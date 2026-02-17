@@ -203,6 +203,79 @@ func (s *Store) ListUserPrompts(userID int64) ([]UserPrompt, error) {
 	return prompts, rows.Err()
 }
 
+// User preference management
+
+// GetUserPreference retrieves a single preference value for a user.
+func (s *Store) GetUserPreference(userID int64, key string) (string, error) {
+	var value string
+	err := s.db.QueryRow(
+		"SELECT value FROM user_preferences WHERE user_id = ? AND key = ?",
+		userID, key,
+	).Scan(&value)
+	if err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
+// SetUserPreference sets a preference value, creating or updating as needed.
+func (s *Store) SetUserPreference(userID int64, key, value string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO user_preferences (user_id, key, value)
+		 VALUES (?, ?, ?)
+		 ON CONFLICT(user_id, key) DO UPDATE SET
+		   value = excluded.value`,
+		userID, key, value,
+	)
+	return err
+}
+
+// GetAllUserPreferences returns all preferences for a user as a key-value map.
+func (s *Store) GetAllUserPreferences(userID int64) (map[string]string, error) {
+	rows, err := s.db.Query(
+		"SELECT key, value FROM user_preferences WHERE user_id = ?",
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get user preferences: %w", err)
+	}
+	defer rows.Close()
+
+	prefs := make(map[string]string)
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, fmt.Errorf("scan preference: %w", err)
+		}
+		prefs[k] = v
+	}
+	return prefs, rows.Err()
+}
+
+// DeleteUserPreference removes a single preference for a user.
+func (s *Store) DeleteUserPreference(userID int64, key string) error {
+	_, err := s.db.Exec(
+		"DELETE FROM user_preferences WHERE user_id = ? AND key = ?",
+		userID, key,
+	)
+	return err
+}
+
+// UpdateStarred sets the starred flag on an article's read state.
+func (s *Store) UpdateStarred(articleID int64, starred bool) error {
+	_, err := s.db.Exec(
+		`INSERT INTO read_state (article_id, starred)
+		 VALUES (?, ?)
+		 ON CONFLICT(article_id) DO UPDATE SET
+		   starred = excluded.starred`,
+		articleID, starred,
+	)
+	if err != nil {
+		return fmt.Errorf("update starred: %w", err)
+	}
+	return nil
+}
+
 // AddFeed adds a new feed to the database
 func (s *Store) AddFeed(url, title, description string) (int64, error) {
 	result, err := s.db.Exec(

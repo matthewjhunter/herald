@@ -10,7 +10,8 @@ type EngineConfig struct {
 	CurationModel     string
 	InterestThreshold float64
 	SecurityThreshold float64
-	Keywords []string // user interest keywords for curation scoring
+	Keywords          []string // user interest keywords for curation scoring
+	UserID            int64    // primary user ID; DB preferences override CLI flags
 }
 
 // Article represents a feed article.
@@ -74,6 +75,29 @@ type FeedStats struct {
 type FeedStatsResult struct {
 	Feeds []FeedStats `json:"feeds"`
 	Total FeedStats   `json:"total"`
+}
+
+// UserPreferences holds all user-configurable preference values.
+type UserPreferences struct {
+	Keywords          []string `json:"keywords"`
+	InterestThreshold float64  `json:"interest_threshold"`
+	NotifyWhen        string   `json:"notify_when"`      // "present", "always", "queue"
+	NotifyMinScore    float64  `json:"notify_min_score"`
+}
+
+// PromptInfo summarizes a prompt type's current status.
+type PromptInfo struct {
+	Type        string  `json:"type"`
+	Status      string  `json:"status"`      // "custom" or "default"
+	Temperature float64 `json:"temperature"`
+}
+
+// PromptDetail contains the full prompt template and metadata.
+type PromptDetail struct {
+	Type        string  `json:"type"`
+	Template    string  `json:"template"`
+	Temperature float64 `json:"temperature"`
+	IsCustom    bool    `json:"is_custom"`
 }
 
 // FetchResult summarizes a feed polling cycle.

@@ -2,9 +2,13 @@ package herald
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/matthewjhunter/herald/internal/ai"
@@ -19,6 +23,7 @@ type Engine struct {
 	fetcher *feeds.Fetcher
 	ai      *ai.AIProcessor
 	config  *storage.Config
+	mu      sync.RWMutex // protects config fields modified at runtime
 }
 
 // NewEngine creates a herald content engine backed by the given SQLite database.
@@ -64,12 +69,31 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		return nil, fmt.Errorf("create AI processor: %w", err)
 	}
 
-	return &Engine{
+	e := &Engine{
 		store:   store,
 		fetcher: fetcher,
 		ai:      processor,
 		config:  storeCfg,
-	}, nil
+	}
+
+	// Overlay DB-stored preferences onto config (DB takes precedence over CLI flags).
+	if cfg.UserID > 0 {
+		if prefs, err := store.GetAllUserPreferences(cfg.UserID); err == nil {
+			if v, ok := prefs["keywords"]; ok {
+				var kw []string
+				if json.Unmarshal([]byte(v), &kw) == nil {
+					storeCfg.Preferences.Keywords = kw
+				}
+			}
+			if v, ok := prefs["interest_threshold"]; ok {
+				if f, err := strconv.ParseFloat(v, 64); err == nil {
+					storeCfg.Thresholds.InterestScore = f
+				}
+			}
+		}
+	}
+
+	return e, nil
 }
 
 // FetchAllFeeds fetches all subscribed feeds and stores new articles.
@@ -426,6 +450,208 @@ func (e *Engine) PendingCounts(userID int64) (unsummarized, unscored int, err er
 		return 0, 0, err
 	}
 	return unsummarized, unscored, nil
+}
+
+// allowedPromptTypes lists prompt types that can be read/written via MCP.
+// "security" is intentionally excluded — the LLM must not weaken content safety.
+var allowedPromptTypes = map[string]bool{
+	"curation":       true,
+	"summarization":  true,
+	"group_summary":  true,
+	"related_groups": true,
+}
+
+// allowedPreferenceKeys lists preference keys that can be set via MCP.
+var allowedPreferenceKeys = map[string]bool{
+	"keywords":          true,
+	"interest_threshold": true,
+	"notify_when":       true,
+	"notify_min_score":  true,
+}
+
+// GetPreferences returns all user preferences, merging DB values over config defaults.
+func (e *Engine) GetPreferences(userID int64) (*UserPreferences, error) {
+	prefs := &UserPreferences{
+		InterestThreshold: e.config.Thresholds.InterestScore,
+		NotifyWhen:        "present",
+		NotifyMinScore:    7.0,
+	}
+
+	e.mu.RLock()
+	prefs.Keywords = append([]string{}, e.config.Preferences.Keywords...)
+	e.mu.RUnlock()
+
+	dbPrefs, err := e.store.GetAllUserPreferences(userID)
+	if err != nil {
+		return prefs, nil // return defaults on error
+	}
+
+	if v, ok := dbPrefs["keywords"]; ok {
+		var kw []string
+		if json.Unmarshal([]byte(v), &kw) == nil {
+			prefs.Keywords = kw
+		}
+	}
+	if v, ok := dbPrefs["interest_threshold"]; ok {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			prefs.InterestThreshold = f
+		}
+	}
+	if v, ok := dbPrefs["notify_when"]; ok {
+		prefs.NotifyWhen = v
+	}
+	if v, ok := dbPrefs["notify_min_score"]; ok {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			prefs.NotifyMinScore = f
+		}
+	}
+
+	return prefs, nil
+}
+
+// SetPreference validates and stores a single preference, updating runtime config
+// for keys that affect scoring (keywords, interest_threshold).
+func (e *Engine) SetPreference(userID int64, key, value string) error {
+	if !allowedPreferenceKeys[key] {
+		return fmt.Errorf("unknown preference key: %q", key)
+	}
+
+	// Validate value by type
+	switch key {
+	case "keywords":
+		var kw []string
+		if err := json.Unmarshal([]byte(value), &kw); err != nil {
+			return fmt.Errorf("keywords must be a JSON array of strings: %w", err)
+		}
+	case "interest_threshold", "notify_min_score":
+		if _, err := strconv.ParseFloat(value, 64); err != nil {
+			return fmt.Errorf("%s must be a number: %w", key, err)
+		}
+	case "notify_when":
+		switch value {
+		case "present", "always", "queue":
+		default:
+			return fmt.Errorf("notify_when must be \"present\", \"always\", or \"queue\"")
+		}
+	}
+
+	if err := e.store.SetUserPreference(userID, key, value); err != nil {
+		return err
+	}
+
+	// Update runtime config for scoring-affecting keys
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	switch key {
+	case "keywords":
+		var kw []string
+		json.Unmarshal([]byte(value), &kw) // already validated above
+		e.config.Preferences.Keywords = kw
+	case "interest_threshold":
+		f, _ := strconv.ParseFloat(value, 64) // already validated above
+		e.config.Thresholds.InterestScore = f
+	}
+
+	return nil
+}
+
+// ListPrompts returns all customizable prompt types with their current status.
+func (e *Engine) ListPrompts(userID int64) ([]PromptInfo, error) {
+	customPrompts, err := e.store.ListUserPrompts(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	customMap := make(map[string]*storage.UserPrompt)
+	for i := range customPrompts {
+		customMap[customPrompts[i].PromptType] = &customPrompts[i]
+	}
+
+	promptLoader := ai.NewPromptLoader(e.store, e.config)
+
+	var result []PromptInfo
+	for pt := range allowedPromptTypes {
+		info := PromptInfo{
+			Type:        pt,
+			Status:      "default",
+			Temperature: promptLoader.GetTemperature(userID, ai.PromptType(pt)),
+		}
+		if _, ok := customMap[pt]; ok {
+			info.Status = "custom"
+		}
+		result = append(result, info)
+	}
+
+	return result, nil
+}
+
+// GetPrompt returns the effective prompt template for a type.
+func (e *Engine) GetPrompt(userID int64, promptType string) (*PromptDetail, error) {
+	if !allowedPromptTypes[promptType] {
+		return nil, fmt.Errorf("unknown or restricted prompt type: %q", promptType)
+	}
+
+	promptLoader := ai.NewPromptLoader(e.store, e.config)
+
+	template, err := promptLoader.GetPrompt(userID, ai.PromptType(promptType))
+	if err != nil {
+		return nil, err
+	}
+
+	temperature := promptLoader.GetTemperature(userID, ai.PromptType(promptType))
+
+	// Determine if this is a custom prompt
+	isCustom := false
+	if _, dbErr := e.store.GetUserPrompt(userID, promptType); dbErr == nil {
+		isCustom = true
+	}
+
+	return &PromptDetail{
+		Type:        promptType,
+		Template:    template,
+		Temperature: temperature,
+		IsCustom:    isCustom,
+	}, nil
+}
+
+// SetPrompt customizes a prompt template and/or temperature.
+func (e *Engine) SetPrompt(userID int64, promptType, template string, temp *float64) error {
+	if !allowedPromptTypes[promptType] {
+		return fmt.Errorf("unknown or restricted prompt type: %q", promptType)
+	}
+
+	// If only temperature is being set, we need to fetch the existing template
+	if template == "" {
+		existing, err := e.store.GetUserPrompt(userID, promptType)
+		if err == sql.ErrNoRows || existing == "" {
+			// Get the default template
+			promptLoader := ai.NewPromptLoader(e.store, e.config)
+			template, err = promptLoader.GetPrompt(userID, ai.PromptType(promptType))
+			if err != nil {
+				return fmt.Errorf("get default prompt: %w", err)
+			}
+		} else if err != nil {
+			return err
+		} else {
+			template = existing
+		}
+	}
+
+	// If temperature not specified, preserve existing or use nil
+	return e.store.SetUserPrompt(userID, promptType, template, temp)
+}
+
+// ResetPrompt reverts a prompt type to its embedded default.
+func (e *Engine) ResetPrompt(userID int64, promptType string) error {
+	if !allowedPromptTypes[promptType] {
+		return fmt.Errorf("unknown or restricted prompt type: %q", promptType)
+	}
+	return e.store.DeleteUserPrompt(userID, promptType)
+}
+
+// StarArticle sets or clears the starred flag on an article.
+func (e *Engine) StarArticle(articleID int64, starred bool) error {
+	return e.store.UpdateStarred(articleID, starred)
 }
 
 // Close releases all resources held by the engine.
