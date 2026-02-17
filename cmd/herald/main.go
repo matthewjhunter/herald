@@ -21,6 +21,119 @@ var (
 	outputFormat string
 )
 
+// processArticlesForUser runs the AI pipeline (summarize, security check,
+// interest scoring, grouping) for a single user's unread articles. Returns
+// the number of articles processed. This is the shared core used by both
+// the `process` and `fetch` commands.
+func processArticlesForUser(ctx context.Context, store *storage.Store, processor *ai.AIProcessor, formatter *output.Formatter, appCfg *storage.Config, userID int64) (int, error) {
+	processed := 0
+	updatedGroups := make(map[int64]bool)
+
+	unreadArticles, err := store.GetUnreadArticlesForUser(userID, 100)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get unread articles for user %d: %w", userID, err)
+	}
+
+	for _, article := range unreadArticles {
+		content := article.Content
+		if content == "" {
+			content = article.Summary
+		}
+
+		// 1. Generate AI summary (cached per-user)
+		existingSummary, err := store.GetArticleSummary(userID, article.ID)
+		if err != nil {
+			formatter.Warning("failed to check article summary: %v", err)
+			continue
+		}
+
+		if existingSummary == nil {
+			aiSummary, err := processor.SummarizeArticle(ctx, userID, article.Title, content)
+			if err != nil {
+				formatter.Warning("summarization failed for article %d: %v", article.ID, err)
+				continue
+			}
+			if err := store.UpdateArticleAISummary(userID, article.ID, aiSummary); err != nil {
+				formatter.Warning("failed to cache AI summary: %v", err)
+			}
+		}
+
+		// 2. Security check
+		secResult, err := processor.SecurityCheck(ctx, userID, article.Title, content)
+		if err != nil {
+			formatter.Warning("security check failed for article %d: %v", article.ID, err)
+			continue
+		}
+
+		if !secResult.Safe || secResult.Score < appCfg.Thresholds.SecurityScore {
+			secScore := secResult.Score
+			interestScore := 0.0
+			store.UpdateReadState(article.ID, false, &interestScore, &secScore)
+			formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, false)
+			continue
+		}
+
+		// 3. Interest scoring
+		curResult, err := processor.CurateArticle(ctx, userID, article.Title, content, appCfg.Preferences.Keywords)
+		if err != nil {
+			formatter.Warning("curation failed for article %d: %v", article.ID, err)
+			continue
+		}
+
+		secScore := secResult.Score
+		interestScore := curResult.InterestScore
+		store.UpdateReadState(article.ID, false, &interestScore, &secScore)
+		formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, true)
+
+		// 4. Find or create group
+		userGroups, err := store.GetUserGroups(userID)
+		if err != nil {
+			formatter.Warning("failed to get user groups: %v", err)
+			continue
+		}
+
+		relatedGroupIDs, err := processor.FindRelatedGroups(ctx, userID, article, userGroups, store)
+		if err != nil {
+			formatter.Warning("failed to find related groups: %v", err)
+			relatedGroupIDs = nil
+		}
+
+		if len(relatedGroupIDs) > 0 {
+			if err := store.AddArticleToGroup(relatedGroupIDs[0], article.ID); err != nil {
+				formatter.Warning("failed to add article to group: %v", err)
+			} else {
+				updatedGroups[relatedGroupIDs[0]] = true
+			}
+		} else {
+			topic := article.Title
+			if len(topic) > 100 {
+				topic = topic[:100]
+			}
+			newGroupID, err := store.CreateArticleGroup(userID, topic)
+			if err != nil {
+				formatter.Warning("failed to create group: %v", err)
+				continue
+			}
+			if err := store.AddArticleToGroup(newGroupID, article.ID); err != nil {
+				formatter.Warning("failed to add article to new group: %v", err)
+			} else {
+				updatedGroups[newGroupID] = true
+			}
+		}
+
+		processed++
+	}
+
+	// 5. Update group summaries for changed groups
+	for groupID := range updatedGroups {
+		if err := updateGroupSummary(ctx, store, processor, groupID, userID); err != nil {
+			formatter.Warning("failed to update group summary for group %d: %v", groupID, err)
+		}
+	}
+
+	return processed, nil
+}
+
 // updateGroupSummary regenerates the summary for a group
 func updateGroupSummary(ctx context.Context, store *storage.Store, processor *ai.AIProcessor, groupID, userID int64) error {
 	// Get all articles in the group
@@ -251,115 +364,9 @@ func processCmd() *cobra.Command {
 				return nil
 			}
 
-			processed := 0
-			updatedGroups := make(map[int64]bool)
-
-			// Get unread articles for this user (from their subscribed feeds)
-			unreadArticles, err := store.GetUnreadArticlesForUser(userID, 100)
+			processed, err := processArticlesForUser(ctx, store, processor, formatter, cfg, userID)
 			if err != nil {
-				return fmt.Errorf("failed to get unread articles for user %d: %w", userID, err)
-			}
-
-			for _, article := range unreadArticles {
-				content := article.Content
-				if content == "" {
-					content = article.Summary
-				}
-
-				// 1. Generate AI summary (cached per-user)
-				existingSummary, err := store.GetArticleSummary(userID, article.ID)
-				if err != nil {
-					formatter.Warning("failed to check article summary: %v", err)
-					continue
-				}
-
-				var aiSummary string
-				if existingSummary == nil {
-					aiSummary, err = processor.SummarizeArticle(ctx, userID, article.Title, content)
-					if err != nil {
-						formatter.Warning("summarization failed for article %d: %v", article.ID, err)
-						continue
-					}
-					if err := store.UpdateArticleAISummary(userID, article.ID, aiSummary); err != nil {
-						formatter.Warning("failed to cache AI summary: %v", err)
-					}
-				} else {
-					aiSummary = existingSummary.AISummary
-				}
-
-				// 2. Security check
-				secResult, err := processor.SecurityCheck(ctx, userID, article.Title, content)
-				if err != nil {
-					formatter.Warning("security check failed for article %d: %v", article.ID, err)
-					continue
-				}
-
-				if !secResult.Safe || secResult.Score < cfg.Thresholds.SecurityScore {
-					secScore := secResult.Score
-					interestScore := 0.0
-					store.UpdateReadState(article.ID, false, &interestScore, &secScore)
-					formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, false)
-					continue
-				}
-
-				// 3. Interest scoring
-				curResult, err := processor.CurateArticle(ctx, userID, article.Title, content, cfg.Preferences.Keywords)
-				if err != nil {
-					formatter.Warning("curation failed for article %d: %v", article.ID, err)
-					continue
-				}
-
-				secScore := secResult.Score
-				interestScore := curResult.InterestScore
-				store.UpdateReadState(article.ID, false, &interestScore, &secScore)
-				formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, true)
-
-				// 4. Find or create group
-				userGroups, err := store.GetUserGroups(userID)
-				if err != nil {
-					formatter.Warning("failed to get user groups: %v", err)
-					continue
-				}
-
-				relatedGroupIDs, err := processor.FindRelatedGroups(ctx, userID, article, userGroups, store)
-				if err != nil {
-					formatter.Warning("failed to find related groups: %v", err)
-					relatedGroupIDs = nil
-				}
-
-				var groupID int64
-				if len(relatedGroupIDs) > 0 {
-					groupID = relatedGroupIDs[0]
-					if err := store.AddArticleToGroup(groupID, article.ID); err != nil {
-						formatter.Warning("failed to add article to group: %v", err)
-					} else {
-						updatedGroups[groupID] = true
-					}
-				} else {
-					topic := article.Title
-					if len(topic) > 100 {
-						topic = topic[:100]
-					}
-					newGroupID, err := store.CreateArticleGroup(userID, topic)
-					if err != nil {
-						formatter.Warning("failed to create group: %v", err)
-						continue
-					}
-					if err := store.AddArticleToGroup(newGroupID, article.ID); err != nil {
-						formatter.Warning("failed to add article to new group: %v", err)
-					} else {
-						updatedGroups[newGroupID] = true
-					}
-				}
-
-				processed++
-			}
-
-			// 5. Update group summaries for changed groups
-			for groupID := range updatedGroups {
-				if err := updateGroupSummary(ctx, store, processor, groupID, userID); err != nil {
-					formatter.Warning("failed to update group summary for group %d: %v", groupID, err)
-				}
+				return err
 			}
 
 			result := &output.FetchResult{
@@ -373,7 +380,7 @@ func processCmd() *cobra.Command {
 			}
 
 			result.HighInterest = len(highInterestArticles)
-			result.NewArticles = len(unreadArticles)
+			result.NewArticles = processed
 
 			// Use Majordomo format for JSON output, traditional format for others
 			if outputFormat == "json" {
@@ -482,123 +489,11 @@ func fetchCmd() *cobra.Command {
 
 			// Process articles for each subscribing user
 			for _, userID := range allUserIDs {
-				processed := 0
-				updatedGroups := make(map[int64]bool) // Track which groups need summary updates
-
-				// Get unread articles for this user (from their subscribed feeds)
-				unreadArticles, err := store.GetUnreadArticlesForUser(userID, 100)
+				processed, err := processArticlesForUser(ctx, store, processor, formatter, cfg, userID)
 				if err != nil {
-					formatter.Warning("failed to get unread articles for user %d: %v", userID, err)
+					formatter.Warning("failed to process articles for user %d: %v", userID, err)
 					continue
 				}
-
-				for _, article := range unreadArticles {
-				content := article.Content
-				if content == "" {
-					content = article.Summary
-				}
-
-				// 1. Generate AI summary (cached per-user)
-				existingSummary, err := store.GetArticleSummary(userID, article.ID)
-				if err != nil {
-					formatter.Warning("failed to check article summary: %v", err)
-					continue
-				}
-
-				var aiSummary string
-				if existingSummary == nil {
-					// Generate new AI summary
-					aiSummary, err = processor.SummarizeArticle(ctx, userID, article.Title, content)
-					if err != nil {
-						formatter.Warning("summarization failed for article %d: %v", article.ID, err)
-						continue
-					}
-					// Cache it
-					if err := store.UpdateArticleAISummary(userID, article.ID, aiSummary); err != nil {
-						formatter.Warning("failed to cache AI summary: %v", err)
-					}
-				} else {
-					aiSummary = existingSummary.AISummary
-				}
-
-				// 2. Security check
-				secResult, err := processor.SecurityCheck(ctx, userID, article.Title, content)
-				if err != nil {
-					formatter.Warning("security check failed for article %d: %v", article.ID, err)
-					continue
-				}
-
-				if !secResult.Safe || secResult.Score < cfg.Thresholds.SecurityScore {
-					secScore := secResult.Score
-					interestScore := 0.0
-					store.UpdateReadState(article.ID, false, &interestScore, &secScore)
-					formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, false)
-					continue
-				}
-
-				// 3. Interest scoring
-				curResult, err := processor.CurateArticle(ctx, userID, article.Title, content, cfg.Preferences.Keywords)
-				if err != nil {
-					formatter.Warning("curation failed for article %d: %v", article.ID, err)
-					continue
-				}
-
-				secScore := secResult.Score
-				interestScore := curResult.InterestScore
-				store.UpdateReadState(article.ID, false, &interestScore, &secScore)
-				formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, true)
-
-				// 4. Find or create group
-				userGroups, err := store.GetUserGroups(userID)
-				if err != nil {
-					formatter.Warning("failed to get user groups: %v", err)
-					continue
-				}
-
-				relatedGroupIDs, err := processor.FindRelatedGroups(ctx, userID, article, userGroups, store)
-				if err != nil {
-					formatter.Warning("failed to find related groups: %v", err)
-					// Continue with new group creation
-					relatedGroupIDs = nil
-				}
-
-				var groupID int64
-				if len(relatedGroupIDs) > 0 {
-					// Add to first related group
-					groupID = relatedGroupIDs[0]
-					if err := store.AddArticleToGroup(groupID, article.ID); err != nil {
-						formatter.Warning("failed to add article to group: %v", err)
-					} else {
-						updatedGroups[groupID] = true
-					}
-				} else {
-					// Create new group
-					topic := article.Title
-					if len(topic) > 100 {
-						topic = topic[:100]
-					}
-					newGroupID, err := store.CreateArticleGroup(userID, topic)
-					if err != nil {
-						formatter.Warning("failed to create group: %v", err)
-						continue
-					}
-					if err := store.AddArticleToGroup(newGroupID, article.ID); err != nil {
-						formatter.Warning("failed to add article to new group: %v", err)
-					} else {
-						updatedGroups[newGroupID] = true
-					}
-				}
-
-					processed++
-				}
-
-				// 5. Update group summaries for changed groups
-				for groupID := range updatedGroups {
-					if err := updateGroupSummary(ctx, store, processor, groupID, userID); err != nil {
-						formatter.Warning("failed to update group summary for group %d: %v", groupID, err)
-					}
-				}
-
 				totalProcessed += processed
 			}
 
