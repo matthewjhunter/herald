@@ -1,6 +1,7 @@
 # Binaries
 feedreader
 /herald
+/herald-mcp
 *.exe
 *.exe~
 *.dll
