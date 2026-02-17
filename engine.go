@@ -415,6 +415,19 @@ func (e *Engine) GetFeedStats(userID int64) (*FeedStatsResult, error) {
 	return result, nil
 }
 
+// PendingCounts returns the number of articles awaiting AI processing.
+func (e *Engine) PendingCounts(userID int64) (unsummarized, unscored int, err error) {
+	unsummarized, err = e.store.GetUnsummarizedArticleCount(userID)
+	if err != nil {
+		return 0, 0, err
+	}
+	unscored, err = e.store.GetUnscoredArticleCount(userID)
+	if err != nil {
+		return 0, 0, err
+	}
+	return unsummarized, unscored, nil
+}
+
 // Close releases all resources held by the engine.
 func (e *Engine) Close() error {
 	return e.store.Close()

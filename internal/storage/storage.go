@@ -736,6 +736,42 @@ func (s *Store) GetArticle(articleID int64) (*Article, error) {
 	return &a, nil
 }
 
+// GetUnscoredArticleCount returns the number of articles from the user's
+// subscribed feeds that have no read_state entry (pending security/interest scoring).
+func (s *Store) GetUnscoredArticleCount(userID int64) (int, error) {
+	var count int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM articles a
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		LEFT JOIN read_state rs ON a.id = rs.article_id
+		WHERE uf.user_id = ? AND rs.article_id IS NULL`,
+		userID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("get unscored article count: %w", err)
+	}
+	return count, nil
+}
+
+// GetUnsummarizedArticleCount returns the number of articles from the user's
+// subscribed feeds that have no AI summary yet (pending content summarization).
+func (s *Store) GetUnsummarizedArticleCount(userID int64) (int, error) {
+	var count int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM articles a
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id AND asumm.user_id = ?
+		WHERE uf.user_id = ? AND asumm.article_id IS NULL`,
+		userID, userID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("get unsummarized article count: %w", err)
+	}
+	return count, nil
+}
+
 // GetUnscoredArticlesForUser returns articles from the user's subscribed feeds
 // that have no read_state entry (never been scored by the AI pipeline).
 func (s *Store) GetUnscoredArticlesForUser(userID int64, limit int) ([]Article, error) {
