@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/matthewjhunter/herald"
 )
@@ -174,7 +175,7 @@ func TestToolsList(t *testing.T) {
 	expected := []string{
 		"articles_unread", "articles_get", "articles_mark_read",
 		"feeds_list", "feed_subscribe", "feed_unsubscribe", "feed_rename",
-		"article_groups", "article_group_get", "feed_stats",
+		"article_groups", "article_group_get", "feed_stats", "poll_now",
 	}
 	if len(result.Tools) != len(expected) {
 		t.Fatalf("got %d tools, want %d", len(result.Tools), len(expected))
@@ -486,6 +487,49 @@ func TestInvalidToolCallParams(t *testing.T) {
 		return // expected
 	}
 	t.Fatal("expected error for invalid params")
+}
+
+func TestPollNowDisabled(t *testing.T) {
+	srv := newTestServer(t)
+	// poller is nil — poll_now should return an error
+	resp := srv.handleRequest(toolCall(1, "poll_now", map[string]any{}))
+
+	if !resultIsError(t, resp) {
+		t.Fatal("expected error when polling is disabled")
+	}
+	text := resultText(t, resp)
+	if text == "" {
+		t.Fatal("expected error message")
+	}
+}
+
+func TestPollNowEnabled(t *testing.T) {
+	srv := newTestServer(t)
+	ts := feedServer(t)
+
+	// Subscribe to a feed so poll has something to fetch
+	subscribeFeed(t, srv, ts.URL+"/feed.xml")
+
+	// Attach a poller
+	p := newPoller(srv.engine, srv.userID, 10*time.Minute, 8.0)
+	srv.poller = p
+
+	resp := srv.handleRequest(toolCall(1, "poll_now", map[string]any{}))
+	if resultIsError(t, resp) {
+		t.Fatalf("poll_now error: %s", resultText(t, resp))
+	}
+
+	text := resultText(t, resp)
+	var result struct {
+		FeedsTotal      int `json:"feeds_total"`
+		FeedsDownloaded int `json:"feeds_downloaded"`
+	}
+	if err := json.Unmarshal([]byte(text), &result); err != nil {
+		t.Fatalf("unmarshal poll result: %v", err)
+	}
+	if result.FeedsTotal == 0 {
+		t.Error("expected non-zero feeds_total")
+	}
 }
 
 func TestFeedUnsubscribeMissingID(t *testing.T) {

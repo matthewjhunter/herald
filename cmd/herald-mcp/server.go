@@ -2,10 +2,12 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/matthewjhunter/herald"
 )
@@ -35,6 +37,7 @@ type rpcError struct {
 type server struct {
 	engine *herald.Engine
 	userID int64
+	poller *poller // non-nil when --poll is enabled
 }
 
 func newServer(engine *herald.Engine, userID int64) *server {
@@ -246,6 +249,14 @@ func (s *server) handleToolsList() any {
 					"properties": map[string]any{},
 				},
 			},
+			{
+				"name":        "poll_now",
+				"description": "Trigger an immediate feed poll cycle: fetch all feeds, score new articles through the AI pipeline, and return results. Only available when the server is running with --poll. Use this when the user asks to check for new articles right now.",
+				"inputSchema": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				},
+			},
 		},
 	}
 }
@@ -281,6 +292,8 @@ func (s *server) handleToolsCall(params json.RawMessage) any {
 		return s.handleArticleGroupGet(call.Arguments)
 	case "feed_stats":
 		return s.handleFeedStats()
+	case "poll_now":
+		return s.handlePollNow()
 	default:
 		return mcpError("unknown tool: %s", call.Name)
 	}
@@ -485,6 +498,25 @@ func (s *server) handleFeedStats() any {
 
 	log.Printf("feed_stats")
 	return mcpJSON(stats)
+}
+
+func (s *server) handlePollNow() any {
+	if s.poller == nil {
+		return mcpError("polling is not enabled (start with --poll)")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	result, err := s.poller.poll(ctx)
+	if err != nil {
+		return mcpError("poll failed: %v", err)
+	}
+
+	log.Printf("poll_now: %d/%d feeds, %d new, %d scored, %d high-interest",
+		result.FeedsDownloaded, result.FeedsTotal,
+		result.NewArticles, result.ProcessedCount, result.HighInterest)
+	return mcpJSON(result)
 }
 
 // --- MCP response helpers ---
