@@ -53,6 +53,7 @@ func main() {
 		InterestThreshold: *threshold,
 		SecurityThreshold: *securityThreshold,
 		Keywords:          kwList,
+		UserID:            *userID,
 	}
 
 	engine, err := herald.NewEngine(engineCfg)

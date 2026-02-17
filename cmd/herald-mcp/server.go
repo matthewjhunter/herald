@@ -257,6 +257,120 @@ func (s *server) handleToolsList() any {
 					"properties": map[string]any{},
 				},
 			},
+			{
+				"name":        "preferences_get",
+				"description": "Get all user preferences as structured JSON. Returns keywords, interest threshold, and notification settings.",
+				"inputSchema": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				},
+			},
+			{
+				"name":        "preference_set",
+				"description": "Set a single user preference by key. Valid keys: keywords (JSON array), interest_threshold (number), notify_when (\"present\"|\"always\"|\"queue\"), notify_min_score (number).",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"key": map[string]any{
+							"type":        "string",
+							"description": "Preference key to set",
+							"enum":        []string{"keywords", "interest_threshold", "notify_when", "notify_min_score"},
+						},
+						"value": map[string]any{
+							"type":        "string",
+							"description": "Value to set (keywords as JSON array, thresholds as number strings, notify_when as enum)",
+						},
+					},
+					"required": []string{"key", "value"},
+				},
+			},
+			{
+				"name":        "prompts_list",
+				"description": "List all customizable prompt types with their current status (custom or default) and temperature.",
+				"inputSchema": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				},
+			},
+			{
+				"name":        "prompt_get",
+				"description": "Get the active prompt template and temperature for a given type. Prompt types: curation, summarization, group_summary, related_groups.",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"prompt_type": map[string]any{
+							"type":        "string",
+							"description": "The prompt type to retrieve",
+							"enum":        []string{"curation", "summarization", "group_summary", "related_groups"},
+						},
+					},
+					"required": []string{"prompt_type"},
+				},
+			},
+			{
+				"name":        "prompt_set",
+				"description": "Customize a prompt template and/or temperature. At least one of template or temperature must be provided. Prompt types: curation, summarization, group_summary, related_groups.",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"prompt_type": map[string]any{
+							"type":        "string",
+							"description": "The prompt type to customize",
+							"enum":        []string{"curation", "summarization", "group_summary", "related_groups"},
+						},
+						"template": map[string]any{
+							"type":        "string",
+							"description": "New prompt template text",
+						},
+						"temperature": map[string]any{
+							"type":        "number",
+							"description": "Temperature setting (0.0-2.0)",
+						},
+					},
+					"required": []string{"prompt_type"},
+				},
+			},
+			{
+				"name":        "prompt_reset",
+				"description": "Revert a prompt type to its embedded default. Deletes any custom template and temperature.",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"prompt_type": map[string]any{
+							"type":        "string",
+							"description": "The prompt type to reset",
+							"enum":        []string{"curation", "summarization", "group_summary", "related_groups"},
+						},
+					},
+					"required": []string{"prompt_type"},
+				},
+			},
+			{
+				"name":        "briefing",
+				"description": "Generate a markdown briefing from high-interest unread articles. Includes titles, scores, URLs, and AI summaries.",
+				"inputSchema": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				},
+			},
+			{
+				"name":        "article_star",
+				"description": "Set or clear the starred flag on an article. Starred articles are saved for later reference.",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"article_id": map[string]any{
+							"type":        "integer",
+							"description": "The article ID to star/unstar",
+						},
+						"starred": map[string]any{
+							"type":        "boolean",
+							"description": "true to star, false to unstar",
+						},
+					},
+					"required": []string{"article_id", "starred"},
+				},
+			},
 		},
 	}
 }
@@ -294,6 +408,22 @@ func (s *server) handleToolsCall(params json.RawMessage) any {
 		return s.handleFeedStats()
 	case "poll_now":
 		return s.handlePollNow()
+	case "preferences_get":
+		return s.handlePreferencesGet()
+	case "preference_set":
+		return s.handlePreferenceSet(call.Arguments)
+	case "prompts_list":
+		return s.handlePromptsList()
+	case "prompt_get":
+		return s.handlePromptGet(call.Arguments)
+	case "prompt_set":
+		return s.handlePromptSet(call.Arguments)
+	case "prompt_reset":
+		return s.handlePromptReset(call.Arguments)
+	case "briefing":
+		return s.handleBriefing()
+	case "article_star":
+		return s.handleArticleStar(call.Arguments)
 	default:
 		return mcpError("unknown tool: %s", call.Name)
 	}
@@ -517,6 +647,162 @@ func (s *server) handlePollNow() any {
 		result.FeedsDownloaded, result.FeedsTotal,
 		result.NewArticles, result.ProcessedCount, result.HighInterest)
 	return mcpJSON(result)
+}
+
+func (s *server) handlePreferencesGet() any {
+	prefs, err := s.engine.GetPreferences(s.userID)
+	if err != nil {
+		return mcpError("%v", err)
+	}
+
+	log.Printf("preferences_get")
+	return mcpJSON(prefs)
+}
+
+func (s *server) handlePreferenceSet(args json.RawMessage) any {
+	var params struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return mcpError("invalid arguments: %v", err)
+	}
+	if params.Key == "" {
+		return mcpError("key parameter is required")
+	}
+	if params.Value == "" {
+		return mcpError("value parameter is required")
+	}
+
+	if err := s.engine.SetPreference(s.userID, params.Key, params.Value); err != nil {
+		return mcpError("%v", err)
+	}
+
+	log.Printf("preference_set: %s=%s", params.Key, params.Value)
+	return mcpText("Preference %q set.", params.Key)
+}
+
+func (s *server) handlePromptsList() any {
+	prompts, err := s.engine.ListPrompts(s.userID)
+	if err != nil {
+		return mcpError("%v", err)
+	}
+
+	log.Printf("prompts_list: %d types", len(prompts))
+	return mcpJSON(prompts)
+}
+
+func (s *server) handlePromptGet(args json.RawMessage) any {
+	var params struct {
+		PromptType string `json:"prompt_type"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return mcpError("invalid arguments: %v", err)
+	}
+	if params.PromptType == "" {
+		return mcpError("prompt_type parameter is required")
+	}
+	if params.PromptType == "security" {
+		return mcpError("the security prompt type cannot be viewed or modified")
+	}
+
+	detail, err := s.engine.GetPrompt(s.userID, params.PromptType)
+	if err != nil {
+		return mcpError("%v", err)
+	}
+
+	log.Printf("prompt_get: type=%s custom=%v", params.PromptType, detail.IsCustom)
+	return mcpJSON(detail)
+}
+
+func (s *server) handlePromptSet(args json.RawMessage) any {
+	var params struct {
+		PromptType  string   `json:"prompt_type"`
+		Template    string   `json:"template"`
+		Temperature *float64 `json:"temperature"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return mcpError("invalid arguments: %v", err)
+	}
+	if params.PromptType == "" {
+		return mcpError("prompt_type parameter is required")
+	}
+	if params.PromptType == "security" {
+		return mcpError("the security prompt type cannot be viewed or modified")
+	}
+	if params.Template == "" && params.Temperature == nil {
+		return mcpError("at least one of template or temperature is required")
+	}
+
+	if err := s.engine.SetPrompt(s.userID, params.PromptType, params.Template, params.Temperature); err != nil {
+		return mcpError("%v", err)
+	}
+
+	log.Printf("prompt_set: type=%s", params.PromptType)
+	return mcpText("Prompt %q updated.", params.PromptType)
+}
+
+func (s *server) handlePromptReset(args json.RawMessage) any {
+	var params struct {
+		PromptType string `json:"prompt_type"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return mcpError("invalid arguments: %v", err)
+	}
+	if params.PromptType == "" {
+		return mcpError("prompt_type parameter is required")
+	}
+	if params.PromptType == "security" {
+		return mcpError("the security prompt type cannot be viewed or modified")
+	}
+
+	if err := s.engine.ResetPrompt(s.userID, params.PromptType); err != nil {
+		return mcpError("%v", err)
+	}
+
+	log.Printf("prompt_reset: type=%s", params.PromptType)
+	return mcpText("Prompt %q reset to default.", params.PromptType)
+}
+
+func (s *server) handleBriefing() any {
+	briefing, err := s.engine.GenerateBriefing(s.userID)
+	if err != nil {
+		return mcpError("%v", err)
+	}
+
+	if briefing == "" {
+		return mcpText("No high-interest unread articles for a briefing.")
+	}
+
+	log.Printf("briefing: generated")
+	return mcpText("%s", briefing)
+}
+
+func (s *server) handleArticleStar(args json.RawMessage) any {
+	var params struct {
+		ArticleID int64 `json:"article_id"`
+		Starred   *bool `json:"starred"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return mcpError("invalid arguments: %v", err)
+	}
+	if params.ArticleID == 0 {
+		return mcpError("article_id parameter is required")
+	}
+	if params.Starred == nil {
+		return mcpError("starred parameter is required")
+	}
+
+	if err := s.engine.StarArticle(params.ArticleID, *params.Starred); err != nil {
+		return mcpError("%v", err)
+	}
+
+	action := "starred"
+	if !*params.Starred {
+		action = "unstarred"
+	}
+	log.Printf("article_star: id=%d %s", params.ArticleID, action)
+	return mcpText("Article %d %s.", params.ArticleID, action)
 }
 
 // --- MCP response helpers ---
