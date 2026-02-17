@@ -22,19 +22,23 @@ var (
 )
 
 // processArticlesForUser runs the AI pipeline (summarize, security check,
-// interest scoring, grouping) for a single user's unread articles. Returns
+// interest scoring, grouping) for a single user's unscored articles. Returns
 // the number of articles processed. This is the shared core used by both
 // the `process` and `fetch` commands.
+//
+// Only articles with no read_state entry are processed — once scored, an
+// article is never re-scored. This avoids redundant AI calls on articles
+// that were fetched in a previous cycle but haven't been read yet.
 func processArticlesForUser(ctx context.Context, store *storage.Store, processor *ai.AIProcessor, formatter *output.Formatter, appCfg *storage.Config, userID int64) (int, error) {
 	processed := 0
 	updatedGroups := make(map[int64]bool)
 
-	unreadArticles, err := store.GetUnreadArticlesForUser(userID, 100, 0)
+	unscoredArticles, err := store.GetUnscoredArticlesForUser(userID, 100)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get unread articles for user %d: %w", userID, err)
+		return 0, fmt.Errorf("failed to get unscored articles for user %d: %w", userID, err)
 	}
 
-	for _, article := range unreadArticles {
+	for _, article := range unscoredArticles {
 		content := article.Content
 		if content == "" {
 			content = article.Summary
