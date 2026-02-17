@@ -29,7 +29,7 @@ func processArticlesForUser(ctx context.Context, store *storage.Store, processor
 	processed := 0
 	updatedGroups := make(map[int64]bool)
 
-	unreadArticles, err := store.GetUnreadArticlesForUser(userID, 100)
+	unreadArticles, err := store.GetUnreadArticlesForUser(userID, 100, 0)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get unread articles for user %d: %w", userID, err)
 	}
@@ -374,7 +374,7 @@ func processCmd() *cobra.Command {
 			}
 
 			// Get and output high-interest articles
-			highInterestArticles, scores, err := store.GetArticlesByInterestScore(cfg.Thresholds.InterestScore, 10)
+			highInterestArticles, scores, err := store.GetArticlesByInterestScore(cfg.Thresholds.InterestScore, 10, 0)
 			if err != nil {
 				return fmt.Errorf("failed to get high-interest articles: %w", err)
 			}
@@ -500,7 +500,7 @@ func fetchCmd() *cobra.Command {
 			result.ProcessedCount = totalProcessed
 
 			// Get and output high-interest articles
-			highInterestArticles, scores, err := store.GetArticlesByInterestScore(cfg.Thresholds.InterestScore, 10)
+			highInterestArticles, scores, err := store.GetArticlesByInterestScore(cfg.Thresholds.InterestScore, 10, 0)
 			if err != nil {
 				return fmt.Errorf("failed to get high-interest articles: %w", err)
 			}

@@ -292,18 +292,28 @@ func (s *Store) UpdateReadState(articleID int64, read bool, interestScore, secur
 	return nil
 }
 
-// GetArticlesByInterestScore returns articles with interest scores above threshold
-func (s *Store) GetArticlesByInterestScore(threshold float64, limit int) ([]Article, []float64, error) {
+// GetArticlesByInterestScore returns unread articles with interest scores above
+// threshold, ordered by a time-decayed effective score. The decay formula is:
+//
+//	effective = interest_score * (1.0 / (1.0 + days_old * 0.1))
+//
+// This causes older articles to gradually sink in priority: a 10-day-old article
+// is weighted at 50% of its raw score, 20-day at 33%, 30-day at 25%. The WHERE
+// clause still filters on the raw score so legitimately interesting articles
+// remain visible — they just sort lower as they age. Returned scores are the
+// decayed effective scores, not the raw stored values.
+func (s *Store) GetArticlesByInterestScore(threshold float64, limit, offset int) ([]Article, []float64, error) {
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date, rs.interest_score
+		       a.author, a.published_date, a.fetched_date,
+		       rs.interest_score * (1.0 / (1.0 + MAX(0, julianday('now') - julianday(COALESCE(a.published_date, a.fetched_date))) * 0.1)) AS decayed_score
 		FROM articles a
 		JOIN read_state rs ON a.id = rs.article_id
 		WHERE rs.interest_score >= ? AND rs.read = 0
-		ORDER BY rs.interest_score DESC, a.published_date DESC
-		LIMIT ?
+		ORDER BY decayed_score DESC
+		LIMIT ? OFFSET ?
 	`
-	rows, err := s.db.Query(query, threshold, limit)
+	rows, err := s.db.Query(query, threshold, limit, offset)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get articles by interest score: %w", err)
 	}
@@ -582,8 +592,54 @@ func (s *Store) GetAllSubscribingUsers() ([]int64, error) {
 	return userIDs, rows.Err()
 }
 
+// GetArticle returns a single article by ID.
+func (s *Store) GetArticle(articleID int64) (*Article, error) {
+	var a Article
+	err := s.db.QueryRow(
+		`SELECT id, feed_id, guid, title, url, content, summary,
+		        author, published_date, fetched_date
+		 FROM articles WHERE id = ?`, articleID,
+	).Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
+		&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate)
+	if err != nil {
+		return nil, fmt.Errorf("get article %d: %w", articleID, err)
+	}
+	return &a, nil
+}
+
+// GetUnscoredArticlesForUser returns articles from the user's subscribed feeds
+// that have no read_state entry (never been scored by the AI pipeline).
+func (s *Store) GetUnscoredArticlesForUser(userID int64, limit int) ([]Article, error) {
+	query := `
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date
+		FROM articles a
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		LEFT JOIN read_state rs ON a.id = rs.article_id
+		WHERE uf.user_id = ? AND rs.article_id IS NULL
+		ORDER BY a.published_date DESC
+		LIMIT ?
+	`
+	rows, err := s.db.Query(query, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get unscored articles for user: %w", err)
+	}
+	defer rows.Close()
+
+	var articles []Article
+	for rows.Next() {
+		var a Article
+		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
+			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate); err != nil {
+			return nil, fmt.Errorf("scan article: %w", err)
+		}
+		articles = append(articles, a)
+	}
+	return articles, rows.Err()
+}
+
 // GetUnreadArticlesForUser returns unread articles from feeds the user subscribes to
-func (s *Store) GetUnreadArticlesForUser(userID int64, limit int) ([]Article, error) {
+func (s *Store) GetUnreadArticlesForUser(userID int64, limit, offset int) ([]Article, error) {
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date
@@ -592,9 +648,9 @@ func (s *Store) GetUnreadArticlesForUser(userID int64, limit int) ([]Article, er
 		LEFT JOIN read_state rs ON a.id = rs.article_id
 		WHERE uf.user_id = ? AND (rs.article_id IS NULL OR rs.read = 0)
 		ORDER BY a.published_date DESC
-		LIMIT ?
+		LIMIT ? OFFSET ?
 	`
-	rows, err := s.db.Query(query, userID, limit)
+	rows, err := s.db.Query(query, userID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get unread articles for user: %w", err)
 	}

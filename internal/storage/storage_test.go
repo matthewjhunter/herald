@@ -166,7 +166,7 @@ func TestGetArticlesByInterestScore(t *testing.T) {
 	}
 
 	// Get articles with score >= 8.0
-	articles, scores, err := store.GetArticlesByInterestScore(8.0, 10)
+	articles, scores, err := store.GetArticlesByInterestScore(8.0, 10, 0)
 	if err != nil {
 		t.Fatalf("GetArticlesByInterestScore failed: %v", err)
 	}
@@ -177,6 +177,57 @@ func TestGetArticlesByInterestScore(t *testing.T) {
 
 	if scores[0] < 8.0 {
 		t.Errorf("First article score should be >= 8.0, got %.1f", scores[0])
+	}
+}
+
+func TestGetArticlesByInterestScore_TimeDecay(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test Feed", "")
+
+	// Two articles with the same raw score but different ages.
+	// The newer one should sort first due to time-decay.
+	recent := time.Now().Add(-1 * 24 * time.Hour) // 1 day old
+	old := time.Now().Add(-30 * 24 * time.Hour)    // 30 days old
+
+	art1, _ := store.AddArticle(&Article{
+		FeedID: feedID, GUID: "old", Title: "Old Article",
+		URL: "https://example.com/old", PublishedDate: &old,
+	})
+	art2, _ := store.AddArticle(&Article{
+		FeedID: feedID, GUID: "recent", Title: "Recent Article",
+		URL: "https://example.com/recent", PublishedDate: &recent,
+	})
+
+	// Both get raw score 9.0
+	rawScore := 9.0
+	secScore := 9.0
+	store.UpdateReadState(art1, false, &rawScore, &secScore)
+	store.UpdateReadState(art2, false, &rawScore, &secScore)
+
+	articles, scores, err := store.GetArticlesByInterestScore(8.0, 10, 0)
+	if err != nil {
+		t.Fatalf("GetArticlesByInterestScore failed: %v", err)
+	}
+	if len(articles) != 2 {
+		t.Fatalf("expected 2 articles, got %d", len(articles))
+	}
+
+	// Recent article should sort first (higher decayed score)
+	if articles[0].Title != "Recent Article" {
+		t.Errorf("expected Recent Article first, got %q", articles[0].Title)
+	}
+
+	// Decayed scores should differ: recent ~8.2 (1 day), old ~2.25 (30 days)
+	if scores[0] <= scores[1] {
+		t.Errorf("recent decayed score (%.2f) should be > old decayed score (%.2f)",
+			scores[0], scores[1])
+	}
+
+	// The 30-day-old article's decayed score should be well below its raw 9.0
+	if scores[1] > 5.0 {
+		t.Errorf("30-day-old article decayed score should be < 5.0, got %.2f", scores[1])
 	}
 }
 
@@ -278,7 +329,7 @@ func TestGetUnreadArticlesForUser(t *testing.T) {
 		URL: "https://example.com/b/1", PublishedDate: &now,
 	})
 
-	articles, err := store.GetUnreadArticlesForUser(1, 10)
+	articles, err := store.GetUnreadArticlesForUser(1, 10, 0)
 	if err != nil {
 		t.Fatalf("GetUnreadArticlesForUser failed: %v", err)
 	}
