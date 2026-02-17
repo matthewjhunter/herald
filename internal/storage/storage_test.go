@@ -1,14 +1,23 @@
 package storage
 
 import (
-	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
 
+func newTestStore(t *testing.T) (*Store, func()) {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	store, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	return store, func() { store.Close() }
+}
+
 func TestNewStore(t *testing.T) {
-	dbPath := "test.db"
-	defer os.Remove(dbPath)
+	dbPath := filepath.Join(t.TempDir(), "test.db")
 
 	store, err := NewStore(dbPath)
 	if err != nil {
@@ -22,14 +31,8 @@ func TestNewStore(t *testing.T) {
 }
 
 func TestAddAndGetFeeds(t *testing.T) {
-	dbPath := "test.db"
-	defer os.Remove(dbPath)
-
-	store, err := NewStore(dbPath)
-	if err != nil {
-		t.Fatalf("NewStore failed: %v", err)
-	}
-	defer store.Close()
+	store, cleanup := newTestStore(t)
+	defer cleanup()
 
 	// Add a feed
 	feedID, err := store.AddFeed("https://example.com/feed", "Test Feed", "A test feed")
@@ -57,14 +60,8 @@ func TestAddAndGetFeeds(t *testing.T) {
 }
 
 func TestAddAndGetArticles(t *testing.T) {
-	dbPath := "test.db"
-	defer os.Remove(dbPath)
-
-	store, err := NewStore(dbPath)
-	if err != nil {
-		t.Fatalf("NewStore failed: %v", err)
-	}
-	defer store.Close()
+	store, cleanup := newTestStore(t)
+	defer cleanup()
 
 	// Add a feed first
 	feedID, err := store.AddFeed("https://example.com/feed", "Test Feed", "")
@@ -110,14 +107,8 @@ func TestAddAndGetArticles(t *testing.T) {
 }
 
 func TestUpdateReadState(t *testing.T) {
-	dbPath := "test.db"
-	defer os.Remove(dbPath)
-
-	store, err := NewStore(dbPath)
-	if err != nil {
-		t.Fatalf("NewStore failed: %v", err)
-	}
-	defer store.Close()
+	store, cleanup := newTestStore(t)
+	defer cleanup()
 
 	// Add a feed and article
 	feedID, _ := store.AddFeed("https://example.com/feed", "Test Feed", "")
@@ -134,8 +125,7 @@ func TestUpdateReadState(t *testing.T) {
 	// Update read state
 	interestScore := 8.5
 	securityScore := 9.0
-	err = store.UpdateReadState(articleID, true, &interestScore, &securityScore)
-	if err != nil {
+	if err := store.UpdateReadState(articleID, true, &interestScore, &securityScore); err != nil {
 		t.Fatalf("UpdateReadState failed: %v", err)
 	}
 
@@ -151,14 +141,8 @@ func TestUpdateReadState(t *testing.T) {
 }
 
 func TestGetArticlesByInterestScore(t *testing.T) {
-	dbPath := "test.db"
-	defer os.Remove(dbPath)
-
-	store, err := NewStore(dbPath)
-	if err != nil {
-		t.Fatalf("NewStore failed: %v", err)
-	}
-	defer store.Close()
+	store, cleanup := newTestStore(t)
+	defer cleanup()
 
 	// Add feed and articles
 	feedID, _ := store.AddFeed("https://example.com/feed", "Test Feed", "")
@@ -193,5 +177,292 @@ func TestGetArticlesByInterestScore(t *testing.T) {
 
 	if scores[0] < 8.0 {
 		t.Errorf("First article score should be >= 8.0, got %.1f", scores[0])
+	}
+}
+
+func TestSubscribeUserToFeed(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test Feed", "")
+
+	if err := store.SubscribeUserToFeed(1, feedID); err != nil {
+		t.Fatalf("SubscribeUserToFeed failed: %v", err)
+	}
+
+	feeds, err := store.GetUserFeeds(1)
+	if err != nil {
+		t.Fatalf("GetUserFeeds failed: %v", err)
+	}
+	if len(feeds) != 1 {
+		t.Fatalf("expected 1 feed, got %d", len(feeds))
+	}
+	if feeds[0].URL != "https://example.com/feed" {
+		t.Errorf("feed URL = %q, want %q", feeds[0].URL, "https://example.com/feed")
+	}
+
+	// Subscribe again should not error (INSERT OR IGNORE)
+	if err := store.SubscribeUserToFeed(1, feedID); err != nil {
+		t.Errorf("duplicate subscribe should not error: %v", err)
+	}
+}
+
+func TestGetAllSubscribedFeeds(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedA, _ := store.AddFeed("https://example.com/a", "Feed A", "")
+	feedB, _ := store.AddFeed("https://example.com/b", "Feed B", "")
+	feedC, _ := store.AddFeed("https://example.com/c", "Feed C", "")
+
+	// User 1 subscribes to A and B
+	store.SubscribeUserToFeed(1, feedA)
+	store.SubscribeUserToFeed(1, feedB)
+	// User 2 subscribes to B and C
+	store.SubscribeUserToFeed(2, feedB)
+	store.SubscribeUserToFeed(2, feedC)
+
+	feeds, err := store.GetAllSubscribedFeeds()
+	if err != nil {
+		t.Fatalf("GetAllSubscribedFeeds failed: %v", err)
+	}
+	if len(feeds) != 3 {
+		t.Errorf("expected 3 distinct subscribed feeds, got %d", len(feeds))
+	}
+}
+
+func TestGetAllSubscribingUsers(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedA, _ := store.AddFeed("https://example.com/a", "Feed A", "")
+	feedB, _ := store.AddFeed("https://example.com/b", "Feed B", "")
+
+	store.SubscribeUserToFeed(1, feedA)
+	store.SubscribeUserToFeed(2, feedB)
+	store.SubscribeUserToFeed(2, feedA) // user 2 subscribes to both
+
+	users, err := store.GetAllSubscribingUsers()
+	if err != nil {
+		t.Fatalf("GetAllSubscribingUsers failed: %v", err)
+	}
+	if len(users) != 2 {
+		t.Fatalf("expected 2 distinct users, got %d", len(users))
+	}
+	if users[0] != 1 || users[1] != 2 {
+		t.Errorf("expected users [1,2], got %v", users)
+	}
+}
+
+func TestGetUnreadArticlesForUser(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedA, _ := store.AddFeed("https://example.com/a", "Feed A", "")
+	feedB, _ := store.AddFeed("https://example.com/b", "Feed B", "")
+
+	// User 1 only subscribes to Feed A
+	store.SubscribeUserToFeed(1, feedA)
+
+	now := time.Now()
+
+	// Article in Feed A (user 1 should see this)
+	store.AddArticle(&Article{
+		FeedID: feedA, GUID: "a1", Title: "Feed A Article",
+		URL: "https://example.com/a/1", PublishedDate: &now,
+	})
+
+	// Article in Feed B (user 1 should NOT see this)
+	store.AddArticle(&Article{
+		FeedID: feedB, GUID: "b1", Title: "Feed B Article",
+		URL: "https://example.com/b/1", PublishedDate: &now,
+	})
+
+	articles, err := store.GetUnreadArticlesForUser(1, 10)
+	if err != nil {
+		t.Fatalf("GetUnreadArticlesForUser failed: %v", err)
+	}
+	if len(articles) != 1 {
+		t.Fatalf("expected 1 article for user 1, got %d", len(articles))
+	}
+	if articles[0].Title != "Feed A Article" {
+		t.Errorf("expected Feed A Article, got %q", articles[0].Title)
+	}
+}
+
+func TestArticleSummary(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test Feed", "")
+	now := time.Now()
+	articleID, _ := store.AddArticle(&Article{
+		FeedID: feedID, GUID: "sum1", Title: "Summary Test",
+		URL: "https://example.com/sum", PublishedDate: &now,
+	})
+
+	// No summary initially
+	summary, err := store.GetArticleSummary(1, articleID)
+	if err != nil {
+		t.Fatalf("GetArticleSummary failed: %v", err)
+	}
+	if summary != nil {
+		t.Error("expected nil summary before setting one")
+	}
+
+	// Set a summary
+	if err := store.UpdateArticleAISummary(1, articleID, "This is an AI summary"); err != nil {
+		t.Fatalf("UpdateArticleAISummary failed: %v", err)
+	}
+
+	// Retrieve it
+	summary, err = store.GetArticleSummary(1, articleID)
+	if err != nil {
+		t.Fatalf("GetArticleSummary failed: %v", err)
+	}
+	if summary == nil {
+		t.Fatal("expected non-nil summary")
+	}
+	if summary.AISummary != "This is an AI summary" {
+		t.Errorf("summary = %q, want %q", summary.AISummary, "This is an AI summary")
+	}
+	if summary.UserID != 1 || summary.ArticleID != articleID {
+		t.Errorf("summary IDs mismatch: user=%d article=%d", summary.UserID, summary.ArticleID)
+	}
+}
+
+func TestArticleGroups(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test Feed", "")
+	now := time.Now()
+	art1, _ := store.AddArticle(&Article{
+		FeedID: feedID, GUID: "g1", Title: "Group Article 1",
+		URL: "https://example.com/g1", PublishedDate: &now,
+	})
+	art2, _ := store.AddArticle(&Article{
+		FeedID: feedID, GUID: "g2", Title: "Group Article 2",
+		URL: "https://example.com/g2", PublishedDate: &now,
+	})
+
+	// Create a group
+	groupID, err := store.CreateArticleGroup(1, "Security Vulnerabilities")
+	if err != nil {
+		t.Fatalf("CreateArticleGroup failed: %v", err)
+	}
+	if groupID == 0 {
+		t.Fatal("group ID should not be 0")
+	}
+
+	// Add articles to the group
+	if err := store.AddArticleToGroup(groupID, art1); err != nil {
+		t.Fatalf("AddArticleToGroup failed: %v", err)
+	}
+	if err := store.AddArticleToGroup(groupID, art2); err != nil {
+		t.Fatalf("AddArticleToGroup failed: %v", err)
+	}
+
+	// Adding same article again should not error (INSERT OR IGNORE)
+	if err := store.AddArticleToGroup(groupID, art1); err != nil {
+		t.Errorf("duplicate AddArticleToGroup should not error: %v", err)
+	}
+
+	// Get group articles
+	articles, err := store.GetGroupArticles(groupID)
+	if err != nil {
+		t.Fatalf("GetGroupArticles failed: %v", err)
+	}
+	if len(articles) != 2 {
+		t.Errorf("expected 2 articles in group, got %d", len(articles))
+	}
+
+	// Get user groups
+	groups, err := store.GetUserGroups(1)
+	if err != nil {
+		t.Fatalf("GetUserGroups failed: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(groups))
+	}
+	if groups[0].Topic != "Security Vulnerabilities" {
+		t.Errorf("topic = %q, want %q", groups[0].Topic, "Security Vulnerabilities")
+	}
+}
+
+func TestGroupSummary(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	groupID, _ := store.CreateArticleGroup(1, "Test Topic")
+
+	maxScore := 9.5
+	if err := store.UpdateGroupSummary(groupID, "Summary of the group", 3, &maxScore); err != nil {
+		t.Fatalf("UpdateGroupSummary failed: %v", err)
+	}
+
+	gs, err := store.GetGroupSummary(groupID)
+	if err != nil {
+		t.Fatalf("GetGroupSummary failed: %v", err)
+	}
+	if gs.Summary != "Summary of the group" {
+		t.Errorf("summary = %q, want %q", gs.Summary, "Summary of the group")
+	}
+	if gs.ArticleCount != 3 {
+		t.Errorf("article count = %d, want 3", gs.ArticleCount)
+	}
+	if gs.MaxInterestScore == nil || *gs.MaxInterestScore != 9.5 {
+		t.Errorf("max interest score = %v, want 9.5", gs.MaxInterestScore)
+	}
+}
+
+func TestUserPrompts(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	// Set a prompt
+	temp := 0.7
+	if err := store.SetUserPrompt(1, "security", "custom security prompt", &temp); err != nil {
+		t.Fatalf("SetUserPrompt failed: %v", err)
+	}
+
+	// Get it back
+	prompt, err := store.GetUserPrompt(1, "security")
+	if err != nil {
+		t.Fatalf("GetUserPrompt failed: %v", err)
+	}
+	if prompt != "custom security prompt" {
+		t.Errorf("prompt = %q, want %q", prompt, "custom security prompt")
+	}
+
+	// Get temperature
+	gotTemp, err := store.GetUserPromptTemperature(1, "security")
+	if err != nil {
+		t.Fatalf("GetUserPromptTemperature failed: %v", err)
+	}
+	if gotTemp != 0.7 {
+		t.Errorf("temperature = %f, want 0.7", gotTemp)
+	}
+
+	// List prompts
+	prompts, err := store.ListUserPrompts(1)
+	if err != nil {
+		t.Fatalf("ListUserPrompts failed: %v", err)
+	}
+	if len(prompts) != 1 {
+		t.Fatalf("expected 1 prompt, got %d", len(prompts))
+	}
+	if prompts[0].PromptType != "security" {
+		t.Errorf("prompt type = %q, want %q", prompts[0].PromptType, "security")
+	}
+
+	// Delete prompt
+	if err := store.DeleteUserPrompt(1, "security"); err != nil {
+		t.Fatalf("DeleteUserPrompt failed: %v", err)
+	}
+
+	prompts, _ = store.ListUserPrompts(1)
+	if len(prompts) != 0 {
+		t.Errorf("expected 0 prompts after delete, got %d", len(prompts))
 	}
 }

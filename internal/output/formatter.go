@@ -34,6 +34,15 @@ func NewFormatter(format Format) *Formatter {
 	}
 }
 
+// NewFormatterWithWriters creates a formatter with custom output writers for testability
+func NewFormatterWithWriters(format Format, out, errW io.Writer) *Formatter {
+	return &Formatter{
+		format: format,
+		out:    out,
+		err:    errW,
+	}
+}
+
 // ArticleGroup represents a group of articles covering the same event
 type ArticleGroup struct {
 	Topic     string             `json:"topic"`
