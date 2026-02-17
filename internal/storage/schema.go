@@ -32,13 +32,21 @@ CREATE TABLE IF NOT EXISTS articles (
 CREATE INDEX IF NOT EXISTS idx_articles_feed_id ON articles(feed_id);
 CREATE INDEX IF NOT EXISTS idx_articles_published ON articles(published_date DESC);
 
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS read_state (
-    article_id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL DEFAULT 1,
+    article_id INTEGER NOT NULL,
     read BOOLEAN NOT NULL DEFAULT 0,
     starred BOOLEAN NOT NULL DEFAULT 0,
     interest_score REAL,
     security_score REAL,
     read_date DATETIME,
+    PRIMARY KEY (user_id, article_id),
     FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
 );
 

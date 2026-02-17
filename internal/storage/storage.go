@@ -108,7 +108,59 @@ func NewStore(dbPath string) (*Store, error) {
 		db.Exec(m) // ignore "duplicate column" errors
 	}
 
+	// Migrate read_state from single-column PK to composite (user_id, article_id) PK.
+	// Detect old schema by checking whether user_id column exists.
+	if needsReadStateMigration(db) {
+		migrationSQL := `
+			CREATE TABLE read_state_new (
+				user_id INTEGER NOT NULL DEFAULT 1,
+				article_id INTEGER NOT NULL,
+				read BOOLEAN NOT NULL DEFAULT 0,
+				starred BOOLEAN NOT NULL DEFAULT 0,
+				interest_score REAL,
+				security_score REAL,
+				read_date DATETIME,
+				PRIMARY KEY (user_id, article_id),
+				FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
+			);
+			INSERT OR IGNORE INTO read_state_new
+				(user_id, article_id, read, starred, interest_score, security_score, read_date)
+				SELECT 1, article_id, read, starred, interest_score, security_score, read_date
+				FROM read_state;
+			DROP TABLE read_state;
+			ALTER TABLE read_state_new RENAME TO read_state;
+		`
+		if _, err := db.Exec(migrationSQL); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to migrate read_state: %w", err)
+		}
+	}
+
 	return &Store{db: db}, nil
+}
+
+// needsReadStateMigration checks whether the read_state table uses the old
+// single-column PK (no user_id column). Returns false for fresh databases
+// that already have the composite key schema.
+func needsReadStateMigration(db *sql.DB) bool {
+	rows, err := db.Query("PRAGMA table_info(read_state)")
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return false
+		}
+		if name == "user_id" {
+			return false
+		}
+	}
+	return true // table exists but has no user_id column
 }
 
 // Close closes the database connection
@@ -264,9 +316,9 @@ func (s *Store) DeleteUserPreference(userID int64, key string) error {
 // UpdateStarred sets the starred flag on an article's read state.
 func (s *Store) UpdateStarred(articleID int64, starred bool) error {
 	_, err := s.db.Exec(
-		`INSERT INTO read_state (article_id, starred)
-		 VALUES (?, ?)
-		 ON CONFLICT(article_id) DO UPDATE SET
+		`INSERT INTO read_state (user_id, article_id, starred)
+		 VALUES (1, ?, ?)
+		 ON CONFLICT(user_id, article_id) DO UPDATE SET
 		   starred = excluded.starred`,
 		articleID, starred,
 	)
@@ -393,9 +445,9 @@ func (s *Store) GetUnreadArticles(limit int) ([]Article, error) {
 // UpdateReadState updates or creates the read state for an article
 func (s *Store) UpdateReadState(articleID int64, read bool, interestScore, securityScore *float64) error {
 	_, err := s.db.Exec(
-		`INSERT INTO read_state (article_id, read, interest_score, security_score, read_date)
-		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-		 ON CONFLICT(article_id) DO UPDATE SET
+		`INSERT INTO read_state (user_id, article_id, read, interest_score, security_score, read_date)
+		 VALUES (1, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		 ON CONFLICT(user_id, article_id) DO UPDATE SET
 		   read = excluded.read,
 		   interest_score = excluded.interest_score,
 		   security_score = excluded.security_score,
