@@ -123,13 +123,17 @@ func (f *Fetcher) ImportOPML(opmlPath string, userID int64) error {
 func (f *Fetcher) StoreArticles(feedID int64, feed *gofeed.Feed) (int, error) {
 	stored := 0
 	for _, item := range feed.Items {
+		var author string
+		if item.Author != nil {
+			author = item.Author.Name
+		}
 		article := &storage.Article{
 			FeedID:  feedID,
 			GUID:    item.GUID,
 			Title:   item.Title,
 			URL:     item.Link,
 			Summary: item.Description,
-			Author:  item.Author.Name,
+			Author:  author,
 		}
 
 		// Use content if available, otherwise use description
@@ -167,9 +171,8 @@ func (f *Fetcher) FetchAllFeeds(ctx context.Context) (int, error) {
 	for _, feed := range feeds {
 		// Add timeout per feed
 		feedCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-
 		parsedFeed, err := f.FetchFeed(feedCtx, feed.URL)
+		cancel()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to fetch feed %s: %v\n", feed.URL, err)
 			continue
