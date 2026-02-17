@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 type Store struct {
@@ -81,7 +81,7 @@ type UserPrompt struct {
 
 // NewStore creates a new database connection and initializes the schema
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -349,7 +349,7 @@ func (s *Store) GetArticlesByInterestScore(threshold float64, limit, offset int)
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date,
-		       rs.interest_score * (1.0 / (1.0 + MAX(0, julianday('now') - julianday(COALESCE(a.published_date, a.fetched_date))) * 0.1)) AS decayed_score
+		       COALESCE(rs.interest_score, 0) * (1.0 / (1.0 + MAX(0, julianday('now') - julianday(COALESCE(a.published_date, a.fetched_date))) * 0.1)) AS decayed_score
 		FROM articles a
 		JOIN read_state rs ON a.id = rs.article_id
 		WHERE rs.interest_score >= ? AND rs.read = 0
