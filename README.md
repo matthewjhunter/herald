@@ -1,8 +1,18 @@
 # Herald - Your AI-Powered News Herald
 
-An intelligent RSS/Atom feed reader with AI-powered security screening and content curation. Herald monitors your feeds, filters for importance, and announces significant news via Majordomo voice notifications.
+> *"Hear ye, hear ye! News of import, my lord."*
+
+An intelligent RSS/Atom feed reader with AI-powered security screening and content curation. Herald monitors your feeds, filters for importance, and announces significant news via [Majordomo](https://github.com/matthewjhunter/majordomo) voice notifications.
 
 Like a medieval herald who announces important news to their lord, Herald watches your RSS feeds and speaks only what matters.
+
+**Key Features:**
+- 🛡️ **AI Security Screening** - Gemma 2 detects malicious content and prompt injection
+- 🎯 **Smart Curation** - Llama 3.2 scores articles for relevance and importance
+- 🔊 **Voice Announcements** - Integrates with Majordomo for spoken notifications
+- 📊 **Article Grouping** - Automatically clusters related stories from different sources
+- 👥 **Multi-User** - Per-user feeds, summaries, and AI prompts
+- 🎨 **Configurable Prompts** - Three-tier system: embedded defaults, config file, per-user database
 
 ## Features
 
