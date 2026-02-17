@@ -43,8 +43,8 @@ func DefaultConfig() *Config {
 	cfg := &Config{}
 	cfg.Database.Path = "./herald.db"
 	cfg.Ollama.BaseURL = "http://localhost:11434"
-	cfg.Ollama.SecurityModel = "gemma2"
-	cfg.Ollama.CurationModel = "llama3.2"
+	cfg.Ollama.SecurityModel = "gemma3:4b"
+	cfg.Ollama.CurationModel = "llama3"
 	cfg.Thresholds.InterestScore = 8.0
 	cfg.Thresholds.SecurityScore = 7.0
 	// Default temperatures (can be overridden in config)
