@@ -25,6 +25,9 @@ config/config.yaml
 # Log files
 *.log
 
+# Claude Code / OMC state
+.omc/
+
 # IDE
 .vscode/
 .idea/
