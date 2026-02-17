@@ -1,0 +1,71 @@
+# Example Majordomo configuration for feedreader integration
+#
+# Add these entries to your Majordomo config file:
+# ~/.config/majordomo/config.toml
+#
+# For full documentation, see: docs/majordomo-integration.md
+
+# Fetch all feeds once per schedule
+# This runs independently and downloads all subscribed feeds
+[[daemon.schedule]]
+name = "feedreader-fetch"
+cron = "*/15 * * * *"  # Every 15 minutes
+persona = "jarvis"
+command = "feedreader fetch-feeds --format=json"
+format = "json"
+timeout_sec = 300  # 5 minutes
+origin = "daemon"
+presence = "queue"  # Queue if user is away
+speak = "present"   # Only speak if user is present
+
+# Process feeds for user 1
+# This runs AI processing and delivers high-interest notifications
+[[daemon.schedule]]
+name = "feedreader-process-user1"
+cron = "*/15 * * * *"  # Match fetch schedule
+persona = "jarvis"
+command = "feedreader process --user=1 --format=json"
+format = "json"
+timeout_sec = 600  # 10 minutes for AI processing
+origin = "user"
+presence = "queue"  # Queue notifications if user is away
+speak = "present"   # Speak notifications when user is present
+
+# Additional users (uncomment and modify as needed)
+# [[daemon.schedule]]
+# name = "feedreader-process-user2"
+# cron = "*/15 * * * *"
+# persona = "jarvis"
+# command = "feedreader process --user=2 --format=json"
+# format = "json"
+# timeout_sec = 600
+# origin = "user"
+# presence = "queue"
+# speak = "present"
+
+# Alternative: Staggered schedule for multiple users
+# This spreads the load by running processing at different times
+#
+# [[daemon.schedule]]
+# name = "feedreader-fetch"
+# cron = "0 * * * *"  # Top of every hour
+# persona = "jarvis"
+# command = "feedreader fetch-feeds --format=json"
+# format = "json"
+# timeout_sec = 300
+#
+# [[daemon.schedule]]
+# name = "feedreader-process-user1"
+# cron = "5 * * * *"  # 5 minutes past hour
+# persona = "jarvis"
+# command = "feedreader process --user=1 --format=json"
+# format = "json"
+# timeout_sec = 600
+#
+# [[daemon.schedule]]
+# name = "feedreader-process-user2"
+# cron = "10 * * * *"  # 10 minutes past hour
+# persona = "jarvis"
+# command = "feedreader process --user=2 --format=json"
+# format = "json"
+# timeout_sec = 600

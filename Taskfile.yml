@@ -1,0 +1,116 @@
+version: '3'
+
+vars:
+  BINARY: feedreader
+  BUILD_DIR: .
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  build:
+    desc: Build the application
+    cmds:
+      - echo "Building {{.BINARY}}..."
+      - go build -o {{.BINARY}} ./cmd/feedreader
+
+  test:
+    desc: Run tests
+    cmds:
+      - echo "Running tests..."
+      - go test -v ./...
+
+  test-coverage:
+    desc: Run tests with coverage report
+    cmds:
+      - go test -v -coverprofile=coverage.out ./...
+      - go tool cover -html=coverage.out -o coverage.html
+      - echo 'Coverage report generated at coverage.html'
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - echo "Cleaning..."
+      - rm -f {{.BINARY}}
+      - rm -f *.db *.db-shm *.db-wal
+      - rm -f internal/storage/test.db
+      - rm -f coverage.out coverage.html
+      - echo "Clean complete"
+
+  install:
+    desc: Install binary to /usr/local/bin
+    deps: [build]
+    cmds:
+      - echo "Installing {{.BINARY}} to /usr/local/bin..."
+      - sudo cp {{.BINARY}} /usr/local/bin/
+      - echo "Installation complete"
+
+  init-config:
+    desc: Initialize default configuration
+    deps: [build]
+    cmds:
+      - ./{{.BINARY}} init-config
+
+  fetch:
+    desc: Fetch and process feeds
+    deps: [build]
+    cmds:
+      - ./{{.BINARY}} fetch
+
+  list:
+    desc: List unread articles
+    deps: [build]
+    cmds:
+      - ./{{.BINARY}} list --limit 10
+
+  import:
+    desc: Import feeds from OPML file (requires OPML_FILE variable)
+    deps: [build]
+    cmds:
+      - ./{{.BINARY}} import {{.OPML_FILE}}
+    vars:
+      OPML_FILE: '{{.OPML_FILE | default "subscriptions.opml"}}'
+
+  lint:
+    desc: Run Go linters
+    cmds:
+      - go fmt ./...
+      - go vet ./...
+
+  deps:
+    desc: Download and verify dependencies
+    cmds:
+      - go mod download
+      - go mod verify
+
+  update-deps:
+    desc: Update all dependencies
+    cmds:
+      - go get -u ./...
+      - go mod tidy
+
+  check-ollama:
+    desc: Check if Ollama is running and has required models
+    cmds:
+      - echo "Checking Ollama..."
+      - curl -s http://localhost:11434/api/tags | grep -q "gemma2" && echo "✓ gemma2 model found" || echo "✗ gemma2 model not found"
+      - curl -s http://localhost:11434/api/tags | grep -q "llama3.2" && echo "✓ llama3.2 model found" || echo "✗ llama3.2 model not found"
+
+  setup:
+    desc: Complete setup - initialize config and verify dependencies
+    deps: [build, init-config]
+    cmds:
+      - task: check-ollama
+
+  dev:
+    desc: Development mode - build and run fetch
+    deps: [build]
+    cmds:
+      - ./{{.BINARY}} fetch
+
+  watch:
+    desc: Watch for changes and rebuild (requires entr)
+    cmds:
+      - find . -name "*.go" | entr -r task build

@@ -1,0 +1,45 @@
+# FeedReader Configuration Example
+# Copy this file to config.yaml and customize
+
+database:
+  # Path to SQLite database file
+  path: ./feedreader.db
+
+ollama:
+  # Ollama API base URL
+  base_url: http://localhost:11434
+
+  # Security model - use Gemma 2 for content safety screening
+  security_model: gemma2
+
+  # Curation model - use Llama 3.2 for neutral interest scoring
+  curation_model: llama3.2
+
+majordomo:
+  # Enable formatted notification output (for future Majordomo integration)
+  enabled: true
+
+  # Command to execute for sending messages (reserved for future use)
+  # When 'majordomo chat' CLI command is implemented, this will be used
+  chat_command: majordomo
+
+  # Target persona to receive notifications
+  target_persona: jarvis
+
+thresholds:
+  # Minimum interest score (0-10) to trigger notification
+  interest_score: 8
+
+  # Minimum security score (0-10) to consider article safe
+  security_score: 7
+
+preferences:
+  # Keywords that indicate interesting topics
+  keywords:
+    - technology
+    - security
+    - AI
+    - programming
+
+  # Preferred news sources (URLs)
+  preferred_sources: []

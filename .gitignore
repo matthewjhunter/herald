@@ -1,0 +1,35 @@
+# Binaries
+feedreader
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+
+# Output of go coverage
+*.out
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Config files (may contain sensitive data)
+config/config.yaml
+
+# Log files
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
