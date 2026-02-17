@@ -21,6 +21,7 @@ type Article struct {
 	URL           string     `json:"url"`
 	Content       string     `json:"content"`
 	Summary       string     `json:"summary"`
+	AISummary     string     `json:"ai_summary,omitempty"`
 	Author        string     `json:"author"`
 	PublishedDate *time.Time `json:"published_date,omitempty"`
 	FetchedDate   time.Time  `json:"fetched_date"`
@@ -58,6 +59,21 @@ type ArticleGroup struct {
 	Scores    []float64  `json:"scores,omitempty"`
 	MaxScore  float64    `json:"max_score,omitempty"`
 	Count     int        `json:"count"`
+}
+
+// FeedStats holds article counts for a single feed.
+type FeedStats struct {
+	FeedID               int64  `json:"feed_id"`
+	FeedTitle            string `json:"feed_title"`
+	TotalArticles        int    `json:"total_articles"`
+	UnreadArticles       int    `json:"unread_articles"`
+	UnsummarizedArticles int    `json:"unsummarized_articles"`
+}
+
+// FeedStatsResult contains per-feed stats and an aggregate total.
+type FeedStatsResult struct {
+	Feeds []FeedStats `json:"feeds"`
+	Total FeedStats   `json:"total"`
 }
 
 // FetchResult summarizes a feed polling cycle.

@@ -178,6 +178,19 @@ func (e *Engine) GetArticle(articleID int64) (*Article, error) {
 	return &result, nil
 }
 
+// GetArticleForUser returns a single article enriched with its AI summary for the given user.
+func (e *Engine) GetArticleForUser(userID, articleID int64) (*Article, error) {
+	a, err := e.store.GetArticle(articleID)
+	if err != nil {
+		return nil, err
+	}
+	result := articleFromInternal(*a)
+	if summary, err := e.store.GetArticleSummary(userID, articleID); err == nil && summary != nil {
+		result.AISummary = summary.AISummary
+	}
+	return &result, nil
+}
+
 // GetHighInterestArticles returns unread articles scored above the threshold.
 func (e *Engine) GetHighInterestArticles(userID int64, threshold float64, limit, offset int) ([]Article, []float64, error) {
 	articles, scores, err := e.store.GetArticlesByInterestScore(threshold, limit, offset)
@@ -364,6 +377,30 @@ func (e *Engine) GenerateBriefing(userID int64) (string, error) {
 	}
 
 	return briefing.String(), nil
+}
+
+// GetFeedStats returns per-feed article counts and an aggregate total for a user.
+func (e *Engine) GetFeedStats(userID int64) (*FeedStatsResult, error) {
+	internal, err := e.store.GetFeedStats(userID)
+	if err != nil {
+		return nil, err
+	}
+	result := &FeedStatsResult{
+		Feeds: make([]FeedStats, len(internal)),
+	}
+	for i, fs := range internal {
+		result.Feeds[i] = FeedStats{
+			FeedID:               fs.FeedID,
+			FeedTitle:            fs.FeedTitle,
+			TotalArticles:        fs.TotalArticles,
+			UnreadArticles:       fs.UnreadArticles,
+			UnsummarizedArticles: fs.UnsummarizedArticles,
+		}
+		result.Total.TotalArticles += fs.TotalArticles
+		result.Total.UnreadArticles += fs.UnreadArticles
+		result.Total.UnsummarizedArticles += fs.UnsummarizedArticles
+	}
+	return result, nil
 }
 
 // Close releases all resources held by the engine.

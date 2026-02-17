@@ -165,6 +165,69 @@ func TestArticleLifecycle(t *testing.T) {
 	}
 }
 
+func TestGetArticleForUser(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	feedID := subscribeDirect(t, engine, 1, "https://example.com/feed.xml", "Test Feed")
+
+	now := time.Now()
+	articleID, err := engine.store.AddArticle(&storage.Article{
+		FeedID:        feedID,
+		GUID:          "test-guid-foruser",
+		Title:         "AI Summary Article",
+		URL:           "https://example.com/article/ai",
+		Content:       "Full content here.",
+		Summary:       "RSS summary here.",
+		PublishedDate: &now,
+	})
+	if err != nil {
+		t.Fatalf("AddArticle: %v", err)
+	}
+
+	// Without AI summary — AISummary should be empty
+	article, err := engine.GetArticleForUser(1, articleID)
+	if err != nil {
+		t.Fatalf("GetArticleForUser: %v", err)
+	}
+	if article.Title != "AI Summary Article" {
+		t.Errorf("title: got %q", article.Title)
+	}
+	if article.AISummary != "" {
+		t.Errorf("expected empty AISummary, got %q", article.AISummary)
+	}
+
+	// Store an AI summary and verify it's returned
+	engine.store.UpdateArticleAISummary(1, articleID, "This is the AI-generated summary.")
+
+	article, err = engine.GetArticleForUser(1, articleID)
+	if err != nil {
+		t.Fatalf("GetArticleForUser with summary: %v", err)
+	}
+	if article.AISummary != "This is the AI-generated summary." {
+		t.Errorf("AISummary: got %q", article.AISummary)
+	}
+
+	// Different user should not see user 1's summary
+	article, err = engine.GetArticleForUser(2, articleID)
+	if err != nil {
+		t.Fatalf("GetArticleForUser user 2: %v", err)
+	}
+	if article.AISummary != "" {
+		t.Errorf("expected empty AISummary for user 2, got %q", article.AISummary)
+	}
+}
+
+func TestGetArticleForUserNotFound(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	_, err := engine.GetArticleForUser(1, 999)
+	if err == nil {
+		t.Fatal("expected error for non-existent article")
+	}
+}
+
 func TestGetArticleNotFound(t *testing.T) {
 	engine, cleanup := newTestEngine(t)
 	defer cleanup()
@@ -249,6 +312,113 @@ func TestGenerateBriefingEmpty(t *testing.T) {
 	}
 	if briefing != "" {
 		t.Errorf("expected empty briefing with no articles, got %q", briefing)
+	}
+}
+
+func TestGetFeedStats(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	// Two feeds, user 1
+	feed1 := subscribeDirect(t, engine, 1, "https://example.com/feed1.xml", "Feed One")
+	feed2 := subscribeDirect(t, engine, 1, "https://example.com/feed2.xml", "Feed Two")
+
+	now := time.Now()
+
+	// Feed 1: 3 articles
+	id1, _ := engine.store.AddArticle(&storage.Article{
+		FeedID: feed1, GUID: "f1-1", Title: "Article 1",
+		URL: "https://example.com/1", PublishedDate: &now,
+	})
+	engine.store.AddArticle(&storage.Article{
+		FeedID: feed1, GUID: "f1-2", Title: "Article 2",
+		URL: "https://example.com/2", PublishedDate: &now,
+	})
+	engine.store.AddArticle(&storage.Article{
+		FeedID: feed1, GUID: "f1-3", Title: "Article 3",
+		URL: "https://example.com/3", PublishedDate: &now,
+	})
+
+	// Feed 2: 2 articles
+	id4, _ := engine.store.AddArticle(&storage.Article{
+		FeedID: feed2, GUID: "f2-1", Title: "Article 4",
+		URL: "https://example.com/4", PublishedDate: &now,
+	})
+	engine.store.AddArticle(&storage.Article{
+		FeedID: feed2, GUID: "f2-2", Title: "Article 5",
+		URL: "https://example.com/5", PublishedDate: &now,
+	})
+
+	// Mark one article read in feed 1
+	engine.store.UpdateReadState(id1, true, nil, nil)
+
+	// Summarize one article in feed 2
+	engine.store.UpdateArticleAISummary(1, id4, "Summary of article 4")
+
+	result, err := engine.GetFeedStats(1)
+	if err != nil {
+		t.Fatalf("GetFeedStats: %v", err)
+	}
+
+	if len(result.Feeds) != 2 {
+		t.Fatalf("expected 2 feeds, got %d", len(result.Feeds))
+	}
+
+	// Feeds are ordered by title
+	f1 := result.Feeds[0] // "Feed One"
+	f2 := result.Feeds[1] // "Feed Two"
+
+	if f1.FeedTitle != "Feed One" || f2.FeedTitle != "Feed Two" {
+		t.Fatalf("unexpected feed order: %q, %q", f1.FeedTitle, f2.FeedTitle)
+	}
+
+	// Feed One: 3 total, 2 unread (1 read), 3 unsummarized
+	if f1.TotalArticles != 3 {
+		t.Errorf("feed1 total: got %d, want 3", f1.TotalArticles)
+	}
+	if f1.UnreadArticles != 2 {
+		t.Errorf("feed1 unread: got %d, want 2", f1.UnreadArticles)
+	}
+	if f1.UnsummarizedArticles != 3 {
+		t.Errorf("feed1 unsummarized: got %d, want 3", f1.UnsummarizedArticles)
+	}
+
+	// Feed Two: 2 total, 2 unread, 1 unsummarized
+	if f2.TotalArticles != 2 {
+		t.Errorf("feed2 total: got %d, want 2", f2.TotalArticles)
+	}
+	if f2.UnreadArticles != 2 {
+		t.Errorf("feed2 unread: got %d, want 2", f2.UnreadArticles)
+	}
+	if f2.UnsummarizedArticles != 1 {
+		t.Errorf("feed2 unsummarized: got %d, want 1", f2.UnsummarizedArticles)
+	}
+
+	// Totals: 5 total, 4 unread, 4 unsummarized
+	if result.Total.TotalArticles != 5 {
+		t.Errorf("total articles: got %d, want 5", result.Total.TotalArticles)
+	}
+	if result.Total.UnreadArticles != 4 {
+		t.Errorf("total unread: got %d, want 4", result.Total.UnreadArticles)
+	}
+	if result.Total.UnsummarizedArticles != 4 {
+		t.Errorf("total unsummarized: got %d, want 4", result.Total.UnsummarizedArticles)
+	}
+}
+
+func TestGetFeedStatsEmpty(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	result, err := engine.GetFeedStats(1)
+	if err != nil {
+		t.Fatalf("GetFeedStats: %v", err)
+	}
+	if len(result.Feeds) != 0 {
+		t.Errorf("expected 0 feeds, got %d", len(result.Feeds))
+	}
+	if result.Total.TotalArticles != 0 {
+		t.Errorf("expected 0 total, got %d", result.Total.TotalArticles)
 	}
 }
 
