@@ -176,6 +176,9 @@ func TestToolsList(t *testing.T) {
 		"articles_unread", "articles_get", "articles_mark_read",
 		"feeds_list", "feed_subscribe", "feed_unsubscribe", "feed_rename",
 		"article_groups", "article_group_get", "feed_stats", "poll_now",
+		"preferences_get", "preference_set",
+		"prompts_list", "prompt_get", "prompt_set", "prompt_reset",
+		"briefing", "article_star",
 	}
 	if len(result.Tools) != len(expected) {
 		t.Fatalf("got %d tools, want %d", len(result.Tools), len(expected))
@@ -538,5 +541,398 @@ func TestFeedUnsubscribeMissingID(t *testing.T) {
 
 	if !resultIsError(t, resp) {
 		t.Fatal("expected error for missing feed_id")
+	}
+}
+
+// --- Preferences tests ---
+
+func TestPreferencesGetDefaults(t *testing.T) {
+	srv := newTestServer(t)
+	resp := srv.handleRequest(toolCall(1, "preferences_get", map[string]any{}))
+
+	if resultIsError(t, resp) {
+		t.Fatalf("unexpected error: %s", resultText(t, resp))
+	}
+
+	text := resultText(t, resp)
+	var prefs herald.UserPreferences
+	if err := json.Unmarshal([]byte(text), &prefs); err != nil {
+		t.Fatalf("unmarshal preferences: %v", err)
+	}
+	// Should have sensible defaults
+	if prefs.NotifyWhen != "present" {
+		t.Errorf("notify_when = %q, want %q", prefs.NotifyWhen, "present")
+	}
+	if prefs.NotifyMinScore != 7.0 {
+		t.Errorf("notify_min_score = %v, want 7.0", prefs.NotifyMinScore)
+	}
+}
+
+func TestPreferenceSetAndGet(t *testing.T) {
+	srv := newTestServer(t)
+
+	// Set keywords
+	resp := srv.handleRequest(toolCall(1, "preference_set", map[string]any{
+		"key":   "keywords",
+		"value": `["security","golang"]`,
+	}))
+	if resultIsError(t, resp) {
+		t.Fatalf("set keywords error: %s", resultText(t, resp))
+	}
+
+	// Set interest_threshold
+	resp = srv.handleRequest(toolCall(2, "preference_set", map[string]any{
+		"key":   "interest_threshold",
+		"value": "6.5",
+	}))
+	if resultIsError(t, resp) {
+		t.Fatalf("set threshold error: %s", resultText(t, resp))
+	}
+
+	// Set notify_when
+	resp = srv.handleRequest(toolCall(3, "preference_set", map[string]any{
+		"key":   "notify_when",
+		"value": "always",
+	}))
+	if resultIsError(t, resp) {
+		t.Fatalf("set notify_when error: %s", resultText(t, resp))
+	}
+
+	// Verify via preferences_get
+	resp = srv.handleRequest(toolCall(4, "preferences_get", map[string]any{}))
+	text := resultText(t, resp)
+	var prefs herald.UserPreferences
+	if err := json.Unmarshal([]byte(text), &prefs); err != nil {
+		t.Fatalf("unmarshal preferences: %v", err)
+	}
+
+	if len(prefs.Keywords) != 2 || prefs.Keywords[0] != "security" || prefs.Keywords[1] != "golang" {
+		t.Errorf("keywords = %v, want [security golang]", prefs.Keywords)
+	}
+	if prefs.InterestThreshold != 6.5 {
+		t.Errorf("interest_threshold = %v, want 6.5", prefs.InterestThreshold)
+	}
+	if prefs.NotifyWhen != "always" {
+		t.Errorf("notify_when = %q, want %q", prefs.NotifyWhen, "always")
+	}
+}
+
+func TestPreferenceSetValidation(t *testing.T) {
+	srv := newTestServer(t)
+
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{"unknown key", "bogus_key", "value"},
+		{"keywords not JSON", "keywords", "not-json"},
+		{"threshold not number", "interest_threshold", "abc"},
+		{"notify_when invalid", "notify_when", "never"},
+		{"missing key", "", "value"},
+		{"missing value", "keywords", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := srv.handleRequest(toolCall(1, "preference_set", map[string]any{
+				"key":   tt.key,
+				"value": tt.value,
+			}))
+			if !resultIsError(t, resp) {
+				t.Fatalf("expected error for %s", tt.name)
+			}
+		})
+	}
+}
+
+// --- Prompt tests ---
+
+func TestPromptsListDefaults(t *testing.T) {
+	srv := newTestServer(t)
+	resp := srv.handleRequest(toolCall(1, "prompts_list", map[string]any{}))
+
+	if resultIsError(t, resp) {
+		t.Fatalf("unexpected error: %s", resultText(t, resp))
+	}
+
+	text := resultText(t, resp)
+	var prompts []herald.PromptInfo
+	if err := json.Unmarshal([]byte(text), &prompts); err != nil {
+		t.Fatalf("unmarshal prompts: %v", err)
+	}
+	if len(prompts) != 4 {
+		t.Fatalf("got %d prompt types, want 4", len(prompts))
+	}
+
+	// All should be default status
+	for _, p := range prompts {
+		if p.Status != "default" {
+			t.Errorf("prompt %q status = %q, want %q", p.Type, p.Status, "default")
+		}
+	}
+}
+
+func TestPromptGetDefault(t *testing.T) {
+	srv := newTestServer(t)
+	resp := srv.handleRequest(toolCall(1, "prompt_get", map[string]any{
+		"prompt_type": "curation",
+	}))
+
+	if resultIsError(t, resp) {
+		t.Fatalf("unexpected error: %s", resultText(t, resp))
+	}
+
+	text := resultText(t, resp)
+	var detail herald.PromptDetail
+	if err := json.Unmarshal([]byte(text), &detail); err != nil {
+		t.Fatalf("unmarshal prompt detail: %v", err)
+	}
+	if detail.Type != "curation" {
+		t.Errorf("type = %q, want %q", detail.Type, "curation")
+	}
+	if detail.Template == "" {
+		t.Error("expected non-empty default template")
+	}
+	if detail.IsCustom {
+		t.Error("expected IsCustom = false for default prompt")
+	}
+}
+
+func TestPromptSetAndGet(t *testing.T) {
+	srv := newTestServer(t)
+	customTemplate := "Rate this article: {{.Title}}"
+	temp := 0.5
+
+	// Set custom prompt
+	resp := srv.handleRequest(toolCall(1, "prompt_set", map[string]any{
+		"prompt_type": "curation",
+		"template":    customTemplate,
+		"temperature": temp,
+	}))
+	if resultIsError(t, resp) {
+		t.Fatalf("prompt_set error: %s", resultText(t, resp))
+	}
+
+	// Verify via prompt_get
+	resp = srv.handleRequest(toolCall(2, "prompt_get", map[string]any{
+		"prompt_type": "curation",
+	}))
+	text := resultText(t, resp)
+	var detail herald.PromptDetail
+	if err := json.Unmarshal([]byte(text), &detail); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if detail.Template != customTemplate {
+		t.Errorf("template = %q, want %q", detail.Template, customTemplate)
+	}
+	if detail.Temperature != temp {
+		t.Errorf("temperature = %v, want %v", detail.Temperature, temp)
+	}
+	if !detail.IsCustom {
+		t.Error("expected IsCustom = true after setting")
+	}
+
+	// Verify prompts_list shows custom status
+	resp = srv.handleRequest(toolCall(3, "prompts_list", map[string]any{}))
+	listText := resultText(t, resp)
+	var prompts []herald.PromptInfo
+	json.Unmarshal([]byte(listText), &prompts)
+	found := false
+	for _, p := range prompts {
+		if p.Type == "curation" && p.Status == "custom" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected curation prompt to show status=custom in list")
+	}
+}
+
+func TestPromptSetTemperatureOnly(t *testing.T) {
+	srv := newTestServer(t)
+	temp := 1.5
+
+	// Set only temperature (template should be preserved from default)
+	resp := srv.handleRequest(toolCall(1, "prompt_set", map[string]any{
+		"prompt_type": "summarization",
+		"temperature": temp,
+	}))
+	if resultIsError(t, resp) {
+		t.Fatalf("prompt_set error: %s", resultText(t, resp))
+	}
+
+	// Verify template is non-empty (default preserved) and temperature is set
+	resp = srv.handleRequest(toolCall(2, "prompt_get", map[string]any{
+		"prompt_type": "summarization",
+	}))
+	text := resultText(t, resp)
+	var detail herald.PromptDetail
+	json.Unmarshal([]byte(text), &detail)
+	if detail.Template == "" {
+		t.Error("expected non-empty template when only temperature was set")
+	}
+	if detail.Temperature != temp {
+		t.Errorf("temperature = %v, want %v", detail.Temperature, temp)
+	}
+}
+
+func TestPromptReset(t *testing.T) {
+	srv := newTestServer(t)
+
+	// Set a custom prompt first
+	resp := srv.handleRequest(toolCall(1, "prompt_set", map[string]any{
+		"prompt_type": "curation",
+		"template":    "custom template",
+	}))
+	if resultIsError(t, resp) {
+		t.Fatalf("prompt_set error: %s", resultText(t, resp))
+	}
+
+	// Reset
+	resp = srv.handleRequest(toolCall(2, "prompt_reset", map[string]any{
+		"prompt_type": "curation",
+	}))
+	if resultIsError(t, resp) {
+		t.Fatalf("prompt_reset error: %s", resultText(t, resp))
+	}
+
+	// Verify it's back to default
+	resp = srv.handleRequest(toolCall(3, "prompt_get", map[string]any{
+		"prompt_type": "curation",
+	}))
+	text := resultText(t, resp)
+	var detail herald.PromptDetail
+	json.Unmarshal([]byte(text), &detail)
+	if detail.IsCustom {
+		t.Error("expected IsCustom = false after reset")
+	}
+	if detail.Template == "custom template" {
+		t.Error("expected template to revert to default after reset")
+	}
+}
+
+func TestPromptSecurityBlocked(t *testing.T) {
+	srv := newTestServer(t)
+
+	// All prompt operations should block "security" type
+	tests := []struct {
+		name string
+		tool string
+		args map[string]any
+	}{
+		{"get security", "prompt_get", map[string]any{"prompt_type": "security"}},
+		{"set security", "prompt_set", map[string]any{"prompt_type": "security", "template": "hack"}},
+		{"reset security", "prompt_reset", map[string]any{"prompt_type": "security"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := srv.handleRequest(toolCall(1, tt.tool, tt.args))
+			if !resultIsError(t, resp) {
+				t.Fatalf("expected error when accessing security prompt via %s", tt.tool)
+			}
+		})
+	}
+}
+
+func TestPromptGetUnknownType(t *testing.T) {
+	srv := newTestServer(t)
+	resp := srv.handleRequest(toolCall(1, "prompt_get", map[string]any{
+		"prompt_type": "nonexistent",
+	}))
+	if !resultIsError(t, resp) {
+		t.Fatal("expected error for unknown prompt type")
+	}
+}
+
+func TestPromptSetMissingParams(t *testing.T) {
+	srv := newTestServer(t)
+
+	// Missing prompt_type
+	resp := srv.handleRequest(toolCall(1, "prompt_set", map[string]any{
+		"template": "foo",
+	}))
+	if !resultIsError(t, resp) {
+		t.Fatal("expected error for missing prompt_type")
+	}
+
+	// Neither template nor temperature
+	resp = srv.handleRequest(toolCall(2, "prompt_set", map[string]any{
+		"prompt_type": "curation",
+	}))
+	if !resultIsError(t, resp) {
+		t.Fatal("expected error when neither template nor temperature provided")
+	}
+}
+
+// --- Briefing tests ---
+
+func TestBriefingEmpty(t *testing.T) {
+	srv := newTestServer(t)
+	resp := srv.handleRequest(toolCall(1, "briefing", map[string]any{}))
+
+	if resultIsError(t, resp) {
+		t.Fatalf("unexpected error: %s", resultText(t, resp))
+	}
+	text := resultText(t, resp)
+	if text == "" {
+		t.Fatal("expected a response message even with no articles")
+	}
+}
+
+// --- Article star tests ---
+
+func TestArticleStarAndUnstar(t *testing.T) {
+	srv := newTestServer(t)
+	ts := feedServer(t)
+	subscribeFeed(t, srv, ts.URL+"/feed.xml")
+
+	// Get an article ID
+	resp := srv.handleRequest(toolCall(1, "articles_unread", map[string]any{"limit": 1}))
+	text := resultText(t, resp)
+	var articles []struct {
+		ID int64 `json:"id"`
+	}
+	json.Unmarshal([]byte(text), &articles)
+	if len(articles) == 0 {
+		t.Fatal("no articles to test with")
+	}
+	articleID := articles[0].ID
+
+	// Star
+	resp = srv.handleRequest(toolCall(2, "article_star", map[string]any{
+		"article_id": articleID,
+		"starred":    true,
+	}))
+	if resultIsError(t, resp) {
+		t.Fatalf("star error: %s", resultText(t, resp))
+	}
+
+	// Unstar
+	resp = srv.handleRequest(toolCall(3, "article_star", map[string]any{
+		"article_id": articleID,
+		"starred":    false,
+	}))
+	if resultIsError(t, resp) {
+		t.Fatalf("unstar error: %s", resultText(t, resp))
+	}
+}
+
+func TestArticleStarMissingParams(t *testing.T) {
+	srv := newTestServer(t)
+
+	resp := srv.handleRequest(toolCall(1, "article_star", map[string]any{
+		"starred": true,
+	}))
+	if !resultIsError(t, resp) {
+		t.Fatal("expected error for missing article_id")
+	}
+
+	resp = srv.handleRequest(toolCall(2, "article_star", map[string]any{
+		"article_id": 1,
+	}))
+	if !resultIsError(t, resp) {
+		t.Fatal("expected error for missing starred")
 	}
 }
