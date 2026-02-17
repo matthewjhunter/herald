@@ -1,6 +1,6 @@
 # Binaries
 feedreader
-herald
+/herald
 *.exe
 *.exe~
 *.dll
