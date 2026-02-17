@@ -393,6 +393,47 @@ func (s *Store) GetArticleSummary(userID, articleID int64) (*ArticleSummary, err
 	return &as, nil
 }
 
+// FeedStats holds per-feed article counts.
+type FeedStats struct {
+	FeedID               int64
+	FeedTitle            string
+	TotalArticles        int
+	UnreadArticles       int
+	UnsummarizedArticles int
+}
+
+// GetFeedStats returns article counts per feed for a user.
+func (s *Store) GetFeedStats(userID int64) ([]FeedStats, error) {
+	rows, err := s.db.Query(`
+		SELECT f.id, f.title,
+			COUNT(a.id),
+			COUNT(a.id) - COALESCE(SUM(CASE WHEN rs.read = 1 THEN 1 ELSE 0 END), 0),
+			COUNT(a.id) - COUNT(asumm.article_id)
+		FROM feeds f
+		JOIN user_feeds uf ON uf.feed_id = f.id AND uf.user_id = ?
+		JOIN articles a ON a.feed_id = f.id
+		LEFT JOIN read_state rs ON rs.article_id = a.id
+		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id AND asumm.user_id = ?
+		GROUP BY f.id, f.title
+		ORDER BY f.title`,
+		userID, userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get feed stats: %w", err)
+	}
+	defer rows.Close()
+
+	var stats []FeedStats
+	for rows.Next() {
+		var fs FeedStats
+		if err := rows.Scan(&fs.FeedID, &fs.FeedTitle, &fs.TotalArticles, &fs.UnreadArticles, &fs.UnsummarizedArticles); err != nil {
+			return nil, fmt.Errorf("scan feed stats: %w", err)
+		}
+		stats = append(stats, fs)
+	}
+	return stats, rows.Err()
+}
+
 // CreateArticleGroup creates a new article group
 func (s *Store) CreateArticleGroup(userID int64, topic string) (int64, error) {
 	result, err := s.db.Exec(
