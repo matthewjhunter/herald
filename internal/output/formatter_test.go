@@ -69,14 +69,28 @@ func TestOutputFetchResult_Human(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	f := NewFormatterWithWriters(FormatHuman, &out, &errBuf)
 
-	result := &FetchResult{NewArticles: 3, ProcessedCount: 2, HighInterest: 1}
+	result := &FetchResult{
+		FeedsTotal:       5,
+		FeedsDownloaded:  3,
+		FeedsNotModified: 1,
+		FeedsErrored:     1,
+		NewArticles:      3,
+		ProcessedCount:   2,
+		HighInterest:     1,
+	}
 	if err := f.OutputFetchResult(result); err != nil {
 		t.Fatalf("OutputFetchResult failed: %v", err)
 	}
 
 	got := out.String()
-	if !strings.Contains(got, "Fetched 3 new articles") {
-		t.Errorf("missing fetch count in output: %s", got)
+	if !strings.Contains(got, "Feeds: 5 checked") {
+		t.Errorf("missing feeds checked in output: %s", got)
+	}
+	if !strings.Contains(got, "3 downloaded") {
+		t.Errorf("missing feeds downloaded in output: %s", got)
+	}
+	if !strings.Contains(got, "New articles: 3") {
+		t.Errorf("missing new articles count in output: %s", got)
 	}
 	if !strings.Contains(got, "Processed 2 articles") {
 		t.Errorf("missing processed count in output: %s", got)

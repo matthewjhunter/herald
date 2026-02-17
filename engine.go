@@ -74,11 +74,17 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 
 // FetchAllFeeds fetches all subscribed feeds and stores new articles.
 func (e *Engine) FetchAllFeeds(ctx context.Context) (*FetchResult, error) {
-	newArticles, err := e.fetcher.FetchAllFeeds(ctx)
+	stats, err := e.fetcher.FetchAllFeeds(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return &FetchResult{NewArticles: newArticles}, nil
+	return &FetchResult{
+		FeedsTotal:       stats.FeedsTotal,
+		FeedsDownloaded:  stats.FeedsDownloaded,
+		FeedsNotModified: stats.FeedsNotModified,
+		FeedsErrored:     stats.FeedsErrored,
+		NewArticles:      stats.NewArticles,
+	}, nil
 }
 
 // ProcessNewArticles runs the AI pipeline (summarize, security check, interest

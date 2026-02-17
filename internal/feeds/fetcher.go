@@ -211,14 +211,23 @@ func (f *Fetcher) StoreArticles(feedID int64, feed *gofeed.Feed) (int, error) {
 	return stored, nil
 }
 
+// FetchStats summarizes a feed polling cycle at the fetcher level.
+type FetchStats struct {
+	FeedsTotal       int // total feeds attempted
+	FeedsDownloaded  int // feeds that returned new content (HTTP 200)
+	FeedsNotModified int // feeds that returned 304
+	FeedsErrored     int // feeds that failed
+	NewArticles      int // articles newly written to DB
+}
+
 // FetchAllFeeds fetches all enabled feeds and stores their articles
-func (f *Fetcher) FetchAllFeeds(ctx context.Context) (int, error) {
+func (f *Fetcher) FetchAllFeeds(ctx context.Context) (*FetchStats, error) {
 	feeds, err := f.store.GetAllFeeds()
 	if err != nil {
-		return 0, fmt.Errorf("failed to get feeds: %w", err)
+		return nil, fmt.Errorf("failed to get feeds: %w", err)
 	}
 
-	totalArticles := 0
+	stats := &FetchStats{FeedsTotal: len(feeds)}
 	for _, feed := range feeds {
 		// Add timeout per feed
 		feedCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -227,10 +236,12 @@ func (f *Fetcher) FetchAllFeeds(ctx context.Context) (int, error) {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to fetch feed %s: %v\n", feed.URL, err)
 			f.store.UpdateFeedError(feed.ID, err.Error())
+			stats.FeedsErrored++
 			continue
 		}
 
 		if result.NotModified {
+			stats.FeedsNotModified++
 			// Clear any previous error and update last_fetched
 			if err := f.store.ClearFeedError(feed.ID); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to update last_fetched for %s: %v\n", feed.URL, err)
@@ -238,12 +249,14 @@ func (f *Fetcher) FetchAllFeeds(ctx context.Context) (int, error) {
 			continue
 		}
 
+		stats.FeedsDownloaded++
+
 		// Store articles
 		stored, err := f.StoreArticles(feed.ID, result.Feed)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: error storing articles from %s: %v\n", feed.URL, err)
 		}
-		totalArticles += stored
+		stats.NewArticles += stored
 
 		// Persist cache headers for next conditional request
 		if result.ETag != "" || result.LastModified != "" {
@@ -256,5 +269,5 @@ func (f *Fetcher) FetchAllFeeds(ctx context.Context) (int, error) {
 		}
 	}
 
-	return totalArticles, nil
+	return stats, nil
 }

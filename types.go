@@ -78,8 +78,12 @@ type FeedStatsResult struct {
 
 // FetchResult summarizes a feed polling cycle.
 type FetchResult struct {
-	NewArticles    int      `json:"new_articles"`
-	ProcessedCount int      `json:"processed"`
-	HighInterest   int      `json:"high_interest_count"`
-	Errors         []string `json:"errors,omitempty"`
+	FeedsTotal       int      `json:"feeds_total"`
+	FeedsDownloaded  int      `json:"feeds_downloaded"`
+	FeedsNotModified int      `json:"feeds_not_modified"`
+	FeedsErrored     int      `json:"feeds_errored"`
+	NewArticles      int      `json:"new_articles"`
+	ProcessedCount   int      `json:"processed"`
+	HighInterest     int      `json:"high_interest_count"`
+	Errors           []string `json:"errors,omitempty"`
 }

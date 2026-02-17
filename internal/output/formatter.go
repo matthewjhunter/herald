@@ -54,10 +54,14 @@ type ArticleGroup struct {
 
 // FetchResult represents the result of a fetch operation
 type FetchResult struct {
-	NewArticles     int    `json:"new_articles"`
-	ProcessedCount  int    `json:"processed"`
-	HighInterest    int    `json:"high_interest_count"`
-	Errors          []string `json:"errors,omitempty"`
+	FeedsTotal       int      `json:"feeds_total"`
+	FeedsDownloaded  int      `json:"feeds_downloaded"`
+	FeedsNotModified int      `json:"feeds_not_modified"`
+	FeedsErrored     int      `json:"feeds_errored"`
+	NewArticles      int      `json:"new_articles"`
+	ProcessedCount   int      `json:"processed"`
+	HighInterest     int      `json:"high_interest_count"`
+	Errors           []string `json:"errors,omitempty"`
 }
 
 // OutputFetchResult outputs the fetch result in the configured format
@@ -66,17 +70,23 @@ func (f *Formatter) OutputFetchResult(result *FetchResult) error {
 	case FormatJSON:
 		return json.NewEncoder(f.out).Encode(result)
 	case FormatText:
+		fmt.Fprintf(f.out, "feeds_total=%d\n", result.FeedsTotal)
+		fmt.Fprintf(f.out, "feeds_downloaded=%d\n", result.FeedsDownloaded)
+		fmt.Fprintf(f.out, "feeds_not_modified=%d\n", result.FeedsNotModified)
+		fmt.Fprintf(f.out, "feeds_errored=%d\n", result.FeedsErrored)
 		fmt.Fprintf(f.out, "new_articles=%d\n", result.NewArticles)
 		fmt.Fprintf(f.out, "processed=%d\n", result.ProcessedCount)
 		fmt.Fprintf(f.out, "high_interest=%d\n", result.HighInterest)
 		return nil
 	case FormatHuman:
-		fmt.Fprintf(f.out, "Fetched %d new articles\n", result.NewArticles)
+		fmt.Fprintf(f.out, "Feeds: %d checked, %d downloaded, %d unchanged, %d errors\n",
+			result.FeedsTotal, result.FeedsDownloaded, result.FeedsNotModified, result.FeedsErrored)
+		fmt.Fprintf(f.out, "New articles: %d\n", result.NewArticles)
 		if result.ProcessedCount > 0 {
 			fmt.Fprintf(f.out, "Processed %d articles\n", result.ProcessedCount)
 		}
 		if result.HighInterest > 0 {
-			fmt.Fprintf(f.out, "🔥 Found %d high-interest articles\n", result.HighInterest)
+			fmt.Fprintf(f.out, "Found %d high-interest articles\n", result.HighInterest)
 		}
 		return nil
 	}

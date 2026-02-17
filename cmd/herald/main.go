@@ -312,7 +312,7 @@ func fetchFeedsCmd() *cobra.Command {
 
 			// Fetch each feed once (efficient, no AI processing)
 			fetcher := feeds.NewFetcher(store)
-			newArticles := 0
+			fetchResult := &output.FetchResult{FeedsTotal: len(subscribedFeeds)}
 			for _, feed := range subscribedFeeds {
 				feedCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 				result, err := fetcher.FetchFeed(feedCtx, feed)
@@ -320,20 +320,24 @@ func fetchFeedsCmd() *cobra.Command {
 
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to fetch feed %s: %v\n", feed.URL, err)
+					fetchResult.FeedsErrored++
 					continue
 				}
 
 				if result.NotModified {
+					fetchResult.FeedsNotModified++
 					store.UpdateFeedLastFetched(feed.ID)
 					continue
 				}
+
+				fetchResult.FeedsDownloaded++
 
 				// Store articles (global, fetched once)
 				stored, err := fetcher.StoreArticles(feed.ID, result.Feed)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: error storing articles from %s: %v\n", feed.URL, err)
 				}
-				newArticles += stored
+				fetchResult.NewArticles += stored
 
 				// Persist cache headers for next conditional request
 				if result.ETag != "" || result.LastModified != "" {
@@ -344,10 +348,6 @@ func fetchFeedsCmd() *cobra.Command {
 				if err := store.UpdateFeedLastFetched(feed.ID); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to update last_fetched for %s: %v\n", feed.URL, err)
 				}
-			}
-
-			fetchResult := &output.FetchResult{
-				NewArticles: newArticles,
 			}
 
 			return formatter.OutputFetchResult(fetchResult)
@@ -448,7 +448,7 @@ func fetchCmd() *cobra.Command {
 
 			// Fetch each feed once (efficient)
 			fetcher := feeds.NewFetcher(store)
-			newArticles := 0
+			fetchResult := &output.FetchResult{FeedsTotal: len(subscribedFeeds)}
 			for _, feed := range subscribedFeeds {
 				feedCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 				result, err := fetcher.FetchFeed(feedCtx, feed)
@@ -456,20 +456,24 @@ func fetchCmd() *cobra.Command {
 
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to fetch feed %s: %v\n", feed.URL, err)
+					fetchResult.FeedsErrored++
 					continue
 				}
 
 				if result.NotModified {
+					fetchResult.FeedsNotModified++
 					store.UpdateFeedLastFetched(feed.ID)
 					continue
 				}
+
+				fetchResult.FeedsDownloaded++
 
 				// Store articles (global, fetched once)
 				stored, err := fetcher.StoreArticles(feed.ID, result.Feed)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: error storing articles from %s: %v\n", feed.URL, err)
 				}
-				newArticles += stored
+				fetchResult.NewArticles += stored
 
 				// Persist cache headers for next conditional request
 				if result.ETag != "" || result.LastModified != "" {
@@ -482,11 +486,7 @@ func fetchCmd() *cobra.Command {
 				}
 			}
 
-			fetchResult := &output.FetchResult{
-				NewArticles: newArticles,
-			}
-
-			if newArticles == 0 {
+			if fetchResult.NewArticles == 0 {
 				return formatter.OutputFetchResult(fetchResult)
 			}
 
