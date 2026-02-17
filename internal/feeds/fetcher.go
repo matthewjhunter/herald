@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 
 type Fetcher struct {
 	parser *gofeed.Parser
+	client *http.Client
 	store  *storage.Store
 }
 
@@ -41,17 +44,65 @@ func NewFetcher(store *storage.Store) *Fetcher {
 	parser.UserAgent = "FeedReader/1.0"
 	return &Fetcher{
 		parser: parser,
+		client: &http.Client{},
 		store:  store,
 	}
 }
 
-// FetchFeed fetches and parses a single feed
-func (f *Fetcher) FetchFeed(ctx context.Context, feedURL string) (*gofeed.Feed, error) {
-	feed, err := f.parser.ParseURLWithContext(feedURL, ctx)
+// FetchResult holds the outcome of a conditional feed fetch.
+type FetchResult struct {
+	Feed         *gofeed.Feed // nil when NotModified is true
+	ETag         string       // ETag from response (empty if absent)
+	LastModified string       // Last-Modified from response (empty if absent)
+	NotModified  bool         // true when server returned 304
+}
+
+// FetchFeed fetches and parses a single feed using conditional HTTP requests.
+// If the feed has stored ETag or Last-Modified values, they are sent as
+// If-None-Match / If-Modified-Since headers. A 304 response skips parsing
+// entirely and returns NotModified=true.
+func (f *Fetcher) FetchFeed(ctx context.Context, feed storage.Feed) (*FetchResult, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, feed.URL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch feed %s: %w", feedURL, err)
+		return nil, fmt.Errorf("failed to create request for %s: %w", feed.URL, err)
 	}
-	return feed, nil
+	req.Header.Set("User-Agent", "FeedReader/1.0")
+	if feed.ETag != "" {
+		req.Header.Set("If-None-Match", feed.ETag)
+	}
+	if feed.LastModified != "" {
+		req.Header.Set("If-Modified-Since", feed.LastModified)
+	}
+
+	resp, err := f.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch feed %s: %w", feed.URL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotModified {
+		return &FetchResult{NotModified: true}, nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("feed %s returned status %d", feed.URL, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read feed %s: %w", feed.URL, err)
+	}
+
+	parsed, err := f.parser.ParseString(string(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse feed %s: %w", feed.URL, err)
+	}
+
+	return &FetchResult{
+		Feed:         parsed,
+		ETag:         resp.Header.Get("ETag"),
+		LastModified: resp.Header.Get("Last-Modified"),
+	}, nil
 }
 
 // ImportOPML imports feeds from an OPML file and subscribes user to them
@@ -171,7 +222,7 @@ func (f *Fetcher) FetchAllFeeds(ctx context.Context) (int, error) {
 	for _, feed := range feeds {
 		// Add timeout per feed
 		feedCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		parsedFeed, err := f.FetchFeed(feedCtx, feed.URL)
+		result, err := f.FetchFeed(feedCtx, feed)
 		cancel()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to fetch feed %s: %v\n", feed.URL, err)
@@ -179,17 +230,25 @@ func (f *Fetcher) FetchAllFeeds(ctx context.Context) (int, error) {
 			continue
 		}
 
-		// Update feed metadata
-		if parsedFeed.Title != "" && parsedFeed.Title != feed.Title {
-			// Could update feed title here if needed
+		if result.NotModified {
+			// Clear any previous error and update last_fetched
+			if err := f.store.ClearFeedError(feed.ID); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to update last_fetched for %s: %v\n", feed.URL, err)
+			}
+			continue
 		}
 
 		// Store articles
-		stored, err := f.StoreArticles(feed.ID, parsedFeed)
+		stored, err := f.StoreArticles(feed.ID, result.Feed)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: error storing articles from %s: %v\n", feed.URL, err)
 		}
 		totalArticles += stored
+
+		// Persist cache headers for next conditional request
+		if result.ETag != "" || result.LastModified != "" {
+			f.store.UpdateFeedCacheHeaders(feed.ID, result.ETag, result.LastModified)
+		}
 
 		// Clear any previous error and update last_fetched
 		if err := f.store.ClearFeedError(feed.ID); err != nil {

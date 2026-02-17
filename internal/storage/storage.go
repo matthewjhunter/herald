@@ -13,14 +13,16 @@ type Store struct {
 }
 
 type Feed struct {
-	ID          int64
-	URL         string
-	Title       string
-	Description string
-	LastFetched *time.Time
-	LastError   *string
-	Enabled     bool
-	CreatedAt   time.Time
+	ID           int64
+	URL          string
+	Title        string
+	Description  string
+	LastFetched  *time.Time
+	LastError    *string
+	ETag         string
+	LastModified string
+	Enabled      bool
+	CreatedAt    time.Time
 }
 
 type Article struct {
@@ -99,6 +101,8 @@ func NewStore(dbPath string) (*Store, error) {
 	// Migrations for existing databases.
 	migrations := []string{
 		"ALTER TABLE feeds ADD COLUMN last_error TEXT",
+		"ALTER TABLE feeds ADD COLUMN etag TEXT",
+		"ALTER TABLE feeds ADD COLUMN last_modified TEXT",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -213,7 +217,7 @@ func (s *Store) AddFeed(url, title, description string) (int64, error) {
 
 // GetAllFeeds returns all enabled feeds
 func (s *Store) GetAllFeeds() ([]Feed, error) {
-	rows, err := s.db.Query("SELECT id, url, title, description, last_fetched, last_error, enabled, created_at FROM feeds WHERE enabled = 1")
+	rows, err := s.db.Query("SELECT id, url, title, description, last_fetched, last_error, etag, last_modified, enabled, created_at FROM feeds WHERE enabled = 1")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get feeds: %w", err)
 	}
@@ -222,9 +226,12 @@ func (s *Store) GetAllFeeds() ([]Feed, error) {
 	var feeds []Feed
 	for rows.Next() {
 		var f Feed
-		if err := rows.Scan(&f.ID, &f.URL, &f.Title, &f.Description, &f.LastFetched, &f.LastError, &f.Enabled, &f.CreatedAt); err != nil {
+		var etag, lastMod sql.NullString
+		if err := rows.Scan(&f.ID, &f.URL, &f.Title, &f.Description, &f.LastFetched, &f.LastError, &etag, &lastMod, &f.Enabled, &f.CreatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan feed: %w", err)
 		}
+		f.ETag = etag.String
+		f.LastModified = lastMod.String
 		feeds = append(feeds, f)
 	}
 	return feeds, rows.Err()
@@ -244,6 +251,15 @@ func (s *Store) ClearFeedError(feedID int64) error {
 	_, err := s.db.Exec("UPDATE feeds SET last_error = NULL, last_fetched = CURRENT_TIMESTAMP WHERE id = ?", feedID)
 	if err != nil {
 		return fmt.Errorf("failed to clear feed error: %w", err)
+	}
+	return nil
+}
+
+// UpdateFeedCacheHeaders stores the HTTP cache headers from the last successful fetch.
+func (s *Store) UpdateFeedCacheHeaders(feedID int64, etag, lastModified string) error {
+	_, err := s.db.Exec("UPDATE feeds SET etag = ?, last_modified = ? WHERE id = ?", etag, lastModified, feedID)
+	if err != nil {
+		return fmt.Errorf("failed to update feed cache headers: %w", err)
 	}
 	return nil
 }
@@ -573,7 +589,7 @@ func (s *Store) SubscribeUserToFeed(userID, feedID int64) error {
 // GetUserFeeds returns all feeds a user is subscribed to
 func (s *Store) GetUserFeeds(userID int64) ([]Feed, error) {
 	query := `
-		SELECT f.id, f.url, f.title, f.description, f.last_fetched, f.last_error, f.enabled, f.created_at
+		SELECT f.id, f.url, f.title, f.description, f.last_fetched, f.last_error, f.etag, f.last_modified, f.enabled, f.created_at
 		FROM feeds f
 		JOIN user_feeds uf ON f.id = uf.feed_id
 		WHERE uf.user_id = ? AND f.enabled = 1
@@ -588,9 +604,12 @@ func (s *Store) GetUserFeeds(userID int64) ([]Feed, error) {
 	var feeds []Feed
 	for rows.Next() {
 		var f Feed
-		if err := rows.Scan(&f.ID, &f.URL, &f.Title, &f.Description, &f.LastFetched, &f.LastError, &f.Enabled, &f.CreatedAt); err != nil {
+		var etag, lastMod sql.NullString
+		if err := rows.Scan(&f.ID, &f.URL, &f.Title, &f.Description, &f.LastFetched, &f.LastError, &etag, &lastMod, &f.Enabled, &f.CreatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan feed: %w", err)
 		}
+		f.ETag = etag.String
+		f.LastModified = lastMod.String
 		feeds = append(feeds, f)
 	}
 	return feeds, rows.Err()
@@ -599,7 +618,7 @@ func (s *Store) GetUserFeeds(userID int64) ([]Feed, error) {
 // GetAllSubscribedFeeds returns all feeds that ANY user is subscribed to
 func (s *Store) GetAllSubscribedFeeds() ([]Feed, error) {
 	query := `
-		SELECT DISTINCT f.id, f.url, f.title, f.description, f.last_fetched, f.last_error, f.enabled, f.created_at
+		SELECT DISTINCT f.id, f.url, f.title, f.description, f.last_fetched, f.last_error, f.etag, f.last_modified, f.enabled, f.created_at
 		FROM feeds f
 		JOIN user_feeds uf ON f.id = uf.feed_id
 		WHERE f.enabled = 1
@@ -614,9 +633,12 @@ func (s *Store) GetAllSubscribedFeeds() ([]Feed, error) {
 	var feeds []Feed
 	for rows.Next() {
 		var f Feed
-		if err := rows.Scan(&f.ID, &f.URL, &f.Title, &f.Description, &f.LastFetched, &f.LastError, &f.Enabled, &f.CreatedAt); err != nil {
+		var etag, lastMod sql.NullString
+		if err := rows.Scan(&f.ID, &f.URL, &f.Title, &f.Description, &f.LastFetched, &f.LastError, &etag, &lastMod, &f.Enabled, &f.CreatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan feed: %w", err)
 		}
+		f.ETag = etag.String
+		f.LastModified = lastMod.String
 		feeds = append(feeds, f)
 	}
 	return feeds, rows.Err()

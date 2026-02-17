@@ -226,28 +226,34 @@ func (e *Engine) SubscribeFeed(userID int64, url, title string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Validate by fetching — catches bad URLs, non-feed pages, timeouts
-	parsedFeed, err := e.fetcher.FetchFeed(ctx, url)
+	// Validate by fetching — catches bad URLs, non-feed pages, timeouts.
+	// No cache headers for a brand-new subscription.
+	result, err := e.fetcher.FetchFeed(ctx, storage.Feed{URL: url})
 	if err != nil {
 		return fmt.Errorf("validate feed: %w", err)
 	}
 
 	// Use the feed's own title if none provided
-	if title == "" && parsedFeed.Title != "" {
-		title = parsedFeed.Title
+	if title == "" && result.Feed.Title != "" {
+		title = result.Feed.Title
 	}
 	if title == "" {
 		title = url
 	}
 
-	feedID, err := e.store.AddFeed(url, title, parsedFeed.Description)
+	feedID, err := e.store.AddFeed(url, title, result.Feed.Description)
 	if err != nil {
 		return fmt.Errorf("add feed: %w", err)
 	}
 
 	// Store the initial articles we already fetched
-	if stored, err := e.fetcher.StoreArticles(feedID, parsedFeed); err == nil && stored > 0 {
+	if stored, err := e.fetcher.StoreArticles(feedID, result.Feed); err == nil && stored > 0 {
 		log.Printf("herald: stored %d initial articles from %s", stored, url)
+	}
+
+	// Persist cache headers for next conditional request
+	if result.ETag != "" || result.LastModified != "" {
+		e.store.UpdateFeedCacheHeaders(feedID, result.ETag, result.LastModified)
 	}
 
 	e.store.ClearFeedError(feedID)

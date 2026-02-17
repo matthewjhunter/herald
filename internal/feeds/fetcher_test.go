@@ -1,6 +1,10 @@
 package feeds
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -249,5 +253,164 @@ func TestStoreArticles_NilAuthor(t *testing.T) {
 	}
 	if stored != 1 {
 		t.Errorf("expected 1 stored, got %d", stored)
+	}
+}
+
+// --- Conditional fetch tests ---
+
+const testRSS = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test Feed</title>
+    <item>
+      <guid>item-1</guid>
+      <title>Test Article</title>
+      <link>https://example.com/1</link>
+      <description>Hello world</description>
+    </item>
+  </channel>
+</rss>`
+
+func TestFetchFeedConditional304(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-None-Match") == `"abc123"` {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		t.Error("expected If-None-Match header")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	fetcher := NewFetcher(store)
+	feed := storage.Feed{URL: srv.URL, ETag: `"abc123"`}
+
+	result, err := fetcher.FetchFeed(context.Background(), feed)
+	if err != nil {
+		t.Fatalf("FetchFeed: %v", err)
+	}
+	if !result.NotModified {
+		t.Error("expected NotModified=true")
+	}
+	if result.Feed != nil {
+		t.Error("expected nil Feed on 304")
+	}
+}
+
+func TestFetchFeedConditionalLastModified(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-Modified-Since") == "Mon, 17 Feb 2026 00:00:00 GMT" {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		t.Error("expected If-Modified-Since header")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	fetcher := NewFetcher(store)
+	feed := storage.Feed{URL: srv.URL, LastModified: "Mon, 17 Feb 2026 00:00:00 GMT"}
+
+	result, err := fetcher.FetchFeed(context.Background(), feed)
+	if err != nil {
+		t.Fatalf("FetchFeed: %v", err)
+	}
+	if !result.NotModified {
+		t.Error("expected NotModified=true")
+	}
+}
+
+func TestFetchFeedConditionalETag(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"new-etag"`)
+		w.Header().Set("Last-Modified", "Mon, 17 Feb 2026 12:00:00 GMT")
+		w.Header().Set("Content-Type", "application/xml")
+		fmt.Fprint(w, testRSS)
+	}))
+	defer srv.Close()
+
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	fetcher := NewFetcher(store)
+	feed := storage.Feed{URL: srv.URL}
+
+	result, err := fetcher.FetchFeed(context.Background(), feed)
+	if err != nil {
+		t.Fatalf("FetchFeed: %v", err)
+	}
+	if result.NotModified {
+		t.Error("expected NotModified=false for 200")
+	}
+	if result.Feed == nil {
+		t.Fatal("expected parsed feed")
+	}
+	if result.Feed.Title != "Test Feed" {
+		t.Errorf("feed title=%q, want Test Feed", result.Feed.Title)
+	}
+	if result.ETag != `"new-etag"` {
+		t.Errorf("etag=%q, want \"new-etag\"", result.ETag)
+	}
+	if result.LastModified != "Mon, 17 Feb 2026 12:00:00 GMT" {
+		t.Errorf("last-modified=%q, want Mon, 17 Feb 2026 12:00:00 GMT", result.LastModified)
+	}
+}
+
+func TestFetchFeedConditionalNoHeaders(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// No ETag or Last-Modified in response
+		w.Header().Set("Content-Type", "application/xml")
+		fmt.Fprint(w, testRSS)
+	}))
+	defer srv.Close()
+
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	fetcher := NewFetcher(store)
+	feed := storage.Feed{URL: srv.URL}
+
+	result, err := fetcher.FetchFeed(context.Background(), feed)
+	if err != nil {
+		t.Fatalf("FetchFeed: %v", err)
+	}
+	if result.NotModified {
+		t.Error("expected NotModified=false")
+	}
+	if result.Feed == nil {
+		t.Fatal("expected parsed feed")
+	}
+	if len(result.Feed.Items) != 1 {
+		t.Errorf("expected 1 item, got %d", len(result.Feed.Items))
+	}
+	if result.ETag != "" {
+		t.Errorf("expected empty etag, got %q", result.ETag)
+	}
+	if result.LastModified != "" {
+		t.Errorf("expected empty last-modified, got %q", result.LastModified)
+	}
+}
+
+func TestFetchFeedConditionalErrorStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	fetcher := NewFetcher(store)
+	feed := storage.Feed{URL: srv.URL}
+
+	_, err := fetcher.FetchFeed(context.Background(), feed)
+	if err == nil {
+		t.Fatal("expected error for 500 status")
 	}
 }

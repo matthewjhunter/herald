@@ -311,7 +311,7 @@ func fetchFeedsCmd() *cobra.Command {
 			newArticles := 0
 			for _, feed := range subscribedFeeds {
 				feedCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				parsedFeed, err := fetcher.FetchFeed(feedCtx, feed.URL)
+				result, err := fetcher.FetchFeed(feedCtx, feed)
 				cancel()
 
 				if err != nil {
@@ -319,12 +319,22 @@ func fetchFeedsCmd() *cobra.Command {
 					continue
 				}
 
+				if result.NotModified {
+					store.UpdateFeedLastFetched(feed.ID)
+					continue
+				}
+
 				// Store articles (global, fetched once)
-				stored, err := fetcher.StoreArticles(feed.ID, parsedFeed)
+				stored, err := fetcher.StoreArticles(feed.ID, result.Feed)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: error storing articles from %s: %v\n", feed.URL, err)
 				}
 				newArticles += stored
+
+				// Persist cache headers for next conditional request
+				if result.ETag != "" || result.LastModified != "" {
+					store.UpdateFeedCacheHeaders(feed.ID, result.ETag, result.LastModified)
+				}
 
 				// Update last fetched timestamp
 				if err := store.UpdateFeedLastFetched(feed.ID); err != nil {
@@ -332,11 +342,11 @@ func fetchFeedsCmd() *cobra.Command {
 				}
 			}
 
-			result := &output.FetchResult{
+			fetchResult := &output.FetchResult{
 				NewArticles: newArticles,
 			}
 
-			return formatter.OutputFetchResult(result)
+			return formatter.OutputFetchResult(fetchResult)
 		},
 	}
 }
@@ -437,7 +447,7 @@ func fetchCmd() *cobra.Command {
 			newArticles := 0
 			for _, feed := range subscribedFeeds {
 				feedCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				parsedFeed, err := fetcher.FetchFeed(feedCtx, feed.URL)
+				result, err := fetcher.FetchFeed(feedCtx, feed)
 				cancel()
 
 				if err != nil {
@@ -445,12 +455,22 @@ func fetchCmd() *cobra.Command {
 					continue
 				}
 
+				if result.NotModified {
+					store.UpdateFeedLastFetched(feed.ID)
+					continue
+				}
+
 				// Store articles (global, fetched once)
-				stored, err := fetcher.StoreArticles(feed.ID, parsedFeed)
+				stored, err := fetcher.StoreArticles(feed.ID, result.Feed)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: error storing articles from %s: %v\n", feed.URL, err)
 				}
 				newArticles += stored
+
+				// Persist cache headers for next conditional request
+				if result.ETag != "" || result.LastModified != "" {
+					store.UpdateFeedCacheHeaders(feed.ID, result.ETag, result.LastModified)
+				}
 
 				// Update last fetched timestamp
 				if err := store.UpdateFeedLastFetched(feed.ID); err != nil {
@@ -458,12 +478,12 @@ func fetchCmd() *cobra.Command {
 				}
 			}
 
-			result := &output.FetchResult{
+			fetchResult := &output.FetchResult{
 				NewArticles: newArticles,
 			}
 
 			if newArticles == 0 {
-				return formatter.OutputFetchResult(result)
+				return formatter.OutputFetchResult(fetchResult)
 			}
 
 			// Process unread articles with AI
@@ -471,7 +491,7 @@ func fetchCmd() *cobra.Command {
 			if err != nil {
 				formatter.Warning("failed to create AI processor: %v", err)
 				formatter.Warning("skipping AI processing (Ollama may not be running)")
-				return formatter.OutputFetchResult(result)
+				return formatter.OutputFetchResult(fetchResult)
 			}
 
 			// Get all users who have subscriptions
@@ -482,7 +502,7 @@ func fetchCmd() *cobra.Command {
 
 			if len(allUserIDs) == 0 {
 				formatter.Warning("no users with subscriptions")
-				return formatter.OutputFetchResult(result)
+				return formatter.OutputFetchResult(fetchResult)
 			}
 
 			totalProcessed := 0
@@ -497,7 +517,7 @@ func fetchCmd() *cobra.Command {
 				totalProcessed += processed
 			}
 
-			result.ProcessedCount = totalProcessed
+			fetchResult.ProcessedCount = totalProcessed
 
 			// Get and output high-interest articles
 			highInterestArticles, scores, err := store.GetArticlesByInterestScore(cfg.Thresholds.InterestScore, 10, 0)
@@ -505,10 +525,10 @@ func fetchCmd() *cobra.Command {
 				return fmt.Errorf("failed to get high-interest articles: %w", err)
 			}
 
-			result.HighInterest = len(highInterestArticles)
+			fetchResult.HighInterest = len(highInterestArticles)
 
 			// Output result summary
-			if err := formatter.OutputFetchResult(result); err != nil {
+			if err := formatter.OutputFetchResult(fetchResult); err != nil {
 				return err
 			}
 

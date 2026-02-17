@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS feeds (
     description TEXT,
     last_fetched DATETIME,
     last_error TEXT,
+    etag TEXT,
+    last_modified TEXT,
     enabled BOOLEAN NOT NULL DEFAULT 1,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
