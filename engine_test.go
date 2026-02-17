@@ -62,14 +62,25 @@ func TestNewEngineDefaults(t *testing.T) {
 	}
 }
 
+// subscribeDirect adds a feed and subscribes the user without HTTP validation.
+// Used by tests that don't need a real feed URL.
+func subscribeDirect(t *testing.T, engine *Engine, userID int64, url, title string) int64 {
+	t.Helper()
+	feedID, err := engine.store.AddFeed(url, title, "")
+	if err != nil {
+		t.Fatalf("AddFeed: %v", err)
+	}
+	if err := engine.store.SubscribeUserToFeed(userID, feedID); err != nil {
+		t.Fatalf("SubscribeUserToFeed: %v", err)
+	}
+	return feedID
+}
+
 func TestSubscribeAndGetFeeds(t *testing.T) {
 	engine, cleanup := newTestEngine(t)
 	defer cleanup()
 
-	err := engine.SubscribeFeed(1, "https://example.com/feed.xml", "Test Feed")
-	if err != nil {
-		t.Fatalf("SubscribeFeed: %v", err)
-	}
+	subscribeDirect(t, engine, 1, "https://example.com/feed.xml", "Test Feed")
 
 	feeds, err := engine.GetUserFeeds(1)
 	if err != nil {
@@ -117,13 +128,7 @@ func TestArticleLifecycle(t *testing.T) {
 	defer cleanup()
 
 	// Add a feed and subscribe user
-	err := engine.SubscribeFeed(1, "https://example.com/feed.xml", "Test Feed")
-	if err != nil {
-		t.Fatalf("SubscribeFeed: %v", err)
-	}
-
-	feeds, _ := engine.GetUserFeeds(1)
-	feedID := feeds[0].ID
+	feedID := subscribeDirect(t, engine, 1, "https://example.com/feed.xml", "Test Feed")
 
 	// Insert an article directly via the store (simulates a fetch)
 	now := time.Now()
@@ -175,12 +180,7 @@ func TestGroupLifecycle(t *testing.T) {
 	defer cleanup()
 
 	// Subscribe and add articles
-	err := engine.SubscribeFeed(1, "https://example.com/feed.xml", "Test Feed")
-	if err != nil {
-		t.Fatalf("SubscribeFeed: %v", err)
-	}
-	feeds, _ := engine.GetUserFeeds(1)
-	feedID := feeds[0].ID
+	feedID := subscribeDirect(t, engine, 1, "https://example.com/feed.xml", "Test Feed")
 
 	now := time.Now()
 	id1, _ := engine.store.AddArticle(&storage.Article{

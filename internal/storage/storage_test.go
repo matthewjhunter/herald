@@ -305,6 +305,116 @@ func TestGetAllSubscribingUsers(t *testing.T) {
 	}
 }
 
+func TestUnsubscribeUserFromFeed(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test Feed", "")
+	store.SubscribeUserToFeed(1, feedID)
+
+	// Verify subscription exists
+	feeds, _ := store.GetUserFeeds(1)
+	if len(feeds) != 1 {
+		t.Fatalf("expected 1 feed, got %d", len(feeds))
+	}
+
+	// Unsubscribe
+	if err := store.UnsubscribeUserFromFeed(1, feedID); err != nil {
+		t.Fatalf("UnsubscribeUserFromFeed failed: %v", err)
+	}
+
+	// Verify subscription removed
+	feeds, _ = store.GetUserFeeds(1)
+	if len(feeds) != 0 {
+		t.Errorf("expected 0 feeds after unsubscribe, got %d", len(feeds))
+	}
+
+	// Unsubscribing again should not error
+	if err := store.UnsubscribeUserFromFeed(1, feedID); err != nil {
+		t.Errorf("duplicate unsubscribe should not error: %v", err)
+	}
+}
+
+func TestDeleteFeedIfOrphaned(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test Feed", "")
+	store.SubscribeUserToFeed(1, feedID)
+
+	// Should not delete — user 1 is still subscribed
+	deleted, err := store.DeleteFeedIfOrphaned(feedID)
+	if err != nil {
+		t.Fatalf("DeleteFeedIfOrphaned failed: %v", err)
+	}
+	if deleted {
+		t.Error("should not delete feed with active subscriber")
+	}
+
+	// Unsubscribe, then delete
+	store.UnsubscribeUserFromFeed(1, feedID)
+	deleted, err = store.DeleteFeedIfOrphaned(feedID)
+	if err != nil {
+		t.Fatalf("DeleteFeedIfOrphaned failed: %v", err)
+	}
+	if !deleted {
+		t.Error("should delete orphaned feed")
+	}
+
+	// Feed should be gone
+	feeds, _ := store.GetAllFeeds()
+	if len(feeds) != 0 {
+		t.Errorf("expected 0 feeds after orphan delete, got %d", len(feeds))
+	}
+}
+
+func TestDeleteFeedIfOrphaned_CascadesArticles(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test Feed", "")
+	now := time.Now()
+	store.AddArticle(&Article{
+		FeedID: feedID, GUID: "art1", Title: "Article 1",
+		URL: "https://example.com/1", PublishedDate: &now,
+	})
+
+	// No subscribers — should delete feed and cascade to articles
+	deleted, err := store.DeleteFeedIfOrphaned(feedID)
+	if err != nil {
+		t.Fatalf("DeleteFeedIfOrphaned failed: %v", err)
+	}
+	if !deleted {
+		t.Error("should delete orphaned feed")
+	}
+
+	// Articles should be gone too (CASCADE)
+	articles, _ := store.GetUnreadArticles(10)
+	if len(articles) != 0 {
+		t.Errorf("expected 0 articles after cascade delete, got %d", len(articles))
+	}
+}
+
+func TestRenameFeed(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Old Name", "")
+	store.SubscribeUserToFeed(1, feedID)
+
+	if err := store.RenameFeed(feedID, "New Name"); err != nil {
+		t.Fatalf("RenameFeed failed: %v", err)
+	}
+
+	feeds, _ := store.GetUserFeeds(1)
+	if len(feeds) != 1 {
+		t.Fatalf("expected 1 feed, got %d", len(feeds))
+	}
+	if feeds[0].Title != "New Name" {
+		t.Errorf("feed title = %q, want %q", feeds[0].Title, "New Name")
+	}
+}
+
 func TestGetUnreadArticlesForUser(t *testing.T) {
 	store, cleanup := newTestStore(t)
 	defer cleanup()

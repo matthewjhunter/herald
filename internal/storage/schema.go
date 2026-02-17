@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS feeds (
     title TEXT NOT NULL,
     description TEXT,
     last_fetched DATETIME,
+    last_error TEXT,
     enabled BOOLEAN NOT NULL DEFAULT 1,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

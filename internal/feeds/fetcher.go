@@ -175,6 +175,7 @@ func (f *Fetcher) FetchAllFeeds(ctx context.Context) (int, error) {
 		cancel()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to fetch feed %s: %v\n", feed.URL, err)
+			f.store.UpdateFeedError(feed.ID, err.Error())
 			continue
 		}
 
@@ -190,8 +191,8 @@ func (f *Fetcher) FetchAllFeeds(ctx context.Context) (int, error) {
 		}
 		totalArticles += stored
 
-		// Update last fetched timestamp
-		if err := f.store.UpdateFeedLastFetched(feed.ID); err != nil {
+		// Clear any previous error and update last_fetched
+		if err := f.store.ClearFeedError(feed.ID); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to update last_fetched for %s: %v\n", feed.URL, err)
 		}
 	}

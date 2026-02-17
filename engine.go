@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/matthewjhunter/herald/internal/ai"
 	"github.com/matthewjhunter/herald/internal/feeds"
@@ -206,12 +207,58 @@ func (e *Engine) GetUserFeeds(userID int64) ([]Feed, error) {
 }
 
 // SubscribeFeed adds a feed and subscribes the user to it.
+// Validates the URL by fetching the feed first; returns an error if the URL
+// is unreachable or not a valid RSS/Atom feed.
 func (e *Engine) SubscribeFeed(userID int64, url, title string) error {
-	feedID, err := e.store.AddFeed(url, title, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Validate by fetching — catches bad URLs, non-feed pages, timeouts
+	parsedFeed, err := e.fetcher.FetchFeed(ctx, url)
+	if err != nil {
+		return fmt.Errorf("validate feed: %w", err)
+	}
+
+	// Use the feed's own title if none provided
+	if title == "" && parsedFeed.Title != "" {
+		title = parsedFeed.Title
+	}
+	if title == "" {
+		title = url
+	}
+
+	feedID, err := e.store.AddFeed(url, title, parsedFeed.Description)
 	if err != nil {
 		return fmt.Errorf("add feed: %w", err)
 	}
+
+	// Store the initial articles we already fetched
+	if stored, err := e.fetcher.StoreArticles(feedID, parsedFeed); err == nil && stored > 0 {
+		log.Printf("herald: stored %d initial articles from %s", stored, url)
+	}
+
+	e.store.ClearFeedError(feedID)
+
 	return e.store.SubscribeUserToFeed(userID, feedID)
+}
+
+// UnsubscribeFeed removes a user's subscription to a feed. If no subscribers
+// remain, the feed and its articles are deleted (via FK CASCADE).
+func (e *Engine) UnsubscribeFeed(userID, feedID int64) error {
+	if err := e.store.UnsubscribeUserFromFeed(userID, feedID); err != nil {
+		return fmt.Errorf("unsubscribe: %w", err)
+	}
+	if deleted, err := e.store.DeleteFeedIfOrphaned(feedID); err != nil {
+		return fmt.Errorf("cleanup orphaned feed: %w", err)
+	} else if deleted {
+		log.Printf("herald: deleted orphaned feed %d", feedID)
+	}
+	return nil
+}
+
+// RenameFeed updates the display title of a feed.
+func (e *Engine) RenameFeed(feedID int64, title string) error {
+	return e.store.RenameFeed(feedID, title)
 }
 
 // GetUserGroups returns all article groups for a user.
@@ -355,6 +402,7 @@ func feedFromInternal(f storage.Feed) Feed {
 		Title:       f.Title,
 		Description: f.Description,
 		LastFetched: f.LastFetched,
+		LastError:   f.LastError,
 		Enabled:     f.Enabled,
 		CreatedAt:   f.CreatedAt,
 	}

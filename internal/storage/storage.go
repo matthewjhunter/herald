@@ -18,6 +18,7 @@ type Feed struct {
 	Title       string
 	Description string
 	LastFetched *time.Time
+	LastError   *string
 	Enabled     bool
 	CreatedAt   time.Time
 }
@@ -204,7 +205,7 @@ func (s *Store) AddFeed(url, title, description string) (int64, error) {
 
 // GetAllFeeds returns all enabled feeds
 func (s *Store) GetAllFeeds() ([]Feed, error) {
-	rows, err := s.db.Query("SELECT id, url, title, description, last_fetched, enabled, created_at FROM feeds WHERE enabled = 1")
+	rows, err := s.db.Query("SELECT id, url, title, description, last_fetched, last_error, enabled, created_at FROM feeds WHERE enabled = 1")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get feeds: %w", err)
 	}
@@ -213,12 +214,30 @@ func (s *Store) GetAllFeeds() ([]Feed, error) {
 	var feeds []Feed
 	for rows.Next() {
 		var f Feed
-		if err := rows.Scan(&f.ID, &f.URL, &f.Title, &f.Description, &f.LastFetched, &f.Enabled, &f.CreatedAt); err != nil {
+		if err := rows.Scan(&f.ID, &f.URL, &f.Title, &f.Description, &f.LastFetched, &f.LastError, &f.Enabled, &f.CreatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan feed: %w", err)
 		}
 		feeds = append(feeds, f)
 	}
 	return feeds, rows.Err()
+}
+
+// UpdateFeedError records a fetch error for a feed.
+func (s *Store) UpdateFeedError(feedID int64, errMsg string) error {
+	_, err := s.db.Exec("UPDATE feeds SET last_error = ? WHERE id = ?", errMsg, feedID)
+	if err != nil {
+		return fmt.Errorf("failed to update feed error: %w", err)
+	}
+	return nil
+}
+
+// ClearFeedError clears the last error and updates last_fetched for a feed.
+func (s *Store) ClearFeedError(feedID int64) error {
+	_, err := s.db.Exec("UPDATE feeds SET last_error = NULL, last_fetched = CURRENT_TIMESTAMP WHERE id = ?", feedID)
+	if err != nil {
+		return fmt.Errorf("failed to clear feed error: %w", err)
+	}
+	return nil
 }
 
 // UpdateFeedLastFetched updates the last fetched timestamp for a feed
@@ -505,7 +524,7 @@ func (s *Store) SubscribeUserToFeed(userID, feedID int64) error {
 // GetUserFeeds returns all feeds a user is subscribed to
 func (s *Store) GetUserFeeds(userID int64) ([]Feed, error) {
 	query := `
-		SELECT f.id, f.url, f.title, f.description, f.last_fetched, f.enabled, f.created_at
+		SELECT f.id, f.url, f.title, f.description, f.last_fetched, f.last_error, f.enabled, f.created_at
 		FROM feeds f
 		JOIN user_feeds uf ON f.id = uf.feed_id
 		WHERE uf.user_id = ? AND f.enabled = 1
@@ -520,7 +539,7 @@ func (s *Store) GetUserFeeds(userID int64) ([]Feed, error) {
 	var feeds []Feed
 	for rows.Next() {
 		var f Feed
-		if err := rows.Scan(&f.ID, &f.URL, &f.Title, &f.Description, &f.LastFetched, &f.Enabled, &f.CreatedAt); err != nil {
+		if err := rows.Scan(&f.ID, &f.URL, &f.Title, &f.Description, &f.LastFetched, &f.LastError, &f.Enabled, &f.CreatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan feed: %w", err)
 		}
 		feeds = append(feeds, f)
@@ -531,7 +550,7 @@ func (s *Store) GetUserFeeds(userID int64) ([]Feed, error) {
 // GetAllSubscribedFeeds returns all feeds that ANY user is subscribed to
 func (s *Store) GetAllSubscribedFeeds() ([]Feed, error) {
 	query := `
-		SELECT DISTINCT f.id, f.url, f.title, f.description, f.last_fetched, f.enabled, f.created_at
+		SELECT DISTINCT f.id, f.url, f.title, f.description, f.last_fetched, f.last_error, f.enabled, f.created_at
 		FROM feeds f
 		JOIN user_feeds uf ON f.id = uf.feed_id
 		WHERE f.enabled = 1
@@ -546,7 +565,7 @@ func (s *Store) GetAllSubscribedFeeds() ([]Feed, error) {
 	var feeds []Feed
 	for rows.Next() {
 		var f Feed
-		if err := rows.Scan(&f.ID, &f.URL, &f.Title, &f.Description, &f.LastFetched, &f.Enabled, &f.CreatedAt); err != nil {
+		if err := rows.Scan(&f.ID, &f.URL, &f.Title, &f.Description, &f.LastFetched, &f.LastError, &f.Enabled, &f.CreatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan feed: %w", err)
 		}
 		feeds = append(feeds, f)
@@ -571,6 +590,45 @@ func (s *Store) GetFeedSubscribers(feedID int64) ([]int64, error) {
 		userIDs = append(userIDs, userID)
 	}
 	return userIDs, rows.Err()
+}
+
+// UnsubscribeUserFromFeed removes a user's subscription to a feed.
+func (s *Store) UnsubscribeUserFromFeed(userID, feedID int64) error {
+	_, err := s.db.Exec(
+		"DELETE FROM user_feeds WHERE user_id = ? AND feed_id = ?",
+		userID, feedID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to unsubscribe user from feed: %w", err)
+	}
+	return nil
+}
+
+// DeleteFeedIfOrphaned deletes a feed only if no users are subscribed to it.
+// Returns true if the feed was deleted. CASCADE handles articles, read_state,
+// summaries, and group member cleanup.
+func (s *Store) DeleteFeedIfOrphaned(feedID int64) (bool, error) {
+	result, err := s.db.Exec(
+		"DELETE FROM feeds WHERE id = ? AND NOT EXISTS (SELECT 1 FROM user_feeds WHERE feed_id = ?)",
+		feedID, feedID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to delete orphaned feed: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	return rows > 0, nil
+}
+
+// RenameFeed updates the display title of a feed.
+func (s *Store) RenameFeed(feedID int64, title string) error {
+	_, err := s.db.Exec("UPDATE feeds SET title = ? WHERE id = ?", title, feedID)
+	if err != nil {
+		return fmt.Errorf("failed to rename feed: %w", err)
+	}
+	return nil
 }
 
 // GetAllSubscribingUsers returns all user IDs that have feed subscriptions
