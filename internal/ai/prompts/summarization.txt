@@ -1,0 +1,7 @@
+Summarize the following news article in 2-3 concise sentences. Focus on the key facts and main points.
+
+Title: {{.Title}}
+
+Content: {{.Content}}
+
+Provide only the summary, no preamble or explanation.

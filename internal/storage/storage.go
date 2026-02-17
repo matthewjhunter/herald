@@ -67,6 +67,15 @@ type GroupSummary struct {
 	GeneratedAt      time.Time
 }
 
+type UserPrompt struct {
+	UserID         int64
+	PromptType     string
+	PromptTemplate string
+	Temperature    *float64
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
 // NewStore creates a new database connection and initializes the schema
 func NewStore(dbPath string) (*Store, error) {
 	db, err := sql.Open("sqlite3", dbPath)
@@ -92,6 +101,93 @@ func NewStore(dbPath string) (*Store, error) {
 // Close closes the database connection
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+// User prompt management
+
+// GetUserPrompt retrieves a user's custom prompt template
+func (s *Store) GetUserPrompt(userID int64, promptType string) (string, error) {
+	var promptTemplate string
+	err := s.db.QueryRow(
+		"SELECT prompt_template FROM user_prompts WHERE user_id = ? AND prompt_type = ?",
+		userID, promptType,
+	).Scan(&promptTemplate)
+
+	if err != nil {
+		return "", err
+	}
+	return promptTemplate, nil
+}
+
+// GetUserPromptTemperature retrieves a user's custom temperature setting
+func (s *Store) GetUserPromptTemperature(userID int64, promptType string) (float64, error) {
+	var temperature sql.NullFloat64
+	err := s.db.QueryRow(
+		"SELECT temperature FROM user_prompts WHERE user_id = ? AND prompt_type = ?",
+		userID, promptType,
+	).Scan(&temperature)
+
+	if err != nil {
+		return 0, err
+	}
+
+	if !temperature.Valid {
+		return 0, nil
+	}
+	return temperature.Float64, nil
+}
+
+// SetUserPrompt sets a custom prompt template for a user
+func (s *Store) SetUserPrompt(userID int64, promptType, promptTemplate string, temperature *float64) error {
+	_, err := s.db.Exec(
+		`INSERT INTO user_prompts (user_id, prompt_type, prompt_template, temperature, updated_at)
+		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+		 ON CONFLICT(user_id, prompt_type) DO UPDATE SET
+		   prompt_template = excluded.prompt_template,
+		   temperature = excluded.temperature,
+		   updated_at = CURRENT_TIMESTAMP`,
+		userID, promptType, promptTemplate, temperature,
+	)
+	return err
+}
+
+// DeleteUserPrompt removes a custom prompt, reverting to config/default
+func (s *Store) DeleteUserPrompt(userID int64, promptType string) error {
+	_, err := s.db.Exec(
+		"DELETE FROM user_prompts WHERE user_id = ? AND prompt_type = ?",
+		userID, promptType,
+	)
+	return err
+}
+
+// ListUserPrompts lists all custom prompts for a user
+func (s *Store) ListUserPrompts(userID int64) ([]UserPrompt, error) {
+	rows, err := s.db.Query(
+		`SELECT prompt_type, prompt_template, temperature, created_at, updated_at
+		 FROM user_prompts WHERE user_id = ? ORDER BY prompt_type`,
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var prompts []UserPrompt
+	for rows.Next() {
+		var p UserPrompt
+		var temp sql.NullFloat64
+		err := rows.Scan(&p.PromptType, &p.PromptTemplate, &temp, &p.CreatedAt, &p.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
+		p.UserID = userID
+		if temp.Valid {
+			tempVal := temp.Float64
+			p.Temperature = &tempVal
+		}
+		prompts = append(prompts, p)
+	}
+	return prompts, rows.Err()
 }
 
 // AddFeed adds a new feed to the database

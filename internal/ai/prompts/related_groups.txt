@@ -1,0 +1,20 @@
+You are analyzing whether a new article relates to existing article groups.
+
+New Article:
+Title: {{.Title}}
+Summary: {{.Summary}}
+
+Existing Groups:
+{{.Groups}}
+
+Determine if the new article covers the same event/story as any existing group. Articles are related if they discuss:
+- The same specific event (e.g., same product launch, same political decision)
+- The same ongoing story (e.g., same conflict, same investigation)
+- The same breaking news developing over time
+
+Respond ONLY with valid JSON:
+{
+  "is_related": true/false,
+  "existing_groups": [<array of group IDs the article relates to>],
+  "reasoning": "<brief explanation>"
+}

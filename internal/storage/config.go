@@ -26,6 +26,22 @@ type Config struct {
 		Keywords       []string `yaml:"keywords"`
 		PreferredSources []string `yaml:"preferred_sources"`
 	} `yaml:"preferences"`
+
+	Prompts struct {
+		Security      string  `yaml:"security,omitempty"`
+		Curation      string  `yaml:"curation,omitempty"`
+		Summarization string  `yaml:"summarization,omitempty"`
+		GroupSummary  string  `yaml:"group_summary,omitempty"`
+		RelatedGroups string  `yaml:"related_groups,omitempty"`
+	} `yaml:"prompts,omitempty"`
+
+	Temperatures struct {
+		Security      float64 `yaml:"security"`
+		Curation      float64 `yaml:"curation"`
+		Summarization float64 `yaml:"summarization"`
+		GroupSummary  float64 `yaml:"group_summary"`
+		RelatedGroups float64 `yaml:"related_groups"`
+	} `yaml:"temperatures,omitempty"`
 }
 
 // DefaultConfig returns a config with sensible defaults
@@ -40,5 +56,11 @@ func DefaultConfig() *Config {
 	cfg.Majordomo.TargetPersona = "jarvis"
 	cfg.Thresholds.InterestScore = 8.0
 	cfg.Thresholds.SecurityScore = 7.0
+	// Default temperatures (can be overridden in config)
+	cfg.Temperatures.Security = 0.3
+	cfg.Temperatures.Curation = 0.5
+	cfg.Temperatures.Summarization = 0.3
+	cfg.Temperatures.GroupSummary = 0.5
+	cfg.Temperatures.RelatedGroups = 0.3
 	return cfg
 }

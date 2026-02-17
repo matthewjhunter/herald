@@ -1,0 +1,12 @@
+You are analyzing multiple news articles covering the same event or topic: "{{.Topic}}"
+
+Articles:
+{{.Articles}}
+
+Create a single coherent narrative (3-5 sentences) that:
+1. Synthesizes the information from all articles
+2. Highlights the most important facts
+3. Notes different perspectives if present
+4. Provides a complete picture of the story
+
+Respond ONLY with the narrative summary, no preamble.

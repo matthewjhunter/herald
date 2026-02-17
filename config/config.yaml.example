@@ -43,3 +43,36 @@ preferences:
 
   # Preferred news sources (URLs)
   preferred_sources: []
+
+# Optional: Override default AI prompts (system-wide)
+# Leave empty to use embedded defaults
+# Prompts use Go template syntax with variables like {{.Title}}, {{.Content}}, etc.
+prompts:
+  # security: |
+  #   Your custom security analysis prompt here...
+  #   Available vars: {{.Title}}, {{.Content}}
+
+  # curation: |
+  #   Your custom curation prompt here...
+  #   Available vars: {{.Title}}, {{.Content}}, {{.Keywords}}
+
+  # summarization: |
+  #   Your custom summarization prompt here...
+  #   Available vars: {{.Title}}, {{.Content}}
+
+  # group_summary: |
+  #   Your custom group summary prompt here...
+  #   Available vars: {{.Topic}}, {{.Articles}}
+
+  # related_groups: |
+  #   Your custom related groups prompt here...
+  #   Available vars: {{.Title}}, {{.Summary}}, {{.Groups}}
+
+# Optional: Override default AI temperatures (system-wide)
+# Values between 0.0 (deterministic) and 1.0 (creative)
+temperatures:
+  security: 0.3       # Conservative for security checks
+  curation: 0.5       # Balanced for interest scoring
+  summarization: 0.3  # Focused for summaries
+  group_summary: 0.5  # Creative for narratives
+  related_groups: 0.3 # Precise for group matching

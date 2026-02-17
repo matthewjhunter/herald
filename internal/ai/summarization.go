@@ -11,27 +11,37 @@ import (
 )
 
 // SummarizeArticle generates an AI summary for a single article
-func (p *AIProcessor) SummarizeArticle(ctx context.Context, title, content string) (string, error) {
-	prompt := fmt.Sprintf(`Summarize the following news article in 2-3 concise sentences. Focus on the key facts and main points.
+func (p *AIProcessor) SummarizeArticle(ctx context.Context, userID int64, title, content string) (string, error) {
+	// Load prompt template
+	promptTemplate, err := p.promptLoader.GetPrompt(userID, PromptTypeSummarization)
+	if err != nil {
+		return "", fmt.Errorf("failed to load summarization prompt: %w", err)
+	}
 
-Title: %s
+	// Render prompt with data
+	data := map[string]interface{}{
+		"Title":   title,
+		"Content": truncateText(content, 3000),
+	}
+	prompt, err := ExecutePrompt(promptTemplate, data)
+	if err != nil {
+		return "", fmt.Errorf("failed to render summarization prompt: %w", err)
+	}
 
-Content: %s
-
-Provide only the summary, no preamble or explanation.`,
-		title, truncateText(content, 3000))
+	// Get temperature
+	temperature := p.promptLoader.GetTemperature(userID, PromptTypeSummarization)
 
 	req := &api.GenerateRequest{
 		Model:  p.curationModel,
 		Prompt: prompt,
 		Stream: new(bool), // false
 		Options: map[string]interface{}{
-			"temperature": 0.3,
+			"temperature": temperature,
 		},
 	}
 
 	var fullResponse strings.Builder
-	err := p.client.Generate(ctx, req, func(resp api.GenerateResponse) error {
+	err = p.client.Generate(ctx, req, func(resp api.GenerateResponse) error {
 		fullResponse.WriteString(resp.Response)
 		return nil
 	})
@@ -50,7 +60,7 @@ type GroupSummaryInput struct {
 }
 
 // GenerateGroupSummary creates a coherent narrative from multiple related articles
-func (p *AIProcessor) GenerateGroupSummary(ctx context.Context, topic string, articles []GroupSummaryInput) (string, error) {
+func (p *AIProcessor) GenerateGroupSummary(ctx context.Context, userID int64, topic string, articles []GroupSummaryInput) (string, error) {
 	if len(articles) == 0 {
 		return "", fmt.Errorf("no articles to summarize")
 	}
@@ -67,31 +77,36 @@ func (p *AIProcessor) GenerateGroupSummary(ctx context.Context, topic string, ar
 			i+1, art.Title, art.AISummary, art.Score))
 	}
 
-	prompt := fmt.Sprintf(`You are analyzing multiple news articles covering the same event or topic: "%s"
+	// Load prompt template
+	promptTemplate, err := p.promptLoader.GetPrompt(userID, PromptTypeGroupSummary)
+	if err != nil {
+		return "", fmt.Errorf("failed to load group summary prompt: %w", err)
+	}
 
-Articles:
-%s
+	// Render prompt with data
+	data := map[string]interface{}{
+		"Topic":    topic,
+		"Articles": strings.Join(articleList, "\n\n"),
+	}
+	prompt, err := ExecutePrompt(promptTemplate, data)
+	if err != nil {
+		return "", fmt.Errorf("failed to render group summary prompt: %w", err)
+	}
 
-Create a single coherent narrative (3-5 sentences) that:
-1. Synthesizes the information from all articles
-2. Highlights the most important facts
-3. Notes different perspectives if present
-4. Provides a complete picture of the story
-
-Respond ONLY with the narrative summary, no preamble.`,
-		topic, strings.Join(articleList, "\n\n"))
+	// Get temperature
+	temperature := p.promptLoader.GetTemperature(userID, PromptTypeGroupSummary)
 
 	req := &api.GenerateRequest{
 		Model:  p.curationModel,
 		Prompt: prompt,
 		Stream: new(bool), // false
 		Options: map[string]interface{}{
-			"temperature": 0.5,
+			"temperature": temperature,
 		},
 	}
 
 	var fullResponse strings.Builder
-	err := p.client.Generate(ctx, req, func(resp api.GenerateResponse) error {
+	err = p.client.Generate(ctx, req, func(resp api.GenerateResponse) error {
 		fullResponse.WriteString(resp.Response)
 		return nil
 	})
@@ -110,7 +125,7 @@ type RelatedArticlesResult struct {
 }
 
 // FindRelatedGroups determines if a new article relates to existing groups
-func (p *AIProcessor) FindRelatedGroups(ctx context.Context, newArticle storage.Article, existingGroups []storage.ArticleGroup, store *storage.Store) ([]int64, error) {
+func (p *AIProcessor) FindRelatedGroups(ctx context.Context, userID int64, newArticle storage.Article, existingGroups []storage.ArticleGroup, store *storage.Store) ([]int64, error) {
 	if len(existingGroups) == 0 {
 		return nil, nil
 	}
@@ -139,41 +154,37 @@ func (p *AIProcessor) FindRelatedGroups(ctx context.Context, newArticle storage.
 			group.ID, group.Topic, strings.Join(sampleTitles, "\n  - ")))
 	}
 
-	prompt := fmt.Sprintf(`You are analyzing whether a new article relates to existing article groups.
+	// Load prompt template
+	promptTemplate, err := p.promptLoader.GetPrompt(userID, PromptTypeRelatedGroups)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load related groups prompt: %w", err)
+	}
 
-New Article:
-Title: %s
-Summary: %s
+	// Render prompt with data
+	data := map[string]interface{}{
+		"Title":   newArticle.Title,
+		"Summary": truncateText(newArticle.Summary, 500),
+		"Groups":  strings.Join(groupDescs, "\n\n"),
+	}
+	prompt, err := ExecutePrompt(promptTemplate, data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to render related groups prompt: %w", err)
+	}
 
-Existing Groups:
-%s
-
-Determine if the new article covers the same event/story as any existing group. Articles are related if they discuss:
-- The same specific event (e.g., same product launch, same political decision)
-- The same ongoing story (e.g., same conflict, same investigation)
-- The same breaking news developing over time
-
-Respond ONLY with valid JSON:
-{
-  "is_related": true/false,
-  "existing_groups": [<array of group IDs the article relates to>],
-  "reasoning": "<brief explanation>"
-}`,
-		newArticle.Title,
-		truncateText(newArticle.Summary, 500),
-		strings.Join(groupDescs, "\n\n"))
+	// Get temperature
+	temperature := p.promptLoader.GetTemperature(userID, PromptTypeRelatedGroups)
 
 	req := &api.GenerateRequest{
 		Model:  p.curationModel,
 		Prompt: prompt,
 		Stream: new(bool), // false
 		Options: map[string]interface{}{
-			"temperature": 0.3,
+			"temperature": temperature,
 		},
 	}
 
 	var fullResponse strings.Builder
-	err := p.client.Generate(ctx, req, func(resp api.GenerateResponse) error {
+	err = p.client.Generate(ctx, req, func(resp api.GenerateResponse) error {
 		fullResponse.WriteString(resp.Response)
 		return nil
 	})

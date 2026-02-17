@@ -1,0 +1,19 @@
+You are an intelligent news curator. Rate the following article for interest and relevance on a scale of 0-10.
+
+Title: {{.Title}}
+
+Content: {{.Content}}
+
+User interests: {{.Keywords}}
+
+Consider:
+- News value and importance
+- Relevance to user interests
+- Timeliness and uniqueness
+- Quality of content
+
+Respond ONLY with valid JSON in this exact format:
+{
+  "interest_score": <0-10>,
+  "reasoning": "<brief explanation>"
+}

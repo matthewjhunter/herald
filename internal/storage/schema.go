@@ -98,4 +98,16 @@ CREATE TABLE IF NOT EXISTS group_summaries (
     generated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (group_id) REFERENCES article_groups(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS user_prompts (
+    user_id INTEGER NOT NULL DEFAULT 1,
+    prompt_type TEXT NOT NULL,
+    prompt_template TEXT NOT NULL,
+    temperature REAL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, prompt_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_prompts_user ON user_prompts(user_id);
 `
