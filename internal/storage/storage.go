@@ -96,6 +96,14 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
+	// Migrations for existing databases.
+	migrations := []string{
+		"ALTER TABLE feeds ADD COLUMN last_error TEXT",
+	}
+	for _, m := range migrations {
+		db.Exec(m) // ignore "duplicate column" errors
+	}
+
 	return &Store{db: db}, nil
 }
 
