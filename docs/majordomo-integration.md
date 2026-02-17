@@ -1,6 +1,6 @@
 # Majordomo Integration
 
-This document describes how to integrate feedreader with the [Majordomo](https://github.com/matthewjhunter/majordomo) voice assistant daemon for automated feed monitoring and voice notifications.
+This document describes how to integrate herald with the [Majordomo](https://github.com/matthewjhunter/majordomo) voice assistant daemon for automated feed monitoring and voice notifications.
 
 ## Overview
 
@@ -10,8 +10,8 @@ Majordomo's cron system can execute commands and deliver their output to AI pers
 
 The integration uses two separate commands for efficient multi-user operation:
 
-1. **`feedreader fetch-feeds`** - Downloads all subscribed feeds once, stores articles globally
-2. **`feedreader process --user=N --format=json`** - Performs per-user AI processing and outputs notifications
+1. **`herald fetch-feeds`** - Downloads all subscribed feeds once, stores articles globally
+2. **`herald process --user=N --format=json`** - Performs per-user AI processing and outputs notifications
 
 This architecture allows:
 - Each feed is fetched only once per run, regardless of subscriber count
@@ -27,10 +27,10 @@ Add the following entries to your Majordomo config file (typically `~/.config/ma
 
 ```toml
 [[daemon.schedule]]
-name = "feedreader-fetch"
+name = "herald-fetch"
 cron = "*/15 * * * *"  # Every 15 minutes
 persona = "jarvis"
-command = "feedreader fetch-feeds --format=json"
+command = "herald fetch-feeds --format=json"
 format = "json"
 timeout_sec = 300  # 5 minutes for fetching all feeds
 origin = "daemon"
@@ -44,10 +44,10 @@ For each user, add a processing schedule:
 
 ```toml
 [[daemon.schedule]]
-name = "feedreader-process-user1"
+name = "herald-process-user1"
 cron = "*/15 * * * *"  # Match fetch schedule
 persona = "jarvis"
-command = "feedreader process --user=1 --format=json"
+command = "herald process --user=1 --format=json"
 format = "json"
 timeout_sec = 600  # 10 minutes for AI processing
 origin = "user"
@@ -59,10 +59,10 @@ For additional users:
 
 ```toml
 [[daemon.schedule]]
-name = "feedreader-process-user2"
+name = "herald-process-user2"
 cron = "*/15 * * * *"
 persona = "jarvis"
-command = "feedreader process --user=2 --format=json"
+command = "herald process --user=2 --format=json"
 format = "json"
 timeout_sec = 600
 origin = "user"
@@ -153,35 +153,35 @@ Example with staggered processing:
 ```toml
 # Fetch once at :00
 [[daemon.schedule]]
-name = "feedreader-fetch"
+name = "herald-fetch"
 cron = "0 * * * *"  # Top of every hour
 persona = "jarvis"
-command = "feedreader fetch-feeds"
+command = "herald fetch-feeds"
 format = "json"
 
 # Process users with 5-minute offsets
 [[daemon.schedule]]
-name = "feedreader-process-user1"
+name = "herald-process-user1"
 cron = "5 * * * *"  # :05 past hour
 persona = "jarvis"
-command = "feedreader process --user=1 --format=json"
+command = "herald process --user=1 --format=json"
 format = "json"
 
 [[daemon.schedule]]
-name = "feedreader-process-user2"
+name = "herald-process-user2"
 cron = "10 * * * *"  # :10 past hour
 persona = "jarvis"
-command = "feedreader process --user=2 --format=json"
+command = "herald process --user=2 --format=json"
 format = "json"
 ```
 
 ## Configuration Files
 
-Feedreader configuration (typically `~/.config/feedreader/config.yaml`):
+Feedreader configuration (typically `~/.config/herald/config.yaml`):
 
 ```yaml
 database:
-  path: "~/.local/share/feedreader/feeds.db"
+  path: "~/.local/share/herald/feeds.db"
 
 ollama:
   base_url: "http://localhost:11434"
@@ -201,10 +201,10 @@ Users are created automatically when they subscribe to feeds:
 
 ```bash
 # Import OPML for user 1
-feedreader import --user=1 ~/feeds.opml
+herald import --user=1 ~/feeds.opml
 
 # Import OPML for user 2
-feedreader import --user=2 ~/other-feeds.opml
+herald import --user=2 ~/other-feeds.opml
 ```
 
 ### Per-User Settings
@@ -223,10 +223,10 @@ Test commands manually to see JSON output:
 
 ```bash
 # Test fetch
-feedreader fetch-feeds --format=json
+herald fetch-feeds --format=json
 
 # Test processing for user 1
-feedreader process --user=1 --format=json
+herald process --user=1 --format=json
 ```
 
 ### Check Majordomo Logs
@@ -241,7 +241,7 @@ Majordomo logs command execution and output. Check logs for:
 Query the database to see processing status:
 
 ```bash
-sqlite3 ~/.local/share/feedreader/feeds.db
+sqlite3 ~/.local/share/herald/feeds.db
 
 -- Check article counts
 SELECT COUNT(*) FROM articles;
@@ -261,12 +261,12 @@ GROUP BY u.user_id;
 
 1. **Check if articles are being fetched**:
    ```bash
-   feedreader fetch-feeds --format=human
+   herald fetch-feeds --format=human
    ```
 
 2. **Check if AI processing is working**:
    ```bash
-   feedreader process --user=1 --format=human
+   herald process --user=1 --format=human
    ```
 
 3. **Verify interest thresholds** in config.yaml - may be too high

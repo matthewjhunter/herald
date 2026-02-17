@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/feedreader/feedreader/internal/output"
-	"github.com/feedreader/feedreader/internal/storage"
+	"github.com/matthewjhunter/herald/internal/output"
+	"github.com/matthewjhunter/herald/internal/storage"
 	"github.com/ollama/ollama/api"
 )
 

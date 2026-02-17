@@ -39,14 +39,14 @@ If you want voice notifications:
 ## Building FeedReader
 
 ```bash
-# Clone or navigate to the feedreader directory
-cd feedreader
+# Clone or navigate to the herald directory
+cd herald
 
 # Build the binary
 make build
 
 # Or manually:
-go build -o feedreader ./cmd/feedreader
+go build -o herald ./cmd/herald
 ```
 
 ## Configuration
@@ -55,7 +55,7 @@ go build -o feedreader ./cmd/feedreader
 
 ```bash
 # Initialize default config
-./feedreader init-config
+./herald init-config
 
 # Or copy the example
 cp config/config.yaml.example config/config.yaml
@@ -67,7 +67,7 @@ Edit `config/config.yaml`:
 
 ```yaml
 database:
-  path: ./feedreader.db  # Database location
+  path: ./herald.db  # Database location
 
 ollama:
   base_url: http://localhost:11434
@@ -105,7 +105,7 @@ Most RSS readers support OPML export:
 ### Import into FeedReader
 
 ```bash
-./feedreader import /path/to/subscriptions.opml
+./herald import /path/to/subscriptions.opml
 ```
 
 ## Set Up Automatic Fetching
@@ -121,7 +121,7 @@ crontab -e
 Add this line to fetch every 30 minutes:
 
 ```cron
-*/30 * * * * cd /path/to/feedreader && ./feedreader fetch >> logs/fetch.log 2>&1
+*/30 * * * * cd /path/to/herald && ./herald fetch >> logs/fetch.log 2>&1
 ```
 
 ### Option 2: Majordomo Cron
@@ -129,12 +129,12 @@ Add this line to fetch every 30 minutes:
 If you're using Majordomo:
 
 ```bash
-majordomo cron add "*/30 * * * *" "cd /path/to/feedreader && ./feedreader fetch"
+majordomo cron add "*/30 * * * *" "cd /path/to/herald && ./herald fetch"
 ```
 
 ### Option 3: Systemd Timer
 
-Create `/etc/systemd/system/feedreader-fetch.service`:
+Create `/etc/systemd/system/herald-fetch.service`:
 
 ```ini
 [Unit]
@@ -144,11 +144,11 @@ After=network.target
 [Service]
 Type=oneshot
 User=your-username
-WorkingDirectory=/path/to/feedreader
-ExecStart=/path/to/feedreader/feedreader fetch
+WorkingDirectory=/path/to/herald
+ExecStart=/path/to/herald/herald fetch
 ```
 
-Create `/etc/systemd/system/feedreader-fetch.timer`:
+Create `/etc/systemd/system/herald-fetch.timer`:
 
 ```ini
 [Unit]
@@ -166,11 +166,11 @@ Enable and start:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable feedreader-fetch.timer
-sudo systemctl start feedreader-fetch.timer
+sudo systemctl enable herald-fetch.timer
+sudo systemctl start herald-fetch.timer
 
 # Check status
-systemctl status feedreader-fetch.timer
+systemctl status herald-fetch.timer
 ```
 
 ## Verify Installation
@@ -178,7 +178,7 @@ systemctl status feedreader-fetch.timer
 ### 1. Manual Fetch
 
 ```bash
-./feedreader fetch
+./herald fetch
 ```
 
 You should see output like:
@@ -196,13 +196,13 @@ Processed 50 articles
 ### 2. List Articles
 
 ```bash
-./feedreader list --limit 10
+./herald list --limit 10
 ```
 
 ### 3. Mark as Read
 
 ```bash
-./feedreader read 1
+./herald read 1
 ```
 
 ## Troubleshooting
@@ -232,11 +232,11 @@ ollama list
 
 ```bash
 # Check database file exists and is readable
-ls -lh feedreader.db
+ls -lh herald.db
 
 # If corrupted, remove and re-fetch
-rm feedreader.db
-./feedreader fetch
+rm herald.db
+./herald fetch
 ```
 
 ### No Articles Fetched
@@ -284,7 +284,7 @@ Balance timeliness vs. resource usage:
 Periodically clean old read articles:
 
 ```bash
-sqlite3 feedreader.db "DELETE FROM articles WHERE id IN (SELECT article_id FROM read_state WHERE read = 1 AND read_date < datetime('now', '-30 days'))"
+sqlite3 herald.db "DELETE FROM articles WHERE id IN (SELECT article_id FROM read_state WHERE read = 1 AND read_date < datetime('now', '-30 days'))"
 ```
 
 ## Uninstall
@@ -294,11 +294,11 @@ sqlite3 feedreader.db "DELETE FROM articles WHERE id IN (SELECT article_id FROM 
 make clean
 
 # Remove database
-rm -f feedreader.db
+rm -f herald.db
 
 # Remove config
 rm -rf config/
 
 # Remove cron job
-crontab -e  # Delete the feedreader line
+crontab -e  # Delete the herald line
 ```

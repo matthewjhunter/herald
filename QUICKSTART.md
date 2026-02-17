@@ -21,15 +21,15 @@ ollama list | grep -E "(gemma2|llama3.2)"
 # 1. Build the application
 task build
 # or: make build
-# or: go build -o feedreader ./cmd/feedreader
+# or: go build -o herald ./cmd/herald
 
 # 2. Initialize configuration
 task init-config
-# or: ./feedreader init-config
+# or: ./herald init-config
 
 # 3. Import your feeds (optional - use test feeds for now)
 task import OPML_FILE=test_feeds.opml
-# or: ./feedreader import test_feeds.opml
+# or: ./herald import test_feeds.opml
 ```
 
 ## First Run
@@ -37,14 +37,14 @@ task import OPML_FILE=test_feeds.opml
 ```bash
 # Fetch feeds and process with AI
 task fetch
-# or: ./feedreader fetch
+# or: ./herald fetch
 
 # List articles
 task list
-# or: ./feedreader list --limit 10
+# or: ./herald list --limit 10
 
 # Read an article (mark as read)
-./feedreader read 1
+./herald read 1
 ```
 
 ## Expected Output
@@ -104,8 +104,8 @@ Notifications will fall back to stdout.
 | `task test` | Run tests |
 | `task fetch` | Fetch and process feeds |
 | `task list` | List unread articles |
-| `./feedreader read <id>` | Mark article as read |
-| `./feedreader import <file>` | Import OPML |
+| `./herald read <id>` | Mark article as read |
+| `./herald import <file>` | Import OPML |
 
 ## Configuration File
 
@@ -129,12 +129,12 @@ Key settings:
 
 Check logs and error messages:
 ```bash
-./feedreader fetch 2>&1 | tee fetch.log
+./herald fetch 2>&1 | tee fetch.log
 ```
 
 Review database:
 ```bash
-sqlite3 feedreader.db "SELECT * FROM feeds"
+sqlite3 herald.db "SELECT * FROM feeds"
 ```
 
 ## Success Criteria

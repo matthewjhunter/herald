@@ -1,4 +1,4 @@
-module github.com/feedreader/feedreader
+module github.com/matthewjhunter/herald
 
 go 1.24.1
 

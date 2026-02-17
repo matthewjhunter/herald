@@ -1,6 +1,8 @@
-# FeedReader - Intelligent RSS/Atom Feed Reader
+# Herald - Your AI-Powered News Herald
 
-An intelligent RSS/Atom feed reader with AI-powered security screening and content curation, integrated with Majordomo for voice notifications.
+An intelligent RSS/Atom feed reader with AI-powered security screening and content curation. Herald monitors your feeds, filters for importance, and announces significant news via Majordomo voice notifications.
+
+Like a medieval herald who announces important news to their lord, Herald watches your RSS feeds and speaks only what matters.
 
 ## Features
 
@@ -43,8 +45,8 @@ This separation ensures security without sacrificing editorial neutrality.
 ### Build
 
 ```bash
-cd feedreader
-go build -o feedreader ./cmd/feedreader
+cd herald
+go build -o herald ./cmd/herald
 ```
 
 ## Output Formats
@@ -53,20 +55,20 @@ FeedReader supports three output formats via the `--format` flag:
 
 ### JSON (default) - Machine Parseable
 ```bash
-./feedreader list --format=json | jq '.[].Title'
-./feedreader fetch --format=json > result.json
+./herald list --format=json | jq '.[].Title'
+./herald fetch --format=json > result.json
 ```
 
 ### Text - Tab-Delimited
 ```bash
-./feedreader list --format=text | awk -F'\t' '{print $2}'
-./feedreader fetch --format=text | grep "processed="
+./herald list --format=text | awk -F'\t' '{print $2}'
+./herald fetch --format=text | grep "processed="
 ```
 
 ### Human - Formatted for Reading
 ```bash
-./feedreader list --format=human | less
-./feedreader fetch --format=human
+./herald list --format=human | less
+./herald fetch --format=human
 ```
 
 All errors and warnings go to stderr, keeping stdout clean for piping.
@@ -76,7 +78,7 @@ All errors and warnings go to stderr, keeping stdout clean for piping.
 Group articles covering the same event from different sources:
 
 ```bash
-./feedreader list --cluster --format=human
+./herald list --cluster --format=human
 ```
 
 The clustering feature uses Llama 3.2 to analyze article titles and detect related stories, providing topic summaries and grouping duplicate coverage.
@@ -86,14 +88,14 @@ The clustering feature uses Llama 3.2 to analyze article titles and detect relat
 ### 1. Initialize Configuration
 
 ```bash
-./feedreader init-config
+./herald init-config
 ```
 
 This creates `config/config.yaml` with default settings. Edit as needed:
 
 ```yaml
 database:
-  path: ./feedreader.db
+  path: ./herald.db
 
 ollama:
   base_url: http://localhost:11434
@@ -120,13 +122,13 @@ preferences:
 ### 2. Import Feeds from OPML
 
 ```bash
-./feedreader import /path/to/subscriptions.opml
+./herald import /path/to/subscriptions.opml
 ```
 
 ### 3. Fetch and Process Feeds
 
 ```bash
-./feedreader fetch
+./herald fetch
 ```
 
 This command:
@@ -139,13 +141,13 @@ This command:
 ### 4. List Unread Articles
 
 ```bash
-./feedreader list --limit 20
+./herald list --limit 20
 ```
 
 ### 5. Mark Article as Read
 
 ```bash
-./feedreader read <article-id>
+./herald read <article-id>
 ```
 
 ## Automation with Cron
@@ -153,13 +155,13 @@ This command:
 Add to your crontab to fetch feeds every 30 minutes:
 
 ```cron
-*/30 * * * * cd /path/to/feedreader && ./feedreader fetch >> fetch.log 2>&1
+*/30 * * * * cd /path/to/herald && ./herald fetch >> fetch.log 2>&1
 ```
 
 Or use Majordomo cron:
 
 ```bash
-majordomo cron add "*/30 * * * *" "cd /path/to/feedreader && ./feedreader fetch"
+majordomo cron add "*/30 * * * *" "cd /path/to/herald && ./herald fetch"
 ```
 
 ## Database Schema
@@ -193,27 +195,27 @@ Feedreader integrates with [Majordomo](https://github.com/matthewjhunter/majordo
 
 ### Quick Setup
 
-1. **Configure feedreader** (see Configuration above)
+1. **Configure herald** (see Configuration above)
 2. **Import feeds** for each user:
    ```bash
-   feedreader import --user=1 ~/feeds.opml
+   herald import --user=1 ~/feeds.opml
    ```
 3. **Add to Majordomo config** (`~/.config/majordomo/config.toml`):
    ```toml
    # Fetch feeds once
    [[daemon.schedule]]
-   name = "feedreader-fetch"
+   name = "herald-fetch"
    cron = "*/15 * * * *"
    persona = "jarvis"
-   command = "feedreader fetch-feeds --format=json"
+   command = "herald fetch-feeds --format=json"
    format = "json"
 
    # Process per user
    [[daemon.schedule]]
-   name = "feedreader-process-user1"
+   name = "herald-process-user1"
    cron = "*/15 * * * *"
    persona = "jarvis"
-   command = "feedreader process --user=1 --format=json"
+   command = "herald process --user=1 --format=json"
    format = "json"
    ```
 
@@ -253,13 +255,13 @@ ollama pull llama3.2
 
 ### Database Location
 
-Default database: `./feedreader.db`
+Default database: `./herald.db`
 
 To use a different location, edit `config/config.yaml`:
 
 ```yaml
 database:
-  path: /path/to/custom/feedreader.db
+  path: /path/to/custom/herald.db
 ```
 
 ## Future Enhancements

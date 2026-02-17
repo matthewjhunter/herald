@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/feedreader/feedreader/internal/storage"
+	"github.com/matthewjhunter/herald/internal/storage"
 )
 
 type Notifier struct {

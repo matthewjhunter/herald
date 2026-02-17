@@ -3,7 +3,7 @@
 
 database:
   # Path to SQLite database file
-  path: ./feedreader.db
+  path: ./herald.db
 
 ollama:
   # Ollama API base URL

@@ -1,7 +1,7 @@
 .PHONY: build test clean install run-fetch run-list help
 
 # Binary name
-BINARY=feedreader
+BINARY=herald
 
 # Build directories
 BUILD_DIR=.
@@ -17,7 +17,7 @@ help:
 
 build:
 	@echo "Building $(BINARY)..."
-	@go build -o $(BINARY) ./cmd/feedreader
+	@go build -o $(BINARY) ./cmd/herald
 
 test:
 	@echo "Running tests..."

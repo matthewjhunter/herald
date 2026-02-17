@@ -4,19 +4,19 @@
 
 ```bash
 # 1. Initialize configuration
-./feedreader init-config
+./herald init-config
 
 # 2. Import your feeds
-./feedreader import subscriptions.opml
+./herald import subscriptions.opml
 
 # 3. Fetch and process articles
-./feedreader fetch
+./herald fetch
 
 # 4. List unread articles
-./feedreader list
+./herald list
 
 # 5. Mark article as read
-./feedreader read <article-id>
+./herald read <article-id>
 ```
 
 ## Commands
@@ -26,10 +26,10 @@
 Creates a default configuration file.
 
 ```bash
-./feedreader init-config
+./herald init-config
 
 # Use custom path
-./feedreader --config /path/to/config.yaml init-config
+./herald --config /path/to/config.yaml init-config
 ```
 
 ### `import`
@@ -37,7 +37,7 @@ Creates a default configuration file.
 Imports feeds from an OPML file.
 
 ```bash
-./feedreader import feeds.opml
+./herald import feeds.opml
 ```
 
 **OPML Format:**
@@ -63,7 +63,7 @@ Imports feeds from an OPML file.
 Fetches all enabled feeds and processes articles with AI.
 
 ```bash
-./feedreader fetch
+./herald fetch
 ```
 
 **What happens:**
@@ -99,11 +99,11 @@ Lists unread articles.
 
 ```bash
 # List 20 most recent unread articles (default)
-./feedreader list
+./herald list
 
 # List specific number
-./feedreader list --limit 50
-./feedreader list -n 10
+./herald list --limit 50
+./herald list -n 10
 ```
 
 **Example output:**
@@ -128,7 +128,7 @@ Published: 2026-02-17 14:15
 Marks an article as read.
 
 ```bash
-./feedreader read 42
+./herald read 42
 ```
 
 ## Workflows
@@ -139,7 +139,7 @@ Set up a morning briefing:
 
 ```bash
 # Add to crontab for 8 AM daily
-0 8 * * * cd /path/to/feedreader && ./feedreader fetch && ./feedreader list --limit 20
+0 8 * * * cd /path/to/herald && ./herald fetch && ./herald list --limit 20
 ```
 
 ### Continuous Monitoring
@@ -148,7 +148,7 @@ For breaking news:
 
 ```bash
 # Fetch every 15 minutes
-*/15 * * * * cd /path/to/feedreader && ./feedreader fetch
+*/15 * * * * cd /path/to/herald && ./herald fetch
 ```
 
 ### Manual Curation
@@ -157,17 +157,17 @@ Review articles yourself:
 
 ```bash
 # Fetch new articles
-./feedreader fetch
+./herald fetch
 
 # List them
-./feedreader list --limit 50 > articles.txt
+./herald list --limit 50 > articles.txt
 
 # Review in your editor
 vim articles.txt
 
 # Mark interesting ones as read after reading
-./feedreader read 42
-./feedreader read 43
+./herald read 42
+./herald read 43
 ```
 
 ### Batch Processing
@@ -176,10 +176,10 @@ Process articles in batches:
 
 ```bash
 # Fetch without AI processing (if Ollama is down)
-./feedreader fetch || echo "AI processing unavailable"
+./herald fetch || echo "AI processing unavailable"
 
 # Later, manually review
-./feedreader list | less
+./herald list | less
 ```
 
 ## AI Processing Details
@@ -307,16 +307,16 @@ Create a daily digest:
 #!/bin/bash
 # daily-digest.sh
 
-cd /path/to/feedreader
+cd /path/to/herald
 
 # Fetch latest
-./feedreader fetch
+./herald fetch
 
 # Generate digest
 {
   echo "Subject: Daily News Digest"
   echo ""
-  ./feedreader list --limit 20
+  ./herald list --limit 20
 } | sendmail your@email.com
 ```
 
@@ -334,10 +334,10 @@ Use different configs for different topics:
 
 ```bash
 # Tech news config
-./feedreader --config tech-config.yaml fetch
+./herald --config tech-config.yaml fetch
 
 # Security news config
-./feedreader --config security-config.yaml fetch
+./herald --config security-config.yaml fetch
 ```
 
 ### Database Queries
@@ -346,7 +346,7 @@ Direct SQL queries for analysis:
 
 ```bash
 # Most popular feeds
-sqlite3 feedreader.db "
+sqlite3 herald.db "
 SELECT f.title, COUNT(*) as articles
 FROM articles a
 JOIN feeds f ON a.feed_id = f.id
@@ -355,7 +355,7 @@ ORDER BY articles DESC
 LIMIT 10"
 
 # Average interest scores by feed
-sqlite3 feedreader.db "
+sqlite3 herald.db "
 SELECT f.title, AVG(rs.interest_score) as avg_score
 FROM read_state rs
 JOIN articles a ON rs.article_id = a.id
@@ -365,7 +365,7 @@ GROUP BY f.id
 ORDER BY avg_score DESC"
 
 # Most interesting articles
-sqlite3 feedreader.db "
+sqlite3 herald.db "
 SELECT a.title, a.url, rs.interest_score
 FROM articles a
 JOIN read_state rs ON a.id = rs.article_id
@@ -379,7 +379,7 @@ LIMIT 20"
 Track what you've read:
 
 ```bash
-sqlite3 feedreader.db -header -csv "
+sqlite3 herald.db -header -csv "
 SELECT a.title, a.url, a.published_date, rs.interest_score
 FROM articles a
 JOIN read_state rs ON a.id = rs.article_id
@@ -403,7 +403,7 @@ ORDER BY rs.read_date DESC" > read_articles.csv
 
 ```bash
 # Check feed URLs
-sqlite3 feedreader.db "SELECT * FROM feeds WHERE enabled = 1"
+sqlite3 herald.db "SELECT * FROM feeds WHERE enabled = 1"
 
 # Test a feed manually
 curl https://example.com/feed.xml

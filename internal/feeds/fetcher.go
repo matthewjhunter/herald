@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/feedreader/feedreader/internal/storage"
+	"github.com/matthewjhunter/herald/internal/storage"
 	"github.com/mmcdole/gofeed"
 )
 

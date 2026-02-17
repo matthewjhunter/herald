@@ -6,7 +6,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/feedreader/feedreader/internal/storage"
+	"github.com/matthewjhunter/herald/internal/storage"
 )
 
 // Embedded default prompts
