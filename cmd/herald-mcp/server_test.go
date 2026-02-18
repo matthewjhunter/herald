@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/matthewjhunter/herald"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const testRSS = `<?xml version="1.0" encoding="UTF-8"?>
@@ -27,7 +29,9 @@ const testRSS = `<?xml version="1.0" encoding="UTF-8"?>
   </channel>
 </rss>`
 
-func newTestServer(t *testing.T) *server {
+// --- Test helpers ---
+
+func newTestSessionWithUserID(t *testing.T, userID int64) (*heraldServer, *mcp.ClientSession) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	engine, err := herald.NewEngine(herald.EngineConfig{DBPath: dbPath})
@@ -35,7 +39,29 @@ func newTestServer(t *testing.T) *server {
 		t.Fatalf("NewEngine: %v", err)
 	}
 	t.Cleanup(func() { engine.Close() })
-	return newServer(engine, 1)
+
+	hs := &heraldServer{engine: engine, userID: userID}
+	server := newMCPServer(hs)
+
+	serverT, clientT := mcp.NewInMemoryTransports()
+	_, err = server.Connect(context.Background(), serverT, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0.1.0"}, nil)
+	session, err := client.Connect(context.Background(), clientT, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() { session.Close() })
+
+	return hs, session
+}
+
+func newTestSession(t *testing.T) (*heraldServer, *mcp.ClientSession) {
+	t.Helper()
+	return newTestSessionWithUserID(t, 1)
 }
 
 // feedServer returns a test HTTP server serving valid RSS.
@@ -49,18 +75,59 @@ func feedServer(t *testing.T) *httptest.Server {
 	return ts
 }
 
-// subscribeFeed subscribes to the test feed server and returns the feed ID.
-func subscribeFeed(t *testing.T, srv *server, feedURL string) int64 {
+// callTool calls an MCP tool and returns both the result and any protocol error.
+func callTool(t *testing.T, session *mcp.ClientSession, name string, args map[string]any) (*mcp.CallToolResult, error) {
 	t.Helper()
-	resp := srv.handleRequest(toolCall(1, "feed_subscribe", map[string]any{
+	return session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      name,
+		Arguments: args,
+	})
+}
+
+// mustCallTool calls an MCP tool and fatals on protocol errors.
+func mustCallTool(t *testing.T, session *mcp.ClientSession, name string, args map[string]any) *mcp.CallToolResult {
+	t.Helper()
+	result, err := callTool(t, session, name, args)
+	if err != nil {
+		t.Fatalf("CallTool %s: %v", name, err)
+	}
+	return result
+}
+
+// expectError calls a tool and asserts either a protocol error or tool error.
+func expectError(t *testing.T, session *mcp.ClientSession, name string, args map[string]any) {
+	t.Helper()
+	result, err := callTool(t, session, name, args)
+	if err == nil && (result == nil || !result.IsError) {
+		t.Fatalf("expected error calling %s", name)
+	}
+}
+
+// resultText extracts the first text content from a tool result.
+func resultText(t *testing.T, result *mcp.CallToolResult) string {
+	t.Helper()
+	if len(result.Content) == 0 {
+		t.Fatal("no content in result")
+	}
+	tc, ok := result.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("first content is %T, want *mcp.TextContent", result.Content[0])
+	}
+	return tc.Text
+}
+
+// subscribeFeed subscribes to the test feed server and returns the feed ID.
+func subscribeFeed(t *testing.T, session *mcp.ClientSession, feedURL string) int64 {
+	t.Helper()
+	result := mustCallTool(t, session, "feed_subscribe", map[string]any{
 		"url": feedURL,
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("subscribe error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("subscribe error: %s", resultText(t, result))
 	}
 
-	resp = srv.handleRequest(toolCall(2, "feeds_list", map[string]any{}))
-	text := resultText(t, resp)
+	result = mustCallTool(t, session, "feeds_list", map[string]any{})
+	text := resultText(t, result)
 	var feeds []struct {
 		ID int64 `json:"id"`
 	}
@@ -73,104 +140,20 @@ func subscribeFeed(t *testing.T, srv *server, feedURL string) int64 {
 	return feeds[0].ID
 }
 
-// rpc builds a jsonRPCRequest for testing.
-func rpc(id int, method string, params any) jsonRPCRequest {
-	req := jsonRPCRequest{
-		JSONRPC: "2.0",
-		Method:  method,
-	}
-	idBytes, _ := json.Marshal(id)
-	req.ID = idBytes
-	if params != nil {
-		p, _ := json.Marshal(params)
-		req.Params = p
-	}
-	return req
-}
-
-// toolCall builds a tools/call request.
-func toolCall(id int, name string, args any) jsonRPCRequest {
-	return rpc(id, "tools/call", map[string]any{
-		"name":      name,
-		"arguments": args,
-	})
-}
-
-// resultText extracts the first text content from an MCP tool response.
-func resultText(t *testing.T, resp jsonRPCResponse) string {
-	t.Helper()
-	b, _ := json.Marshal(resp.Result)
-	var r struct {
-		Content []struct {
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if err := json.Unmarshal(b, &r); err != nil || len(r.Content) == 0 {
-		t.Fatalf("could not extract text from result: %s", b)
-	}
-	return r.Content[0].Text
-}
-
-// resultIsError checks whether an MCP tool response is an error.
-func resultIsError(t *testing.T, resp jsonRPCResponse) bool {
-	t.Helper()
-	b, _ := json.Marshal(resp.Result)
-	var r struct {
-		IsError bool `json:"isError"`
-	}
-	json.Unmarshal(b, &r)
-	return r.IsError
-}
-
 // --- Protocol tests ---
 
 func TestInitialize(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(rpc(1, "initialize", nil))
-
-	if resp.Error != nil {
-		t.Fatalf("unexpected error: %s", resp.Error.Message)
-	}
-	b, _ := json.Marshal(resp.Result)
-	var result struct {
-		ProtocolVersion string `json:"protocolVersion"`
-		ServerInfo      struct {
-			Name string `json:"name"`
-		} `json:"serverInfo"`
-	}
-	json.Unmarshal(b, &result)
-	if result.ProtocolVersion != "2024-11-05" {
-		t.Errorf("protocol version = %q, want 2024-11-05", result.ProtocolVersion)
-	}
-	if result.ServerInfo.Name != "herald" {
-		t.Errorf("server name = %q, want herald", result.ServerInfo.Name)
-	}
-}
-
-func TestPing(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(rpc(1, "ping", nil))
-
-	if resp.Error != nil {
-		t.Fatalf("unexpected error: %s", resp.Error.Message)
-	}
+	// SDK handles initialization during Connect. If we get here, it worked.
+	_, session := newTestSession(t)
+	_ = session
 }
 
 func TestToolsList(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(rpc(1, "tools/list", nil))
-
-	if resp.Error != nil {
-		t.Fatalf("unexpected error: %s", resp.Error.Message)
+	_, session := newTestSession(t)
+	result, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
 	}
-
-	b, _ := json.Marshal(resp.Result)
-	var result struct {
-		Tools []struct {
-			Name string `json:"name"`
-		} `json:"tools"`
-	}
-	json.Unmarshal(b, &result)
 
 	expected := []string{
 		"articles_unread", "articles_get", "articles_mark_read",
@@ -195,48 +178,32 @@ func TestToolsList(t *testing.T) {
 	}
 }
 
-func TestUnknownMethod(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(rpc(1, "nonexistent/method", nil))
-
-	if resp.Error == nil {
-		t.Fatal("expected error for unknown method")
-	}
-	if resp.Error.Code != -32601 {
-		t.Errorf("error code = %d, want -32601", resp.Error.Code)
-	}
-}
-
 // --- Tool tests ---
 
 func TestFeedsListEmpty(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(toolCall(1, "feeds_list", map[string]any{}))
-
-	if resp.Error != nil {
-		t.Fatalf("unexpected error: %s", resp.Error.Message)
-	}
-	if resultIsError(t, resp) {
+	_, session := newTestSession(t)
+	result := mustCallTool(t, session, "feeds_list", map[string]any{})
+	if result.IsError {
 		t.Fatal("unexpected tool error")
 	}
 }
 
 func TestFeedSubscribeAndList(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 	ts := feedServer(t)
 
 	// Subscribe
-	resp := srv.handleRequest(toolCall(1, "feed_subscribe", map[string]any{
+	result := mustCallTool(t, session, "feed_subscribe", map[string]any{
 		"url":   ts.URL + "/feed.xml",
 		"title": "Test Feed",
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("subscribe error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("subscribe error: %s", resultText(t, result))
 	}
 
 	// List should show the feed
-	resp = srv.handleRequest(toolCall(2, "feeds_list", map[string]any{}))
-	text := resultText(t, resp)
+	result = mustCallTool(t, session, "feeds_list", map[string]any{})
+	text := resultText(t, result)
 	var feeds []struct {
 		URL   string `json:"url"`
 		Title string `json:"title"`
@@ -253,31 +220,27 @@ func TestFeedSubscribeAndList(t *testing.T) {
 }
 
 func TestFeedSubscribeMissingURL(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(toolCall(1, "feed_subscribe", map[string]any{}))
-
-	if !resultIsError(t, resp) {
-		t.Fatal("expected error for missing URL")
-	}
+	_, session := newTestSession(t)
+	expectError(t, session, "feed_subscribe", map[string]any{})
 }
 
 func TestFeedRename(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 	ts := feedServer(t)
-	feedID := subscribeFeed(t, srv, ts.URL+"/feed.xml")
+	feedID := subscribeFeed(t, session, ts.URL+"/feed.xml")
 
 	// Rename
-	resp := srv.handleRequest(toolCall(3, "feed_rename", map[string]any{
+	result := mustCallTool(t, session, "feed_rename", map[string]any{
 		"feed_id": feedID,
 		"title":   "Renamed Feed",
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("rename error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("rename error: %s", resultText(t, result))
 	}
 
 	// Verify
-	resp = srv.handleRequest(toolCall(4, "feeds_list", map[string]any{}))
-	text := resultText(t, resp)
+	result = mustCallTool(t, session, "feeds_list", map[string]any{})
+	text := resultText(t, result)
 	var updated []struct {
 		Title string `json:"title"`
 	}
@@ -291,39 +254,27 @@ func TestFeedRename(t *testing.T) {
 }
 
 func TestFeedRenameMissingParams(t *testing.T) {
-	srv := newTestServer(t)
-
-	resp := srv.handleRequest(toolCall(1, "feed_rename", map[string]any{
-		"feed_id": 1,
-	}))
-	if !resultIsError(t, resp) {
-		t.Fatal("expected error for missing title")
-	}
-
-	resp = srv.handleRequest(toolCall(2, "feed_rename", map[string]any{
-		"title": "Foo",
-	}))
-	if !resultIsError(t, resp) {
-		t.Fatal("expected error for missing feed_id")
-	}
+	_, session := newTestSession(t)
+	expectError(t, session, "feed_rename", map[string]any{"feed_id": 1})
+	expectError(t, session, "feed_rename", map[string]any{"title": "Foo"})
 }
 
 func TestFeedUnsubscribe(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 	ts := feedServer(t)
-	feedID := subscribeFeed(t, srv, ts.URL+"/feed.xml")
+	feedID := subscribeFeed(t, session, ts.URL+"/feed.xml")
 
 	// Unsubscribe
-	resp := srv.handleRequest(toolCall(3, "feed_unsubscribe", map[string]any{
+	result := mustCallTool(t, session, "feed_unsubscribe", map[string]any{
 		"feed_id": feedID,
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("unsubscribe error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("unsubscribe error: %s", resultText(t, result))
 	}
 
 	// List should be empty
-	resp = srv.handleRequest(toolCall(4, "feeds_list", map[string]any{}))
-	text := resultText(t, resp)
+	result = mustCallTool(t, session, "feeds_list", map[string]any{})
+	text := resultText(t, result)
 	var remaining []struct{}
 	json.Unmarshal([]byte(text), &remaining)
 	if len(remaining) != 0 {
@@ -332,28 +283,26 @@ func TestFeedUnsubscribe(t *testing.T) {
 }
 
 func TestArticlesUnreadEmpty(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(toolCall(1, "articles_unread", map[string]any{}))
-
-	if resultIsError(t, resp) {
-		t.Fatalf("unexpected error: %s", resultText(t, resp))
+	_, session := newTestSession(t)
+	result := mustCallTool(t, session, "articles_unread", map[string]any{})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", resultText(t, result))
 	}
 }
 
 func TestArticlesUnreadWithFeed(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 	ts := feedServer(t)
-	subscribeFeed(t, srv, ts.URL+"/feed.xml")
+	subscribeFeed(t, session, ts.URL+"/feed.xml")
 
-	// Subscribe stores articles from the initial fetch
-	resp := srv.handleRequest(toolCall(1, "articles_unread", map[string]any{
+	result := mustCallTool(t, session, "articles_unread", map[string]any{
 		"limit": 10,
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("articles_unread error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("articles_unread error: %s", resultText(t, result))
 	}
 
-	text := resultText(t, resp)
+	text := resultText(t, result)
 	var articles []struct {
 		Title string `json:"title"`
 	}
@@ -367,13 +316,13 @@ func TestArticlesUnreadWithFeed(t *testing.T) {
 }
 
 func TestArticlesGetAndMarkRead(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 	ts := feedServer(t)
-	subscribeFeed(t, srv, ts.URL+"/feed.xml")
+	subscribeFeed(t, session, ts.URL+"/feed.xml")
 
 	// Get article list to find an ID
-	resp := srv.handleRequest(toolCall(1, "articles_unread", map[string]any{"limit": 1}))
-	text := resultText(t, resp)
+	result := mustCallTool(t, session, "articles_unread", map[string]any{"limit": 1})
+	text := resultText(t, result)
 	var articles []struct {
 		ID int64 `json:"id"`
 	}
@@ -384,78 +333,64 @@ func TestArticlesGetAndMarkRead(t *testing.T) {
 	articleID := articles[0].ID
 
 	// Get full article
-	resp = srv.handleRequest(toolCall(2, "articles_get", map[string]any{
+	result = mustCallTool(t, session, "articles_get", map[string]any{
 		"article_id": articleID,
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("articles_get error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("articles_get error: %s", resultText(t, result))
 	}
 
 	// Mark read
-	resp = srv.handleRequest(toolCall(3, "articles_mark_read", map[string]any{
+	result = mustCallTool(t, session, "articles_mark_read", map[string]any{
 		"article_id": articleID,
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("articles_mark_read error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("articles_mark_read error: %s", resultText(t, result))
 	}
 }
 
 func TestArticlesGetMissingID(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(toolCall(1, "articles_get", map[string]any{}))
-
-	if !resultIsError(t, resp) {
-		t.Fatal("expected error for missing article_id")
-	}
+	_, session := newTestSession(t)
+	expectError(t, session, "articles_get", map[string]any{})
 }
 
 func TestArticlesMarkReadMissingID(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(toolCall(1, "articles_mark_read", map[string]any{}))
-
-	if !resultIsError(t, resp) {
-		t.Fatal("expected error for missing article_id")
-	}
+	_, session := newTestSession(t)
+	expectError(t, session, "articles_mark_read", map[string]any{})
 }
 
 func TestArticleGroupsEmpty(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(toolCall(1, "article_groups", map[string]any{}))
-
-	if resultIsError(t, resp) {
-		t.Fatalf("unexpected error: %s", resultText(t, resp))
+	_, session := newTestSession(t)
+	result := mustCallTool(t, session, "article_groups", map[string]any{})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", resultText(t, result))
 	}
 }
 
 func TestArticleGroupGetMissingID(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(toolCall(1, "article_group_get", map[string]any{}))
-
-	if !resultIsError(t, resp) {
-		t.Fatal("expected error for missing group_id")
-	}
+	_, session := newTestSession(t)
+	expectError(t, session, "article_group_get", map[string]any{})
 }
 
 func TestFeedStats(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(toolCall(1, "feed_stats", map[string]any{}))
-
-	if resultIsError(t, resp) {
-		t.Fatalf("unexpected error: %s", resultText(t, resp))
+	_, session := newTestSession(t)
+	result := mustCallTool(t, session, "feed_stats", map[string]any{})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", resultText(t, result))
 	}
 }
 
 func TestFeedStatsWithFeed(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 	ts := feedServer(t)
-	subscribeFeed(t, srv, ts.URL+"/feed.xml")
+	subscribeFeed(t, session, ts.URL+"/feed.xml")
 
-	resp := srv.handleRequest(toolCall(1, "feed_stats", map[string]any{}))
-	if resultIsError(t, resp) {
-		t.Fatalf("feed_stats error: %s", resultText(t, resp))
+	result := mustCallTool(t, session, "feed_stats", map[string]any{})
+	if result.IsError {
+		t.Fatalf("feed_stats error: %s", resultText(t, result))
 	}
 
-	text := resultText(t, resp)
+	text := resultText(t, result)
 	var stats struct {
 		Feeds []struct {
 			TotalArticles int `json:"total_articles"`
@@ -471,96 +406,74 @@ func TestFeedStatsWithFeed(t *testing.T) {
 }
 
 func TestUnknownTool(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(toolCall(1, "nonexistent_tool", map[string]any{}))
-
-	if !resultIsError(t, resp) {
+	_, session := newTestSession(t)
+	_, err := callTool(t, session, "nonexistent_tool", map[string]any{})
+	if err == nil {
 		t.Fatal("expected error for unknown tool")
 	}
-	text := resultText(t, resp)
-	if text == "" {
-		t.Fatal("expected error message")
-	}
-}
-
-func TestInvalidToolCallParams(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(rpc(1, "tools/call", "not-valid-json"))
-
-	if resultIsError(t, resp) {
-		return // expected
-	}
-	t.Fatal("expected error for invalid params")
 }
 
 func TestPollNowDisabled(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 	// poller is nil — poll_now should return an error
-	resp := srv.handleRequest(toolCall(1, "poll_now", map[string]any{}))
-
-	if !resultIsError(t, resp) {
+	result := mustCallTool(t, session, "poll_now", map[string]any{})
+	if !result.IsError {
 		t.Fatal("expected error when polling is disabled")
 	}
-	text := resultText(t, resp)
+	text := resultText(t, result)
 	if text == "" {
 		t.Fatal("expected error message")
 	}
 }
 
 func TestPollNowEnabled(t *testing.T) {
-	srv := newTestServer(t)
+	hs, session := newTestSession(t)
 	ts := feedServer(t)
 
 	// Subscribe to a feed so poll has something to fetch
-	subscribeFeed(t, srv, ts.URL+"/feed.xml")
+	subscribeFeed(t, session, ts.URL+"/feed.xml")
 
 	// Attach a poller
-	p := newPoller(srv.engine, srv.userID, 10*time.Minute, 8.0)
-	srv.poller = p
+	p := newPoller(hs.engine, hs.userID, 10*time.Minute, 8.0)
+	hs.poller = p
 
-	resp := srv.handleRequest(toolCall(1, "poll_now", map[string]any{}))
-	if resultIsError(t, resp) {
-		t.Fatalf("poll_now error: %s", resultText(t, resp))
+	result := mustCallTool(t, session, "poll_now", map[string]any{})
+	if result.IsError {
+		t.Fatalf("poll_now error: %s", resultText(t, result))
 	}
 
-	text := resultText(t, resp)
-	var result struct {
+	text := resultText(t, result)
+	var pollResult struct {
 		FeedsTotal      int `json:"feeds_total"`
 		FeedsDownloaded int `json:"feeds_downloaded"`
 	}
-	if err := json.Unmarshal([]byte(text), &result); err != nil {
+	if err := json.Unmarshal([]byte(text), &pollResult); err != nil {
 		t.Fatalf("unmarshal poll result: %v", err)
 	}
-	if result.FeedsTotal == 0 {
+	if pollResult.FeedsTotal == 0 {
 		t.Error("expected non-zero feeds_total")
 	}
 }
 
 func TestFeedUnsubscribeMissingID(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(toolCall(1, "feed_unsubscribe", map[string]any{}))
-
-	if !resultIsError(t, resp) {
-		t.Fatal("expected error for missing feed_id")
-	}
+	_, session := newTestSession(t)
+	expectError(t, session, "feed_unsubscribe", map[string]any{})
 }
 
 // --- Preferences tests ---
 
 func TestPreferencesGetDefaults(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(toolCall(1, "preferences_get", map[string]any{}))
-
-	if resultIsError(t, resp) {
-		t.Fatalf("unexpected error: %s", resultText(t, resp))
+	_, session := newTestSession(t)
+	result := mustCallTool(t, session, "preferences_get", map[string]any{})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", resultText(t, result))
 	}
 
-	text := resultText(t, resp)
+	text := resultText(t, result)
 	var prefs herald.UserPreferences
 	if err := json.Unmarshal([]byte(text), &prefs); err != nil {
 		t.Fatalf("unmarshal preferences: %v", err)
 	}
-	// Should have sensible defaults
 	if prefs.NotifyWhen != "present" {
 		t.Errorf("notify_when = %q, want %q", prefs.NotifyWhen, "present")
 	}
@@ -570,38 +483,38 @@ func TestPreferencesGetDefaults(t *testing.T) {
 }
 
 func TestPreferenceSetAndGet(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 
 	// Set keywords
-	resp := srv.handleRequest(toolCall(1, "preference_set", map[string]any{
+	result := mustCallTool(t, session, "preference_set", map[string]any{
 		"key":   "keywords",
 		"value": `["security","golang"]`,
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("set keywords error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("set keywords error: %s", resultText(t, result))
 	}
 
 	// Set interest_threshold
-	resp = srv.handleRequest(toolCall(2, "preference_set", map[string]any{
+	result = mustCallTool(t, session, "preference_set", map[string]any{
 		"key":   "interest_threshold",
 		"value": "6.5",
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("set threshold error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("set threshold error: %s", resultText(t, result))
 	}
 
 	// Set notify_when
-	resp = srv.handleRequest(toolCall(3, "preference_set", map[string]any{
+	result = mustCallTool(t, session, "preference_set", map[string]any{
 		"key":   "notify_when",
 		"value": "always",
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("set notify_when error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("set notify_when error: %s", resultText(t, result))
 	}
 
 	// Verify via preferences_get
-	resp = srv.handleRequest(toolCall(4, "preferences_get", map[string]any{}))
-	text := resultText(t, resp)
+	result = mustCallTool(t, session, "preferences_get", map[string]any{})
+	text := resultText(t, result)
 	var prefs herald.UserPreferences
 	if err := json.Unmarshal([]byte(text), &prefs); err != nil {
 		t.Fatalf("unmarshal preferences: %v", err)
@@ -619,7 +532,7 @@ func TestPreferenceSetAndGet(t *testing.T) {
 }
 
 func TestPreferenceSetValidation(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 
 	tests := []struct {
 		name  string
@@ -636,11 +549,11 @@ func TestPreferenceSetValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp := srv.handleRequest(toolCall(1, "preference_set", map[string]any{
+			result := mustCallTool(t, session, "preference_set", map[string]any{
 				"key":   tt.key,
 				"value": tt.value,
-			}))
-			if !resultIsError(t, resp) {
+			})
+			if !result.IsError {
 				t.Fatalf("expected error for %s", tt.name)
 			}
 		})
@@ -650,14 +563,13 @@ func TestPreferenceSetValidation(t *testing.T) {
 // --- Prompt tests ---
 
 func TestPromptsListDefaults(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(toolCall(1, "prompts_list", map[string]any{}))
-
-	if resultIsError(t, resp) {
-		t.Fatalf("unexpected error: %s", resultText(t, resp))
+	_, session := newTestSession(t)
+	result := mustCallTool(t, session, "prompts_list", map[string]any{})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", resultText(t, result))
 	}
 
-	text := resultText(t, resp)
+	text := resultText(t, result)
 	var prompts []herald.PromptInfo
 	if err := json.Unmarshal([]byte(text), &prompts); err != nil {
 		t.Fatalf("unmarshal prompts: %v", err)
@@ -666,7 +578,6 @@ func TestPromptsListDefaults(t *testing.T) {
 		t.Fatalf("got %d prompt types, want 4", len(prompts))
 	}
 
-	// All should be default status
 	for _, p := range prompts {
 		if p.Status != "default" {
 			t.Errorf("prompt %q status = %q, want %q", p.Type, p.Status, "default")
@@ -675,16 +586,15 @@ func TestPromptsListDefaults(t *testing.T) {
 }
 
 func TestPromptGetDefault(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(toolCall(1, "prompt_get", map[string]any{
+	_, session := newTestSession(t)
+	result := mustCallTool(t, session, "prompt_get", map[string]any{
 		"prompt_type": "curation",
-	}))
-
-	if resultIsError(t, resp) {
-		t.Fatalf("unexpected error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", resultText(t, result))
 	}
 
-	text := resultText(t, resp)
+	text := resultText(t, result)
 	var detail herald.PromptDetail
 	if err := json.Unmarshal([]byte(text), &detail); err != nil {
 		t.Fatalf("unmarshal prompt detail: %v", err)
@@ -701,25 +611,25 @@ func TestPromptGetDefault(t *testing.T) {
 }
 
 func TestPromptSetAndGet(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 	customTemplate := "Rate this article: {{.Title}}"
 	temp := 0.5
 
 	// Set custom prompt
-	resp := srv.handleRequest(toolCall(1, "prompt_set", map[string]any{
+	result := mustCallTool(t, session, "prompt_set", map[string]any{
 		"prompt_type": "curation",
 		"template":    customTemplate,
 		"temperature": temp,
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("prompt_set error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("prompt_set error: %s", resultText(t, result))
 	}
 
 	// Verify via prompt_get
-	resp = srv.handleRequest(toolCall(2, "prompt_get", map[string]any{
+	result = mustCallTool(t, session, "prompt_get", map[string]any{
 		"prompt_type": "curation",
-	}))
-	text := resultText(t, resp)
+	})
+	text := resultText(t, result)
 	var detail herald.PromptDetail
 	if err := json.Unmarshal([]byte(text), &detail); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -735,8 +645,8 @@ func TestPromptSetAndGet(t *testing.T) {
 	}
 
 	// Verify prompts_list shows custom status
-	resp = srv.handleRequest(toolCall(3, "prompts_list", map[string]any{}))
-	listText := resultText(t, resp)
+	result = mustCallTool(t, session, "prompts_list", map[string]any{})
+	listText := resultText(t, result)
 	var prompts []herald.PromptInfo
 	json.Unmarshal([]byte(listText), &prompts)
 	found := false
@@ -751,23 +661,23 @@ func TestPromptSetAndGet(t *testing.T) {
 }
 
 func TestPromptSetTemperatureOnly(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 	temp := 1.5
 
 	// Set only temperature (template should be preserved from default)
-	resp := srv.handleRequest(toolCall(1, "prompt_set", map[string]any{
+	result := mustCallTool(t, session, "prompt_set", map[string]any{
 		"prompt_type": "summarization",
 		"temperature": temp,
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("prompt_set error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("prompt_set error: %s", resultText(t, result))
 	}
 
 	// Verify template is non-empty (default preserved) and temperature is set
-	resp = srv.handleRequest(toolCall(2, "prompt_get", map[string]any{
+	result = mustCallTool(t, session, "prompt_get", map[string]any{
 		"prompt_type": "summarization",
-	}))
-	text := resultText(t, resp)
+	})
+	text := resultText(t, result)
 	var detail herald.PromptDetail
 	json.Unmarshal([]byte(text), &detail)
 	if detail.Template == "" {
@@ -779,30 +689,30 @@ func TestPromptSetTemperatureOnly(t *testing.T) {
 }
 
 func TestPromptReset(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 
 	// Set a custom prompt first
-	resp := srv.handleRequest(toolCall(1, "prompt_set", map[string]any{
+	result := mustCallTool(t, session, "prompt_set", map[string]any{
 		"prompt_type": "curation",
 		"template":    "custom template",
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("prompt_set error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("prompt_set error: %s", resultText(t, result))
 	}
 
 	// Reset
-	resp = srv.handleRequest(toolCall(2, "prompt_reset", map[string]any{
+	result = mustCallTool(t, session, "prompt_reset", map[string]any{
 		"prompt_type": "curation",
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("prompt_reset error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("prompt_reset error: %s", resultText(t, result))
 	}
 
 	// Verify it's back to default
-	resp = srv.handleRequest(toolCall(3, "prompt_get", map[string]any{
+	result = mustCallTool(t, session, "prompt_get", map[string]any{
 		"prompt_type": "curation",
-	}))
-	text := resultText(t, resp)
+	})
+	text := resultText(t, result)
 	var detail herald.PromptDetail
 	json.Unmarshal([]byte(text), &detail)
 	if detail.IsCustom {
@@ -814,9 +724,8 @@ func TestPromptReset(t *testing.T) {
 }
 
 func TestPromptSecurityBlocked(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 
-	// All prompt operations should block "security" type
 	tests := []struct {
 		name string
 		tool string
@@ -829,8 +738,8 @@ func TestPromptSecurityBlocked(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp := srv.handleRequest(toolCall(1, tt.tool, tt.args))
-			if !resultIsError(t, resp) {
+			result := mustCallTool(t, session, tt.tool, tt.args)
+			if !result.IsError {
 				t.Fatalf("expected error when accessing security prompt via %s", tt.tool)
 			}
 		})
@@ -838,31 +747,26 @@ func TestPromptSecurityBlocked(t *testing.T) {
 }
 
 func TestPromptGetUnknownType(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(toolCall(1, "prompt_get", map[string]any{
+	_, session := newTestSession(t)
+	result := mustCallTool(t, session, "prompt_get", map[string]any{
 		"prompt_type": "nonexistent",
-	}))
-	if !resultIsError(t, resp) {
+	})
+	if !result.IsError {
 		t.Fatal("expected error for unknown prompt type")
 	}
 }
 
 func TestPromptSetMissingParams(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 
-	// Missing prompt_type
-	resp := srv.handleRequest(toolCall(1, "prompt_set", map[string]any{
-		"template": "foo",
-	}))
-	if !resultIsError(t, resp) {
-		t.Fatal("expected error for missing prompt_type")
-	}
+	// Missing prompt_type — caught by schema validation
+	expectError(t, session, "prompt_set", map[string]any{"template": "foo"})
 
-	// Neither template nor temperature
-	resp = srv.handleRequest(toolCall(2, "prompt_set", map[string]any{
+	// Neither template nor temperature — caught by handler
+	result := mustCallTool(t, session, "prompt_set", map[string]any{
 		"prompt_type": "curation",
-	}))
-	if !resultIsError(t, resp) {
+	})
+	if !result.IsError {
 		t.Fatal("expected error when neither template nor temperature provided")
 	}
 }
@@ -870,13 +774,12 @@ func TestPromptSetMissingParams(t *testing.T) {
 // --- Briefing tests ---
 
 func TestBriefingEmpty(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(toolCall(1, "briefing", map[string]any{}))
-
-	if resultIsError(t, resp) {
-		t.Fatalf("unexpected error: %s", resultText(t, resp))
+	_, session := newTestSession(t)
+	result := mustCallTool(t, session, "briefing", map[string]any{})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", resultText(t, result))
 	}
-	text := resultText(t, resp)
+	text := resultText(t, result)
 	if text == "" {
 		t.Fatal("expected a response message even with no articles")
 	}
@@ -885,13 +788,13 @@ func TestBriefingEmpty(t *testing.T) {
 // --- Article star tests ---
 
 func TestArticleStarAndUnstar(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 	ts := feedServer(t)
-	subscribeFeed(t, srv, ts.URL+"/feed.xml")
+	subscribeFeed(t, session, ts.URL+"/feed.xml")
 
 	// Get an article ID
-	resp := srv.handleRequest(toolCall(1, "articles_unread", map[string]any{"limit": 1}))
-	text := resultText(t, resp)
+	result := mustCallTool(t, session, "articles_unread", map[string]any{"limit": 1})
+	text := resultText(t, result)
 	var articles []struct {
 		ID int64 `json:"id"`
 	}
@@ -902,38 +805,35 @@ func TestArticleStarAndUnstar(t *testing.T) {
 	articleID := articles[0].ID
 
 	// Star
-	resp = srv.handleRequest(toolCall(2, "article_star", map[string]any{
+	result = mustCallTool(t, session, "article_star", map[string]any{
 		"article_id": articleID,
 		"starred":    true,
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("star error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("star error: %s", resultText(t, result))
 	}
 
 	// Unstar
-	resp = srv.handleRequest(toolCall(3, "article_star", map[string]any{
+	result = mustCallTool(t, session, "article_star", map[string]any{
 		"article_id": articleID,
 		"starred":    false,
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("unstar error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("unstar error: %s", resultText(t, result))
 	}
 }
 
 func TestArticleStarMissingParams(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 
-	resp := srv.handleRequest(toolCall(1, "article_star", map[string]any{
-		"starred": true,
-	}))
-	if !resultIsError(t, resp) {
-		t.Fatal("expected error for missing article_id")
-	}
+	// Missing article_id — caught by schema validation
+	expectError(t, session, "article_star", map[string]any{"starred": true})
 
-	resp = srv.handleRequest(toolCall(2, "article_star", map[string]any{
+	// Missing starred (pointer type, optional in schema) — caught by handler
+	result := mustCallTool(t, session, "article_star", map[string]any{
 		"article_id": 1,
-	}))
-	if !resultIsError(t, resp) {
+	})
+	if !result.IsError {
 		t.Fatal("expected error for missing starred")
 	}
 }
@@ -941,62 +841,59 @@ func TestArticleStarMissingParams(t *testing.T) {
 // --- User management tests ---
 
 func TestUserRegister(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 
-	resp := srv.handleRequest(toolCall(1, "user_register", map[string]any{
+	result := mustCallTool(t, session, "user_register", map[string]any{
 		"name": "alice",
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("user_register error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("user_register error: %s", resultText(t, result))
 	}
 
-	text := resultText(t, resp)
-	var result struct {
+	text := resultText(t, result)
+	var user struct {
 		ID   int64  `json:"id"`
 		Name string `json:"name"`
 	}
-	if err := json.Unmarshal([]byte(text), &result); err != nil {
+	if err := json.Unmarshal([]byte(text), &user); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if result.ID == 0 {
+	if user.ID == 0 {
 		t.Error("expected non-zero user ID")
 	}
-	if result.Name != "alice" {
-		t.Errorf("name = %q, want %q", result.Name, "alice")
+	if user.Name != "alice" {
+		t.Errorf("name = %q, want %q", user.Name, "alice")
 	}
 }
 
 func TestUserRegisterMissingName(t *testing.T) {
-	srv := newTestServer(t)
-	resp := srv.handleRequest(toolCall(1, "user_register", map[string]any{}))
-	if !resultIsError(t, resp) {
-		t.Fatal("expected error for missing name")
-	}
+	_, session := newTestSession(t)
+	expectError(t, session, "user_register", map[string]any{})
 }
 
 func TestUserRegisterDuplicate(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 
-	resp := srv.handleRequest(toolCall(1, "user_register", map[string]any{"name": "bob"}))
-	if resultIsError(t, resp) {
-		t.Fatalf("first register error: %s", resultText(t, resp))
+	result := mustCallTool(t, session, "user_register", map[string]any{"name": "bob"})
+	if result.IsError {
+		t.Fatalf("first register error: %s", resultText(t, result))
 	}
 
-	resp = srv.handleRequest(toolCall(2, "user_register", map[string]any{"name": "bob"}))
-	if !resultIsError(t, resp) {
+	result = mustCallTool(t, session, "user_register", map[string]any{"name": "bob"})
+	if !result.IsError {
 		t.Fatal("expected error for duplicate name")
 	}
 }
 
 func TestUserList(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 
 	// Empty initially
-	resp := srv.handleRequest(toolCall(1, "user_list", map[string]any{}))
-	if resultIsError(t, resp) {
-		t.Fatalf("user_list error: %s", resultText(t, resp))
+	result := mustCallTool(t, session, "user_list", map[string]any{})
+	if result.IsError {
+		t.Fatalf("user_list error: %s", resultText(t, result))
 	}
-	text := resultText(t, resp)
+	text := resultText(t, result)
 	var users []struct {
 		Name string `json:"name"`
 	}
@@ -1008,11 +905,11 @@ func TestUserList(t *testing.T) {
 	}
 
 	// Register two users
-	srv.handleRequest(toolCall(2, "user_register", map[string]any{"name": "alice"}))
-	srv.handleRequest(toolCall(3, "user_register", map[string]any{"name": "bob"}))
+	mustCallTool(t, session, "user_register", map[string]any{"name": "alice"})
+	mustCallTool(t, session, "user_register", map[string]any{"name": "bob"})
 
-	resp = srv.handleRequest(toolCall(4, "user_list", map[string]any{}))
-	text = resultText(t, resp)
+	result = mustCallTool(t, session, "user_list", map[string]any{})
+	text = resultText(t, result)
 	if err := json.Unmarshal([]byte(text), &users); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -1026,35 +923,29 @@ func TestUserList(t *testing.T) {
 func TestSpeakerResolution(t *testing.T) {
 	// Use a high default user ID (99) so it doesn't collide with
 	// auto-increment IDs from user_register.
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	engine, err := herald.NewEngine(herald.EngineConfig{DBPath: dbPath})
-	if err != nil {
-		t.Fatalf("NewEngine: %v", err)
-	}
-	t.Cleanup(func() { engine.Close() })
-	srv := newServer(engine, 99)
+	_, session := newTestSessionWithUserID(t, 99)
 	ts := feedServer(t)
 
 	// Register "alice" as user (gets ID 1)
-	resp := srv.handleRequest(toolCall(1, "user_register", map[string]any{"name": "alice"}))
-	if resultIsError(t, resp) {
-		t.Fatalf("register error: %s", resultText(t, resp))
+	result := mustCallTool(t, session, "user_register", map[string]any{"name": "alice"})
+	if result.IsError {
+		t.Fatalf("register error: %s", resultText(t, result))
 	}
 
 	// Subscribe a feed as alice (via speaker)
-	resp = srv.handleRequest(toolCall(2, "feed_subscribe", map[string]any{
+	result = mustCallTool(t, session, "feed_subscribe", map[string]any{
 		"url":     ts.URL + "/feed.xml",
 		"speaker": "alice",
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("subscribe error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("subscribe error: %s", resultText(t, result))
 	}
 
 	// Alice should see the feed
-	resp = srv.handleRequest(toolCall(3, "feeds_list", map[string]any{
+	result = mustCallTool(t, session, "feeds_list", map[string]any{
 		"speaker": "alice",
-	}))
-	text := resultText(t, resp)
+	})
+	text := resultText(t, result)
 	var feeds []struct {
 		ID int64 `json:"id"`
 	}
@@ -1064,8 +955,8 @@ func TestSpeakerResolution(t *testing.T) {
 	}
 
 	// Default user (ID 99) should NOT see alice's feed
-	resp = srv.handleRequest(toolCall(4, "feeds_list", map[string]any{}))
-	text = resultText(t, resp)
+	result = mustCallTool(t, session, "feeds_list", map[string]any{})
+	text = resultText(t, result)
 	var defaultFeeds []struct {
 		ID int64 `json:"id"`
 	}
@@ -1076,33 +967,32 @@ func TestSpeakerResolution(t *testing.T) {
 }
 
 func TestSpeakerFallback(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 
 	// Unknown speaker should fall back to default user
-	resp := srv.handleRequest(toolCall(1, "feeds_list", map[string]any{
+	result := mustCallTool(t, session, "feeds_list", map[string]any{
 		"speaker": "unknown_person",
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("unexpected error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", resultText(t, result))
 	}
-	// Should succeed (using default user) — no error
 }
 
 func TestSpeakerOmitted(t *testing.T) {
-	srv := newTestServer(t)
+	_, session := newTestSession(t)
 	ts := feedServer(t)
 
 	// Subscribe without speaker — should use default user
-	resp := srv.handleRequest(toolCall(1, "feed_subscribe", map[string]any{
+	result := mustCallTool(t, session, "feed_subscribe", map[string]any{
 		"url": ts.URL + "/feed.xml",
-	}))
-	if resultIsError(t, resp) {
-		t.Fatalf("subscribe error: %s", resultText(t, resp))
+	})
+	if result.IsError {
+		t.Fatalf("subscribe error: %s", resultText(t, result))
 	}
 
 	// List without speaker — should see the feed
-	resp = srv.handleRequest(toolCall(2, "feeds_list", map[string]any{}))
-	text := resultText(t, resp)
+	result = mustCallTool(t, session, "feeds_list", map[string]any{})
+	text := resultText(t, result)
 	var feeds []struct {
 		ID int64 `json:"id"`
 	}

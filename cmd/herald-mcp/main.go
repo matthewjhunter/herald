@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/matthewjhunter/herald"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func main() {
@@ -62,7 +63,9 @@ func main() {
 	}
 	defer engine.Close()
 
-	srv := newServer(engine, *userID)
+	log.SetOutput(os.Stderr)
+
+	hs := newHeraldServer(engine, *userID)
 
 	if *poll {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -72,10 +75,13 @@ func main() {
 		p.start(ctx)
 		defer p.stop()
 
-		srv.poller = p
+		hs.poller = p
 	}
 
-	if err := srv.run(); err != nil {
+	log.Printf("herald-mcp starting (user=%d)", hs.userID)
+
+	mcpSrv := newMCPServer(hs)
+	if err := mcpSrv.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }
