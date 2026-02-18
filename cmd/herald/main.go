@@ -611,7 +611,8 @@ func listCmd() *cobra.Command {
 }
 
 func readCmd() *cobra.Command {
-	return &cobra.Command{
+	var userID int64
+	cmd := &cobra.Command{
 		Use:   "read <article-id>",
 		Short: "Mark an article as read",
 		Args:  cobra.ExactArgs(1),
@@ -627,7 +628,7 @@ func readCmd() *cobra.Command {
 			}
 			defer store.Close()
 
-			if err := store.UpdateReadState(1, articleID, true, nil, nil); err != nil {
+			if err := store.UpdateReadState(userID, articleID, true, nil, nil); err != nil {
 				return fmt.Errorf("failed to mark article as read: %w", err)
 			}
 
@@ -635,6 +636,8 @@ func readCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().Int64VarP(&userID, "user", "u", 1, "user ID (default: 1)")
+	return cmd
 }
 
 func initConfigCmd() *cobra.Command {
