@@ -431,3 +431,145 @@ func TestClose(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 }
+
+// --- Filter rules tests ---
+
+func TestFilterRulesCRUD(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	userID := int64(1)
+
+	// No rules initially
+	rules, err := engine.GetFilterRules(userID, nil)
+	if err != nil {
+		t.Fatalf("GetFilterRules: %v", err)
+	}
+	if len(rules) != 0 {
+		t.Fatalf("expected 0 rules, got %d", len(rules))
+	}
+
+	// Add a rule
+	rule := FilterRule{Axis: "author", Value: "Alice", Score: 5}
+	id, err := engine.AddFilterRule(userID, rule)
+	if err != nil {
+		t.Fatalf("AddFilterRule: %v", err)
+	}
+	if id == 0 {
+		t.Fatal("expected non-zero rule ID")
+	}
+
+	// Verify
+	rules, _ = engine.GetFilterRules(userID, nil)
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].Axis != "author" || rules[0].Value != "Alice" || rules[0].Score != 5 {
+		t.Errorf("rule mismatch: %+v", rules[0])
+	}
+
+	// Update score
+	if err := engine.UpdateFilterRule(id, 10); err != nil {
+		t.Fatalf("UpdateFilterRule: %v", err)
+	}
+	rules, _ = engine.GetFilterRules(userID, nil)
+	if rules[0].Score != 10 {
+		t.Errorf("expected score 10, got %d", rules[0].Score)
+	}
+
+	// Delete
+	if err := engine.DeleteFilterRule(id); err != nil {
+		t.Fatalf("DeleteFilterRule: %v", err)
+	}
+	rules, _ = engine.GetFilterRules(userID, nil)
+	if len(rules) != 0 {
+		t.Errorf("expected 0 rules after delete, got %d", len(rules))
+	}
+}
+
+func TestFilterRuleValidation(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	// Invalid axis
+	_, err := engine.AddFilterRule(1, FilterRule{Axis: "bogus", Value: "x", Score: 1})
+	if err == nil {
+		t.Fatal("expected error for invalid axis")
+	}
+
+	// Empty value
+	_, err = engine.AddFilterRule(1, FilterRule{Axis: "author", Value: "", Score: 1})
+	if err == nil {
+		t.Fatal("expected error for empty value")
+	}
+
+	// Valid axes
+	for _, axis := range []string{"author", "category", "tag"} {
+		_, err := engine.AddFilterRule(1, FilterRule{Axis: axis, Value: "test", Score: 1})
+		if err != nil {
+			t.Errorf("AddFilterRule(%s): %v", axis, err)
+		}
+	}
+}
+
+func TestGetFeedMetadata(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	feedID := subscribeDirect(t, engine, 1, "https://example.com/feed", "Test")
+
+	now := time.Now()
+	a := &storage.Article{
+		FeedID: feedID, GUID: "g1", Title: "A1",
+		URL: "https://example.com/1", PublishedDate: &now,
+	}
+	articleID, err := engine.store.AddArticle(a)
+	if err != nil {
+		t.Fatalf("AddArticle: %v", err)
+	}
+
+	engine.store.StoreArticleAuthors(articleID, []storage.ArticleAuthor{
+		{Name: "Alice"}, {Name: "Bob"},
+	})
+	engine.store.StoreArticleCategories(articleID, []string{"Security", "Golang"})
+
+	meta, err := engine.GetFeedMetadata(feedID)
+	if err != nil {
+		t.Fatalf("GetFeedMetadata: %v", err)
+	}
+	if len(meta.Authors) != 2 {
+		t.Errorf("expected 2 authors, got %d", len(meta.Authors))
+	}
+	if len(meta.Categories) != 2 {
+		t.Errorf("expected 2 categories, got %d", len(meta.Categories))
+	}
+}
+
+func TestFilterThresholdPreference(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	// Default should be 0
+	prefs, err := engine.GetPreferences(1)
+	if err != nil {
+		t.Fatalf("GetPreferences: %v", err)
+	}
+	if prefs.FilterThreshold != 0 {
+		t.Errorf("default filter_threshold: got %d, want 0", prefs.FilterThreshold)
+	}
+
+	// Set it
+	if err := engine.SetPreference(1, "filter_threshold", "5"); err != nil {
+		t.Fatalf("SetPreference: %v", err)
+	}
+
+	prefs, _ = engine.GetPreferences(1)
+	if prefs.FilterThreshold != 5 {
+		t.Errorf("filter_threshold: got %d, want 5", prefs.FilterThreshold)
+	}
+
+	// Invalid value
+	if err := engine.SetPreference(1, "filter_threshold", "abc"); err == nil {
+		t.Fatal("expected error for non-integer filter_threshold")
+	}
+}

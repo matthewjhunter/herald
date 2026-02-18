@@ -205,6 +205,29 @@ func (f *Fetcher) StoreArticles(feedID int64, feed *gofeed.Feed) (int, error) {
 		articleID, err := f.store.AddArticle(article)
 		if err == nil && articleID > 0 {
 			stored++
+
+			// Store authors from gofeed (plural, non-deprecated)
+			if len(item.Authors) > 0 {
+				var authors []storage.ArticleAuthor
+				for _, a := range item.Authors {
+					if a.Name != "" {
+						authors = append(authors, storage.ArticleAuthor{Name: a.Name, Email: a.Email})
+					}
+				}
+				if len(authors) > 0 {
+					f.store.StoreArticleAuthors(articleID, authors)
+				}
+			} else if item.Author != nil && item.Author.Name != "" {
+				// Fallback to deprecated singular Author
+				f.store.StoreArticleAuthors(articleID, []storage.ArticleAuthor{
+					{Name: item.Author.Name, Email: item.Author.Email},
+				})
+			}
+
+			// Store categories
+			if len(item.Categories) > 0 {
+				f.store.StoreArticleCategories(articleID, item.Categories)
+			}
 		}
 	}
 

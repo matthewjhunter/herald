@@ -202,7 +202,7 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 
 // GetUnreadArticles returns unread articles for a user, up to limit starting at offset.
 func (e *Engine) GetUnreadArticles(userID int64, limit, offset int) ([]Article, error) {
-	articles, err := e.store.GetUnreadArticlesForUser(userID, limit, offset)
+	articles, err := e.store.GetUnreadArticlesForUser(userID, limit, offset, e.resolveFilterThreshold(userID))
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +211,7 @@ func (e *Engine) GetUnreadArticles(userID int64, limit, offset int) ([]Article, 
 
 // GetStarredArticles returns starred articles for a user.
 func (e *Engine) GetStarredArticles(userID int64, limit, offset int) ([]Article, error) {
-	articles, err := e.store.GetStarredArticles(userID, limit, offset)
+	articles, err := e.store.GetStarredArticles(userID, limit, offset, e.resolveFilterThreshold(userID))
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +220,7 @@ func (e *Engine) GetStarredArticles(userID int64, limit, offset int) ([]Article,
 
 // GetUnreadArticlesByFeed returns unread articles for a user filtered to a specific feed.
 func (e *Engine) GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int) ([]Article, error) {
-	articles, err := e.store.GetUnreadArticlesByFeed(userID, feedID, limit, offset)
+	articles, err := e.store.GetUnreadArticlesByFeed(userID, feedID, limit, offset, e.resolveFilterThreshold(userID))
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +252,7 @@ func (e *Engine) GetArticleForUser(userID, articleID int64) (*Article, error) {
 
 // GetHighInterestArticles returns unread articles scored above the threshold.
 func (e *Engine) GetHighInterestArticles(userID int64, threshold float64, limit, offset int) ([]Article, []float64, error) {
-	articles, scores, err := e.store.GetArticlesByInterestScore(userID, threshold, limit, offset)
+	articles, scores, err := e.store.GetArticlesByInterestScore(userID, threshold, limit, offset, e.resolveFilterThreshold(userID))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -418,7 +418,7 @@ func (e *Engine) GenerateBriefing(userID int64) (string, error) {
 		return "", fmt.Errorf("AI processing not available in read-only mode")
 	}
 	articles, scores, err := e.store.GetArticlesByInterestScore(
-		userID, e.config.Thresholds.InterestScore, 20, 0)
+		userID, e.config.Thresholds.InterestScore, 20, 0, nil)
 	if err != nil {
 		return "", fmt.Errorf("get high-interest articles: %w", err)
 	}
@@ -495,10 +495,18 @@ var allowedPromptTypes = map[string]bool{
 
 // allowedPreferenceKeys lists preference keys that can be set via MCP.
 var allowedPreferenceKeys = map[string]bool{
-	"keywords":          true,
+	"keywords":           true,
 	"interest_threshold": true,
-	"notify_when":       true,
-	"notify_min_score":  true,
+	"filter_threshold":   true,
+	"notify_when":        true,
+	"notify_min_score":   true,
+}
+
+// allowedFilterAxes are the valid axis values for filter rules.
+var allowedFilterAxes = map[string]bool{
+	"author":   true,
+	"category": true,
+	"tag":      true,
 }
 
 // GetPreferences returns all user preferences, merging DB values over config defaults.
@@ -527,6 +535,11 @@ func (e *Engine) GetPreferences(userID int64) (*UserPreferences, error) {
 	if v, ok := dbPrefs["interest_threshold"]; ok {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			prefs.InterestThreshold = f
+		}
+	}
+	if v, ok := dbPrefs["filter_threshold"]; ok {
+		if i, err := strconv.Atoi(v); err == nil {
+			prefs.FilterThreshold = i
 		}
 	}
 	if v, ok := dbPrefs["notify_when"]; ok {
@@ -558,6 +571,10 @@ func (e *Engine) SetPreference(userID int64, key, value string) error {
 	case "interest_threshold", "notify_min_score":
 		if _, err := strconv.ParseFloat(value, 64); err != nil {
 			return fmt.Errorf("%s must be a number: %w", key, err)
+		}
+	case "filter_threshold":
+		if _, err := strconv.Atoi(value); err != nil {
+			return fmt.Errorf("filter_threshold must be an integer: %w", err)
 		}
 	case "notify_when":
 		switch value {
@@ -711,6 +728,89 @@ func (e *Engine) ListUsers() ([]User, error) {
 		result[i] = User{ID: u.ID, Name: u.Name, CreatedAt: u.CreatedAt}
 	}
 	return result, nil
+}
+
+// --- Filter rules ---
+
+// AddFilterRule validates and stores a new filter rule. Returns the rule ID.
+func (e *Engine) AddFilterRule(userID int64, rule FilterRule) (int64, error) {
+	if !allowedFilterAxes[rule.Axis] {
+		return 0, fmt.Errorf("invalid filter axis: %q (must be author, category, or tag)", rule.Axis)
+	}
+	if rule.Value == "" {
+		return 0, fmt.Errorf("filter rule value cannot be empty")
+	}
+	sr := &storage.FilterRule{
+		UserID: userID,
+		FeedID: rule.FeedID,
+		Axis:   rule.Axis,
+		Value:  rule.Value,
+		Score:  rule.Score,
+	}
+	return e.store.AddFilterRule(sr)
+}
+
+// GetFilterRules returns filter rules for a user, optionally scoped to a feed.
+func (e *Engine) GetFilterRules(userID int64, feedID *int64) ([]FilterRule, error) {
+	rules, err := e.store.GetFilterRules(userID, feedID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]FilterRule, len(rules))
+	for i, r := range rules {
+		result[i] = FilterRule{
+			ID:        r.ID,
+			UserID:    r.UserID,
+			FeedID:    r.FeedID,
+			Axis:      r.Axis,
+			Value:     r.Value,
+			Score:     r.Score,
+			CreatedAt: r.CreatedAt,
+		}
+	}
+	return result, nil
+}
+
+// UpdateFilterRule updates the score of an existing filter rule.
+func (e *Engine) UpdateFilterRule(ruleID int64, score int) error {
+	return e.store.UpdateFilterRuleScore(ruleID, score)
+}
+
+// DeleteFilterRule deletes a filter rule by ID.
+func (e *Engine) DeleteFilterRule(ruleID int64) error {
+	return e.store.DeleteFilterRule(ruleID)
+}
+
+// GetFeedMetadata returns discoverable authors and categories for a feed.
+func (e *Engine) GetFeedMetadata(feedID int64) (*FeedMetadata, error) {
+	authors, err := e.store.GetFeedAuthors(feedID)
+	if err != nil {
+		return nil, err
+	}
+	categories, err := e.store.GetFeedCategories(feedID)
+	if err != nil {
+		return nil, err
+	}
+	return &FeedMetadata{
+		FeedID:     feedID,
+		Authors:    authors,
+		Categories: categories,
+	}, nil
+}
+
+// resolveFilterThreshold returns the user's filter threshold as a pointer
+// suitable for passing to Store query methods. Returns nil if the user has
+// no filter rules (fast path) or threshold is 0 (disabled).
+func (e *Engine) resolveFilterThreshold(userID int64) *int {
+	prefs, err := e.GetPreferences(userID)
+	if err != nil || prefs.FilterThreshold == 0 {
+		return nil
+	}
+	has, err := e.store.HasFilterRules(userID)
+	if err != nil || !has {
+		return nil
+	}
+	return &prefs.FilterThreshold
 }
 
 // Close releases all resources held by the engine.

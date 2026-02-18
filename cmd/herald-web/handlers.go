@@ -43,7 +43,7 @@ func (h *handlers) init() {
 	shared := []string{"base.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "error.html"}
 
 	// Pages that get their own template tree.
-	pages := []string{"index.html", "home.html", "feeds_manage.html", "groups.html", "group_detail.html", "settings.html"}
+	pages := []string{"index.html", "home.html", "feeds_manage.html", "groups.html", "group_detail.html", "settings.html", "filters.html"}
 
 	h.pages = make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
@@ -133,6 +133,22 @@ type settingsData struct {
 	InterestThreshold float64
 	NotifyWhen        string
 	NotifyMinScore    float64
+}
+
+type filtersData struct {
+	UserID          int64
+	FilterThreshold int
+	Rules           []filterRuleRow
+	Feeds           []herald.Feed
+}
+
+type filterRuleRow struct {
+	ID        int64
+	Axis      string
+	Value     string
+	Score     int
+	FeedTitle string
+	UserID    int64
 }
 
 type errorData struct {
@@ -623,4 +639,165 @@ func (h *handlers) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("HX-Trigger", "settings-saved")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, "Settings saved.")
+}
+
+// --- Filter rules handlers ---
+
+func (h *handlers) handleFilters(w http.ResponseWriter, r *http.Request) {
+	uid := userIDFromRequest(r)
+
+	prefs, err := h.engine.GetPreferences(uid)
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Failed to load preferences")
+		return
+	}
+
+	rules, err := h.engine.GetFilterRules(uid, nil)
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Failed to load filter rules")
+		return
+	}
+
+	feeds, err := h.engine.GetUserFeeds(uid)
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Failed to load feeds")
+		return
+	}
+
+	// Build feed title lookup
+	feedTitles := make(map[int64]string)
+	for _, f := range feeds {
+		feedTitles[f.ID] = f.Title
+	}
+
+	data := filtersData{
+		UserID:          uid,
+		FilterThreshold: prefs.FilterThreshold,
+		Feeds:           feeds,
+	}
+	for _, r := range rules {
+		row := filterRuleRow{
+			ID:     r.ID,
+			Axis:   r.Axis,
+			Value:  r.Value,
+			Score:  r.Score,
+			UserID: uid,
+		}
+		if r.FeedID != nil {
+			row.FeedTitle = feedTitles[*r.FeedID]
+		}
+		data.Rules = append(data.Rules, row)
+	}
+
+	h.renderPage(w, r, "filters.html", data)
+}
+
+func (h *handlers) handleFilterAdd(w http.ResponseWriter, r *http.Request) {
+	uid := userIDFromRequest(r)
+
+	axis := strings.TrimSpace(r.FormValue("axis"))
+	value := strings.TrimSpace(r.FormValue("value"))
+	scoreStr := r.FormValue("score")
+	feedIDStr := r.FormValue("feed_id")
+
+	score, err := strconv.Atoi(scoreStr)
+	if err != nil {
+		h.renderError(w, http.StatusBadRequest, "Invalid score")
+		return
+	}
+
+	rule := herald.FilterRule{
+		Axis:  axis,
+		Value: value,
+		Score: score,
+	}
+	if feedIDStr != "" {
+		fid, err := strconv.ParseInt(feedIDStr, 10, 64)
+		if err == nil && fid > 0 {
+			rule.FeedID = &fid
+		}
+	}
+
+	if _, err := h.engine.AddFilterRule(uid, rule); err != nil {
+		h.renderError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to add rule: %v", err))
+		return
+	}
+
+	// Re-render the rules table fragment
+	h.renderFilterRulesFragment(w, uid)
+}
+
+func (h *handlers) handleFilterDelete(w http.ResponseWriter, r *http.Request) {
+	uid := userIDFromRequest(r)
+	ruleID, err := strconv.ParseInt(r.PathValue("ruleID"), 10, 64)
+	if err != nil {
+		h.renderError(w, http.StatusBadRequest, "Invalid rule ID")
+		return
+	}
+
+	if err := h.engine.DeleteFilterRule(ruleID); err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Failed to delete rule")
+		return
+	}
+
+	h.renderFilterRulesFragment(w, uid)
+}
+
+func (h *handlers) handleFilterThreshold(w http.ResponseWriter, r *http.Request) {
+	uid := userIDFromRequest(r)
+	v := r.FormValue("filter_threshold")
+	if v == "" {
+		v = "0"
+	}
+
+	if err := h.engine.SetPreference(uid, "filter_threshold", v); err != nil {
+		h.renderError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save threshold: %v", err))
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, "Threshold saved.")
+}
+
+func (h *handlers) handleFeedMetadata(w http.ResponseWriter, r *http.Request) {
+	feedID, err := strconv.ParseInt(r.PathValue("feedID"), 10, 64)
+	if err != nil {
+		h.renderError(w, http.StatusBadRequest, "Invalid feed ID")
+		return
+	}
+
+	meta, err := h.engine.GetFeedMetadata(feedID)
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Failed to load metadata")
+		return
+	}
+
+	h.renderFragment(w, "feed_metadata_fragment", meta)
+}
+
+func (h *handlers) renderFilterRulesFragment(w http.ResponseWriter, userID int64) {
+	rules, _ := h.engine.GetFilterRules(userID, nil)
+	feeds, _ := h.engine.GetUserFeeds(userID)
+
+	feedTitles := make(map[int64]string)
+	for _, f := range feeds {
+		feedTitles[f.ID] = f.Title
+	}
+
+	data := filtersData{UserID: userID}
+	for _, r := range rules {
+		row := filterRuleRow{
+			ID:     r.ID,
+			Axis:   r.Axis,
+			Value:  r.Value,
+			Score:  r.Score,
+			UserID: userID,
+		}
+		if r.FeedID != nil {
+			row.FeedTitle = feedTitles[*r.FeedID]
+		}
+		data.Rules = append(data.Rules, row)
+	}
+
+	h.renderFragment(w, "filter_rules_table", data)
 }

@@ -1,0 +1,152 @@
+{{define "title"}}Herald - Filter Rules{{end}}
+{{define "nav"}}
+<nav style="display:flex;gap:1rem;align-items:center;">
+    <a href="/u/{{.UserID}}">Articles</a>
+    <a href="/u/{{.UserID}}/feeds">Feeds</a>
+    <a href="/u/{{.UserID}}/groups">Groups</a>
+    <a href="/u/{{.UserID}}/settings">Settings</a>
+</nav>
+{{end}}
+{{define "content"}}
+<main class="container" style="max-width:800px;">
+    <h2>Filter Rules</h2>
+    <p class="secondary">
+        Rules score articles by author, category, or tag. Scores are additive.
+        Set a <strong>filter threshold</strong> below; articles scoring below it are hidden.
+    </p>
+
+    <article>
+        <header><h3>Filter Threshold</h3></header>
+        <form hx-post="/u/{{.UserID}}/filters/threshold" hx-swap="none">
+            <div class="grid" style="align-items:end;">
+                <div>
+                    <label for="filter_threshold">Threshold</label>
+                    <input type="number" id="filter_threshold" name="filter_threshold"
+                           value="{{.FilterThreshold}}" step="1">
+                    <small>0 = disabled (show all articles). Articles with total rule score below this are hidden.</small>
+                </div>
+                <div><button type="submit">Save</button></div>
+            </div>
+        </form>
+    </article>
+
+    <article>
+        <header><h3>Add Rule</h3></header>
+        <form hx-post="/u/{{.UserID}}/filters" hx-target="#rules-list" hx-swap="innerHTML"
+              hx-on::after-request="if(event.detail.successful) this.reset();">
+            <div class="grid">
+                <div>
+                    <label for="axis">Axis</label>
+                    <select id="axis" name="axis" required>
+                        <option value="author">Author</option>
+                        <option value="category">Category</option>
+                        <option value="tag">Tag</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="value">Value</label>
+                    <input type="text" id="value" name="value" placeholder="e.g. John Doe" required>
+                </div>
+                <div>
+                    <label for="score">Score</label>
+                    <input type="number" id="score" name="score" value="1" required>
+                </div>
+                <div>
+                    <label for="feed_id">Feed (optional)</label>
+                    <select id="feed_id" name="feed_id">
+                        <option value="">Global (all feeds)</option>
+                        {{range .Feeds}}
+                        <option value="{{.ID}}">{{.Title}}</option>
+                        {{end}}
+                    </select>
+                </div>
+            </div>
+            <button type="submit">Add Rule</button>
+        </form>
+    </article>
+
+    <div id="rules-list">
+        {{template "filter_rules_table" .}}
+    </div>
+
+    {{if .Feeds}}
+    <article>
+        <header><h3>Discover Metadata</h3></header>
+        <p class="secondary">Select a feed to discover available authors and categories for creating rules.</p>
+        <div class="grid" style="align-items:end;">
+            <div>
+                <label for="meta_feed">Feed</label>
+                <select id="meta_feed">
+                    {{range .Feeds}}
+                    <option value="{{.ID}}">{{.Title}}</option>
+                    {{end}}
+                </select>
+            </div>
+            <div>
+                <button class="outline" onclick="htmx.ajax('GET', '/u/{{.UserID}}/feeds/' + document.getElementById('meta_feed').value + '/metadata', '#metadata-result')">
+                    Discover
+                </button>
+            </div>
+        </div>
+        <div id="metadata-result" style="margin-top:1rem;"></div>
+    </article>
+    {{end}}
+</main>
+{{end}}
+
+{{define "filter_rules_table"}}
+{{if .Rules}}
+<table>
+    <thead>
+        <tr>
+            <th>Axis</th>
+            <th>Value</th>
+            <th>Score</th>
+            <th>Feed</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {{range .Rules}}
+        <tr>
+            <td>{{.Axis}}</td>
+            <td>{{.Value}}</td>
+            <td>{{.Score}}</td>
+            <td>{{if .FeedTitle}}{{.FeedTitle}}{{else}}Global{{end}}</td>
+            <td>
+                <button class="outline secondary" style="padding:0.25rem 0.5rem;font-size:0.8rem;"
+                        hx-delete="/u/{{$.UserID}}/filters/{{.ID}}"
+                        hx-target="#rules-list" hx-swap="innerHTML"
+                        hx-confirm="Delete this rule?">
+                    Delete
+                </button>
+            </td>
+        </tr>
+        {{end}}
+    </tbody>
+</table>
+{{else}}
+<p class="empty-state">No filter rules defined. Add one above.</p>
+{{end}}
+{{end}}
+
+{{define "feed_metadata_fragment"}}
+{{if or .Authors .Categories}}
+<div>
+    {{if .Authors}}
+    <h4>Authors</h4>
+    <ul>
+        {{range .Authors}}<li>{{.}}</li>{{end}}
+    </ul>
+    {{end}}
+    {{if .Categories}}
+    <h4>Categories</h4>
+    <ul>
+        {{range .Categories}}<li>{{.}}</li>{{end}}
+    </ul>
+    {{end}}
+</div>
+{{else}}
+<p class="secondary">No metadata found for this feed. Try fetching articles first.</p>
+{{end}}
+{{end}}

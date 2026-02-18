@@ -89,6 +89,23 @@ type UserPrompt struct {
 	UpdatedAt      time.Time
 }
 
+// ArticleAuthor represents an author extracted from a feed item.
+type ArticleAuthor struct {
+	Name  string
+	Email string
+}
+
+// FilterRule represents a user-defined scoring rule for article filtering.
+type FilterRule struct {
+	ID        int64
+	UserID    int64
+	FeedID    *int64 // nil = global rule
+	Axis      string // "author", "category", "tag"
+	Value     string
+	Score     int
+	CreatedAt time.Time
+}
+
 // NewSQLiteStore creates a new database connection and initializes the schema.
 func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
@@ -114,6 +131,9 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		"ALTER TABLE feeds ADD COLUMN etag TEXT",
 		"ALTER TABLE feeds ADD COLUMN last_modified TEXT",
 		"ALTER TABLE article_groups ADD COLUMN embedding BLOB",
+		// Backfill article_authors from the existing articles.author column.
+		`INSERT OR IGNORE INTO article_authors (article_id, name)
+		 SELECT id, author FROM articles WHERE author != '' AND author IS NOT NULL`,
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -532,7 +552,8 @@ func (s *SQLiteStore) UpdateReadState(userID, articleID int64, read bool, intere
 // clause still filters on the raw score so legitimately interesting articles
 // remain visible — they just sort lower as they age. Returned scores are the
 // decayed effective scores, not the raw stored values.
-func (s *SQLiteStore) GetArticlesByInterestScore(userID int64, threshold float64, limit, offset int) ([]Article, []float64, error) {
+func (s *SQLiteStore) GetArticlesByInterestScore(userID int64, threshold float64, limit, offset int, filterThreshold *int) ([]Article, []float64, error) {
+	filterSQL, filterArgs := filterScoreClause(userID, filterThreshold)
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date,
@@ -540,10 +561,14 @@ func (s *SQLiteStore) GetArticlesByInterestScore(userID int64, threshold float64
 		FROM articles a
 		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
 		WHERE rs.interest_score >= ? AND rs.read = 0
+		` + filterSQL + `
 		ORDER BY decayed_score DESC
 		LIMIT ? OFFSET ?
 	`
-	rows, err := s.db.Query(query, userID, threshold, limit, offset)
+	args := []interface{}{userID, threshold}
+	args = append(args, filterArgs...)
+	args = append(args, limit, offset)
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get articles by interest score: %w", err)
 	}
@@ -991,7 +1016,8 @@ func (s *SQLiteStore) GetUnscoredArticlesForUser(userID int64, limit int) ([]Art
 }
 
 // GetUnreadArticlesForUser returns unread articles from feeds the user subscribes to
-func (s *SQLiteStore) GetUnreadArticlesForUser(userID int64, limit, offset int) ([]Article, error) {
+func (s *SQLiteStore) GetUnreadArticlesForUser(userID int64, limit, offset int, filterThreshold *int) ([]Article, error) {
+	filterSQL, filterArgs := filterScoreClause(userID, filterThreshold)
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date
@@ -999,10 +1025,14 @@ func (s *SQLiteStore) GetUnreadArticlesForUser(userID int64, limit, offset int) 
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
 		WHERE uf.user_id = ? AND (rs.article_id IS NULL OR rs.read = 0)
+		` + filterSQL + `
 		ORDER BY a.published_date DESC
 		LIMIT ? OFFSET ?
 	`
-	rows, err := s.db.Query(query, userID, userID, limit, offset)
+	args := []interface{}{userID, userID}
+	args = append(args, filterArgs...)
+	args = append(args, limit, offset)
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get unread articles for user: %w", err)
 	}
@@ -1021,7 +1051,8 @@ func (s *SQLiteStore) GetUnreadArticlesForUser(userID int64, limit, offset int) 
 }
 
 // GetUnreadArticlesByFeed returns unread articles for a user filtered to a specific feed.
-func (s *SQLiteStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int) ([]Article, error) {
+func (s *SQLiteStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int, filterThreshold *int) ([]Article, error) {
+	filterSQL, filterArgs := filterScoreClause(userID, filterThreshold)
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date
@@ -1029,10 +1060,14 @@ func (s *SQLiteStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, offse
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
 		WHERE uf.user_id = ? AND a.feed_id = ? AND (rs.article_id IS NULL OR rs.read = 0)
+		` + filterSQL + `
 		ORDER BY a.published_date DESC
 		LIMIT ? OFFSET ?
 	`
-	rows, err := s.db.Query(query, userID, userID, feedID, limit, offset)
+	args := []interface{}{userID, userID, feedID}
+	args = append(args, filterArgs...)
+	args = append(args, limit, offset)
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get unread articles by feed: %w", err)
 	}
@@ -1120,7 +1155,8 @@ func (s *SQLiteStore) UpdateGroupTopic(groupID int64, topic string) error {
 }
 
 // GetStarredArticles returns starred articles for a user.
-func (s *SQLiteStore) GetStarredArticles(userID int64, limit, offset int) ([]Article, error) {
+func (s *SQLiteStore) GetStarredArticles(userID int64, limit, offset int, filterThreshold *int) ([]Article, error) {
+	filterSQL, filterArgs := filterScoreClause(userID, filterThreshold)
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date
@@ -1128,10 +1164,14 @@ func (s *SQLiteStore) GetStarredArticles(userID int64, limit, offset int) ([]Art
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
 		WHERE uf.user_id = ? AND rs.starred = 1
+		` + filterSQL + `
 		ORDER BY a.published_date DESC
 		LIMIT ? OFFSET ?
 	`
-	rows, err := s.db.Query(query, userID, userID, limit, offset)
+	args := []interface{}{userID, userID}
+	args = append(args, filterArgs...)
+	args = append(args, limit, offset)
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get starred articles: %w", err)
 	}
@@ -1147,4 +1187,241 @@ func (s *SQLiteStore) GetStarredArticles(userID int64, limit, offset int) ([]Art
 		articles = append(articles, a)
 	}
 	return articles, rows.Err()
+}
+
+// --- Filter scoring helper ---
+
+// filterScoreClause returns an SQL fragment and bind args that filter articles
+// by additive filter rule scoring. Returns ("", nil) when threshold is nil
+// (no filtering). The caller's query must alias the articles table as "a".
+func filterScoreClause(userID int64, threshold *int) (string, []interface{}) {
+	if threshold == nil {
+		return "", nil
+	}
+	sql := `AND (
+		NOT EXISTS (SELECT 1 FROM filter_rules WHERE user_id = ?)
+		OR (
+			SELECT COALESCE(SUM(fr.score), 0)
+			FROM filter_rules fr
+			WHERE fr.user_id = ?
+			  AND (fr.feed_id IS NULL OR fr.feed_id = a.feed_id)
+			  AND (
+				(fr.axis = 'author' AND EXISTS (
+				  SELECT 1 FROM article_authors aa
+				  WHERE aa.article_id = a.id AND aa.name = fr.value
+				))
+				OR (fr.axis IN ('category', 'tag') AND EXISTS (
+				  SELECT 1 FROM article_categories ac
+				  WHERE ac.article_id = a.id AND ac.category = fr.value
+				))
+			  )
+		) >= ?
+	)`
+	return sql, []interface{}{userID, userID, *threshold}
+}
+
+// --- Article metadata methods ---
+
+// StoreArticleAuthors stores authors for an article. Uses INSERT OR IGNORE
+// to handle duplicates gracefully.
+func (s *SQLiteStore) StoreArticleAuthors(articleID int64, authors []ArticleAuthor) error {
+	for _, a := range authors {
+		_, err := s.db.Exec(
+			"INSERT OR IGNORE INTO article_authors (article_id, name, email) VALUES (?, ?, ?)",
+			articleID, a.Name, a.Email,
+		)
+		if err != nil {
+			return fmt.Errorf("store article author: %w", err)
+		}
+	}
+	return nil
+}
+
+// StoreArticleCategories stores categories for an article. Uses INSERT OR IGNORE
+// to handle duplicates gracefully.
+func (s *SQLiteStore) StoreArticleCategories(articleID int64, categories []string) error {
+	for _, cat := range categories {
+		_, err := s.db.Exec(
+			"INSERT OR IGNORE INTO article_categories (article_id, category) VALUES (?, ?)",
+			articleID, cat,
+		)
+		if err != nil {
+			return fmt.Errorf("store article category: %w", err)
+		}
+	}
+	return nil
+}
+
+// GetArticleAuthors returns all authors for an article.
+func (s *SQLiteStore) GetArticleAuthors(articleID int64) ([]ArticleAuthor, error) {
+	rows, err := s.db.Query(
+		"SELECT name, email FROM article_authors WHERE article_id = ? ORDER BY name",
+		articleID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get article authors: %w", err)
+	}
+	defer rows.Close()
+
+	var authors []ArticleAuthor
+	for rows.Next() {
+		var a ArticleAuthor
+		var email sql.NullString
+		if err := rows.Scan(&a.Name, &email); err != nil {
+			return nil, fmt.Errorf("scan article author: %w", err)
+		}
+		a.Email = email.String
+		authors = append(authors, a)
+	}
+	return authors, rows.Err()
+}
+
+// GetArticleCategories returns all categories for an article.
+func (s *SQLiteStore) GetArticleCategories(articleID int64) ([]string, error) {
+	rows, err := s.db.Query(
+		"SELECT category FROM article_categories WHERE article_id = ? ORDER BY category",
+		articleID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get article categories: %w", err)
+	}
+	defer rows.Close()
+
+	var cats []string
+	for rows.Next() {
+		var cat string
+		if err := rows.Scan(&cat); err != nil {
+			return nil, fmt.Errorf("scan article category: %w", err)
+		}
+		cats = append(cats, cat)
+	}
+	return cats, rows.Err()
+}
+
+// --- Feed metadata discovery ---
+
+// GetFeedAuthors returns distinct author names across all articles in a feed.
+func (s *SQLiteStore) GetFeedAuthors(feedID int64) ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT DISTINCT aa.name FROM article_authors aa
+		 JOIN articles a ON a.id = aa.article_id
+		 WHERE a.feed_id = ? ORDER BY aa.name`,
+		feedID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get feed authors: %w", err)
+	}
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan feed author: %w", err)
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}
+
+// GetFeedCategories returns distinct categories across all articles in a feed.
+func (s *SQLiteStore) GetFeedCategories(feedID int64) ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT DISTINCT ac.category FROM article_categories ac
+		 JOIN articles a ON a.id = ac.article_id
+		 WHERE a.feed_id = ? ORDER BY ac.category`,
+		feedID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get feed categories: %w", err)
+	}
+	defer rows.Close()
+
+	var cats []string
+	for rows.Next() {
+		var cat string
+		if err := rows.Scan(&cat); err != nil {
+			return nil, fmt.Errorf("scan feed category: %w", err)
+		}
+		cats = append(cats, cat)
+	}
+	return cats, rows.Err()
+}
+
+// --- Filter rules CRUD ---
+
+// AddFilterRule inserts a new filter rule and returns its ID.
+func (s *SQLiteStore) AddFilterRule(rule *FilterRule) (int64, error) {
+	result, err := s.db.Exec(
+		`INSERT INTO filter_rules (user_id, feed_id, axis, value, score)
+		 VALUES (?, ?, ?, ?, ?)`,
+		rule.UserID, rule.FeedID, rule.Axis, rule.Value, rule.Score,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("add filter rule: %w", err)
+	}
+	return result.LastInsertId()
+}
+
+// GetFilterRules returns filter rules for a user. If feedID is non-nil,
+// returns only rules scoped to that feed plus global rules. If nil, returns all.
+func (s *SQLiteStore) GetFilterRules(userID int64, feedID *int64) ([]FilterRule, error) {
+	var query string
+	var args []interface{}
+
+	if feedID != nil {
+		query = `SELECT id, user_id, feed_id, axis, value, score, created_at
+				 FROM filter_rules WHERE user_id = ? AND (feed_id IS NULL OR feed_id = ?)
+				 ORDER BY axis, value`
+		args = []interface{}{userID, *feedID}
+	} else {
+		query = `SELECT id, user_id, feed_id, axis, value, score, created_at
+				 FROM filter_rules WHERE user_id = ?
+				 ORDER BY axis, value`
+		args = []interface{}{userID}
+	}
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get filter rules: %w", err)
+	}
+	defer rows.Close()
+
+	var rules []FilterRule
+	for rows.Next() {
+		var r FilterRule
+		if err := rows.Scan(&r.ID, &r.UserID, &r.FeedID, &r.Axis, &r.Value, &r.Score, &r.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan filter rule: %w", err)
+		}
+		rules = append(rules, r)
+	}
+	return rules, rows.Err()
+}
+
+// UpdateFilterRuleScore updates the score of an existing filter rule.
+func (s *SQLiteStore) UpdateFilterRuleScore(ruleID int64, score int) error {
+	_, err := s.db.Exec("UPDATE filter_rules SET score = ? WHERE id = ?", score, ruleID)
+	if err != nil {
+		return fmt.Errorf("update filter rule score: %w", err)
+	}
+	return nil
+}
+
+// DeleteFilterRule deletes a filter rule by ID.
+func (s *SQLiteStore) DeleteFilterRule(ruleID int64) error {
+	_, err := s.db.Exec("DELETE FROM filter_rules WHERE id = ?", ruleID)
+	if err != nil {
+		return fmt.Errorf("delete filter rule: %w", err)
+	}
+	return nil
+}
+
+// HasFilterRules returns true if the user has any filter rules defined.
+func (s *SQLiteStore) HasFilterRules(userID int64) (bool, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM filter_rules WHERE user_id = ?", userID).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("has filter rules: %w", err)
+	}
+	return count > 0, nil
 }

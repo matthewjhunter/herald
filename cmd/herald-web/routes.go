@@ -28,6 +28,7 @@ func newRouter(engine *herald.Engine) http.Handler {
 	mux.HandleFunc("GET /u/{userID}/groups", h.handleGroups)
 	mux.HandleFunc("GET /u/{userID}/groups/{groupID}", h.handleGroupDetail)
 	mux.HandleFunc("GET /u/{userID}/settings", h.handleSettings)
+	mux.HandleFunc("GET /u/{userID}/filters", h.handleFilters)
 
 	// htmx fragment routes
 	mux.HandleFunc("GET /u/{userID}/articles", h.handleArticleList)
@@ -37,6 +38,10 @@ func newRouter(engine *herald.Engine) http.Handler {
 	mux.HandleFunc("POST /u/{userID}/feeds", h.handleFeedSubscribe)
 	mux.HandleFunc("DELETE /u/{userID}/feeds/{feedID}", h.handleFeedUnsubscribe)
 	mux.HandleFunc("POST /u/{userID}/settings", h.handleSettingsSave)
+	mux.HandleFunc("POST /u/{userID}/filters", h.handleFilterAdd)
+	mux.HandleFunc("POST /u/{userID}/filters/threshold", h.handleFilterThreshold)
+	mux.HandleFunc("DELETE /u/{userID}/filters/{ruleID}", h.handleFilterDelete)
+	mux.HandleFunc("GET /u/{userID}/feeds/{feedID}/metadata", h.handleFeedMetadata)
 
 	return mux
 }

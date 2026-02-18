@@ -416,7 +416,7 @@ func processCmd() *cobra.Command {
 			}
 
 			// Get and output high-interest articles
-			highInterestArticles, scores, err := store.GetArticlesByInterestScore(userID, cfg.Thresholds.InterestScore, 10, 0)
+			highInterestArticles, scores, err := store.GetArticlesByInterestScore(userID, cfg.Thresholds.InterestScore, 10, 0, nil)
 			if err != nil {
 				return fmt.Errorf("failed to get high-interest articles: %w", err)
 			}
@@ -555,7 +555,7 @@ func doFetch(ctx context.Context) error {
 	if len(allUserIDs) > 0 {
 		displayUserID = allUserIDs[0]
 	}
-	highInterestArticles, scores, err := store.GetArticlesByInterestScore(displayUserID, cfg.Thresholds.InterestScore, 10, 0)
+	highInterestArticles, scores, err := store.GetArticlesByInterestScore(displayUserID, cfg.Thresholds.InterestScore, 10, 0, nil)
 	if err != nil {
 		return fmt.Errorf("failed to get high-interest articles: %w", err)
 	}

@@ -89,8 +89,27 @@ type FeedStatsResult struct {
 type UserPreferences struct {
 	Keywords          []string `json:"keywords"`
 	InterestThreshold float64  `json:"interest_threshold"`
+	FilterThreshold   int      `json:"filter_threshold"`
 	NotifyWhen        string   `json:"notify_when"`      // "present", "always", "queue"
 	NotifyMinScore    float64  `json:"notify_min_score"`
+}
+
+// FilterRule represents a user-defined scoring rule for article filtering.
+type FilterRule struct {
+	ID        int64      `json:"id"`
+	UserID    int64      `json:"user_id"`
+	FeedID    *int64     `json:"feed_id,omitempty"`
+	Axis      string     `json:"axis"`
+	Value     string     `json:"value"`
+	Score     int        `json:"score"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+// FeedMetadata holds discoverable metadata for a feed's articles.
+type FeedMetadata struct {
+	FeedID     int64    `json:"feed_id"`
+	Authors    []string `json:"authors"`
+	Categories []string `json:"categories"`
 }
 
 // PromptInfo summarizes a prompt type's current status.

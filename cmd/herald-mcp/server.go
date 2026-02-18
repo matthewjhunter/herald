@@ -79,7 +79,7 @@ func ptrStr(s *string) string {
 	return *s
 }
 
-// registerTools registers all 21 herald tools with the MCP server.
+// registerTools registers all 26 herald tools with the MCP server.
 func registerTools(s *mcp.Server, hs *heraldServer) {
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -430,6 +430,87 @@ func registerTools(s *mcp.Server, hs *heraldServer) {
 		}
 		log.Printf("article_star: id=%d %s", input.ArticleID, action)
 		return textResult("Article %d %s.", input.ArticleID, action)
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "filter_rules_list",
+		Description: "List filter rules for the user. Optionally filter by feed_id to see rules scoped to a specific feed plus global rules.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input filterRulesListInput) (*mcp.CallToolResult, any, error) {
+		userID := hs.resolveUser(ptrStr(input.Speaker))
+		rules, err := hs.engine.GetFilterRules(userID, input.FeedID)
+		if err != nil {
+			return errResult("%v", err)
+		}
+		log.Printf("filter_rules_list: %d rules", len(rules))
+		return jsonResult(rules)
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "filter_rule_add",
+		Description: "Add a filter rule. Rules score articles by author, category, or tag. Positive scores boost, negative penalize. Use feed_metadata to discover available values first.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input filterRuleAddInput) (*mcp.CallToolResult, any, error) {
+		if input.Axis == "" {
+			return errResult("axis parameter is required")
+		}
+		if input.Value == "" {
+			return errResult("value parameter is required")
+		}
+		userID := hs.resolveUser(ptrStr(input.Speaker))
+		rule := herald.FilterRule{
+			FeedID: input.FeedID,
+			Axis:   input.Axis,
+			Value:  input.Value,
+			Score:  input.Score,
+		}
+		id, err := hs.engine.AddFilterRule(userID, rule)
+		if err != nil {
+			return errResult("%v", err)
+		}
+		log.Printf("filter_rule_add: id=%d axis=%s value=%q score=%d", id, input.Axis, input.Value, input.Score)
+		return jsonResult(map[string]any{"id": id, "axis": input.Axis, "value": input.Value, "score": input.Score})
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "filter_rule_update",
+		Description: "Update the score of an existing filter rule by ID. Use filter_rules_list to find rule IDs.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input filterRuleUpdateInput) (*mcp.CallToolResult, any, error) {
+		if input.RuleID == 0 {
+			return errResult("rule_id parameter is required")
+		}
+		if err := hs.engine.UpdateFilterRule(input.RuleID, input.Score); err != nil {
+			return errResult("%v", err)
+		}
+		log.Printf("filter_rule_update: id=%d score=%d", input.RuleID, input.Score)
+		return textResult("Filter rule %d updated to score %d.", input.RuleID, input.Score)
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "filter_rule_delete",
+		Description: "Delete a filter rule by ID. Use filter_rules_list to find rule IDs.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input filterRuleDeleteInput) (*mcp.CallToolResult, any, error) {
+		if input.RuleID == 0 {
+			return errResult("rule_id parameter is required")
+		}
+		if err := hs.engine.DeleteFilterRule(input.RuleID); err != nil {
+			return errResult("%v", err)
+		}
+		log.Printf("filter_rule_delete: id=%d", input.RuleID)
+		return textResult("Filter rule %d deleted.", input.RuleID)
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "feed_metadata",
+		Description: "Discover authors and categories from a feed's articles. Use this to find values for creating filter rules. Requires feed_id from feeds_list.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input feedMetadataInput) (*mcp.CallToolResult, any, error) {
+		if input.FeedID == 0 {
+			return errResult("feed_id parameter is required")
+		}
+		meta, err := hs.engine.GetFeedMetadata(input.FeedID)
+		if err != nil {
+			return errResult("%v", err)
+		}
+		log.Printf("feed_metadata: feed_id=%d authors=%d categories=%d", input.FeedID, len(meta.Authors), len(meta.Categories))
+		return jsonResult(meta)
 	})
 
 	mcp.AddTool(s, &mcp.Tool{

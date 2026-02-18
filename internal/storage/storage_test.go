@@ -166,7 +166,7 @@ func TestGetArticlesByInterestScore(t *testing.T) {
 	}
 
 	// Get articles with score >= 8.0
-	articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0)
+	articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil)
 	if err != nil {
 		t.Fatalf("GetArticlesByInterestScore failed: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestGetArticlesByInterestScore_TimeDecay(t *testing.T) {
 	store.UpdateReadState(1, art1, false, &rawScore, &secScore)
 	store.UpdateReadState(1, art2, false, &rawScore, &secScore)
 
-	articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0)
+	articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil)
 	if err != nil {
 		t.Fatalf("GetArticlesByInterestScore failed: %v", err)
 	}
@@ -439,7 +439,7 @@ func TestGetUnreadArticlesForUser(t *testing.T) {
 		URL: "https://example.com/b/1", PublishedDate: &now,
 	})
 
-	articles, err := store.GetUnreadArticlesForUser(1, 10, 0)
+	articles, err := store.GetUnreadArticlesForUser(1, 10, 0, nil)
 	if err != nil {
 		t.Fatalf("GetUnreadArticlesForUser failed: %v", err)
 	}
@@ -598,7 +598,7 @@ func TestReadStatePerUserIsolation(t *testing.T) {
 	store.UpdateReadState(2, articleID, false, &score2, &sec)
 
 	// User 1 should see their score
-	articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0)
+	articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil)
 	if err != nil {
 		t.Fatalf("GetArticlesByInterestScore user 1: %v", err)
 	}
@@ -610,7 +610,7 @@ func TestReadStatePerUserIsolation(t *testing.T) {
 	}
 
 	// User 2 should not see it at threshold 8.0 (their score is 3.0)
-	articles, _, err = store.GetArticlesByInterestScore(2, 8.0, 10, 0)
+	articles, _, err = store.GetArticlesByInterestScore(2, 8.0, 10, 0, nil)
 	if err != nil {
 		t.Fatalf("GetArticlesByInterestScore user 2: %v", err)
 	}
@@ -620,7 +620,7 @@ func TestReadStatePerUserIsolation(t *testing.T) {
 
 	// User 1 marks read, user 2 still unread
 	store.UpdateReadState(1, articleID, true, &score1, &sec)
-	articles, _, _ = store.GetArticlesByInterestScore(1, 8.0, 10, 0)
+	articles, _, _ = store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil)
 	if len(articles) != 0 {
 		t.Errorf("user 1 after mark-read: expected 0 articles, got %d", len(articles))
 	}
@@ -746,5 +746,289 @@ func TestUserPrompts(t *testing.T) {
 	prompts, _ = store.ListUserPrompts(1)
 	if len(prompts) != 0 {
 		t.Errorf("expected 0 prompts after delete, got %d", len(prompts))
+	}
+}
+
+// --- Article metadata tests ---
+
+func TestStoreAndGetArticleAuthors(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test", "")
+	now := time.Now()
+	articleID, _ := store.AddArticle(&Article{
+		FeedID: feedID, GUID: "g1", Title: "A1", URL: "https://example.com/1",
+		PublishedDate: &now,
+	})
+
+	authors := []ArticleAuthor{
+		{Name: "Alice", Email: "alice@example.com"},
+		{Name: "Bob", Email: ""},
+	}
+	if err := store.StoreArticleAuthors(articleID, authors); err != nil {
+		t.Fatalf("StoreArticleAuthors: %v", err)
+	}
+
+	got, err := store.GetArticleAuthors(articleID)
+	if err != nil {
+		t.Fatalf("GetArticleAuthors: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 authors, got %d", len(got))
+	}
+
+	// Duplicate insert should be ignored
+	if err := store.StoreArticleAuthors(articleID, authors); err != nil {
+		t.Fatalf("duplicate StoreArticleAuthors: %v", err)
+	}
+	got, _ = store.GetArticleAuthors(articleID)
+	if len(got) != 2 {
+		t.Errorf("expected 2 authors after duplicate insert, got %d", len(got))
+	}
+}
+
+func TestStoreAndGetArticleCategories(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test", "")
+	now := time.Now()
+	articleID, _ := store.AddArticle(&Article{
+		FeedID: feedID, GUID: "g1", Title: "A1", URL: "https://example.com/1",
+		PublishedDate: &now,
+	})
+
+	categories := []string{"Security", "Golang", "AI"}
+	if err := store.StoreArticleCategories(articleID, categories); err != nil {
+		t.Fatalf("StoreArticleCategories: %v", err)
+	}
+
+	got, err := store.GetArticleCategories(articleID)
+	if err != nil {
+		t.Fatalf("GetArticleCategories: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 categories, got %d", len(got))
+	}
+}
+
+func TestGetFeedAuthorsAndCategories(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test", "")
+	now := time.Now()
+
+	a1, _ := store.AddArticle(&Article{
+		FeedID: feedID, GUID: "g1", Title: "A1", URL: "https://example.com/1",
+		PublishedDate: &now,
+	})
+	a2, _ := store.AddArticle(&Article{
+		FeedID: feedID, GUID: "g2", Title: "A2", URL: "https://example.com/2",
+		PublishedDate: &now,
+	})
+
+	store.StoreArticleAuthors(a1, []ArticleAuthor{{Name: "Alice"}})
+	store.StoreArticleAuthors(a2, []ArticleAuthor{{Name: "Alice"}, {Name: "Bob"}})
+	store.StoreArticleCategories(a1, []string{"Security"})
+	store.StoreArticleCategories(a2, []string{"Security", "Golang"})
+
+	authors, err := store.GetFeedAuthors(feedID)
+	if err != nil {
+		t.Fatalf("GetFeedAuthors: %v", err)
+	}
+	if len(authors) != 2 {
+		t.Errorf("expected 2 distinct authors, got %d: %v", len(authors), authors)
+	}
+
+	categories, err := store.GetFeedCategories(feedID)
+	if err != nil {
+		t.Fatalf("GetFeedCategories: %v", err)
+	}
+	if len(categories) != 2 {
+		t.Errorf("expected 2 distinct categories, got %d: %v", len(categories), categories)
+	}
+}
+
+// --- Filter rules tests ---
+
+func TestFilterRulesCRUD(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test", "")
+
+	// Add a global rule
+	r1 := &FilterRule{UserID: 1, Axis: "author", Value: "Alice", Score: 5}
+	id1, err := store.AddFilterRule(r1)
+	if err != nil {
+		t.Fatalf("AddFilterRule: %v", err)
+	}
+	if id1 == 0 {
+		t.Fatal("expected non-zero rule ID")
+	}
+
+	// Add a per-feed rule
+	r2 := &FilterRule{UserID: 1, FeedID: &feedID, Axis: "category", Value: "Security", Score: 3}
+	id2, err := store.AddFilterRule(r2)
+	if err != nil {
+		t.Fatalf("AddFilterRule per-feed: %v", err)
+	}
+
+	// List all rules for user
+	rules, err := store.GetFilterRules(1, nil)
+	if err != nil {
+		t.Fatalf("GetFilterRules: %v", err)
+	}
+	if len(rules) != 2 {
+		t.Fatalf("expected 2 rules, got %d", len(rules))
+	}
+
+	// List per-feed rules (includes global rules that also apply)
+	rules, err = store.GetFilterRules(1, &feedID)
+	if err != nil {
+		t.Fatalf("GetFilterRules per-feed: %v", err)
+	}
+	if len(rules) != 2 {
+		t.Fatalf("expected 2 rules (1 global + 1 per-feed), got %d", len(rules))
+	}
+
+	// Update score
+	if err := store.UpdateFilterRuleScore(id1, 10); err != nil {
+		t.Fatalf("UpdateFilterRuleScore: %v", err)
+	}
+	rules, _ = store.GetFilterRules(1, nil)
+	for _, r := range rules {
+		if r.ID == id1 && r.Score != 10 {
+			t.Errorf("expected score 10 after update, got %d", r.Score)
+		}
+	}
+
+	// HasFilterRules
+	has, err := store.HasFilterRules(1)
+	if err != nil {
+		t.Fatalf("HasFilterRules: %v", err)
+	}
+	if !has {
+		t.Error("expected HasFilterRules = true")
+	}
+
+	has, _ = store.HasFilterRules(99)
+	if has {
+		t.Error("expected HasFilterRules = false for non-existent user")
+	}
+
+	// Delete
+	if err := store.DeleteFilterRule(id2); err != nil {
+		t.Fatalf("DeleteFilterRule: %v", err)
+	}
+	rules, _ = store.GetFilterRules(1, nil)
+	if len(rules) != 1 {
+		t.Errorf("expected 1 rule after delete, got %d", len(rules))
+	}
+}
+
+func TestFilterRuleUniqueConstraint(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	r := &FilterRule{UserID: 1, Axis: "author", Value: "Alice", Score: 5}
+	_, err := store.AddFilterRule(r)
+	if err != nil {
+		t.Fatalf("first AddFilterRule: %v", err)
+	}
+
+	// Duplicate should fail
+	_, err = store.AddFilterRule(r)
+	if err == nil {
+		t.Fatal("expected error for duplicate filter rule")
+	}
+}
+
+func TestFilteredArticleQueries(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test", "")
+	store.SubscribeUserToFeed(1, feedID)
+
+	now := time.Now()
+	a1, _ := store.AddArticle(&Article{
+		FeedID: feedID, GUID: "g1", Title: "Secure Article",
+		URL: "https://example.com/1", PublishedDate: &now,
+	})
+	a2, _ := store.AddArticle(&Article{
+		FeedID: feedID, GUID: "g2", Title: "Random Article",
+		URL: "https://example.com/2", PublishedDate: &now,
+	})
+
+	// Tag a1 with matching metadata
+	store.StoreArticleAuthors(a1, []ArticleAuthor{{Name: "Alice"}})
+	store.StoreArticleCategories(a1, []string{"Security"})
+
+	// a2 has no matching metadata
+	_ = a2
+
+	// Add filter rules: boost author=Alice (+5) and category=Security (+3)
+	store.AddFilterRule(&FilterRule{UserID: 1, Axis: "author", Value: "Alice", Score: 5})
+	store.AddFilterRule(&FilterRule{UserID: 1, Axis: "category", Value: "Security", Score: 3})
+
+	// Without filter (nil threshold) — both articles returned
+	articles, err := store.GetUnreadArticlesForUser(1, 10, 0, nil)
+	if err != nil {
+		t.Fatalf("GetUnreadArticlesForUser (nil threshold): %v", err)
+	}
+	if len(articles) != 2 {
+		t.Errorf("nil threshold: expected 2 articles, got %d", len(articles))
+	}
+
+	// With threshold=0 — both articles returned (0 means disabled)
+	zero := 0
+	articles, _ = store.GetUnreadArticlesForUser(1, 10, 0, &zero)
+	if len(articles) != 2 {
+		t.Errorf("threshold=0: expected 2 articles, got %d", len(articles))
+	}
+
+	// With threshold=1 — only a1 passes (score 8 >= 1), a2 has score 0
+	one := 1
+	articles, _ = store.GetUnreadArticlesForUser(1, 10, 0, &one)
+	if len(articles) != 1 {
+		t.Errorf("threshold=1: expected 1 article, got %d", len(articles))
+	}
+	if len(articles) > 0 && articles[0].Title != "Secure Article" {
+		t.Errorf("expected 'Secure Article', got %q", articles[0].Title)
+	}
+
+	// With threshold=10 — neither passes (max score is 8)
+	ten := 10
+	articles, _ = store.GetUnreadArticlesForUser(1, 10, 0, &ten)
+	if len(articles) != 0 {
+		t.Errorf("threshold=10: expected 0 articles, got %d", len(articles))
+	}
+}
+
+func TestFilteredQueriesNoRulesPassthrough(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test", "")
+	store.SubscribeUserToFeed(1, feedID)
+
+	now := time.Now()
+	store.AddArticle(&Article{
+		FeedID: feedID, GUID: "g1", Title: "A1",
+		URL: "https://example.com/1", PublishedDate: &now,
+	})
+
+	// User has no filter rules, but threshold is set — should still pass through
+	// because NOT EXISTS (SELECT 1 FROM filter_rules WHERE user_id=1) is true
+	threshold := 5
+	articles, err := store.GetUnreadArticlesForUser(1, 10, 0, &threshold)
+	if err != nil {
+		t.Fatalf("GetUnreadArticlesForUser with threshold but no rules: %v", err)
+	}
+	if len(articles) != 1 {
+		t.Errorf("expected 1 article (no rules passthrough), got %d", len(articles))
 	}
 }

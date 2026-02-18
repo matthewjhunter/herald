@@ -39,14 +39,31 @@ type Store interface {
 	AddArticle(article *Article) (int64, error)
 	GetUnreadArticles(limit int) ([]Article, error)
 	GetArticle(articleID int64) (*Article, error)
-	GetArticlesByInterestScore(userID int64, threshold float64, limit, offset int) ([]Article, []float64, error)
-	GetUnreadArticlesForUser(userID int64, limit, offset int) ([]Article, error)
-	GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int) ([]Article, error)
+	GetArticlesByInterestScore(userID int64, threshold float64, limit, offset int, filterThreshold *int) ([]Article, []float64, error)
+	GetUnreadArticlesForUser(userID int64, limit, offset int, filterThreshold *int) ([]Article, error)
+	GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int, filterThreshold *int) ([]Article, error)
 	GetUnscoredArticlesForUser(userID int64, limit int) ([]Article, error)
 	GetUnscoredArticleCount(userID int64) (int, error)
 	GetUnsummarizedArticleCount(userID int64) (int, error)
 
-	GetStarredArticles(userID int64, limit, offset int) ([]Article, error)
+	GetStarredArticles(userID int64, limit, offset int, filterThreshold *int) ([]Article, error)
+
+	// Article metadata
+	StoreArticleAuthors(articleID int64, authors []ArticleAuthor) error
+	StoreArticleCategories(articleID int64, categories []string) error
+	GetArticleAuthors(articleID int64) ([]ArticleAuthor, error)
+	GetArticleCategories(articleID int64) ([]string, error)
+
+	// Feed metadata discovery
+	GetFeedAuthors(feedID int64) ([]string, error)
+	GetFeedCategories(feedID int64) ([]string, error)
+
+	// Filter rules
+	AddFilterRule(rule *FilterRule) (int64, error)
+	GetFilterRules(userID int64, feedID *int64) ([]FilterRule, error)
+	UpdateFilterRuleScore(ruleID int64, score int) error
+	DeleteFilterRule(ruleID int64) error
+	HasFilterRules(userID int64) (bool, error)
 
 	// Article summaries
 	UpdateArticleAISummary(userID, articleID int64, aiSummary string) error

@@ -121,4 +121,36 @@ CREATE TABLE IF NOT EXISTS user_prompts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_prompts_user ON user_prompts(user_id);
+
+CREATE TABLE IF NOT EXISTS article_authors (
+    article_id INTEGER NOT NULL,
+    name TEXT NOT NULL COLLATE NOCASE,
+    email TEXT,
+    PRIMARY KEY (article_id, name),
+    FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_article_authors_name ON article_authors(name);
+
+CREATE TABLE IF NOT EXISTS article_categories (
+    article_id INTEGER NOT NULL,
+    category TEXT NOT NULL COLLATE NOCASE,
+    PRIMARY KEY (article_id, category),
+    FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_article_categories_category ON article_categories(category);
+
+CREATE TABLE IF NOT EXISTS filter_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    feed_id INTEGER,
+    axis TEXT NOT NULL CHECK(axis IN ('author', 'category', 'tag')),
+    value TEXT NOT NULL COLLATE NOCASE,
+    score INTEGER NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_filter_rules_user ON filter_rules(user_id);
+CREATE INDEX IF NOT EXISTS idx_filter_rules_lookup ON filter_rules(user_id, axis, value);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_filter_rules_unique
+    ON filter_rules(user_id, COALESCE(feed_id, -1), axis, value);
 `

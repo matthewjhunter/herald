@@ -163,6 +163,8 @@ func TestToolsList(t *testing.T) {
 		"prompts_list", "prompt_get", "prompt_set", "prompt_reset",
 		"briefing", "article_star",
 		"user_register", "user_list",
+		"filter_rules_list", "filter_rule_add", "filter_rule_update",
+		"filter_rule_delete", "feed_metadata",
 	}
 	if len(result.Tools) != len(expected) {
 		t.Fatalf("got %d tools, want %d", len(result.Tools), len(expected))
@@ -976,6 +978,180 @@ func TestSpeakerFallback(t *testing.T) {
 	if result.IsError {
 		t.Fatalf("unexpected error: %s", resultText(t, result))
 	}
+}
+
+// --- Filter rules tests ---
+
+func TestFilterRuleAddAndList(t *testing.T) {
+	_, session := newTestSession(t)
+
+	// Add a global rule
+	result := mustCallTool(t, session, "filter_rule_add", map[string]any{
+		"axis":  "author",
+		"value": "Alice",
+		"score": 5,
+	})
+	if result.IsError {
+		t.Fatalf("filter_rule_add error: %s", resultText(t, result))
+	}
+
+	// List rules
+	result = mustCallTool(t, session, "filter_rules_list", map[string]any{})
+	if result.IsError {
+		t.Fatalf("filter_rules_list error: %s", resultText(t, result))
+	}
+
+	text := resultText(t, result)
+	var rules []struct {
+		ID    int64  `json:"id"`
+		Axis  string `json:"axis"`
+		Value string `json:"value"`
+		Score int    `json:"score"`
+	}
+	if err := json.Unmarshal([]byte(text), &rules); err != nil {
+		t.Fatalf("unmarshal rules: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].Axis != "author" || rules[0].Value != "Alice" || rules[0].Score != 5 {
+		t.Errorf("rule mismatch: %+v", rules[0])
+	}
+}
+
+func TestFilterRuleAddValidation(t *testing.T) {
+	_, session := newTestSession(t)
+
+	// Invalid axis
+	result := mustCallTool(t, session, "filter_rule_add", map[string]any{
+		"axis":  "invalid",
+		"value": "x",
+		"score": 1,
+	})
+	if !result.IsError {
+		t.Fatal("expected error for invalid axis")
+	}
+}
+
+func TestFilterRuleUpdate(t *testing.T) {
+	_, session := newTestSession(t)
+
+	// Add a rule
+	result := mustCallTool(t, session, "filter_rule_add", map[string]any{
+		"axis": "category", "value": "Security", "score": 3,
+	})
+	if result.IsError {
+		t.Fatalf("add error: %s", resultText(t, result))
+	}
+
+	// Get the rule ID
+	result = mustCallTool(t, session, "filter_rules_list", map[string]any{})
+	text := resultText(t, result)
+	var rules []struct {
+		ID int64 `json:"id"`
+	}
+	json.Unmarshal([]byte(text), &rules)
+	if len(rules) == 0 {
+		t.Fatal("no rules to update")
+	}
+
+	// Update score
+	result = mustCallTool(t, session, "filter_rule_update", map[string]any{
+		"rule_id": rules[0].ID,
+		"score":   10,
+	})
+	if result.IsError {
+		t.Fatalf("update error: %s", resultText(t, result))
+	}
+
+	// Verify
+	result = mustCallTool(t, session, "filter_rules_list", map[string]any{})
+	text = resultText(t, result)
+	var updated []struct {
+		Score int `json:"score"`
+	}
+	json.Unmarshal([]byte(text), &updated)
+	if len(updated) > 0 && updated[0].Score != 10 {
+		t.Errorf("expected score 10, got %d", updated[0].Score)
+	}
+}
+
+func TestFilterRuleDelete(t *testing.T) {
+	_, session := newTestSession(t)
+
+	// Add and delete
+	mustCallTool(t, session, "filter_rule_add", map[string]any{
+		"axis": "tag", "value": "golang", "score": 2,
+	})
+
+	result := mustCallTool(t, session, "filter_rules_list", map[string]any{})
+	text := resultText(t, result)
+	var rules []struct {
+		ID int64 `json:"id"`
+	}
+	json.Unmarshal([]byte(text), &rules)
+	if len(rules) == 0 {
+		t.Fatal("no rules to delete")
+	}
+
+	result = mustCallTool(t, session, "filter_rule_delete", map[string]any{
+		"rule_id": rules[0].ID,
+	})
+	if result.IsError {
+		t.Fatalf("delete error: %s", resultText(t, result))
+	}
+
+	// Verify empty
+	result = mustCallTool(t, session, "filter_rules_list", map[string]any{})
+	text = resultText(t, result)
+	json.Unmarshal([]byte(text), &rules)
+	if len(rules) != 0 {
+		t.Errorf("expected 0 rules after delete, got %d", len(rules))
+	}
+}
+
+func TestFeedMetadata(t *testing.T) {
+	_, session := newTestSession(t)
+	ts := feedServer(t)
+	feedID := subscribeFeed(t, session, ts.URL+"/feed.xml")
+
+	result := mustCallTool(t, session, "feed_metadata", map[string]any{
+		"feed_id": feedID,
+	})
+	if result.IsError {
+		t.Fatalf("feed_metadata error: %s", resultText(t, result))
+	}
+
+	text := resultText(t, result)
+	var meta struct {
+		FeedID     int64    `json:"feed_id"`
+		Authors    []string `json:"authors"`
+		Categories []string `json:"categories"`
+	}
+	if err := json.Unmarshal([]byte(text), &meta); err != nil {
+		t.Fatalf("unmarshal metadata: %v", err)
+	}
+	if meta.FeedID != feedID {
+		t.Errorf("feed_id = %d, want %d", meta.FeedID, feedID)
+	}
+}
+
+func TestFilterRuleAddMissingParams(t *testing.T) {
+	_, session := newTestSession(t)
+
+	// Missing axis
+	expectError(t, session, "filter_rule_add", map[string]any{"value": "x", "score": 1})
+
+	// Missing value
+	expectError(t, session, "filter_rule_add", map[string]any{"axis": "author", "score": 1})
+
+	// Missing score
+	expectError(t, session, "filter_rule_add", map[string]any{"axis": "author", "value": "x"})
+}
+
+func TestFeedMetadataMissingID(t *testing.T) {
+	_, session := newTestSession(t)
+	expectError(t, session, "feed_metadata", map[string]any{})
 }
 
 func TestSpeakerOmitted(t *testing.T) {
