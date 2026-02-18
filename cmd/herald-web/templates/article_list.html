@@ -1,0 +1,17 @@
+{{define "article_list"}}
+{{if .Articles}}
+{{range .Articles}}
+{{template "article_row" .}}
+{{end}}
+{{if .HasMore}}
+<div class="scroll-sentinel"
+     hx-get="/u/{{$.UserID}}/articles?offset={{.NextOffset}}{{if $.FeedID}}&feed_id={{$.FeedID}}{{end}}{{if $.Starred}}&starred=1{{end}}"
+     hx-trigger="revealed"
+     hx-swap="outerHTML">
+    Loading more...
+</div>
+{{end}}
+{{else}}
+<div class="empty-state">No articles to show</div>
+{{end}}
+{{end}}

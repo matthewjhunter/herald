@@ -1,0 +1,19 @@
+{{define "title"}}Herald - Select User{{end}}
+{{define "content"}}
+<main class="container" style="max-width:400px;margin-top:3rem;">
+    <article>
+        <header><h2>Select User</h2></header>
+        {{if .Users}}
+        <nav>
+            {{range .Users}}
+            <a href="/u/{{.ID}}" role="button" class="outline" style="display:block;margin-bottom:0.5rem;text-align:center;">
+                {{.Name}}
+            </a>
+            {{end}}
+        </nav>
+        {{else}}
+        <p class="empty-state">No users registered. Use the CLI to create a user.</p>
+        {{end}}
+    </article>
+</main>
+{{end}}

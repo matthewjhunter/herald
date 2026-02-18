@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="auto">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{block "title" .}}Herald{{end}}</title>
+    <link rel="stylesheet" href="/static/pico.min.css">
+    <link rel="stylesheet" href="/static/herald.css">
+</head>
+<body>
+    <header class="top-nav">
+        <h1><a href="/" style="text-decoration:none;color:inherit;">Herald</a></h1>
+        {{block "nav" .}}{{end}}
+    </header>
+    {{block "content" .}}{{end}}
+    <script src="/static/htmx.min.js"></script>
+    <script src="/static/herald.js"></script>
+</body>
+</html>

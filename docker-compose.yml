@@ -1,0 +1,32 @@
+services:
+  herald-web:
+    build: .
+    command: herald-web --db /data/herald.db --addr :8080
+    ports:
+      - "8080:8080"
+    volumes:
+      - herald-data:/data
+    restart: unless-stopped
+    depends_on:
+      - herald-fetcher
+
+  herald-fetcher:
+    build: .
+    command: herald daemon --config /etc/herald/config.yaml --interval 5m
+    volumes:
+      - herald-data:/data
+      - ./config:/etc/herald:ro
+    restart: unless-stopped
+    depends_on:
+      - ollama
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-models:/root/.ollama
+    ports:
+      - "11434:11434"
+
+volumes:
+  herald-data:
+  ollama-models:

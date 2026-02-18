@@ -1,0 +1,33 @@
+{{define "article_view"}}
+<div class="article-header">
+    <h2>{{.Title}}</h2>
+    <div class="meta">
+        {{if .FeedTitle}}<strong>{{.FeedTitle}}</strong> &middot; {{end}}
+        {{if .Author}}{{.Author}} &middot; {{end}}
+        {{.PublishedDateFmt}}
+    </div>
+</div>
+
+{{if .AISummary}}
+<div class="ai-summary">
+    <strong>AI Summary</strong>
+    <p>{{.AISummary}}</p>
+</div>
+{{end}}
+
+<div class="article-content">
+    {{.SanitizedContent}}
+</div>
+
+<div class="article-actions">
+    <a href="{{.URL}}" target="_blank" rel="noopener" role="button" class="outline" data-original>
+        Open Original
+    </a>
+    <button class="outline {{if .Starred}}contrast{{end}}"
+            data-star-toggle
+            hx-post="/u/{{.UserID}}/articles/{{.ID}}/star"
+            hx-swap="outerHTML">
+        {{if .Starred}}&#9733; Starred{{else}}&#9734; Star{{end}}
+    </button>
+</div>
+{{end}}

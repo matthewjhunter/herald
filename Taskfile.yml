@@ -33,7 +33,7 @@ tasks:
     desc: Remove build artifacts
     cmds:
       - echo "Cleaning..."
-      - rm -f {{.BINARY}}
+      - rm -f {{.BINARY}} herald-web
       - rm -f *.db *.db-shm *.db-wal
       - rm -f internal/storage/test.db
       - rm -f coverage.out coverage.html
@@ -109,6 +109,42 @@ tasks:
     deps: [build]
     cmds:
       - ./{{.BINARY}} fetch
+
+  build-web:
+    desc: Build the web application
+    cmds:
+      - echo "Building herald-web..."
+      - go build -o herald-web ./cmd/herald-web
+
+  run-web:
+    desc: Run the web application
+    deps: [build-web]
+    cmds:
+      - ./herald-web --addr :8080
+
+  build-all:
+    desc: Build all applications
+    deps: [build, build-web]
+
+  docker-build:
+    desc: Build Docker images
+    cmds:
+      - docker compose build
+
+  docker-up:
+    desc: Start all services in background
+    cmds:
+      - docker compose up -d
+
+  docker-down:
+    desc: Stop all services
+    cmds:
+      - docker compose down
+
+  docker-logs:
+    desc: Follow logs from all services
+    cmds:
+      - docker compose logs -f
 
   watch:
     desc: Watch for changes and rebuild (requires entr)

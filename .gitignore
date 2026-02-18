@@ -2,6 +2,7 @@
 feedreader
 /herald
 /herald-mcp
+/herald-web
 *.exe
 *.exe~
 *.dll

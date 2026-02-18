@@ -1,0 +1,22 @@
+{{define "feed_sidebar_content"}}
+<nav>
+    <a href="#" hx-get="/u/{{.UserID}}/articles" hx-target="#article-list" hx-swap="innerHTML"
+       class="{{if not .ActiveFeed}}active{{end}}">
+        All Articles
+        {{if .TotalUnread}}<span class="unread-count">{{.TotalUnread}}</span>{{end}}
+    </a>
+    <a href="#" hx-get="/u/{{.UserID}}/articles?starred=1" hx-target="#article-list" hx-swap="innerHTML">
+        Starred
+    </a>
+    <hr>
+    {{range .Feeds}}
+    <a href="#" hx-get="/u/{{$.UserID}}/articles?feed_id={{.FeedID}}" hx-target="#article-list" hx-swap="innerHTML"
+       class="{{if eq $.ActiveFeed .FeedID}}active{{end}}">
+        {{.FeedTitle}}
+        {{if .UnreadArticles}}<span class="unread-count">{{.UnreadArticles}}</span>{{end}}
+    </a>
+    {{end}}
+    <hr>
+    <a href="/u/{{.UserID}}/feeds">+ Manage Feeds</a>
+</nav>
+{{end}}

@@ -1,0 +1,57 @@
+{{define "title"}}Herald - {{.Group.Topic}}{{end}}
+{{define "nav"}}
+<nav style="display:flex;gap:1rem;align-items:center;">
+    <a href="/u/{{.UserID}}">Articles</a>
+    <a href="/u/{{.UserID}}/feeds">Feeds</a>
+    <a href="/u/{{.UserID}}/groups" aria-current="page">Groups</a>
+    <a href="/u/{{.UserID}}/settings">Settings</a>
+</nav>
+{{end}}
+{{define "content"}}
+<main class="container">
+    <nav aria-label="breadcrumb">
+        <ul>
+            <li><a href="/u/{{.UserID}}/groups">Groups</a></li>
+            <li>{{.Group.Topic}}</li>
+        </ul>
+    </nav>
+
+    <h2>{{.Group.Topic}}</h2>
+
+    {{if .Group.Summary}}
+    <article>
+        <p>{{.Group.Summary}}</p>
+    </article>
+    {{end}}
+
+    {{if .Group.Articles}}
+    <table>
+        <thead>
+            <tr>
+                <th>Article</th>
+                <th>Author</th>
+                <th>Date</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Group.Articles}}
+            <tr>
+                <td>
+                    <a href="/u/{{$.UserID}}/articles/{{.ID}}"
+                       hx-get="/u/{{$.UserID}}/articles/{{.ID}}"
+                       hx-target="#reading-pane" hx-swap="innerHTML"
+                       hx-push-url="false">
+                        {{.Title}}
+                    </a>
+                </td>
+                <td>{{.Author}}</td>
+                <td>{{.PublishedDateFmt}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    {{else}}
+    <p class="empty-state">No articles in this group.</p>
+    {{end}}
+</main>
+{{end}}

@@ -226,6 +226,7 @@ func main() {
 	rootCmd.AddCommand(fetchFeedsCmd())
 	rootCmd.AddCommand(processCmd())
 	rootCmd.AddCommand(fetchCmd())
+	rootCmd.AddCommand(daemonCmd())
 	rootCmd.AddCommand(listCmd())
 	rootCmd.AddCommand(readCmd())
 	rootCmd.AddCommand(initConfigCmd())

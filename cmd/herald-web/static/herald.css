@@ -1,0 +1,174 @@
+/* Herald Web UI Layout */
+
+/* Main app grid: sidebar + content */
+.app-grid {
+    display: grid;
+    grid-template-columns: 250px 1fr;
+    height: calc(100vh - 60px);
+    overflow: hidden;
+}
+
+/* Sidebar */
+.sidebar {
+    border-right: 1px solid var(--pico-muted-border-color);
+    overflow-y: auto;
+    padding: 1rem;
+}
+
+.sidebar nav a {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+    text-decoration: none;
+    color: var(--pico-color);
+}
+
+.sidebar nav a:hover,
+.sidebar nav a.active {
+    background: var(--pico-primary-focus);
+}
+
+.sidebar .unread-count {
+    font-size: 0.8rem;
+    opacity: 0.7;
+}
+
+.sidebar hr {
+    margin: 0.75rem 0;
+}
+
+/* Main content: article list + reading pane */
+.content-split {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.article-list-pane {
+    flex: 0 0 40%;
+    overflow-y: auto;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+}
+
+.reading-pane {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.5rem;
+}
+
+/* Article rows */
+.article-row {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.article-row:hover {
+    background: var(--pico-primary-focus);
+}
+
+.article-row.active {
+    background: var(--pico-primary-focus);
+    border-left: 3px solid var(--pico-primary);
+}
+
+.article-row.read {
+    opacity: 0.6;
+}
+
+.article-row h4 {
+    margin: 0 0 0.25rem;
+    font-size: 0.95rem;
+    line-height: 1.3;
+}
+
+.article-row .meta {
+    font-size: 0.8rem;
+    color: var(--pico-muted-color);
+}
+
+.article-row .starred {
+    color: gold;
+}
+
+/* Reading pane content */
+.reading-pane .article-header {
+    margin-bottom: 1.5rem;
+}
+
+.reading-pane .article-header h2 {
+    margin-bottom: 0.5rem;
+}
+
+.reading-pane .ai-summary {
+    background: var(--pico-card-background-color);
+    border-left: 3px solid var(--pico-primary);
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+    border-radius: 4px;
+}
+
+.reading-pane .article-content {
+    line-height: 1.7;
+}
+
+.reading-pane .article-content img {
+    max-width: 100%;
+    height: auto;
+}
+
+.reading-pane .article-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--pico-muted-border-color);
+}
+
+/* Infinite scroll sentinel */
+.scroll-sentinel {
+    padding: 1rem;
+    text-align: center;
+    color: var(--pico-muted-color);
+}
+
+/* Top nav */
+.top-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 1rem;
+    height: 60px;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+}
+
+.top-nav h1 {
+    margin: 0;
+    font-size: 1.25rem;
+}
+
+/* Empty states */
+.empty-state {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--pico-muted-color);
+}
+
+/* Responsive: collapse sidebar on mobile */
+@media (max-width: 768px) {
+    .app-grid {
+        grid-template-columns: 1fr;
+    }
+    .sidebar {
+        display: none;
+    }
+    .content-split {
+        flex-direction: column;
+    }
+    .article-list-pane {
+        flex: 0 0 50%;
+    }
+}

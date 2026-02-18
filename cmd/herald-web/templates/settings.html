@@ -1,0 +1,39 @@
+{{define "title"}}Herald - Settings{{end}}
+{{define "nav"}}
+<nav style="display:flex;gap:1rem;align-items:center;">
+    <a href="/u/{{.UserID}}">Articles</a>
+    <a href="/u/{{.UserID}}/feeds">Feeds</a>
+    <a href="/u/{{.UserID}}/groups">Groups</a>
+    <a href="/u/{{.UserID}}/settings" aria-current="page">Settings</a>
+</nav>
+{{end}}
+{{define "content"}}
+<main class="container" style="max-width:600px;">
+    <h2>Settings</h2>
+
+    <form hx-post="/u/{{.UserID}}/settings" hx-swap="none">
+        <label for="keywords">Interest Keywords</label>
+        <input type="text" id="keywords" name="keywords" value="{{.Keywords}}"
+               placeholder="security, golang, AI (comma-separated)">
+        <small>Comma-separated list of topics you're interested in.</small>
+
+        <label for="interest_threshold">Interest Threshold</label>
+        <input type="number" id="interest_threshold" name="interest_threshold"
+               value="{{printf "%.1f" .InterestThreshold}}" min="0" max="10" step="0.5">
+        <small>Articles scored above this threshold appear in briefings (0-10).</small>
+
+        <label for="notify_when">Notification Timing</label>
+        <select id="notify_when" name="notify_when">
+            <option value="present" {{if eq .NotifyWhen "present"}}selected{{end}}>When present</option>
+            <option value="always" {{if eq .NotifyWhen "always"}}selected{{end}}>Always</option>
+            <option value="queue" {{if eq .NotifyWhen "queue"}}selected{{end}}>Queue</option>
+        </select>
+
+        <label for="notify_min_score">Minimum Notification Score</label>
+        <input type="number" id="notify_min_score" name="notify_min_score"
+               value="{{printf "%.1f" .NotifyMinScore}}" min="0" max="10" step="0.5">
+
+        <button type="submit">Save Settings</button>
+    </form>
+</main>
+{{end}}

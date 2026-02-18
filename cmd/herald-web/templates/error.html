@@ -1,0 +1,6 @@
+{{define "error"}}
+<div class="empty-state">
+    <p>{{.Message}}</p>
+    {{if .Detail}}<small class="secondary">{{.Detail}}</small>{{end}}
+</div>
+{{end}}

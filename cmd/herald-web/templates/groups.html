@@ -1,0 +1,32 @@
+{{define "title"}}Herald - Groups{{end}}
+{{define "nav"}}
+<nav style="display:flex;gap:1rem;align-items:center;">
+    <a href="/u/{{.UserID}}">Articles</a>
+    <a href="/u/{{.UserID}}/feeds">Feeds</a>
+    <a href="/u/{{.UserID}}/groups" aria-current="page">Groups</a>
+    <a href="/u/{{.UserID}}/settings">Settings</a>
+</nav>
+{{end}}
+{{define "content"}}
+<main class="container">
+    <h2>Article Groups</h2>
+
+    {{if .Groups}}
+    <div class="grid">
+        {{range .Groups}}
+        <article>
+            <header>
+                <a href="/u/{{$.UserID}}/groups/{{.ID}}"><strong>{{.Topic}}</strong></a>
+            </header>
+            {{if .Summary}}<p>{{.Summary}}</p>{{end}}
+            <footer>
+                <small>{{.Count}} articles{{if .MaxScore}} &middot; Top score: {{printf "%.1f" .MaxScore}}{{end}}</small>
+            </footer>
+        </article>
+        {{end}}
+    </div>
+    {{else}}
+    <p class="empty-state">No article groups yet. Groups are created automatically as articles are processed.</p>
+    {{end}}
+</main>
+{{end}}

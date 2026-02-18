@@ -1,0 +1,66 @@
+{{define "title"}}Herald - Manage Feeds{{end}}
+{{define "nav"}}
+<nav style="display:flex;gap:1rem;align-items:center;">
+    <a href="/u/{{.UserID}}">Articles</a>
+    <a href="/u/{{.UserID}}/feeds" aria-current="page">Feeds</a>
+    <a href="/u/{{.UserID}}/groups">Groups</a>
+    <a href="/u/{{.UserID}}/settings">Settings</a>
+</nav>
+{{end}}
+{{define "content"}}
+<main class="container">
+    <h2>Manage Feeds</h2>
+
+    <article>
+        <header><h3>Subscribe to Feed</h3></header>
+        <form hx-post="/u/{{.UserID}}/feeds" hx-target="#feed-list" hx-swap="innerHTML"
+              hx-on::after-request="if(event.detail.successful) this.reset();">
+            <div class="grid">
+                <input type="url" name="url" placeholder="https://example.com/feed.xml" required>
+                <input type="text" name="title" placeholder="Title (optional)">
+                <button type="submit">Subscribe</button>
+            </div>
+        </form>
+    </article>
+
+    <div id="feed-list">
+        {{if .Feeds}}
+        <table>
+            <thead>
+                <tr>
+                    <th>Feed</th>
+                    <th>Articles</th>
+                    <th>Unread</th>
+                    <th>Last Fetched</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Feeds}}
+                <tr>
+                    <td>
+                        <strong>{{.Title}}</strong><br>
+                        <small class="secondary">{{.URL}}</small>
+                        {{if .LastError}}<br><small style="color:var(--pico-del-color);">Error: {{.LastError}}</small>{{end}}
+                    </td>
+                    <td>{{.TotalArticles}}</td>
+                    <td>{{.UnreadArticles}}</td>
+                    <td>{{.LastFetchedFmt}}</td>
+                    <td>
+                        <button class="outline secondary" style="padding:0.25rem 0.5rem;font-size:0.8rem;"
+                                hx-delete="/u/{{$.UserID}}/feeds/{{.FeedID}}"
+                                hx-target="#feed-list" hx-swap="innerHTML"
+                                hx-confirm="Unsubscribe from {{.Title}}?">
+                            Unsubscribe
+                        </button>
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+        {{else}}
+        <p class="empty-state">No feeds subscribed. Add one above.</p>
+        {{end}}
+    </div>
+</main>
+{{end}}

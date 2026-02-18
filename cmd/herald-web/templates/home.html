@@ -1,0 +1,26 @@
+{{define "title"}}Herald - {{.UserName}}{{end}}
+{{define "nav"}}
+<nav style="display:flex;gap:1rem;align-items:center;">
+    <a href="/u/{{.UserID}}">Articles</a>
+    <a href="/u/{{.UserID}}/feeds">Feeds</a>
+    <a href="/u/{{.UserID}}/groups">Groups</a>
+    <a href="/u/{{.UserID}}/settings">Settings</a>
+</nav>
+{{end}}
+{{define "content"}}
+<div class="app-grid">
+    <aside class="sidebar" id="sidebar"
+           hx-get="/u/{{.UserID}}/sidebar" hx-trigger="feeds-changed from:body" hx-swap="innerHTML">
+        {{template "feed_sidebar_content" .}}
+    </aside>
+    <div class="content-split">
+        <div class="article-list-pane" id="article-list"
+             hx-get="/u/{{.UserID}}/articles" hx-trigger="load" hx-swap="innerHTML">
+            <div class="empty-state">Loading articles...</div>
+        </div>
+        <div class="reading-pane" id="reading-pane">
+            <div class="empty-state">Select an article to read</div>
+        </div>
+    </div>
+</div>
+{{end}}
