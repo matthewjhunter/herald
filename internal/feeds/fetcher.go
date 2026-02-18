@@ -16,7 +16,7 @@ import (
 type Fetcher struct {
 	parser *gofeed.Parser
 	client *http.Client
-	store  *storage.Store
+	store  storage.Store
 }
 
 // OPML structures for parsing
@@ -39,7 +39,7 @@ type OPMLOutline struct {
 }
 
 // NewFetcher creates a new feed fetcher
-func NewFetcher(store *storage.Store) *Fetcher {
+func NewFetcher(store storage.Store) *Fetcher {
 	parser := gofeed.NewParser()
 	parser.UserAgent = "FeedReader/1.0"
 	return &Fetcher{

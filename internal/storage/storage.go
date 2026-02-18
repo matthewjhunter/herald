@@ -8,9 +8,13 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type Store struct {
+// SQLiteStore implements the Store interface using SQLite.
+type SQLiteStore struct {
 	db *sql.DB
 }
+
+// Compile-time check that SQLiteStore implements Store.
+var _ Store = (*SQLiteStore)(nil)
 
 type Feed struct {
 	ID           int64
@@ -79,8 +83,8 @@ type UserPrompt struct {
 	UpdatedAt      time.Time
 }
 
-// NewStore creates a new database connection and initializes the schema
-func NewStore(dbPath string) (*Store, error) {
+// NewSQLiteStore creates a new database connection and initializes the schema.
+func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
@@ -136,7 +140,7 @@ func NewStore(dbPath string) (*Store, error) {
 		}
 	}
 
-	return &Store{db: db}, nil
+	return &SQLiteStore{db: db}, nil
 }
 
 // needsReadStateMigration checks whether the read_state table uses the old
@@ -164,7 +168,7 @@ func needsReadStateMigration(db *sql.DB) bool {
 }
 
 // Close closes the database connection
-func (s *Store) Close() error {
+func (s *SQLiteStore) Close() error {
 	return s.db.Close()
 }
 
@@ -176,7 +180,7 @@ type User struct {
 }
 
 // CreateUser registers a new user by name. Returns the new user's ID.
-func (s *Store) CreateUser(name string) (int64, error) {
+func (s *SQLiteStore) CreateUser(name string) (int64, error) {
 	result, err := s.db.Exec(
 		"INSERT INTO users (name) VALUES (?)",
 		name,
@@ -188,7 +192,7 @@ func (s *Store) CreateUser(name string) (int64, error) {
 }
 
 // GetUserByName looks up a user by name (case-insensitive).
-func (s *Store) GetUserByName(name string) (*User, error) {
+func (s *SQLiteStore) GetUserByName(name string) (*User, error) {
 	var u User
 	err := s.db.QueryRow(
 		"SELECT id, name, created_at FROM users WHERE name = ?",
@@ -201,7 +205,7 @@ func (s *Store) GetUserByName(name string) (*User, error) {
 }
 
 // ListUsers returns all registered users ordered by name.
-func (s *Store) ListUsers() ([]User, error) {
+func (s *SQLiteStore) ListUsers() ([]User, error) {
 	rows, err := s.db.Query("SELECT id, name, created_at FROM users ORDER BY name")
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
@@ -222,7 +226,7 @@ func (s *Store) ListUsers() ([]User, error) {
 // User prompt management
 
 // GetUserPrompt retrieves a user's custom prompt template
-func (s *Store) GetUserPrompt(userID int64, promptType string) (string, error) {
+func (s *SQLiteStore) GetUserPrompt(userID int64, promptType string) (string, error) {
 	var promptTemplate string
 	err := s.db.QueryRow(
 		"SELECT prompt_template FROM user_prompts WHERE user_id = ? AND prompt_type = ?",
@@ -236,7 +240,7 @@ func (s *Store) GetUserPrompt(userID int64, promptType string) (string, error) {
 }
 
 // GetUserPromptTemperature retrieves a user's custom temperature setting
-func (s *Store) GetUserPromptTemperature(userID int64, promptType string) (float64, error) {
+func (s *SQLiteStore) GetUserPromptTemperature(userID int64, promptType string) (float64, error) {
 	var temperature sql.NullFloat64
 	err := s.db.QueryRow(
 		"SELECT temperature FROM user_prompts WHERE user_id = ? AND prompt_type = ?",
@@ -254,7 +258,7 @@ func (s *Store) GetUserPromptTemperature(userID int64, promptType string) (float
 }
 
 // SetUserPrompt sets a custom prompt template for a user
-func (s *Store) SetUserPrompt(userID int64, promptType, promptTemplate string, temperature *float64) error {
+func (s *SQLiteStore) SetUserPrompt(userID int64, promptType, promptTemplate string, temperature *float64) error {
 	_, err := s.db.Exec(
 		`INSERT INTO user_prompts (user_id, prompt_type, prompt_template, temperature, updated_at)
 		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -268,7 +272,7 @@ func (s *Store) SetUserPrompt(userID int64, promptType, promptTemplate string, t
 }
 
 // DeleteUserPrompt removes a custom prompt, reverting to config/default
-func (s *Store) DeleteUserPrompt(userID int64, promptType string) error {
+func (s *SQLiteStore) DeleteUserPrompt(userID int64, promptType string) error {
 	_, err := s.db.Exec(
 		"DELETE FROM user_prompts WHERE user_id = ? AND prompt_type = ?",
 		userID, promptType,
@@ -277,7 +281,7 @@ func (s *Store) DeleteUserPrompt(userID int64, promptType string) error {
 }
 
 // ListUserPrompts lists all custom prompts for a user
-func (s *Store) ListUserPrompts(userID int64) ([]UserPrompt, error) {
+func (s *SQLiteStore) ListUserPrompts(userID int64) ([]UserPrompt, error) {
 	rows, err := s.db.Query(
 		`SELECT prompt_type, prompt_template, temperature, created_at, updated_at
 		 FROM user_prompts WHERE user_id = ? ORDER BY prompt_type`,
@@ -309,7 +313,7 @@ func (s *Store) ListUserPrompts(userID int64) ([]UserPrompt, error) {
 // User preference management
 
 // GetUserPreference retrieves a single preference value for a user.
-func (s *Store) GetUserPreference(userID int64, key string) (string, error) {
+func (s *SQLiteStore) GetUserPreference(userID int64, key string) (string, error) {
 	var value string
 	err := s.db.QueryRow(
 		"SELECT value FROM user_preferences WHERE user_id = ? AND key = ?",
@@ -322,7 +326,7 @@ func (s *Store) GetUserPreference(userID int64, key string) (string, error) {
 }
 
 // SetUserPreference sets a preference value, creating or updating as needed.
-func (s *Store) SetUserPreference(userID int64, key, value string) error {
+func (s *SQLiteStore) SetUserPreference(userID int64, key, value string) error {
 	_, err := s.db.Exec(
 		`INSERT INTO user_preferences (user_id, key, value)
 		 VALUES (?, ?, ?)
@@ -334,7 +338,7 @@ func (s *Store) SetUserPreference(userID int64, key, value string) error {
 }
 
 // GetAllUserPreferences returns all preferences for a user as a key-value map.
-func (s *Store) GetAllUserPreferences(userID int64) (map[string]string, error) {
+func (s *SQLiteStore) GetAllUserPreferences(userID int64) (map[string]string, error) {
 	rows, err := s.db.Query(
 		"SELECT key, value FROM user_preferences WHERE user_id = ?",
 		userID,
@@ -356,7 +360,7 @@ func (s *Store) GetAllUserPreferences(userID int64) (map[string]string, error) {
 }
 
 // DeleteUserPreference removes a single preference for a user.
-func (s *Store) DeleteUserPreference(userID int64, key string) error {
+func (s *SQLiteStore) DeleteUserPreference(userID int64, key string) error {
 	_, err := s.db.Exec(
 		"DELETE FROM user_preferences WHERE user_id = ? AND key = ?",
 		userID, key,
@@ -365,7 +369,7 @@ func (s *Store) DeleteUserPreference(userID int64, key string) error {
 }
 
 // UpdateStarred sets the starred flag on an article's read state.
-func (s *Store) UpdateStarred(userID, articleID int64, starred bool) error {
+func (s *SQLiteStore) UpdateStarred(userID, articleID int64, starred bool) error {
 	_, err := s.db.Exec(
 		`INSERT INTO read_state (user_id, article_id, starred)
 		 VALUES (?, ?, ?)
@@ -380,7 +384,7 @@ func (s *Store) UpdateStarred(userID, articleID int64, starred bool) error {
 }
 
 // AddFeed adds a new feed to the database
-func (s *Store) AddFeed(url, title, description string) (int64, error) {
+func (s *SQLiteStore) AddFeed(url, title, description string) (int64, error) {
 	result, err := s.db.Exec(
 		"INSERT INTO feeds (url, title, description) VALUES (?, ?, ?)",
 		url, title, description,
@@ -392,7 +396,7 @@ func (s *Store) AddFeed(url, title, description string) (int64, error) {
 }
 
 // GetAllFeeds returns all enabled feeds
-func (s *Store) GetAllFeeds() ([]Feed, error) {
+func (s *SQLiteStore) GetAllFeeds() ([]Feed, error) {
 	rows, err := s.db.Query("SELECT id, url, title, description, last_fetched, last_error, etag, last_modified, enabled, created_at FROM feeds WHERE enabled = 1")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get feeds: %w", err)
@@ -414,7 +418,7 @@ func (s *Store) GetAllFeeds() ([]Feed, error) {
 }
 
 // UpdateFeedError records a fetch error for a feed.
-func (s *Store) UpdateFeedError(feedID int64, errMsg string) error {
+func (s *SQLiteStore) UpdateFeedError(feedID int64, errMsg string) error {
 	_, err := s.db.Exec("UPDATE feeds SET last_error = ? WHERE id = ?", errMsg, feedID)
 	if err != nil {
 		return fmt.Errorf("failed to update feed error: %w", err)
@@ -423,7 +427,7 @@ func (s *Store) UpdateFeedError(feedID int64, errMsg string) error {
 }
 
 // ClearFeedError clears the last error and updates last_fetched for a feed.
-func (s *Store) ClearFeedError(feedID int64) error {
+func (s *SQLiteStore) ClearFeedError(feedID int64) error {
 	_, err := s.db.Exec("UPDATE feeds SET last_error = NULL, last_fetched = CURRENT_TIMESTAMP WHERE id = ?", feedID)
 	if err != nil {
 		return fmt.Errorf("failed to clear feed error: %w", err)
@@ -432,7 +436,7 @@ func (s *Store) ClearFeedError(feedID int64) error {
 }
 
 // UpdateFeedCacheHeaders stores the HTTP cache headers from the last successful fetch.
-func (s *Store) UpdateFeedCacheHeaders(feedID int64, etag, lastModified string) error {
+func (s *SQLiteStore) UpdateFeedCacheHeaders(feedID int64, etag, lastModified string) error {
 	_, err := s.db.Exec("UPDATE feeds SET etag = ?, last_modified = ? WHERE id = ?", etag, lastModified, feedID)
 	if err != nil {
 		return fmt.Errorf("failed to update feed cache headers: %w", err)
@@ -441,7 +445,7 @@ func (s *Store) UpdateFeedCacheHeaders(feedID int64, etag, lastModified string) 
 }
 
 // UpdateFeedLastFetched updates the last fetched timestamp for a feed
-func (s *Store) UpdateFeedLastFetched(feedID int64) error {
+func (s *SQLiteStore) UpdateFeedLastFetched(feedID int64) error {
 	_, err := s.db.Exec("UPDATE feeds SET last_fetched = CURRENT_TIMESTAMP WHERE id = ?", feedID)
 	if err != nil {
 		return fmt.Errorf("failed to update feed last_fetched: %w", err)
@@ -450,7 +454,7 @@ func (s *Store) UpdateFeedLastFetched(feedID int64) error {
 }
 
 // AddArticle adds a new article to the database
-func (s *Store) AddArticle(article *Article) (int64, error) {
+func (s *SQLiteStore) AddArticle(article *Article) (int64, error) {
 	result, err := s.db.Exec(
 		`INSERT INTO articles (feed_id, guid, title, url, content, summary, author, published_date)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -465,7 +469,7 @@ func (s *Store) AddArticle(article *Article) (int64, error) {
 }
 
 // GetUnreadArticles returns all unread articles
-func (s *Store) GetUnreadArticles(limit int) ([]Article, error) {
+func (s *SQLiteStore) GetUnreadArticles(limit int) ([]Article, error) {
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date
@@ -494,7 +498,7 @@ func (s *Store) GetUnreadArticles(limit int) ([]Article, error) {
 }
 
 // UpdateReadState updates or creates the read state for an article
-func (s *Store) UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64) error {
+func (s *SQLiteStore) UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64) error {
 	_, err := s.db.Exec(
 		`INSERT INTO read_state (user_id, article_id, read, interest_score, security_score, read_date)
 		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -521,7 +525,7 @@ func (s *Store) UpdateReadState(userID, articleID int64, read bool, interestScor
 // clause still filters on the raw score so legitimately interesting articles
 // remain visible — they just sort lower as they age. Returned scores are the
 // decayed effective scores, not the raw stored values.
-func (s *Store) GetArticlesByInterestScore(userID int64, threshold float64, limit, offset int) ([]Article, []float64, error) {
+func (s *SQLiteStore) GetArticlesByInterestScore(userID int64, threshold float64, limit, offset int) ([]Article, []float64, error) {
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date,
@@ -554,7 +558,7 @@ func (s *Store) GetArticlesByInterestScore(userID int64, threshold float64, limi
 }
 
 // UpdateArticleAISummary stores the AI-generated summary for an article (per-user)
-func (s *Store) UpdateArticleAISummary(userID, articleID int64, aiSummary string) error {
+func (s *SQLiteStore) UpdateArticleAISummary(userID, articleID int64, aiSummary string) error {
 	_, err := s.db.Exec(
 		`INSERT INTO article_summaries (user_id, article_id, ai_summary)
 		 VALUES (?, ?, ?)
@@ -570,7 +574,7 @@ func (s *Store) UpdateArticleAISummary(userID, articleID int64, aiSummary string
 }
 
 // GetArticleSummary retrieves the AI summary for an article for a specific user
-func (s *Store) GetArticleSummary(userID, articleID int64) (*ArticleSummary, error) {
+func (s *SQLiteStore) GetArticleSummary(userID, articleID int64) (*ArticleSummary, error) {
 	var as ArticleSummary
 	err := s.db.QueryRow(
 		"SELECT user_id, article_id, ai_summary, generated_at FROM article_summaries WHERE user_id = ? AND article_id = ?",
@@ -595,7 +599,7 @@ type FeedStats struct {
 }
 
 // GetFeedStats returns article counts per feed for a user.
-func (s *Store) GetFeedStats(userID int64) ([]FeedStats, error) {
+func (s *SQLiteStore) GetFeedStats(userID int64) ([]FeedStats, error) {
 	rows, err := s.db.Query(`
 		SELECT f.id, f.title,
 			COUNT(a.id),
@@ -627,7 +631,7 @@ func (s *Store) GetFeedStats(userID int64) ([]FeedStats, error) {
 }
 
 // CreateArticleGroup creates a new article group
-func (s *Store) CreateArticleGroup(userID int64, topic string) (int64, error) {
+func (s *SQLiteStore) CreateArticleGroup(userID int64, topic string) (int64, error) {
 	result, err := s.db.Exec(
 		"INSERT INTO article_groups (user_id, topic) VALUES (?, ?)",
 		userID, topic,
@@ -639,7 +643,7 @@ func (s *Store) CreateArticleGroup(userID int64, topic string) (int64, error) {
 }
 
 // AddArticleToGroup adds an article to a group
-func (s *Store) AddArticleToGroup(groupID, articleID int64) error {
+func (s *SQLiteStore) AddArticleToGroup(groupID, articleID int64) error {
 	_, err := s.db.Exec(
 		"INSERT OR IGNORE INTO article_group_members (group_id, article_id) VALUES (?, ?)",
 		groupID, articleID,
@@ -654,7 +658,7 @@ func (s *Store) AddArticleToGroup(groupID, articleID int64) error {
 }
 
 // GetGroupArticles returns all articles in a group
-func (s *Store) GetGroupArticles(groupID int64) ([]Article, error) {
+func (s *SQLiteStore) GetGroupArticles(groupID int64) ([]Article, error) {
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date
@@ -682,7 +686,7 @@ func (s *Store) GetGroupArticles(groupID int64) ([]Article, error) {
 }
 
 // UpdateGroupSummary stores or updates the summary for a group
-func (s *Store) UpdateGroupSummary(groupID int64, summary string, articleCount int, maxInterestScore *float64) error {
+func (s *SQLiteStore) UpdateGroupSummary(groupID int64, summary string, articleCount int, maxInterestScore *float64) error {
 	_, err := s.db.Exec(
 		`INSERT INTO group_summaries (group_id, summary, article_count, max_interest_score, generated_at)
 		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -700,7 +704,7 @@ func (s *Store) UpdateGroupSummary(groupID int64, summary string, articleCount i
 }
 
 // GetGroupSummary retrieves the summary for a group
-func (s *Store) GetGroupSummary(groupID int64) (*GroupSummary, error) {
+func (s *SQLiteStore) GetGroupSummary(groupID int64) (*GroupSummary, error) {
 	var gs GroupSummary
 	err := s.db.QueryRow(
 		"SELECT group_id, summary, article_count, max_interest_score, generated_at FROM group_summaries WHERE group_id = ?",
@@ -713,7 +717,7 @@ func (s *Store) GetGroupSummary(groupID int64) (*GroupSummary, error) {
 }
 
 // GetUserGroups returns all groups for a user
-func (s *Store) GetUserGroups(userID int64) ([]ArticleGroup, error) {
+func (s *SQLiteStore) GetUserGroups(userID int64) ([]ArticleGroup, error) {
 	query := "SELECT id, user_id, topic, created_at, updated_at FROM article_groups WHERE user_id = ? ORDER BY updated_at DESC"
 	rows, err := s.db.Query(query, userID)
 	if err != nil {
@@ -733,7 +737,7 @@ func (s *Store) GetUserGroups(userID int64) ([]ArticleGroup, error) {
 }
 
 // FindArticleGroup finds the group ID for an article, if it belongs to one
-func (s *Store) FindArticleGroup(articleID, userID int64) (*int64, error) {
+func (s *SQLiteStore) FindArticleGroup(articleID, userID int64) (*int64, error) {
 	var groupID int64
 	err := s.db.QueryRow(
 		`SELECT agm.group_id FROM article_group_members agm
@@ -751,7 +755,7 @@ func (s *Store) FindArticleGroup(articleID, userID int64) (*int64, error) {
 }
 
 // SubscribeUserToFeed subscribes a user to a feed
-func (s *Store) SubscribeUserToFeed(userID, feedID int64) error {
+func (s *SQLiteStore) SubscribeUserToFeed(userID, feedID int64) error {
 	_, err := s.db.Exec(
 		"INSERT OR IGNORE INTO user_feeds (user_id, feed_id) VALUES (?, ?)",
 		userID, feedID,
@@ -763,7 +767,7 @@ func (s *Store) SubscribeUserToFeed(userID, feedID int64) error {
 }
 
 // GetUserFeeds returns all feeds a user is subscribed to
-func (s *Store) GetUserFeeds(userID int64) ([]Feed, error) {
+func (s *SQLiteStore) GetUserFeeds(userID int64) ([]Feed, error) {
 	query := `
 		SELECT f.id, f.url, f.title, f.description, f.last_fetched, f.last_error, f.etag, f.last_modified, f.enabled, f.created_at
 		FROM feeds f
@@ -792,7 +796,7 @@ func (s *Store) GetUserFeeds(userID int64) ([]Feed, error) {
 }
 
 // GetAllSubscribedFeeds returns all feeds that ANY user is subscribed to
-func (s *Store) GetAllSubscribedFeeds() ([]Feed, error) {
+func (s *SQLiteStore) GetAllSubscribedFeeds() ([]Feed, error) {
 	query := `
 		SELECT DISTINCT f.id, f.url, f.title, f.description, f.last_fetched, f.last_error, f.etag, f.last_modified, f.enabled, f.created_at
 		FROM feeds f
@@ -821,7 +825,7 @@ func (s *Store) GetAllSubscribedFeeds() ([]Feed, error) {
 }
 
 // GetFeedSubscribers returns all user IDs subscribed to a feed
-func (s *Store) GetFeedSubscribers(feedID int64) ([]int64, error) {
+func (s *SQLiteStore) GetFeedSubscribers(feedID int64) ([]int64, error) {
 	rows, err := s.db.Query("SELECT user_id FROM user_feeds WHERE feed_id = ?", feedID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get feed subscribers: %w", err)
@@ -840,7 +844,7 @@ func (s *Store) GetFeedSubscribers(feedID int64) ([]int64, error) {
 }
 
 // UnsubscribeUserFromFeed removes a user's subscription to a feed.
-func (s *Store) UnsubscribeUserFromFeed(userID, feedID int64) error {
+func (s *SQLiteStore) UnsubscribeUserFromFeed(userID, feedID int64) error {
 	_, err := s.db.Exec(
 		"DELETE FROM user_feeds WHERE user_id = ? AND feed_id = ?",
 		userID, feedID,
@@ -854,7 +858,7 @@ func (s *Store) UnsubscribeUserFromFeed(userID, feedID int64) error {
 // DeleteFeedIfOrphaned deletes a feed only if no users are subscribed to it.
 // Returns true if the feed was deleted. CASCADE handles articles, read_state,
 // summaries, and group member cleanup.
-func (s *Store) DeleteFeedIfOrphaned(feedID int64) (bool, error) {
+func (s *SQLiteStore) DeleteFeedIfOrphaned(feedID int64) (bool, error) {
 	result, err := s.db.Exec(
 		"DELETE FROM feeds WHERE id = ? AND NOT EXISTS (SELECT 1 FROM user_feeds WHERE feed_id = ?)",
 		feedID, feedID,
@@ -870,7 +874,7 @@ func (s *Store) DeleteFeedIfOrphaned(feedID int64) (bool, error) {
 }
 
 // RenameFeed updates the display title of a feed.
-func (s *Store) RenameFeed(feedID int64, title string) error {
+func (s *SQLiteStore) RenameFeed(feedID int64, title string) error {
 	_, err := s.db.Exec("UPDATE feeds SET title = ? WHERE id = ?", title, feedID)
 	if err != nil {
 		return fmt.Errorf("failed to rename feed: %w", err)
@@ -879,7 +883,7 @@ func (s *Store) RenameFeed(feedID int64, title string) error {
 }
 
 // GetAllSubscribingUsers returns all user IDs that have feed subscriptions
-func (s *Store) GetAllSubscribingUsers() ([]int64, error) {
+func (s *SQLiteStore) GetAllSubscribingUsers() ([]int64, error) {
 	rows, err := s.db.Query("SELECT DISTINCT user_id FROM user_feeds ORDER BY user_id")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get subscribing users: %w", err)
@@ -898,7 +902,7 @@ func (s *Store) GetAllSubscribingUsers() ([]int64, error) {
 }
 
 // GetArticle returns a single article by ID.
-func (s *Store) GetArticle(articleID int64) (*Article, error) {
+func (s *SQLiteStore) GetArticle(articleID int64) (*Article, error) {
 	var a Article
 	err := s.db.QueryRow(
 		`SELECT id, feed_id, guid, title, url, content, summary,
@@ -914,7 +918,7 @@ func (s *Store) GetArticle(articleID int64) (*Article, error) {
 
 // GetUnscoredArticleCount returns the number of articles from the user's
 // subscribed feeds that have no read_state entry (pending security/interest scoring).
-func (s *Store) GetUnscoredArticleCount(userID int64) (int, error) {
+func (s *SQLiteStore) GetUnscoredArticleCount(userID int64) (int, error) {
 	var count int
 	err := s.db.QueryRow(`
 		SELECT COUNT(*)
@@ -932,7 +936,7 @@ func (s *Store) GetUnscoredArticleCount(userID int64) (int, error) {
 
 // GetUnsummarizedArticleCount returns the number of articles from the user's
 // subscribed feeds that have no AI summary yet (pending content summarization).
-func (s *Store) GetUnsummarizedArticleCount(userID int64) (int, error) {
+func (s *SQLiteStore) GetUnsummarizedArticleCount(userID int64) (int, error) {
 	var count int
 	err := s.db.QueryRow(`
 		SELECT COUNT(*)
@@ -950,7 +954,7 @@ func (s *Store) GetUnsummarizedArticleCount(userID int64) (int, error) {
 
 // GetUnscoredArticlesForUser returns articles from the user's subscribed feeds
 // that have no read_state entry (never been scored by the AI pipeline).
-func (s *Store) GetUnscoredArticlesForUser(userID int64, limit int) ([]Article, error) {
+func (s *SQLiteStore) GetUnscoredArticlesForUser(userID int64, limit int) ([]Article, error) {
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date
@@ -980,7 +984,7 @@ func (s *Store) GetUnscoredArticlesForUser(userID int64, limit int) ([]Article, 
 }
 
 // GetUnreadArticlesForUser returns unread articles from feeds the user subscribes to
-func (s *Store) GetUnreadArticlesForUser(userID int64, limit, offset int) ([]Article, error) {
+func (s *SQLiteStore) GetUnreadArticlesForUser(userID int64, limit, offset int) ([]Article, error) {
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date
@@ -994,6 +998,66 @@ func (s *Store) GetUnreadArticlesForUser(userID int64, limit, offset int) ([]Art
 	rows, err := s.db.Query(query, userID, userID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get unread articles for user: %w", err)
+	}
+	defer rows.Close()
+
+	var articles []Article
+	for rows.Next() {
+		var a Article
+		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
+			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate); err != nil {
+			return nil, fmt.Errorf("failed to scan article: %w", err)
+		}
+		articles = append(articles, a)
+	}
+	return articles, rows.Err()
+}
+
+// GetUnreadArticlesByFeed returns unread articles for a user filtered to a specific feed.
+func (s *SQLiteStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int) ([]Article, error) {
+	query := `
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date
+		FROM articles a
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
+		WHERE uf.user_id = ? AND a.feed_id = ? AND (rs.article_id IS NULL OR rs.read = 0)
+		ORDER BY a.published_date DESC
+		LIMIT ? OFFSET ?
+	`
+	rows, err := s.db.Query(query, userID, userID, feedID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get unread articles by feed: %w", err)
+	}
+	defer rows.Close()
+
+	var articles []Article
+	for rows.Next() {
+		var a Article
+		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
+			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate); err != nil {
+			return nil, fmt.Errorf("failed to scan article: %w", err)
+		}
+		articles = append(articles, a)
+	}
+	return articles, rows.Err()
+}
+
+// GetStarredArticles returns starred articles for a user.
+func (s *SQLiteStore) GetStarredArticles(userID int64, limit, offset int) ([]Article, error) {
+	query := `
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date
+		FROM articles a
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
+		WHERE uf.user_id = ? AND rs.starred = 1
+		ORDER BY a.published_date DESC
+		LIMIT ? OFFSET ?
+	`
+	rows, err := s.db.Query(query, userID, userID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get starred articles: %w", err)
 	}
 	defer rows.Close()
 

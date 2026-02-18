@@ -6,22 +6,22 @@ import (
 	"time"
 )
 
-func newTestStore(t *testing.T) (*Store, func()) {
+func newTestStore(t *testing.T) (*SQLiteStore, func()) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	store, err := NewStore(dbPath)
+	store, err := NewSQLiteStore(dbPath)
 	if err != nil {
-		t.Fatalf("NewStore failed: %v", err)
+		t.Fatalf("NewSQLiteStore failed: %v", err)
 	}
 	return store, func() { store.Close() }
 }
 
-func TestNewStore(t *testing.T) {
+func TestNewSQLiteStore(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 
-	store, err := NewStore(dbPath)
+	store, err := NewSQLiteStore(dbPath)
 	if err != nil {
-		t.Fatalf("NewStore failed: %v", err)
+		t.Fatalf("NewSQLiteStore failed: %v", err)
 	}
 	defer store.Close()
 

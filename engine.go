@@ -19,7 +19,7 @@ import (
 // Engine is the public API for herald's content processing pipeline.
 // It wraps the internal storage, feed fetcher, and AI processor.
 type Engine struct {
-	store   *storage.Store
+	store   storage.Store
 	fetcher *feeds.Fetcher
 	ai      *ai.AIProcessor
 	config  *storage.Config
@@ -45,7 +45,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		cfg.SecurityThreshold = 7.0
 	}
 
-	store, err := storage.NewStore(cfg.DBPath)
+	store, err := storage.NewSQLiteStore(cfg.DBPath)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -58,15 +58,20 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	storeCfg.Thresholds.SecurityScore = cfg.SecurityThreshold
 	storeCfg.Preferences.Keywords = cfg.Keywords
 
-	fetcher := feeds.NewFetcher(store)
+	var fetcher *feeds.Fetcher
+	var processor *ai.AIProcessor
 
-	processor, err := ai.NewAIProcessor(
-		cfg.OllamaBaseURL, cfg.SecurityModel, cfg.CurationModel,
-		store, storeCfg,
-	)
-	if err != nil {
-		store.Close()
-		return nil, fmt.Errorf("create AI processor: %w", err)
+	if !cfg.ReadOnly {
+		fetcher = feeds.NewFetcher(store)
+
+		processor, err = ai.NewAIProcessor(
+			cfg.OllamaBaseURL, cfg.SecurityModel, cfg.CurationModel,
+			store, storeCfg,
+		)
+		if err != nil {
+			store.Close()
+			return nil, fmt.Errorf("create AI processor: %w", err)
+		}
 	}
 
 	e := &Engine{
@@ -98,6 +103,9 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 
 // FetchAllFeeds fetches all subscribed feeds and stores new articles.
 func (e *Engine) FetchAllFeeds(ctx context.Context) (*FetchResult, error) {
+	if e.fetcher == nil {
+		return nil, fmt.Errorf("feed fetching not available in read-only mode")
+	}
 	stats, err := e.fetcher.FetchAllFeeds(ctx)
 	if err != nil {
 		return nil, err
@@ -115,6 +123,9 @@ func (e *Engine) FetchAllFeeds(ctx context.Context) (*FetchResult, error) {
 // scoring) on unscored articles for the given user. Returns scored articles.
 // Articles that fail individual AI steps are skipped, not fatal.
 func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]ScoredArticle, error) {
+	if e.ai == nil {
+		return nil, fmt.Errorf("AI processing not available in read-only mode")
+	}
 	articles, err := e.store.GetUnscoredArticlesForUser(userID, 100)
 	if err != nil {
 		return nil, fmt.Errorf("get unscored articles: %w", err)
@@ -192,6 +203,24 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 // GetUnreadArticles returns unread articles for a user, up to limit starting at offset.
 func (e *Engine) GetUnreadArticles(userID int64, limit, offset int) ([]Article, error) {
 	articles, err := e.store.GetUnreadArticlesForUser(userID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return articlesFromInternal(articles), nil
+}
+
+// GetStarredArticles returns starred articles for a user.
+func (e *Engine) GetStarredArticles(userID int64, limit, offset int) ([]Article, error) {
+	articles, err := e.store.GetStarredArticles(userID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return articlesFromInternal(articles), nil
+}
+
+// GetUnreadArticlesByFeed returns unread articles for a user filtered to a specific feed.
+func (e *Engine) GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int) ([]Article, error) {
+	articles, err := e.store.GetUnreadArticlesByFeed(userID, feedID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -385,6 +414,9 @@ func (e *Engine) GetGroupArticles(groupID int64) (*ArticleGroup, error) {
 
 // GenerateBriefing creates a text briefing from high-interest unread articles.
 func (e *Engine) GenerateBriefing(userID int64) (string, error) {
+	if e.ai == nil {
+		return "", fmt.Errorf("AI processing not available in read-only mode")
+	}
 	articles, scores, err := e.store.GetArticlesByInterestScore(
 		userID, e.config.Thresholds.InterestScore, 20, 0)
 	if err != nil {

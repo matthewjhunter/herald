@@ -38,7 +38,7 @@ const (
 
 // PromptLoader handles 3-tier prompt loading: embedded -> config -> database
 type PromptLoader struct {
-	store  interface{} // *storage.Store
+	store  interface{} // storage.Store
 	config interface{} // *storage.Config
 	cache  map[string]string // cache of loaded prompts per user
 }
@@ -64,7 +64,7 @@ func (pl *PromptLoader) GetPrompt(userID int64, promptType PromptType) (string, 
 
 	// Tier 3: Check user database (highest priority)
 	if pl.store != nil {
-		if store, ok := pl.store.(*storage.Store); ok {
+		if store, ok := pl.store.(*storage.SQLiteStore); ok {
 			userPrompt, err := store.GetUserPrompt(userID, string(promptType))
 			if err == nil && userPrompt != "" {
 				pl.cache[cacheKey] = userPrompt
@@ -123,7 +123,7 @@ func (pl *PromptLoader) GetPrompt(userID int64, promptType PromptType) (string, 
 func (pl *PromptLoader) GetTemperature(userID int64, promptType PromptType) float64 {
 	// Tier 3: Check user database
 	if pl.store != nil {
-		if store, ok := pl.store.(*storage.Store); ok {
+		if store, ok := pl.store.(*storage.SQLiteStore); ok {
 			temp, err := store.GetUserPromptTemperature(userID, string(promptType))
 			if err == nil && temp > 0 {
 				return temp

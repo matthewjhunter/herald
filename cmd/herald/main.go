@@ -29,7 +29,7 @@ var (
 // Only articles with no read_state entry are processed — once scored, an
 // article is never re-scored. This avoids redundant AI calls on articles
 // that were fetched in a previous cycle but haven't been read yet.
-func processArticlesForUser(ctx context.Context, store *storage.Store, processor *ai.AIProcessor, formatter *output.Formatter, appCfg *storage.Config, userID int64) (int, error) {
+func processArticlesForUser(ctx context.Context, store storage.Store, processor *ai.AIProcessor, formatter *output.Formatter, appCfg *storage.Config, userID int64) (int, error) {
 	processed := 0
 	updatedGroups := make(map[int64]bool)
 
@@ -139,7 +139,7 @@ func processArticlesForUser(ctx context.Context, store *storage.Store, processor
 }
 
 // updateGroupSummary regenerates the summary for a group
-func updateGroupSummary(ctx context.Context, store *storage.Store, processor *ai.AIProcessor, groupID, userID int64) error {
+func updateGroupSummary(ctx context.Context, store storage.Store, processor *ai.AIProcessor, groupID, userID int64) error {
 	// Get all articles in the group
 	articles, err := store.GetGroupArticles(groupID)
 	if err != nil {
@@ -203,7 +203,11 @@ func updateGroupSummary(ctx context.Context, store *storage.Store, processor *ai
 
 	// Store group summary
 	maxScorePtr := &maxScore
-	return store.UpdateGroupSummary(groupID, groupSummary, len(articles), maxScorePtr)
+	if err := store.UpdateGroupSummary(groupID, groupSummary, len(articles), maxScorePtr); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func main() {
@@ -266,7 +270,7 @@ func importCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opmlPath := args[0]
 
-			store, err := storage.NewStore(cfg.Database.Path)
+			store, err := storage.NewSQLiteStore(cfg.Database.Path)
 			if err != nil {
 				return fmt.Errorf("failed to open database: %w", err)
 			}
@@ -293,7 +297,7 @@ func fetchFeedsCmd() *cobra.Command {
 			ctx := context.Background()
 			formatter := output.NewFormatter(output.Format(outputFormat))
 
-			store, err := storage.NewStore(cfg.Database.Path)
+			store, err := storage.NewSQLiteStore(cfg.Database.Path)
 			if err != nil {
 				return fmt.Errorf("failed to open database: %w", err)
 			}
@@ -364,7 +368,7 @@ func processCmd() *cobra.Command {
 			ctx := context.Background()
 			formatter := output.NewFormatter(output.Format(outputFormat))
 
-			store, err := storage.NewStore(cfg.Database.Path)
+			store, err := storage.NewSQLiteStore(cfg.Database.Path)
 			if err != nil {
 				return fmt.Errorf("failed to open database: %w", err)
 			}
@@ -421,134 +425,140 @@ func processCmd() *cobra.Command {
 	return cmd
 }
 
+// doFetch runs the complete fetch+process cycle once. Both the `fetch` command
+// and the `daemon` command call this. It uses the package-level cfg and
+// outputFormat variables.
+func doFetch(ctx context.Context) error {
+	formatter := output.NewFormatter(output.Format(outputFormat))
+
+	store, err := storage.NewSQLiteStore(cfg.Database.Path)
+	if err != nil {
+		return fmt.Errorf("failed to open database: %w", err)
+	}
+	defer store.Close()
+
+	// Get all feeds that ANY user is subscribed to
+	subscribedFeeds, err := store.GetAllSubscribedFeeds()
+	if err != nil {
+		return fmt.Errorf("failed to get subscribed feeds: %w", err)
+	}
+
+	if len(subscribedFeeds) == 0 {
+		formatter.Warning("no feeds subscribed by any user")
+		return formatter.OutputFetchResult(&output.FetchResult{})
+	}
+
+	// Fetch each feed once (efficient)
+	fetcher := feeds.NewFetcher(store)
+	fetchResult := &output.FetchResult{FeedsTotal: len(subscribedFeeds)}
+	for _, feed := range subscribedFeeds {
+		feedCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		result, err := fetcher.FetchFeed(feedCtx, feed)
+		cancel()
+
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to fetch feed %s: %v\n", feed.URL, err)
+			fetchResult.FeedsErrored++
+			continue
+		}
+
+		if result.NotModified {
+			fetchResult.FeedsNotModified++
+			store.UpdateFeedLastFetched(feed.ID)
+			continue
+		}
+
+		fetchResult.FeedsDownloaded++
+
+		// Store articles (global, fetched once)
+		stored, err := fetcher.StoreArticles(feed.ID, result.Feed)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: error storing articles from %s: %v\n", feed.URL, err)
+		}
+		fetchResult.NewArticles += stored
+
+		// Persist cache headers for next conditional request
+		if result.ETag != "" || result.LastModified != "" {
+			store.UpdateFeedCacheHeaders(feed.ID, result.ETag, result.LastModified)
+		}
+
+		// Update last fetched timestamp
+		if err := store.UpdateFeedLastFetched(feed.ID); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to update last_fetched for %s: %v\n", feed.URL, err)
+		}
+	}
+
+	if fetchResult.NewArticles == 0 {
+		return formatter.OutputFetchResult(fetchResult)
+	}
+
+	// Process unread articles with AI
+	processor, err := ai.NewAIProcessor(cfg.Ollama.BaseURL, cfg.Ollama.SecurityModel, cfg.Ollama.CurationModel, store, cfg)
+	if err != nil {
+		formatter.Warning("failed to create AI processor: %v", err)
+		formatter.Warning("skipping AI processing (Ollama may not be running)")
+		return formatter.OutputFetchResult(fetchResult)
+	}
+
+	// Get all users who have subscriptions
+	allUserIDs, err := store.GetAllSubscribingUsers()
+	if err != nil {
+		return fmt.Errorf("failed to get subscribing users: %w", err)
+	}
+
+	if len(allUserIDs) == 0 {
+		formatter.Warning("no users with subscriptions")
+		return formatter.OutputFetchResult(fetchResult)
+	}
+
+	totalProcessed := 0
+
+	// Process articles for each subscribing user
+	for _, userID := range allUserIDs {
+		processed, err := processArticlesForUser(ctx, store, processor, formatter, cfg, userID)
+		if err != nil {
+			formatter.Warning("failed to process articles for user %d: %v", userID, err)
+			continue
+		}
+		totalProcessed += processed
+	}
+
+	fetchResult.ProcessedCount = totalProcessed
+
+	// Get and output high-interest articles
+	// Show high-interest articles for the first subscribing user.
+	var displayUserID int64 = 1
+	if len(allUserIDs) > 0 {
+		displayUserID = allUserIDs[0]
+	}
+	highInterestArticles, scores, err := store.GetArticlesByInterestScore(displayUserID, cfg.Thresholds.InterestScore, 10, 0)
+	if err != nil {
+		return fmt.Errorf("failed to get high-interest articles: %w", err)
+	}
+
+	fetchResult.HighInterest = len(highInterestArticles)
+
+	// Output result summary
+	if err := formatter.OutputFetchResult(fetchResult); err != nil {
+		return err
+	}
+
+	// Output high-interest notifications
+	if len(highInterestArticles) > 0 {
+		if err := formatter.OutputHighInterestNotification(highInterestArticles, scores); err != nil {
+			formatter.Warning("notification output failed: %v", err)
+		}
+	}
+
+	return nil
+}
+
 func fetchCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "fetch",
 		Short: "Fetch all feeds and process articles with AI",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
-			formatter := output.NewFormatter(output.Format(outputFormat))
-
-			store, err := storage.NewStore(cfg.Database.Path)
-			if err != nil {
-				return fmt.Errorf("failed to open database: %w", err)
-			}
-			defer store.Close()
-
-			// Get all feeds that ANY user is subscribed to
-			subscribedFeeds, err := store.GetAllSubscribedFeeds()
-			if err != nil {
-				return fmt.Errorf("failed to get subscribed feeds: %w", err)
-			}
-
-			if len(subscribedFeeds) == 0 {
-				formatter.Warning("no feeds subscribed by any user")
-				return formatter.OutputFetchResult(&output.FetchResult{})
-			}
-
-			// Fetch each feed once (efficient)
-			fetcher := feeds.NewFetcher(store)
-			fetchResult := &output.FetchResult{FeedsTotal: len(subscribedFeeds)}
-			for _, feed := range subscribedFeeds {
-				feedCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				result, err := fetcher.FetchFeed(feedCtx, feed)
-				cancel()
-
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to fetch feed %s: %v\n", feed.URL, err)
-					fetchResult.FeedsErrored++
-					continue
-				}
-
-				if result.NotModified {
-					fetchResult.FeedsNotModified++
-					store.UpdateFeedLastFetched(feed.ID)
-					continue
-				}
-
-				fetchResult.FeedsDownloaded++
-
-				// Store articles (global, fetched once)
-				stored, err := fetcher.StoreArticles(feed.ID, result.Feed)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: error storing articles from %s: %v\n", feed.URL, err)
-				}
-				fetchResult.NewArticles += stored
-
-				// Persist cache headers for next conditional request
-				if result.ETag != "" || result.LastModified != "" {
-					store.UpdateFeedCacheHeaders(feed.ID, result.ETag, result.LastModified)
-				}
-
-				// Update last fetched timestamp
-				if err := store.UpdateFeedLastFetched(feed.ID); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to update last_fetched for %s: %v\n", feed.URL, err)
-				}
-			}
-
-			if fetchResult.NewArticles == 0 {
-				return formatter.OutputFetchResult(fetchResult)
-			}
-
-			// Process unread articles with AI
-			processor, err := ai.NewAIProcessor(cfg.Ollama.BaseURL, cfg.Ollama.SecurityModel, cfg.Ollama.CurationModel, store, cfg)
-			if err != nil {
-				formatter.Warning("failed to create AI processor: %v", err)
-				formatter.Warning("skipping AI processing (Ollama may not be running)")
-				return formatter.OutputFetchResult(fetchResult)
-			}
-
-			// Get all users who have subscriptions
-			allUserIDs, err := store.GetAllSubscribingUsers()
-			if err != nil {
-				return fmt.Errorf("failed to get subscribing users: %w", err)
-			}
-
-			if len(allUserIDs) == 0 {
-				formatter.Warning("no users with subscriptions")
-				return formatter.OutputFetchResult(fetchResult)
-			}
-
-			totalProcessed := 0
-
-			// Process articles for each subscribing user
-			for _, userID := range allUserIDs {
-				processed, err := processArticlesForUser(ctx, store, processor, formatter, cfg, userID)
-				if err != nil {
-					formatter.Warning("failed to process articles for user %d: %v", userID, err)
-					continue
-				}
-				totalProcessed += processed
-			}
-
-			fetchResult.ProcessedCount = totalProcessed
-
-			// Get and output high-interest articles
-			// Show high-interest articles for the first subscribing user.
-			var displayUserID int64 = 1
-			if len(allUserIDs) > 0 {
-				displayUserID = allUserIDs[0]
-			}
-			highInterestArticles, scores, err := store.GetArticlesByInterestScore(displayUserID, cfg.Thresholds.InterestScore, 10, 0)
-			if err != nil {
-				return fmt.Errorf("failed to get high-interest articles: %w", err)
-			}
-
-			fetchResult.HighInterest = len(highInterestArticles)
-
-			// Output result summary
-			if err := formatter.OutputFetchResult(fetchResult); err != nil {
-				return err
-			}
-
-			// Output high-interest notifications
-			if len(highInterestArticles) > 0 {
-				if err := formatter.OutputHighInterestNotification(highInterestArticles, scores); err != nil {
-					formatter.Warning("notification output failed: %v", err)
-				}
-			}
-
-			return nil
+			return doFetch(context.Background())
 		},
 	}
 }
@@ -563,7 +573,7 @@ func listCmd() *cobra.Command {
 			ctx := context.Background()
 			formatter := output.NewFormatter(output.Format(outputFormat))
 
-			store, err := storage.NewStore(cfg.Database.Path)
+			store, err := storage.NewSQLiteStore(cfg.Database.Path)
 			if err != nil {
 				return fmt.Errorf("failed to open database: %w", err)
 			}
@@ -622,7 +632,7 @@ func readCmd() *cobra.Command {
 				return fmt.Errorf("invalid article ID: %w", err)
 			}
 
-			store, err := storage.NewStore(cfg.Database.Path)
+			store, err := storage.NewSQLiteStore(cfg.Database.Path)
 			if err != nil {
 				return fmt.Errorf("failed to open database: %w", err)
 			}

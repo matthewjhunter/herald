@@ -125,7 +125,7 @@ type RelatedArticlesResult struct {
 }
 
 // FindRelatedGroups determines if a new article relates to existing groups
-func (p *AIProcessor) FindRelatedGroups(ctx context.Context, userID int64, newArticle storage.Article, existingGroups []storage.ArticleGroup, store *storage.Store) ([]int64, error) {
+func (p *AIProcessor) FindRelatedGroups(ctx context.Context, userID int64, newArticle storage.Article, existingGroups []storage.ArticleGroup, store storage.Store) ([]int64, error) {
 	if len(existingGroups) == 0 {
 		return nil, nil
 	}

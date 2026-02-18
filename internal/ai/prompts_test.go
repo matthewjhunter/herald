@@ -7,12 +7,12 @@ import (
 	"github.com/matthewjhunter/herald/internal/storage"
 )
 
-func newTestStore(t *testing.T) (*storage.Store, func()) {
+func newTestStore(t *testing.T) (*storage.SQLiteStore, func()) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	store, err := storage.NewStore(dbPath)
+	store, err := storage.NewSQLiteStore(dbPath)
 	if err != nil {
-		t.Fatalf("NewStore failed: %v", err)
+		t.Fatalf("NewSQLiteStore failed: %v", err)
 	}
 	return store, func() { store.Close() }
 }

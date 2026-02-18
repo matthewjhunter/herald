@@ -12,6 +12,7 @@ type EngineConfig struct {
 	SecurityThreshold float64
 	Keywords          []string // user interest keywords for curation scoring
 	UserID            int64    // primary user ID; DB preferences override CLI flags
+	ReadOnly          bool     // when true, skip AI processor and fetcher creation
 }
 
 // User represents a registered household member.
