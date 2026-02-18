@@ -44,6 +44,19 @@ func newServer(engine *herald.Engine, userID int64) *server {
 	return &server{engine: engine, userID: userID}
 }
 
+// resolveUser maps a speaker name to a user ID.
+// If speaker is empty or unknown, it returns the default user ID.
+func (s *server) resolveUser(speaker string) int64 {
+	if speaker == "" {
+		return s.userID
+	}
+	id, err := s.engine.ResolveUser(speaker)
+	if err != nil || id == 0 {
+		return s.userID
+	}
+	return id
+}
+
 // run starts the MCP server, reading from stdin and writing to stdout.
 func (s *server) run() error {
 	log.SetOutput(os.Stderr)
@@ -130,6 +143,10 @@ func (s *server) handleToolsList() any {
 							"type":        "number",
 							"description": "Minimum interest score filter (0-10). Only returns articles scored at or above this threshold.",
 						},
+						"speaker": map[string]any{
+							"type":        "string",
+							"description": "Speaker name for multi-user resolution. If omitted, uses the default user.",
+						},
 					},
 				},
 			},
@@ -142,6 +159,10 @@ func (s *server) handleToolsList() any {
 						"article_id": map[string]any{
 							"type":        "integer",
 							"description": "The article ID to retrieve",
+						},
+						"speaker": map[string]any{
+							"type":        "string",
+							"description": "Speaker name for multi-user resolution. If omitted, uses the default user.",
 						},
 					},
 					"required": []string{"article_id"},
@@ -157,6 +178,10 @@ func (s *server) handleToolsList() any {
 							"type":        "integer",
 							"description": "The article ID to mark as read",
 						},
+						"speaker": map[string]any{
+							"type":        "string",
+							"description": "Speaker name for multi-user resolution. If omitted, uses the default user.",
+						},
 					},
 					"required": []string{"article_id"},
 				},
@@ -165,8 +190,13 @@ func (s *server) handleToolsList() any {
 				"name":        "feeds_list",
 				"description": "List all subscribed RSS/Atom feeds with their titles, URLs, and last fetch times.",
 				"inputSchema": map[string]any{
-					"type":       "object",
-					"properties": map[string]any{},
+					"type": "object",
+					"properties": map[string]any{
+						"speaker": map[string]any{
+							"type":        "string",
+							"description": "Speaker name for multi-user resolution. If omitted, uses the default user.",
+						},
+					},
 				},
 			},
 			{
@@ -183,6 +213,10 @@ func (s *server) handleToolsList() any {
 							"type":        "string",
 							"description": "Optional display title for the feed. If omitted, the feed's own title is used once fetched.",
 						},
+						"speaker": map[string]any{
+							"type":        "string",
+							"description": "Speaker name for multi-user resolution. If omitted, uses the default user.",
+						},
 					},
 					"required": []string{"url"},
 				},
@@ -196,6 +230,10 @@ func (s *server) handleToolsList() any {
 						"feed_id": map[string]any{
 							"type":        "integer",
 							"description": "The feed ID to unsubscribe from",
+						},
+						"speaker": map[string]any{
+							"type":        "string",
+							"description": "Speaker name for multi-user resolution. If omitted, uses the default user.",
 						},
 					},
 					"required": []string{"feed_id"},
@@ -223,8 +261,13 @@ func (s *server) handleToolsList() any {
 				"name":        "article_groups",
 				"description": "List article groups (clusters of articles covering the same event or topic). Each group has a topic label, article count, and max interest score. Use this for briefings to present related coverage together.",
 				"inputSchema": map[string]any{
-					"type":       "object",
-					"properties": map[string]any{},
+					"type": "object",
+					"properties": map[string]any{
+						"speaker": map[string]any{
+							"type":        "string",
+							"description": "Speaker name for multi-user resolution. If omitted, uses the default user.",
+						},
+					},
 				},
 			},
 			{
@@ -237,6 +280,10 @@ func (s *server) handleToolsList() any {
 							"type":        "integer",
 							"description": "The group ID to retrieve",
 						},
+						"speaker": map[string]any{
+							"type":        "string",
+							"description": "Speaker name for multi-user resolution. If omitted, uses the default user.",
+						},
 					},
 					"required": []string{"group_id"},
 				},
@@ -245,8 +292,13 @@ func (s *server) handleToolsList() any {
 				"name":        "feed_stats",
 				"description": "Get article statistics per feed and totals: total articles, unread count, and unsummarized count. Use this to understand pipeline health and coverage.",
 				"inputSchema": map[string]any{
-					"type":       "object",
-					"properties": map[string]any{},
+					"type": "object",
+					"properties": map[string]any{
+						"speaker": map[string]any{
+							"type":        "string",
+							"description": "Speaker name for multi-user resolution. If omitted, uses the default user.",
+						},
+					},
 				},
 			},
 			{
@@ -261,8 +313,13 @@ func (s *server) handleToolsList() any {
 				"name":        "preferences_get",
 				"description": "Get all user preferences as structured JSON. Returns keywords, interest threshold, and notification settings.",
 				"inputSchema": map[string]any{
-					"type":       "object",
-					"properties": map[string]any{},
+					"type": "object",
+					"properties": map[string]any{
+						"speaker": map[string]any{
+							"type":        "string",
+							"description": "Speaker name for multi-user resolution. If omitted, uses the default user.",
+						},
+					},
 				},
 			},
 			{
@@ -280,6 +337,10 @@ func (s *server) handleToolsList() any {
 							"type":        "string",
 							"description": "Value to set (keywords as JSON array, thresholds as number strings, notify_when as enum)",
 						},
+						"speaker": map[string]any{
+							"type":        "string",
+							"description": "Speaker name for multi-user resolution. If omitted, uses the default user.",
+						},
 					},
 					"required": []string{"key", "value"},
 				},
@@ -288,8 +349,13 @@ func (s *server) handleToolsList() any {
 				"name":        "prompts_list",
 				"description": "List all customizable prompt types with their current status (custom or default) and temperature.",
 				"inputSchema": map[string]any{
-					"type":       "object",
-					"properties": map[string]any{},
+					"type": "object",
+					"properties": map[string]any{
+						"speaker": map[string]any{
+							"type":        "string",
+							"description": "Speaker name for multi-user resolution. If omitted, uses the default user.",
+						},
+					},
 				},
 			},
 			{
@@ -302,6 +368,10 @@ func (s *server) handleToolsList() any {
 							"type":        "string",
 							"description": "The prompt type to retrieve",
 							"enum":        []string{"curation", "summarization", "group_summary", "related_groups"},
+						},
+						"speaker": map[string]any{
+							"type":        "string",
+							"description": "Speaker name for multi-user resolution. If omitted, uses the default user.",
 						},
 					},
 					"required": []string{"prompt_type"},
@@ -326,6 +396,10 @@ func (s *server) handleToolsList() any {
 							"type":        "number",
 							"description": "Temperature setting (0.0-2.0)",
 						},
+						"speaker": map[string]any{
+							"type":        "string",
+							"description": "Speaker name for multi-user resolution. If omitted, uses the default user.",
+						},
 					},
 					"required": []string{"prompt_type"},
 				},
@@ -341,6 +415,10 @@ func (s *server) handleToolsList() any {
 							"description": "The prompt type to reset",
 							"enum":        []string{"curation", "summarization", "group_summary", "related_groups"},
 						},
+						"speaker": map[string]any{
+							"type":        "string",
+							"description": "Speaker name for multi-user resolution. If omitted, uses the default user.",
+						},
 					},
 					"required": []string{"prompt_type"},
 				},
@@ -349,8 +427,13 @@ func (s *server) handleToolsList() any {
 				"name":        "briefing",
 				"description": "Generate a markdown briefing from high-interest unread articles. Includes titles, scores, URLs, and AI summaries.",
 				"inputSchema": map[string]any{
-					"type":       "object",
-					"properties": map[string]any{},
+					"type": "object",
+					"properties": map[string]any{
+						"speaker": map[string]any{
+							"type":        "string",
+							"description": "Speaker name for multi-user resolution. If omitted, uses the default user.",
+						},
+					},
 				},
 			},
 			{
@@ -367,8 +450,34 @@ func (s *server) handleToolsList() any {
 							"type":        "boolean",
 							"description": "true to star, false to unstar",
 						},
+						"speaker": map[string]any{
+							"type":        "string",
+							"description": "Speaker name for multi-user resolution. If omitted, uses the default user.",
+						},
 					},
 					"required": []string{"article_id", "starred"},
+				},
+			},
+			{
+				"name":        "user_register",
+				"description": "Register a speaker name as a herald user. Returns the new user's ID. Use this when a new household member wants their own feeds, preferences, and read state.",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"name": map[string]any{
+							"type":        "string",
+							"description": "Speaker name to register",
+						},
+					},
+					"required": []string{"name"},
+				},
+			},
+			{
+				"name":        "user_list",
+				"description": "List all registered herald users.",
+				"inputSchema": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
 				},
 			},
 		},
@@ -393,7 +502,7 @@ func (s *server) handleToolsCall(params json.RawMessage) any {
 	case "articles_mark_read":
 		return s.handleArticlesMarkRead(call.Arguments)
 	case "feeds_list":
-		return s.handleFeedsList()
+		return s.handleFeedsList(call.Arguments)
 	case "feed_subscribe":
 		return s.handleFeedSubscribe(call.Arguments)
 	case "feed_unsubscribe":
@@ -401,19 +510,19 @@ func (s *server) handleToolsCall(params json.RawMessage) any {
 	case "feed_rename":
 		return s.handleFeedRename(call.Arguments)
 	case "article_groups":
-		return s.handleArticleGroups()
+		return s.handleArticleGroups(call.Arguments)
 	case "article_group_get":
 		return s.handleArticleGroupGet(call.Arguments)
 	case "feed_stats":
-		return s.handleFeedStats()
+		return s.handleFeedStats(call.Arguments)
 	case "poll_now":
 		return s.handlePollNow()
 	case "preferences_get":
-		return s.handlePreferencesGet()
+		return s.handlePreferencesGet(call.Arguments)
 	case "preference_set":
 		return s.handlePreferenceSet(call.Arguments)
 	case "prompts_list":
-		return s.handlePromptsList()
+		return s.handlePromptsList(call.Arguments)
 	case "prompt_get":
 		return s.handlePromptGet(call.Arguments)
 	case "prompt_set":
@@ -421,9 +530,13 @@ func (s *server) handleToolsCall(params json.RawMessage) any {
 	case "prompt_reset":
 		return s.handlePromptReset(call.Arguments)
 	case "briefing":
-		return s.handleBriefing()
+		return s.handleBriefing(call.Arguments)
 	case "article_star":
 		return s.handleArticleStar(call.Arguments)
+	case "user_register":
+		return s.handleUserRegister(call.Arguments)
+	case "user_list":
+		return s.handleUserList()
 	default:
 		return mcpError("unknown tool: %s", call.Name)
 	}
@@ -436,10 +549,12 @@ func (s *server) handleArticlesUnread(args json.RawMessage) any {
 		Limit    int     `json:"limit"`
 		Offset   int     `json:"offset"`
 		MinScore float64 `json:"min_score"`
+		Speaker  string  `json:"speaker"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return mcpError("invalid arguments: %v", err)
 	}
+	userID := s.resolveUser(params.Speaker)
 
 	limit := params.Limit
 	if limit <= 0 {
@@ -447,7 +562,7 @@ func (s *server) handleArticlesUnread(args json.RawMessage) any {
 	}
 
 	if params.MinScore > 0 {
-		articles, scores, err := s.engine.GetHighInterestArticles(s.userID, params.MinScore, limit, params.Offset)
+		articles, scores, err := s.engine.GetHighInterestArticles(userID, params.MinScore, limit, params.Offset)
 		if err != nil {
 			return mcpError("%v", err)
 		}
@@ -468,7 +583,7 @@ func (s *server) handleArticlesUnread(args json.RawMessage) any {
 		return mcpJSON(result)
 	}
 
-	articles, err := s.engine.GetUnreadArticles(s.userID, limit, params.Offset)
+	articles, err := s.engine.GetUnreadArticles(userID, limit, params.Offset)
 	if err != nil {
 		return mcpError("%v", err)
 	}
@@ -481,7 +596,8 @@ func (s *server) handleArticlesUnread(args json.RawMessage) any {
 
 func (s *server) handleArticlesGet(args json.RawMessage) any {
 	var params struct {
-		ArticleID int64 `json:"article_id"`
+		ArticleID int64  `json:"article_id"`
+		Speaker   string `json:"speaker"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return mcpError("invalid arguments: %v", err)
@@ -489,8 +605,9 @@ func (s *server) handleArticlesGet(args json.RawMessage) any {
 	if params.ArticleID == 0 {
 		return mcpError("article_id parameter is required")
 	}
+	userID := s.resolveUser(params.Speaker)
 
-	article, err := s.engine.GetArticleForUser(s.userID, params.ArticleID)
+	article, err := s.engine.GetArticleForUser(userID, params.ArticleID)
 	if err != nil {
 		return mcpError("%v", err)
 	}
@@ -501,7 +618,8 @@ func (s *server) handleArticlesGet(args json.RawMessage) any {
 
 func (s *server) handleArticlesMarkRead(args json.RawMessage) any {
 	var params struct {
-		ArticleID int64 `json:"article_id"`
+		ArticleID int64  `json:"article_id"`
+		Speaker   string `json:"speaker"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return mcpError("invalid arguments: %v", err)
@@ -509,8 +627,9 @@ func (s *server) handleArticlesMarkRead(args json.RawMessage) any {
 	if params.ArticleID == 0 {
 		return mcpError("article_id parameter is required")
 	}
+	userID := s.resolveUser(params.Speaker)
 
-	if err := s.engine.MarkArticleRead(s.userID, params.ArticleID); err != nil {
+	if err := s.engine.MarkArticleRead(userID, params.ArticleID); err != nil {
 		return mcpError("%v", err)
 	}
 
@@ -518,8 +637,14 @@ func (s *server) handleArticlesMarkRead(args json.RawMessage) any {
 	return mcpText("Article %d marked as read.", params.ArticleID)
 }
 
-func (s *server) handleFeedsList() any {
-	feeds, err := s.engine.GetUserFeeds(s.userID)
+func (s *server) handleFeedsList(args json.RawMessage) any {
+	var params struct {
+		Speaker string `json:"speaker"`
+	}
+	json.Unmarshal(args, &params)
+	userID := s.resolveUser(params.Speaker)
+
+	feeds, err := s.engine.GetUserFeeds(userID)
 	if err != nil {
 		return mcpError("%v", err)
 	}
@@ -530,8 +655,9 @@ func (s *server) handleFeedsList() any {
 
 func (s *server) handleFeedSubscribe(args json.RawMessage) any {
 	var params struct {
-		URL   string `json:"url"`
-		Title string `json:"title"`
+		URL     string `json:"url"`
+		Title   string `json:"title"`
+		Speaker string `json:"speaker"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return mcpError("invalid arguments: %v", err)
@@ -539,8 +665,9 @@ func (s *server) handleFeedSubscribe(args json.RawMessage) any {
 	if params.URL == "" {
 		return mcpError("url parameter is required")
 	}
+	userID := s.resolveUser(params.Speaker)
 
-	if err := s.engine.SubscribeFeed(s.userID, params.URL, params.Title); err != nil {
+	if err := s.engine.SubscribeFeed(userID, params.URL, params.Title); err != nil {
 		return mcpError("%v", err)
 	}
 
@@ -550,7 +677,8 @@ func (s *server) handleFeedSubscribe(args json.RawMessage) any {
 
 func (s *server) handleFeedUnsubscribe(args json.RawMessage) any {
 	var params struct {
-		FeedID int64 `json:"feed_id"`
+		FeedID  int64  `json:"feed_id"`
+		Speaker string `json:"speaker"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return mcpError("invalid arguments: %v", err)
@@ -558,8 +686,9 @@ func (s *server) handleFeedUnsubscribe(args json.RawMessage) any {
 	if params.FeedID == 0 {
 		return mcpError("feed_id parameter is required")
 	}
+	userID := s.resolveUser(params.Speaker)
 
-	if err := s.engine.UnsubscribeFeed(s.userID, params.FeedID); err != nil {
+	if err := s.engine.UnsubscribeFeed(userID, params.FeedID); err != nil {
 		return mcpError("%v", err)
 	}
 
@@ -590,8 +719,14 @@ func (s *server) handleFeedRename(args json.RawMessage) any {
 	return mcpText("Feed %d renamed to %q.", params.FeedID, params.Title)
 }
 
-func (s *server) handleArticleGroups() any {
-	groups, err := s.engine.GetUserGroups(s.userID)
+func (s *server) handleArticleGroups(args json.RawMessage) any {
+	var params struct {
+		Speaker string `json:"speaker"`
+	}
+	json.Unmarshal(args, &params)
+	userID := s.resolveUser(params.Speaker)
+
+	groups, err := s.engine.GetUserGroups(userID)
 	if err != nil {
 		return mcpError("%v", err)
 	}
@@ -602,7 +737,8 @@ func (s *server) handleArticleGroups() any {
 
 func (s *server) handleArticleGroupGet(args json.RawMessage) any {
 	var params struct {
-		GroupID int64 `json:"group_id"`
+		GroupID int64  `json:"group_id"`
+		Speaker string `json:"speaker"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return mcpError("invalid arguments: %v", err)
@@ -620,8 +756,14 @@ func (s *server) handleArticleGroupGet(args json.RawMessage) any {
 	return mcpJSON(group)
 }
 
-func (s *server) handleFeedStats() any {
-	stats, err := s.engine.GetFeedStats(s.userID)
+func (s *server) handleFeedStats(args json.RawMessage) any {
+	var params struct {
+		Speaker string `json:"speaker"`
+	}
+	json.Unmarshal(args, &params)
+	userID := s.resolveUser(params.Speaker)
+
+	stats, err := s.engine.GetFeedStats(userID)
 	if err != nil {
 		return mcpError("%v", err)
 	}
@@ -649,8 +791,14 @@ func (s *server) handlePollNow() any {
 	return mcpJSON(result)
 }
 
-func (s *server) handlePreferencesGet() any {
-	prefs, err := s.engine.GetPreferences(s.userID)
+func (s *server) handlePreferencesGet(args json.RawMessage) any {
+	var params struct {
+		Speaker string `json:"speaker"`
+	}
+	json.Unmarshal(args, &params)
+	userID := s.resolveUser(params.Speaker)
+
+	prefs, err := s.engine.GetPreferences(userID)
 	if err != nil {
 		return mcpError("%v", err)
 	}
@@ -661,8 +809,9 @@ func (s *server) handlePreferencesGet() any {
 
 func (s *server) handlePreferenceSet(args json.RawMessage) any {
 	var params struct {
-		Key   string `json:"key"`
-		Value string `json:"value"`
+		Key     string `json:"key"`
+		Value   string `json:"value"`
+		Speaker string `json:"speaker"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return mcpError("invalid arguments: %v", err)
@@ -673,8 +822,9 @@ func (s *server) handlePreferenceSet(args json.RawMessage) any {
 	if params.Value == "" {
 		return mcpError("value parameter is required")
 	}
+	userID := s.resolveUser(params.Speaker)
 
-	if err := s.engine.SetPreference(s.userID, params.Key, params.Value); err != nil {
+	if err := s.engine.SetPreference(userID, params.Key, params.Value); err != nil {
 		return mcpError("%v", err)
 	}
 
@@ -682,8 +832,14 @@ func (s *server) handlePreferenceSet(args json.RawMessage) any {
 	return mcpText("Preference %q set.", params.Key)
 }
 
-func (s *server) handlePromptsList() any {
-	prompts, err := s.engine.ListPrompts(s.userID)
+func (s *server) handlePromptsList(args json.RawMessage) any {
+	var params struct {
+		Speaker string `json:"speaker"`
+	}
+	json.Unmarshal(args, &params)
+	userID := s.resolveUser(params.Speaker)
+
+	prompts, err := s.engine.ListPrompts(userID)
 	if err != nil {
 		return mcpError("%v", err)
 	}
@@ -695,6 +851,7 @@ func (s *server) handlePromptsList() any {
 func (s *server) handlePromptGet(args json.RawMessage) any {
 	var params struct {
 		PromptType string `json:"prompt_type"`
+		Speaker    string `json:"speaker"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return mcpError("invalid arguments: %v", err)
@@ -705,8 +862,9 @@ func (s *server) handlePromptGet(args json.RawMessage) any {
 	if params.PromptType == "security" {
 		return mcpError("the security prompt type cannot be viewed or modified")
 	}
+	userID := s.resolveUser(params.Speaker)
 
-	detail, err := s.engine.GetPrompt(s.userID, params.PromptType)
+	detail, err := s.engine.GetPrompt(userID, params.PromptType)
 	if err != nil {
 		return mcpError("%v", err)
 	}
@@ -720,6 +878,7 @@ func (s *server) handlePromptSet(args json.RawMessage) any {
 		PromptType  string   `json:"prompt_type"`
 		Template    string   `json:"template"`
 		Temperature *float64 `json:"temperature"`
+		Speaker     string   `json:"speaker"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return mcpError("invalid arguments: %v", err)
@@ -733,8 +892,9 @@ func (s *server) handlePromptSet(args json.RawMessage) any {
 	if params.Template == "" && params.Temperature == nil {
 		return mcpError("at least one of template or temperature is required")
 	}
+	userID := s.resolveUser(params.Speaker)
 
-	if err := s.engine.SetPrompt(s.userID, params.PromptType, params.Template, params.Temperature); err != nil {
+	if err := s.engine.SetPrompt(userID, params.PromptType, params.Template, params.Temperature); err != nil {
 		return mcpError("%v", err)
 	}
 
@@ -745,6 +905,7 @@ func (s *server) handlePromptSet(args json.RawMessage) any {
 func (s *server) handlePromptReset(args json.RawMessage) any {
 	var params struct {
 		PromptType string `json:"prompt_type"`
+		Speaker    string `json:"speaker"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return mcpError("invalid arguments: %v", err)
@@ -755,8 +916,9 @@ func (s *server) handlePromptReset(args json.RawMessage) any {
 	if params.PromptType == "security" {
 		return mcpError("the security prompt type cannot be viewed or modified")
 	}
+	userID := s.resolveUser(params.Speaker)
 
-	if err := s.engine.ResetPrompt(s.userID, params.PromptType); err != nil {
+	if err := s.engine.ResetPrompt(userID, params.PromptType); err != nil {
 		return mcpError("%v", err)
 	}
 
@@ -764,8 +926,14 @@ func (s *server) handlePromptReset(args json.RawMessage) any {
 	return mcpText("Prompt %q reset to default.", params.PromptType)
 }
 
-func (s *server) handleBriefing() any {
-	briefing, err := s.engine.GenerateBriefing(s.userID)
+func (s *server) handleBriefing(args json.RawMessage) any {
+	var params struct {
+		Speaker string `json:"speaker"`
+	}
+	json.Unmarshal(args, &params)
+	userID := s.resolveUser(params.Speaker)
+
+	briefing, err := s.engine.GenerateBriefing(userID)
 	if err != nil {
 		return mcpError("%v", err)
 	}
@@ -780,8 +948,9 @@ func (s *server) handleBriefing() any {
 
 func (s *server) handleArticleStar(args json.RawMessage) any {
 	var params struct {
-		ArticleID int64 `json:"article_id"`
-		Starred   *bool `json:"starred"`
+		ArticleID int64  `json:"article_id"`
+		Starred   *bool  `json:"starred"`
+		Speaker   string `json:"speaker"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return mcpError("invalid arguments: %v", err)
@@ -792,8 +961,9 @@ func (s *server) handleArticleStar(args json.RawMessage) any {
 	if params.Starred == nil {
 		return mcpError("starred parameter is required")
 	}
+	userID := s.resolveUser(params.Speaker)
 
-	if err := s.engine.StarArticle(s.userID, params.ArticleID, *params.Starred); err != nil {
+	if err := s.engine.StarArticle(userID, params.ArticleID, *params.Starred); err != nil {
 		return mcpError("%v", err)
 	}
 
@@ -803,6 +973,36 @@ func (s *server) handleArticleStar(args json.RawMessage) any {
 	}
 	log.Printf("article_star: id=%d %s", params.ArticleID, action)
 	return mcpText("Article %d %s.", params.ArticleID, action)
+}
+
+func (s *server) handleUserRegister(args json.RawMessage) any {
+	var params struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return mcpError("invalid arguments: %v", err)
+	}
+	if params.Name == "" {
+		return mcpError("name parameter is required")
+	}
+
+	id, err := s.engine.RegisterUser(params.Name)
+	if err != nil {
+		return mcpError("%v", err)
+	}
+
+	log.Printf("user_register: name=%q id=%d", params.Name, id)
+	return mcpJSON(map[string]any{"id": id, "name": params.Name})
+}
+
+func (s *server) handleUserList() any {
+	users, err := s.engine.ListUsers()
+	if err != nil {
+		return mcpError("%v", err)
+	}
+
+	log.Printf("user_list: %d users", len(users))
+	return mcpJSON(users)
 }
 
 // --- MCP response helpers ---

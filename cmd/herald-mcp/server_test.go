@@ -179,6 +179,7 @@ func TestToolsList(t *testing.T) {
 		"preferences_get", "preference_set",
 		"prompts_list", "prompt_get", "prompt_set", "prompt_reset",
 		"briefing", "article_star",
+		"user_register", "user_list",
 	}
 	if len(result.Tools) != len(expected) {
 		t.Fatalf("got %d tools, want %d", len(result.Tools), len(expected))
@@ -934,5 +935,179 @@ func TestArticleStarMissingParams(t *testing.T) {
 	}))
 	if !resultIsError(t, resp) {
 		t.Fatal("expected error for missing starred")
+	}
+}
+
+// --- User management tests ---
+
+func TestUserRegister(t *testing.T) {
+	srv := newTestServer(t)
+
+	resp := srv.handleRequest(toolCall(1, "user_register", map[string]any{
+		"name": "alice",
+	}))
+	if resultIsError(t, resp) {
+		t.Fatalf("user_register error: %s", resultText(t, resp))
+	}
+
+	text := resultText(t, resp)
+	var result struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(text), &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if result.ID == 0 {
+		t.Error("expected non-zero user ID")
+	}
+	if result.Name != "alice" {
+		t.Errorf("name = %q, want %q", result.Name, "alice")
+	}
+}
+
+func TestUserRegisterMissingName(t *testing.T) {
+	srv := newTestServer(t)
+	resp := srv.handleRequest(toolCall(1, "user_register", map[string]any{}))
+	if !resultIsError(t, resp) {
+		t.Fatal("expected error for missing name")
+	}
+}
+
+func TestUserRegisterDuplicate(t *testing.T) {
+	srv := newTestServer(t)
+
+	resp := srv.handleRequest(toolCall(1, "user_register", map[string]any{"name": "bob"}))
+	if resultIsError(t, resp) {
+		t.Fatalf("first register error: %s", resultText(t, resp))
+	}
+
+	resp = srv.handleRequest(toolCall(2, "user_register", map[string]any{"name": "bob"}))
+	if !resultIsError(t, resp) {
+		t.Fatal("expected error for duplicate name")
+	}
+}
+
+func TestUserList(t *testing.T) {
+	srv := newTestServer(t)
+
+	// Empty initially
+	resp := srv.handleRequest(toolCall(1, "user_list", map[string]any{}))
+	if resultIsError(t, resp) {
+		t.Fatalf("user_list error: %s", resultText(t, resp))
+	}
+	text := resultText(t, resp)
+	var users []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(text), &users); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(users) != 0 {
+		t.Fatalf("expected 0 users, got %d", len(users))
+	}
+
+	// Register two users
+	srv.handleRequest(toolCall(2, "user_register", map[string]any{"name": "alice"}))
+	srv.handleRequest(toolCall(3, "user_register", map[string]any{"name": "bob"}))
+
+	resp = srv.handleRequest(toolCall(4, "user_list", map[string]any{}))
+	text = resultText(t, resp)
+	if err := json.Unmarshal([]byte(text), &users); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(users) != 2 {
+		t.Fatalf("expected 2 users, got %d", len(users))
+	}
+}
+
+// --- Speaker resolution tests ---
+
+func TestSpeakerResolution(t *testing.T) {
+	// Use a high default user ID (99) so it doesn't collide with
+	// auto-increment IDs from user_register.
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	engine, err := herald.NewEngine(herald.EngineConfig{DBPath: dbPath})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	t.Cleanup(func() { engine.Close() })
+	srv := newServer(engine, 99)
+	ts := feedServer(t)
+
+	// Register "alice" as user (gets ID 1)
+	resp := srv.handleRequest(toolCall(1, "user_register", map[string]any{"name": "alice"}))
+	if resultIsError(t, resp) {
+		t.Fatalf("register error: %s", resultText(t, resp))
+	}
+
+	// Subscribe a feed as alice (via speaker)
+	resp = srv.handleRequest(toolCall(2, "feed_subscribe", map[string]any{
+		"url":     ts.URL + "/feed.xml",
+		"speaker": "alice",
+	}))
+	if resultIsError(t, resp) {
+		t.Fatalf("subscribe error: %s", resultText(t, resp))
+	}
+
+	// Alice should see the feed
+	resp = srv.handleRequest(toolCall(3, "feeds_list", map[string]any{
+		"speaker": "alice",
+	}))
+	text := resultText(t, resp)
+	var feeds []struct {
+		ID int64 `json:"id"`
+	}
+	json.Unmarshal([]byte(text), &feeds)
+	if len(feeds) != 1 {
+		t.Fatalf("alice should have 1 feed, got %d", len(feeds))
+	}
+
+	// Default user (ID 99) should NOT see alice's feed
+	resp = srv.handleRequest(toolCall(4, "feeds_list", map[string]any{}))
+	text = resultText(t, resp)
+	var defaultFeeds []struct {
+		ID int64 `json:"id"`
+	}
+	json.Unmarshal([]byte(text), &defaultFeeds)
+	if len(defaultFeeds) != 0 {
+		t.Errorf("default user should have 0 feeds, got %d", len(defaultFeeds))
+	}
+}
+
+func TestSpeakerFallback(t *testing.T) {
+	srv := newTestServer(t)
+
+	// Unknown speaker should fall back to default user
+	resp := srv.handleRequest(toolCall(1, "feeds_list", map[string]any{
+		"speaker": "unknown_person",
+	}))
+	if resultIsError(t, resp) {
+		t.Fatalf("unexpected error: %s", resultText(t, resp))
+	}
+	// Should succeed (using default user) — no error
+}
+
+func TestSpeakerOmitted(t *testing.T) {
+	srv := newTestServer(t)
+	ts := feedServer(t)
+
+	// Subscribe without speaker — should use default user
+	resp := srv.handleRequest(toolCall(1, "feed_subscribe", map[string]any{
+		"url": ts.URL + "/feed.xml",
+	}))
+	if resultIsError(t, resp) {
+		t.Fatalf("subscribe error: %s", resultText(t, resp))
+	}
+
+	// List without speaker — should see the feed
+	resp = srv.handleRequest(toolCall(2, "feeds_list", map[string]any{}))
+	text := resultText(t, resp)
+	var feeds []struct {
+		ID int64 `json:"id"`
+	}
+	json.Unmarshal([]byte(text), &feeds)
+	if len(feeds) != 1 {
+		t.Fatalf("expected 1 feed, got %d", len(feeds))
 	}
 }
