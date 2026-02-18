@@ -9,6 +9,7 @@ type Config struct {
 		BaseURL        string `yaml:"base_url"`
 		SecurityModel  string `yaml:"security_model"`
 		CurationModel  string `yaml:"curation_model"`
+		EmbeddingModel string `yaml:"embedding_model"`
 	} `yaml:"ollama"`
 
 	Thresholds struct {
@@ -29,6 +30,10 @@ type Config struct {
 		RelatedGroups string  `yaml:"related_groups,omitempty"`
 	} `yaml:"prompts,omitempty"`
 
+	Grouping struct {
+		SimilarityThreshold float64 `yaml:"similarity_threshold"`
+	} `yaml:"grouping"`
+
 	Temperatures struct {
 		Security      float64 `yaml:"security"`
 		Curation      float64 `yaml:"curation"`
@@ -45,6 +50,8 @@ func DefaultConfig() *Config {
 	cfg.Ollama.BaseURL = "http://localhost:11434"
 	cfg.Ollama.SecurityModel = "gemma3:4b"
 	cfg.Ollama.CurationModel = "llama3"
+	cfg.Ollama.EmbeddingModel = "embeddinggemma"
+	cfg.Grouping.SimilarityThreshold = 0.75
 	cfg.Thresholds.InterestScore = 8.0
 	cfg.Thresholds.SecurityScore = 7.0
 	// Default temperatures (can be overridden in config)

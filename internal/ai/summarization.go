@@ -117,6 +117,40 @@ func (p *AIProcessor) GenerateGroupSummary(ctx context.Context, userID int64, to
 	return strings.TrimSpace(fullResponse.String()), nil
 }
 
+// RefineGroupTopic generates a concise topic label from a group summary.
+// Called when a group reaches 3+ articles to replace the initial title-based topic.
+func (p *AIProcessor) RefineGroupTopic(ctx context.Context, userID int64, groupSummary string) (string, error) {
+	prompt := fmt.Sprintf(`Given this summary of related news articles, generate a short topic label (5-10 words max) that captures the core event or theme. Return ONLY the topic label, nothing else.
+
+Summary:
+%s`, truncateText(groupSummary, 1000))
+
+	req := &api.GenerateRequest{
+		Model:  p.curationModel,
+		Prompt: prompt,
+		Stream: new(bool), // false
+		Options: map[string]interface{}{
+			"temperature": 0.3,
+		},
+	}
+
+	var fullResponse strings.Builder
+	err := p.client.Generate(ctx, req, func(resp api.GenerateResponse) error {
+		fullResponse.WriteString(resp.Response)
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("topic refinement failed: %w", err)
+	}
+
+	topic := strings.TrimSpace(fullResponse.String())
+	// Clamp to 200 chars to avoid runaway output
+	if len(topic) > 200 {
+		topic = topic[:200]
+	}
+	return topic, nil
+}
+
 // RelatedArticlesResult represents the result of finding related articles
 type RelatedArticlesResult struct {
 	IsRelated      bool    `json:"is_related"`

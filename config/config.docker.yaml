@@ -4,6 +4,9 @@ ollama:
   base_url: http://ollama:11434
   security_model: gemma3:4b
   curation_model: llama3
+  embedding_model: embeddinggemma
+grouping:
+  similarity_threshold: 0.75
 thresholds:
   interest_score: 8.0
   security_score: 7.0

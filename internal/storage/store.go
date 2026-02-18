@@ -64,6 +64,13 @@ type Store interface {
 	GetUserGroups(userID int64) ([]ArticleGroup, error)
 	FindArticleGroup(articleID, userID int64) (*int64, error)
 
+	// Embedding-based group operations
+	UpdateGroupEmbedding(groupID int64, embedding []byte) error
+	GetGroupsWithEmbeddings(userID int64) ([]ArticleGroupWithEmbedding, error)
+	GetGroupEmbedding(groupID int64) ([]byte, error)
+	GetGroupArticleCount(groupID int64) (int, error)
+	UpdateGroupTopic(groupID int64, topic string) error
+
 	// Subscriptions
 	SubscribeUserToFeed(userID, feedID int64) error
 	GetUserFeeds(userID int64) ([]Feed, error)

@@ -66,6 +66,12 @@ type ArticleGroup struct {
 	UpdatedAt time.Time
 }
 
+// ArticleGroupWithEmbedding extends ArticleGroup with the raw centroid vector blob.
+type ArticleGroupWithEmbedding struct {
+	ArticleGroup
+	Embedding []byte // raw little-endian float32 blob, caller decodes
+}
+
 type GroupSummary struct {
 	GroupID          int64
 	Summary          string
@@ -107,6 +113,7 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		"ALTER TABLE feeds ADD COLUMN last_error TEXT",
 		"ALTER TABLE feeds ADD COLUMN etag TEXT",
 		"ALTER TABLE feeds ADD COLUMN last_modified TEXT",
+		"ALTER TABLE article_groups ADD COLUMN embedding BLOB",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -1041,6 +1048,75 @@ func (s *SQLiteStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, offse
 		articles = append(articles, a)
 	}
 	return articles, rows.Err()
+}
+
+// UpdateGroupEmbedding stores or updates the centroid embedding for a group.
+func (s *SQLiteStore) UpdateGroupEmbedding(groupID int64, embedding []byte) error {
+	_, err := s.db.Exec("UPDATE article_groups SET embedding = ? WHERE id = ?", embedding, groupID)
+	if err != nil {
+		return fmt.Errorf("update group embedding: %w", err)
+	}
+	return nil
+}
+
+// GetGroupsWithEmbeddings returns all groups for a user that have a centroid embedding.
+func (s *SQLiteStore) GetGroupsWithEmbeddings(userID int64) ([]ArticleGroupWithEmbedding, error) {
+	rows, err := s.db.Query(
+		`SELECT id, user_id, topic, embedding, created_at, updated_at
+		 FROM article_groups
+		 WHERE user_id = ? AND embedding IS NOT NULL`,
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get groups with embeddings: %w", err)
+	}
+	defer rows.Close()
+
+	var groups []ArticleGroupWithEmbedding
+	for rows.Next() {
+		var g ArticleGroupWithEmbedding
+		if err := rows.Scan(&g.ID, &g.UserID, &g.Topic, &g.Embedding, &g.CreatedAt, &g.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan group with embedding: %w", err)
+		}
+		groups = append(groups, g)
+	}
+	return groups, rows.Err()
+}
+
+// GetGroupEmbedding returns the raw centroid embedding for a single group.
+// Returns nil if the group has no embedding.
+func (s *SQLiteStore) GetGroupEmbedding(groupID int64) ([]byte, error) {
+	var emb []byte
+	err := s.db.QueryRow(
+		"SELECT embedding FROM article_groups WHERE id = ?",
+		groupID,
+	).Scan(&emb)
+	if err != nil {
+		return nil, fmt.Errorf("get group embedding: %w", err)
+	}
+	return emb, nil
+}
+
+// GetGroupArticleCount returns the number of articles in a group.
+func (s *SQLiteStore) GetGroupArticleCount(groupID int64) (int, error) {
+	var count int
+	err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM article_group_members WHERE group_id = ?",
+		groupID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("get group article count: %w", err)
+	}
+	return count, nil
+}
+
+// UpdateGroupTopic updates the topic label for a group.
+func (s *SQLiteStore) UpdateGroupTopic(groupID int64, topic string) error {
+	_, err := s.db.Exec("UPDATE article_groups SET topic = ? WHERE id = ?", topic, groupID)
+	if err != nil {
+		return fmt.Errorf("update group topic: %w", err)
+	}
+	return nil
 }
 
 // GetStarredArticles returns starred articles for a user.

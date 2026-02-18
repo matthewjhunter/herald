@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	embedding "github.com/matthewjhunter/go-embedding"
 	"github.com/matthewjhunter/herald/internal/ai"
 	"github.com/matthewjhunter/herald/internal/feeds"
 	"github.com/matthewjhunter/herald/internal/output"
@@ -33,6 +34,11 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 	processed := 0
 	updatedGroups := make(map[int64]bool)
 
+	// Create GroupMatcher for vector-based group matching
+	var groupMatcher *ai.GroupMatcher
+	embedder := embedding.NewOllamaEmbedder(appCfg.Ollama.BaseURL, appCfg.Ollama.EmbeddingModel)
+	groupMatcher = ai.NewGroupMatcher(embedder, store, appCfg.Grouping.SimilarityThreshold)
+
 	unscoredArticles, err := store.GetUnscoredArticlesForUser(userID, 100)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get unscored articles for user %d: %w", userID, err)
@@ -45,6 +51,7 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 		}
 
 		// 1. Generate AI summary (cached per-user)
+		var aiSummary string
 		existingSummary, err := store.GetArticleSummary(userID, article.ID)
 		if err != nil {
 			formatter.Warning("failed to check article summary: %v", err)
@@ -52,7 +59,7 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 		}
 
 		if existingSummary == nil {
-			aiSummary, err := processor.SummarizeArticle(ctx, userID, article.Title, content)
+			aiSummary, err = processor.SummarizeArticle(ctx, userID, article.Title, content)
 			if err != nil {
 				formatter.Warning("summarization failed for article %d: %v", article.ID, err)
 				continue
@@ -60,6 +67,8 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 			if err := store.UpdateArticleAISummary(userID, article.ID, aiSummary); err != nil {
 				formatter.Warning("failed to cache AI summary: %v", err)
 			}
+		} else {
+			aiSummary = existingSummary.AISummary
 		}
 
 		// 2. Security check
@@ -89,24 +98,23 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 		store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore)
 		formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, true)
 
-		// 4. Find or create group
-		userGroups, err := store.GetUserGroups(userID)
+		// 4. Vector-based group matching (replaces LLM-based FindRelatedGroups)
+		matchedGroupID, articleEmb, err := groupMatcher.MatchArticleToGroup(ctx, userID, article.Title, aiSummary)
 		if err != nil {
-			formatter.Warning("failed to get user groups: %v", err)
-			continue
+			formatter.Warning("vector group match failed: %v", err)
+			// Fall through to create new group without embedding
 		}
 
-		relatedGroupIDs, err := processor.FindRelatedGroups(ctx, userID, article, userGroups, store)
-		if err != nil {
-			formatter.Warning("failed to find related groups: %v", err)
-			relatedGroupIDs = nil
-		}
-
-		if len(relatedGroupIDs) > 0 {
-			if err := store.AddArticleToGroup(relatedGroupIDs[0], article.ID); err != nil {
+		if matchedGroupID != nil {
+			if err := store.AddArticleToGroup(*matchedGroupID, article.ID); err != nil {
 				formatter.Warning("failed to add article to group: %v", err)
 			} else {
-				updatedGroups[relatedGroupIDs[0]] = true
+				updatedGroups[*matchedGroupID] = true
+				if articleEmb != nil {
+					if err := groupMatcher.UpdateGroupCentroid(ctx, *matchedGroupID, articleEmb); err != nil {
+						formatter.Warning("failed to update group centroid: %v", err)
+					}
+				}
 			}
 		} else {
 			topic := article.Title
@@ -122,6 +130,12 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 				formatter.Warning("failed to add article to new group: %v", err)
 			} else {
 				updatedGroups[newGroupID] = true
+			}
+			// Set initial centroid from this article's embedding
+			if articleEmb != nil {
+				if err := store.UpdateGroupEmbedding(newGroupID, embedding.EncodeFloat32s(articleEmb)); err != nil {
+					formatter.Warning("failed to set initial group centroid: %v", err)
+				}
 			}
 		}
 
@@ -205,6 +219,15 @@ func updateGroupSummary(ctx context.Context, store storage.Store, processor *ai.
 	maxScorePtr := &maxScore
 	if err := store.UpdateGroupSummary(groupID, groupSummary, len(articles), maxScorePtr); err != nil {
 		return err
+	}
+
+	// Phase 6: Refine topic label when group has 3+ articles.
+	// Use the LLM to generate a concise topic from the group summary.
+	if len(articles) >= 3 {
+		refinedTopic, err := processor.RefineGroupTopic(ctx, userID, groupSummary)
+		if err == nil && refinedTopic != "" {
+			store.UpdateGroupTopic(groupID, refinedTopic)
+		}
 	}
 
 	return nil
