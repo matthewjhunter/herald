@@ -168,6 +168,57 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// User represents a registered household member.
+type User struct {
+	ID        int64
+	Name      string
+	CreatedAt time.Time
+}
+
+// CreateUser registers a new user by name. Returns the new user's ID.
+func (s *Store) CreateUser(name string) (int64, error) {
+	result, err := s.db.Exec(
+		"INSERT INTO users (name) VALUES (?)",
+		name,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("create user: %w", err)
+	}
+	return result.LastInsertId()
+}
+
+// GetUserByName looks up a user by name (case-insensitive).
+func (s *Store) GetUserByName(name string) (*User, error) {
+	var u User
+	err := s.db.QueryRow(
+		"SELECT id, name, created_at FROM users WHERE name = ?",
+		name,
+	).Scan(&u.ID, &u.Name, &u.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// ListUsers returns all registered users ordered by name.
+func (s *Store) ListUsers() ([]User, error) {
+	rows, err := s.db.Query("SELECT id, name, created_at FROM users ORDER BY name")
+	if err != nil {
+		return nil, fmt.Errorf("list users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.Name, &u.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan user: %w", err)
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
 // User prompt management
 
 // GetUserPrompt retrieves a user's custom prompt template

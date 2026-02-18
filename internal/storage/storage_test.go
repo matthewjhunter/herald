@@ -577,6 +577,78 @@ func TestGroupSummary(t *testing.T) {
 	}
 }
 
+func TestCreateUser(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	id, err := store.CreateUser("Matthew")
+	if err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+	if id == 0 {
+		t.Fatal("user ID should not be 0")
+	}
+
+	// Duplicate name should error (UNIQUE constraint)
+	_, err = store.CreateUser("matthew") // case-insensitive
+	if err == nil {
+		t.Fatal("expected error for duplicate user name")
+	}
+}
+
+func TestGetUserByName(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	store.CreateUser("Alice")
+
+	// Exact case
+	u, err := store.GetUserByName("Alice")
+	if err != nil {
+		t.Fatalf("GetUserByName failed: %v", err)
+	}
+	if u.Name != "Alice" {
+		t.Errorf("name = %q, want %q", u.Name, "Alice")
+	}
+
+	// Case-insensitive lookup
+	u, err = store.GetUserByName("alice")
+	if err != nil {
+		t.Fatalf("GetUserByName case-insensitive failed: %v", err)
+	}
+	if u.Name != "Alice" {
+		t.Errorf("name = %q, want %q", u.Name, "Alice")
+	}
+
+	// Non-existent user
+	_, err = store.GetUserByName("nobody")
+	if err == nil {
+		t.Fatal("expected error for non-existent user")
+	}
+}
+
+func TestListUsers(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	store.CreateUser("Charlie")
+	store.CreateUser("Alice")
+	store.CreateUser("Bob")
+
+	users, err := store.ListUsers()
+	if err != nil {
+		t.Fatalf("ListUsers failed: %v", err)
+	}
+	if len(users) != 3 {
+		t.Fatalf("expected 3 users, got %d", len(users))
+	}
+
+	// Should be ordered by name
+	if users[0].Name != "Alice" || users[1].Name != "Bob" || users[2].Name != "Charlie" {
+		t.Errorf("users not in name order: %v", []string{users[0].Name, users[1].Name, users[2].Name})
+	}
+}
+
 func TestUserPrompts(t *testing.T) {
 	store, cleanup := newTestStore(t)
 	defer cleanup()
