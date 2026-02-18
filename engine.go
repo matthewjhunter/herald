@@ -148,7 +148,7 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 		if !secResult.Safe || secResult.Score < e.config.Thresholds.SecurityScore {
 			secScore := secResult.Score
 			zero := 0.0
-			e.store.UpdateReadState(article.ID, false, &zero, &secScore)
+			e.store.UpdateReadState(userID, article.ID, false, &zero, &secScore)
 			continue
 		}
 
@@ -161,7 +161,7 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 
 		secScore := secResult.Score
 		interestScore := curResult.InterestScore
-		e.store.UpdateReadState(article.ID, false, &interestScore, &secScore)
+		e.store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore)
 
 		// Group management
 		userGroups, _ := e.store.GetUserGroups(userID)
@@ -223,7 +223,7 @@ func (e *Engine) GetArticleForUser(userID, articleID int64) (*Article, error) {
 
 // GetHighInterestArticles returns unread articles scored above the threshold.
 func (e *Engine) GetHighInterestArticles(userID int64, threshold float64, limit, offset int) ([]Article, []float64, error) {
-	articles, scores, err := e.store.GetArticlesByInterestScore(threshold, limit, offset)
+	articles, scores, err := e.store.GetArticlesByInterestScore(userID, threshold, limit, offset)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -231,8 +231,8 @@ func (e *Engine) GetHighInterestArticles(userID int64, threshold float64, limit,
 }
 
 // MarkArticleRead marks an article as read.
-func (e *Engine) MarkArticleRead(articleID int64) error {
-	return e.store.UpdateReadState(articleID, true, nil, nil)
+func (e *Engine) MarkArticleRead(userID, articleID int64) error {
+	return e.store.UpdateReadState(userID, articleID, true, nil, nil)
 }
 
 // ImportOPML imports feeds from an OPML file and subscribes the user.
@@ -386,7 +386,7 @@ func (e *Engine) GetGroupArticles(groupID int64) (*ArticleGroup, error) {
 // GenerateBriefing creates a text briefing from high-interest unread articles.
 func (e *Engine) GenerateBriefing(userID int64) (string, error) {
 	articles, scores, err := e.store.GetArticlesByInterestScore(
-		e.config.Thresholds.InterestScore, 20, 0)
+		userID, e.config.Thresholds.InterestScore, 20, 0)
 	if err != nil {
 		return "", fmt.Errorf("get high-interest articles: %w", err)
 	}
@@ -650,8 +650,35 @@ func (e *Engine) ResetPrompt(userID int64, promptType string) error {
 }
 
 // StarArticle sets or clears the starred flag on an article.
-func (e *Engine) StarArticle(articleID int64, starred bool) error {
-	return e.store.UpdateStarred(articleID, starred)
+func (e *Engine) StarArticle(userID, articleID int64, starred bool) error {
+	return e.store.UpdateStarred(userID, articleID, starred)
+}
+
+// RegisterUser creates a new user by name and returns the ID.
+func (e *Engine) RegisterUser(name string) (int64, error) {
+	return e.store.CreateUser(name)
+}
+
+// ResolveUser looks up a user by name and returns the ID.
+func (e *Engine) ResolveUser(name string) (int64, error) {
+	u, err := e.store.GetUserByName(name)
+	if err != nil {
+		return 0, err
+	}
+	return u.ID, nil
+}
+
+// ListUsers returns all registered users.
+func (e *Engine) ListUsers() ([]User, error) {
+	users, err := e.store.ListUsers()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]User, len(users))
+	for i, u := range users {
+		result[i] = User{ID: u.ID, Name: u.Name, CreatedAt: u.CreatedAt}
+	}
+	return result, nil
 }
 
 // Close releases all resources held by the engine.

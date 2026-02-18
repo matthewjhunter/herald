@@ -14,6 +14,13 @@ type EngineConfig struct {
 	UserID            int64    // primary user ID; DB preferences override CLI flags
 }
 
+// User represents a registered household member.
+type User struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // Article represents a feed article.
 type Article struct {
 	ID            int64      `json:"id"`

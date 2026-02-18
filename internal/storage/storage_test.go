@@ -125,7 +125,7 @@ func TestUpdateReadState(t *testing.T) {
 	// Update read state
 	interestScore := 8.5
 	securityScore := 9.0
-	if err := store.UpdateReadState(articleID, true, &interestScore, &securityScore); err != nil {
+	if err := store.UpdateReadState(1, articleID, true, &interestScore, &securityScore); err != nil {
 		t.Fatalf("UpdateReadState failed: %v", err)
 	}
 
@@ -162,11 +162,11 @@ func TestGetArticlesByInterestScore(t *testing.T) {
 
 		score := scores[i]
 		secScore := 9.0
-		store.UpdateReadState(articleID, false, &score, &secScore)
+		store.UpdateReadState(1, articleID, false, &score, &secScore)
 	}
 
 	// Get articles with score >= 8.0
-	articles, scores, err := store.GetArticlesByInterestScore(8.0, 10, 0)
+	articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0)
 	if err != nil {
 		t.Fatalf("GetArticlesByInterestScore failed: %v", err)
 	}
@@ -203,10 +203,10 @@ func TestGetArticlesByInterestScore_TimeDecay(t *testing.T) {
 	// Both get raw score 9.0
 	rawScore := 9.0
 	secScore := 9.0
-	store.UpdateReadState(art1, false, &rawScore, &secScore)
-	store.UpdateReadState(art2, false, &rawScore, &secScore)
+	store.UpdateReadState(1, art1, false, &rawScore, &secScore)
+	store.UpdateReadState(1, art2, false, &rawScore, &secScore)
 
-	articles, scores, err := store.GetArticlesByInterestScore(8.0, 10, 0)
+	articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0)
 	if err != nil {
 		t.Fatalf("GetArticlesByInterestScore failed: %v", err)
 	}
@@ -574,6 +574,55 @@ func TestGroupSummary(t *testing.T) {
 	}
 	if gs.MaxInterestScore == nil || *gs.MaxInterestScore != 9.5 {
 		t.Errorf("max interest score = %v, want 9.5", gs.MaxInterestScore)
+	}
+}
+
+func TestReadStatePerUserIsolation(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test Feed", "")
+	now := time.Now()
+	articleID, _ := store.AddArticle(&Article{
+		FeedID: feedID, GUID: "iso1", Title: "Shared Article",
+		URL: "https://example.com/iso1", PublishedDate: &now,
+	})
+
+	// User 1 scores the article
+	score1 := 9.0
+	sec := 8.0
+	store.UpdateReadState(1, articleID, false, &score1, &sec)
+
+	// User 2 scores the same article differently
+	score2 := 3.0
+	store.UpdateReadState(2, articleID, false, &score2, &sec)
+
+	// User 1 should see their score
+	articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0)
+	if err != nil {
+		t.Fatalf("GetArticlesByInterestScore user 1: %v", err)
+	}
+	if len(articles) != 1 {
+		t.Fatalf("user 1: expected 1 high-interest article, got %d", len(articles))
+	}
+	if scores[0] < 8.0 {
+		t.Errorf("user 1 score should be >= 8.0, got %.1f", scores[0])
+	}
+
+	// User 2 should not see it at threshold 8.0 (their score is 3.0)
+	articles, _, err = store.GetArticlesByInterestScore(2, 8.0, 10, 0)
+	if err != nil {
+		t.Fatalf("GetArticlesByInterestScore user 2: %v", err)
+	}
+	if len(articles) != 0 {
+		t.Errorf("user 2: expected 0 high-interest articles, got %d", len(articles))
+	}
+
+	// User 1 marks read, user 2 still unread
+	store.UpdateReadState(1, articleID, true, &score1, &sec)
+	articles, _, _ = store.GetArticlesByInterestScore(1, 8.0, 10, 0)
+	if len(articles) != 0 {
+		t.Errorf("user 1 after mark-read: expected 0 articles, got %d", len(articles))
 	}
 }
 

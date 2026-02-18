@@ -510,7 +510,7 @@ func (s *server) handleArticlesMarkRead(args json.RawMessage) any {
 		return mcpError("article_id parameter is required")
 	}
 
-	if err := s.engine.MarkArticleRead(params.ArticleID); err != nil {
+	if err := s.engine.MarkArticleRead(s.userID, params.ArticleID); err != nil {
 		return mcpError("%v", err)
 	}
 
@@ -793,7 +793,7 @@ func (s *server) handleArticleStar(args json.RawMessage) any {
 		return mcpError("starred parameter is required")
 	}
 
-	if err := s.engine.StarArticle(params.ArticleID, *params.Starred); err != nil {
+	if err := s.engine.StarArticle(s.userID, params.ArticleID, *params.Starred); err != nil {
 		return mcpError("%v", err)
 	}
 

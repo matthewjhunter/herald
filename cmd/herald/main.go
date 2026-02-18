@@ -72,7 +72,7 @@ func processArticlesForUser(ctx context.Context, store *storage.Store, processor
 		if !secResult.Safe || secResult.Score < appCfg.Thresholds.SecurityScore {
 			secScore := secResult.Score
 			interestScore := 0.0
-			store.UpdateReadState(article.ID, false, &interestScore, &secScore)
+			store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore)
 			formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, false)
 			continue
 		}
@@ -86,7 +86,7 @@ func processArticlesForUser(ctx context.Context, store *storage.Store, processor
 
 		secScore := secResult.Score
 		interestScore := curResult.InterestScore
-		store.UpdateReadState(article.ID, false, &interestScore, &secScore)
+		store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore)
 		formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, true)
 
 		// 4. Find or create group
@@ -388,7 +388,7 @@ func processCmd() *cobra.Command {
 			}
 
 			// Get and output high-interest articles
-			highInterestArticles, scores, err := store.GetArticlesByInterestScore(cfg.Thresholds.InterestScore, 10, 0)
+			highInterestArticles, scores, err := store.GetArticlesByInterestScore(userID, cfg.Thresholds.InterestScore, 10, 0)
 			if err != nil {
 				return fmt.Errorf("failed to get high-interest articles: %w", err)
 			}
@@ -524,7 +524,12 @@ func fetchCmd() *cobra.Command {
 			fetchResult.ProcessedCount = totalProcessed
 
 			// Get and output high-interest articles
-			highInterestArticles, scores, err := store.GetArticlesByInterestScore(cfg.Thresholds.InterestScore, 10, 0)
+			// Show high-interest articles for the first subscribing user.
+			var displayUserID int64 = 1
+			if len(allUserIDs) > 0 {
+				displayUserID = allUserIDs[0]
+			}
+			highInterestArticles, scores, err := store.GetArticlesByInterestScore(displayUserID, cfg.Thresholds.InterestScore, 10, 0)
 			if err != nil {
 				return fmt.Errorf("failed to get high-interest articles: %w", err)
 			}
@@ -622,7 +627,7 @@ func readCmd() *cobra.Command {
 			}
 			defer store.Close()
 
-			if err := store.UpdateReadState(articleID, true, nil, nil); err != nil {
+			if err := store.UpdateReadState(1, articleID, true, nil, nil); err != nil {
 				return fmt.Errorf("failed to mark article as read: %w", err)
 			}
 

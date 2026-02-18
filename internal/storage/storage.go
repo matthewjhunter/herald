@@ -365,13 +365,13 @@ func (s *Store) DeleteUserPreference(userID int64, key string) error {
 }
 
 // UpdateStarred sets the starred flag on an article's read state.
-func (s *Store) UpdateStarred(articleID int64, starred bool) error {
+func (s *Store) UpdateStarred(userID, articleID int64, starred bool) error {
 	_, err := s.db.Exec(
 		`INSERT INTO read_state (user_id, article_id, starred)
-		 VALUES (1, ?, ?)
+		 VALUES (?, ?, ?)
 		 ON CONFLICT(user_id, article_id) DO UPDATE SET
 		   starred = excluded.starred`,
-		articleID, starred,
+		userID, articleID, starred,
 	)
 	if err != nil {
 		return fmt.Errorf("update starred: %w", err)
@@ -494,16 +494,16 @@ func (s *Store) GetUnreadArticles(limit int) ([]Article, error) {
 }
 
 // UpdateReadState updates or creates the read state for an article
-func (s *Store) UpdateReadState(articleID int64, read bool, interestScore, securityScore *float64) error {
+func (s *Store) UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64) error {
 	_, err := s.db.Exec(
 		`INSERT INTO read_state (user_id, article_id, read, interest_score, security_score, read_date)
-		 VALUES (1, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		 ON CONFLICT(user_id, article_id) DO UPDATE SET
 		   read = excluded.read,
 		   interest_score = excluded.interest_score,
 		   security_score = excluded.security_score,
 		   read_date = CURRENT_TIMESTAMP`,
-		articleID, read, interestScore, securityScore,
+		userID, articleID, read, interestScore, securityScore,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update read state: %w", err)
@@ -521,18 +521,18 @@ func (s *Store) UpdateReadState(articleID int64, read bool, interestScore, secur
 // clause still filters on the raw score so legitimately interesting articles
 // remain visible — they just sort lower as they age. Returned scores are the
 // decayed effective scores, not the raw stored values.
-func (s *Store) GetArticlesByInterestScore(threshold float64, limit, offset int) ([]Article, []float64, error) {
+func (s *Store) GetArticlesByInterestScore(userID int64, threshold float64, limit, offset int) ([]Article, []float64, error) {
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date,
 		       COALESCE(rs.interest_score, 0) * (1.0 / (1.0 + MAX(0, julianday('now') - julianday(COALESCE(a.published_date, a.fetched_date))) * 0.1)) AS decayed_score
 		FROM articles a
-		JOIN read_state rs ON a.id = rs.article_id
+		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
 		WHERE rs.interest_score >= ? AND rs.read = 0
 		ORDER BY decayed_score DESC
 		LIMIT ? OFFSET ?
 	`
-	rows, err := s.db.Query(query, threshold, limit, offset)
+	rows, err := s.db.Query(query, userID, threshold, limit, offset)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get articles by interest score: %w", err)
 	}
@@ -604,11 +604,11 @@ func (s *Store) GetFeedStats(userID int64) ([]FeedStats, error) {
 		FROM feeds f
 		JOIN user_feeds uf ON uf.feed_id = f.id AND uf.user_id = ?
 		JOIN articles a ON a.feed_id = f.id
-		LEFT JOIN read_state rs ON rs.article_id = a.id
+		LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = ?
 		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id AND asumm.user_id = ?
 		GROUP BY f.id, f.title
 		ORDER BY f.title`,
-		userID, userID,
+		userID, userID, userID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get feed stats: %w", err)
@@ -920,9 +920,9 @@ func (s *Store) GetUnscoredArticleCount(userID int64) (int, error) {
 		SELECT COUNT(*)
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		LEFT JOIN read_state rs ON a.id = rs.article_id
+		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
 		WHERE uf.user_id = ? AND rs.article_id IS NULL`,
-		userID,
+		userID, userID,
 	).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("get unscored article count: %w", err)
@@ -956,12 +956,12 @@ func (s *Store) GetUnscoredArticlesForUser(userID int64, limit int) ([]Article, 
 		       a.author, a.published_date, a.fetched_date
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		LEFT JOIN read_state rs ON a.id = rs.article_id
+		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
 		WHERE uf.user_id = ? AND rs.article_id IS NULL
 		ORDER BY a.published_date DESC
 		LIMIT ?
 	`
-	rows, err := s.db.Query(query, userID, limit)
+	rows, err := s.db.Query(query, userID, userID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get unscored articles for user: %w", err)
 	}
@@ -986,12 +986,12 @@ func (s *Store) GetUnreadArticlesForUser(userID int64, limit, offset int) ([]Art
 		       a.author, a.published_date, a.fetched_date
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		LEFT JOIN read_state rs ON a.id = rs.article_id
+		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
 		WHERE uf.user_id = ? AND (rs.article_id IS NULL OR rs.read = 0)
 		ORDER BY a.published_date DESC
 		LIMIT ? OFFSET ?
 	`
-	rows, err := s.db.Query(query, userID, limit, offset)
+	rows, err := s.db.Query(query, userID, userID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get unread articles for user: %w", err)
 	}
