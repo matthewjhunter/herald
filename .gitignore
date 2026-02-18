@@ -29,8 +29,13 @@ config/config.yaml
 # Claude Code / OMC state
 .omc/
 
+# Build output
+dist/
+
+# Task cache
+.task/
+
 # IDE
-.vscode/
 .idea/
 *.swp
 *.swo

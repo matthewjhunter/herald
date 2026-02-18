@@ -16,11 +16,20 @@ tasks:
       - echo "Building {{.BINARY}}..."
       - go build -o {{.BINARY}} ./cmd/herald
 
-  test:
-    desc: Run tests
+  build-web:
+    desc: Build the web application
     cmds:
-      - echo "Running tests..."
-      - go test -v ./...
+      - echo "Building herald-web..."
+      - go build -o herald-web ./cmd/herald-web
+
+  build-all:
+    desc: Build all applications
+    deps: [build, build-web]
+
+  test:
+    desc: Run tests with race detector
+    cmds:
+      - go test -race -count=1 ./...
 
   test-coverage:
     desc: Run tests with coverage report
@@ -28,6 +37,54 @@ tasks:
       - go test -v -coverprofile=coverage.out ./...
       - go tool cover -html=coverage.out -o coverage.html
       - echo 'Coverage report generated at coverage.html'
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  fmt:
+    desc: Check formatting with gofmt
+    cmds:
+      - |
+        unformatted=$(gofmt -l .)
+        if [ -n "$unformatted" ]; then
+          echo "Unformatted files:"
+          echo "$unformatted"
+          exit 1
+        fi
+
+  fmt:fix:
+    desc: Fix formatting with gofmt
+    cmds:
+      - gofmt -w .
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run ./...
+
+  vulncheck:
+    desc: Run govulncheck
+    cmds:
+      - govulncheck ./...
+
+  check:
+    desc: Run all CI checks (test, vet, fmt, lint, vulncheck)
+    cmds:
+      - task: test
+      - task: vet
+      - task: fmt
+      - task: lint
+      - task: vulncheck
+
+  hooks:install:
+    desc: Install git hooks from githooks/
+    cmds:
+      - cp githooks/pre-commit .git/hooks/pre-commit
+      - cp githooks/pre-push .git/hooks/pre-push
+      - chmod +x .git/hooks/pre-commit .git/hooks/pre-push
+      - echo "Git hooks installed."
 
   clean:
     desc: Remove build artifacts
@@ -73,12 +130,6 @@ tasks:
     vars:
       OPML_FILE: '{{.OPML_FILE | default "subscriptions.opml"}}'
 
-  lint:
-    desc: Run Go linters
-    cmds:
-      - go fmt ./...
-      - go vet ./...
-
   deps:
     desc: Download and verify dependencies
     cmds:
@@ -110,21 +161,11 @@ tasks:
     cmds:
       - ./{{.BINARY}} fetch
 
-  build-web:
-    desc: Build the web application
-    cmds:
-      - echo "Building herald-web..."
-      - go build -o herald-web ./cmd/herald-web
-
   run-web:
     desc: Run the web application
     deps: [build-web]
     cmds:
       - ./herald-web --addr :8080
-
-  build-all:
-    desc: Build all applications
-    deps: [build, build-web]
 
   docker-build:
     desc: Build Docker images

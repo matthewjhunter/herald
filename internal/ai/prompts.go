@@ -10,6 +10,7 @@ import (
 )
 
 // Embedded default prompts
+//
 //go:embed prompts/security.txt
 var defaultSecurityPrompt string
 
@@ -38,8 +39,8 @@ const (
 
 // PromptLoader handles 3-tier prompt loading: embedded -> config -> database
 type PromptLoader struct {
-	store  interface{} // storage.Store
-	config interface{} // *storage.Config
+	store  interface{}       // storage.Store
+	config interface{}       // *storage.Config
 	cache  map[string]string // cache of loaded prompts per user
 }
 

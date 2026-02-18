@@ -189,7 +189,7 @@ func TestGetArticlesByInterestScore_TimeDecay(t *testing.T) {
 	// Two articles with the same raw score but different ages.
 	// The newer one should sort first due to time-decay.
 	recent := time.Now().Add(-1 * 24 * time.Hour) // 1 day old
-	old := time.Now().Add(-30 * 24 * time.Hour)    // 30 days old
+	old := time.Now().Add(-30 * 24 * time.Hour)   // 30 days old
 
 	art1, _ := store.AddArticle(&Article{
 		FeedID: feedID, GUID: "old", Title: "Old Article",

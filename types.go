@@ -58,16 +58,16 @@ type ScoredArticle struct {
 
 // ArticleGroup represents a cluster of articles covering the same topic/event.
 type ArticleGroup struct {
-	ID        int64      `json:"id"`
-	UserID    int64      `json:"user_id"`
-	Topic     string     `json:"topic"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
-	Summary   string     `json:"summary,omitempty"`
-	Articles  []Article  `json:"articles,omitempty"`
-	Scores    []float64  `json:"scores,omitempty"`
-	MaxScore  float64    `json:"max_score,omitempty"`
-	Count     int        `json:"count"`
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	Topic     string    `json:"topic"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Summary   string    `json:"summary,omitempty"`
+	Articles  []Article `json:"articles,omitempty"`
+	Scores    []float64 `json:"scores,omitempty"`
+	MaxScore  float64   `json:"max_score,omitempty"`
+	Count     int       `json:"count"`
 }
 
 // FeedStats holds article counts for a single feed.
@@ -90,19 +90,19 @@ type UserPreferences struct {
 	Keywords          []string `json:"keywords"`
 	InterestThreshold float64  `json:"interest_threshold"`
 	FilterThreshold   int      `json:"filter_threshold"`
-	NotifyWhen        string   `json:"notify_when"`      // "present", "always", "queue"
+	NotifyWhen        string   `json:"notify_when"` // "present", "always", "queue"
 	NotifyMinScore    float64  `json:"notify_min_score"`
 }
 
 // FilterRule represents a user-defined scoring rule for article filtering.
 type FilterRule struct {
-	ID        int64      `json:"id"`
-	UserID    int64      `json:"user_id"`
-	FeedID    *int64     `json:"feed_id,omitempty"`
-	Axis      string     `json:"axis"`
-	Value     string     `json:"value"`
-	Score     int        `json:"score"`
-	CreatedAt time.Time  `json:"created_at"`
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	FeedID    *int64    `json:"feed_id,omitempty"`
+	Axis      string    `json:"axis"`
+	Value     string    `json:"value"`
+	Score     int       `json:"score"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // FeedMetadata holds discoverable metadata for a feed's articles.
@@ -115,7 +115,7 @@ type FeedMetadata struct {
 // PromptInfo summarizes a prompt type's current status.
 type PromptInfo struct {
 	Type        string  `json:"type"`
-	Status      string  `json:"status"`      // "custom" or "default"
+	Status      string  `json:"status"` // "custom" or "default"
 	Temperature float64 `json:"temperature"`
 }
 

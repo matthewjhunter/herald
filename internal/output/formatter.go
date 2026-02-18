@@ -45,11 +45,11 @@ func NewFormatterWithWriters(format Format, out, errW io.Writer) *Formatter {
 
 // ArticleGroup represents a group of articles covering the same event
 type ArticleGroup struct {
-	Topic     string             `json:"topic"`
-	Articles  []storage.Article  `json:"articles"`
-	Scores    []float64          `json:"scores,omitempty"`
-	MaxScore  float64            `json:"max_score,omitempty"`
-	Count     int                `json:"count"`
+	Topic    string            `json:"topic"`
+	Articles []storage.Article `json:"articles"`
+	Scores   []float64         `json:"scores,omitempty"`
+	MaxScore float64           `json:"max_score,omitempty"`
+	Count    int               `json:"count"`
 }
 
 // FetchResult represents the result of a fetch operation

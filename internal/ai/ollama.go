@@ -18,10 +18,10 @@ type AIProcessor struct {
 }
 
 type SecurityResult struct {
-	Safe           bool    `json:"safe"`
-	Score          float64 `json:"score"`
-	Reasoning      string  `json:"reasoning"`
-	SanitizedText  string  `json:"sanitized_text"`
+	Safe          bool    `json:"safe"`
+	Score         float64 `json:"score"`
+	Reasoning     string  `json:"reasoning"`
+	SanitizedText string  `json:"sanitized_text"`
 }
 
 type CurationResult struct {
@@ -131,10 +131,10 @@ func (p *AIProcessor) SecurityCheck(ctx context.Context, userID int64, title, co
 	if err := json.Unmarshal([]byte(responseText), &result); err != nil {
 		// If JSON parsing fails, return a conservative default
 		return &SecurityResult{
-			Safe:           false,
-			Score:          5.0,
-			Reasoning:      "Failed to parse security response",
-			SanitizedText:  title,
+			Safe:          false,
+			Score:         5.0,
+			Reasoning:     "Failed to parse security response",
+			SanitizedText: title,
 		}, nil
 	}
 

@@ -18,16 +18,16 @@ type Config struct {
 	} `yaml:"thresholds"`
 
 	Preferences struct {
-		Keywords       []string `yaml:"keywords"`
+		Keywords         []string `yaml:"keywords"`
 		PreferredSources []string `yaml:"preferred_sources"`
 	} `yaml:"preferences"`
 
 	Prompts struct {
-		Security      string  `yaml:"security,omitempty"`
-		Curation      string  `yaml:"curation,omitempty"`
-		Summarization string  `yaml:"summarization,omitempty"`
-		GroupSummary  string  `yaml:"group_summary,omitempty"`
-		RelatedGroups string  `yaml:"related_groups,omitempty"`
+		Security      string `yaml:"security,omitempty"`
+		Curation      string `yaml:"curation,omitempty"`
+		Summarization string `yaml:"summarization,omitempty"`
+		GroupSummary  string `yaml:"group_summary,omitempty"`
+		RelatedGroups string `yaml:"related_groups,omitempty"`
 	} `yaml:"prompts,omitempty"`
 
 	Grouping struct {

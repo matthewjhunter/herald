@@ -62,11 +62,11 @@ type indexData struct {
 }
 
 type homeData struct {
-	UserID     int64
-	UserName   string
-	Feeds      []herald.FeedStats
+	UserID      int64
+	UserName    string
+	Feeds       []herald.FeedStats
 	TotalUnread int
-	ActiveFeed int64
+	ActiveFeed  int64
 }
 
 type articleListData struct {
@@ -79,14 +79,14 @@ type articleListData struct {
 }
 
 type articleRow struct {
-	ID              int64
-	UserID          int64
-	Title           string
-	Author          string
-	FeedTitle       string
+	ID               int64
+	UserID           int64
+	Title            string
+	Author           string
+	FeedTitle        string
 	PublishedDateFmt string
-	Read            bool
-	Starred         bool
+	Read             bool
+	Starred          bool
 }
 
 type articleViewData struct {
