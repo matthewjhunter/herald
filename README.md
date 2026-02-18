@@ -1,290 +1,156 @@
-# Herald - Your AI-Powered News Herald
+# Herald
 
-> *"Hear ye, hear ye! News of import, my lord."*
+[![CI](https://github.com/matthewjhunter/herald/actions/workflows/ci.yml/badge.svg)](https://github.com/matthewjhunter/herald/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/matthewjhunter/herald)](https://goreportcard.com/report/github.com/matthewjhunter/herald)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/matthewjhunter/herald)](go.mod)
 
-An intelligent RSS/Atom feed reader with AI-powered security screening and content curation. Herald monitors your feeds, filters for importance, and announces significant news via [Majordomo](https://github.com/matthewjhunter/majordomo) voice notifications.
+AI-powered feed reader with security-first content screening and neutral interest curation.
 
-Like a medieval herald who announces important news to their lord, Herald watches your RSS feeds and speaks only what matters.
+## What It Does
 
-**Key Features:**
-- 🛡️ **AI Security Screening** - Gemma 2 detects malicious content and prompt injection
-- 🎯 **Smart Curation** - Llama 3.2 scores articles for relevance and importance
-- 🔊 **Voice Announcements** - Integrates with Majordomo for spoken notifications
-- 📊 **Article Grouping** - Automatically clusters related stories from different sources
-- 👥 **Multi-User** - Per-user feeds, summaries, and AI prompts
-- 🎨 **Configurable Prompts** - Three-tier system: embedded defaults, config file, per-user database
+Herald is an intelligent RSS/Atom reader that uses a two-model AI pipeline to filter and curate news. A security model (Gemma) screens content for prompt injection and adversarial manipulation before it ever reaches curation, while a separate model (Llama) scores articles by relevance — without imposing editorial bias. Related articles are automatically clustered using vector embeddings, and high-interest items can be delivered as voice notifications via [Majordomo](https://github.com/matthewjhunter/majordomo) integration. Herald runs in three modes: CLI for manual use, MCP server for AI persona integration, and a web interface for browsing.
 
-## Features
+## The Two-Model Approach
 
-- **RSS & Atom Support**: Parse and fetch feeds in both RSS 2.0 and Atom 1.0 formats
-- **OPML Import**: Import your existing feed subscriptions from OPML files
-- **AI Security Layer**: Use Gemma 2 to detect malicious content and prompt injection attacks
-- **AI Curation**: Use Llama 3.2 to score articles by interest and relevance
-- **Article Clustering**: Automatically group articles from different sources covering the same event
-- **Multiple Output Formats**: JSON (default), tab-delimited text, or human-readable
-- **Stdout/Stderr Separation**: Clean output for piping and automation
-- **SQLite Storage**: Lightweight, file-based database with full read state tracking
-- **CLI Interface**: Simple command-line interface designed for cron automation
+Most AI news tools either skip security entirely — leaving them vulnerable to poisoned feeds — or use a single model that conflates safety filtering with editorial judgment. Herald separates these concerns at the architectural level.
+
+### Security Layer (Gemma)
+
+Gemma screens every article before it reaches curation. It looks for prompt injection attempts, adversarial content designed to manipulate downstream AI systems, and other malicious patterns. The security check is conservative: when in doubt, it flags. Critically, it makes no judgment about whether content is interesting — only whether it is safe.
+
+Articles that fail the security check are recorded with their score and reasoning but excluded from the curation pipeline entirely.
+
+### Curation Layer (Llama)
+
+Llama scores articles on news value, relevance, and alignment with user-defined keywords. It operates on content that has already been cleared by the security layer, so it has no reason to be defensive. The result is neutral relevance ranking — articles are scored on how interesting they are to you, not filtered based on content category or topic.
+
+### Why This Matters
+
+Security and editorial judgment are different problems that benefit from different model characteristics. Gemma was trained with strong safety guardrails, making it well-suited to threat detection. Llama provides neutral scoring without the conservative filtering bias that safety-trained models apply to content they find sensitive. Using one model for both tasks forces a tradeoff. Using two removes it.
+
+## Key Features
+
+- Two-model AI pipeline: security screening (Gemma) separated from interest curation (Llama)
+- RSS 2.0 and Atom 1.0 support with OPML import
+- Vector-based article clustering across sources using cosine similarity
+- Per-user interest keywords, thresholds, and read state
+- Customizable AI prompts with 3-tier fallback: database → config → embedded defaults
+- Article summarization with per-user caching
+- Conditional feed fetching (ETag / Last-Modified) to minimize bandwidth
+- Majordomo voice notification integration for high-interest articles
+- MCP server for AI persona access (26 tools)
+- Web interface for browsing articles and groups
+- Multi-user support: separate feeds, preferences, and read state per user
+- Filter rules: score articles by author, category, or tag
 
 ## Architecture
 
-### Security & Curation Pipeline
+```
+RSS/Atom Feeds → Fetcher → Parser → SQLite
+                                       |
+                               Security Check (Gemma)
+                                       |
+                               Interest Scoring (Llama)
+                                       |
+                               Embedding + Clustering
+                                       |
+                         .-----------.-----------.
+                        CLI      MCP Server    Web UI
+```
 
-1. **Fetch**: Download RSS/Atom feeds from subscribed sources
-2. **Security Check**: Gemma 2 analyzes content for threats (conservative filtering)
-3. **Curation**: Llama 3.2 scores articles for interest (neutral scoring)
-4. **Notification**: High-scoring articles trigger Majordomo voice notifications
+See [docs/architecture.md](docs/architecture.md) for a detailed breakdown of each component.
 
-### Two-Model Approach
+## Binaries
 
-- **Security Model (Gemma 2)**: Leverages Google's safety training for threat detection
-- **Curation Model (Llama 3.2)**: Neutral model for unbiased interest scoring
+| Binary | Purpose |
+|--------|---------|
+| `herald` | CLI for feed management, fetching, and reading |
+| `herald-mcp` | MCP server for AI persona integration |
+| `herald-web` | Read-only web interface for browsing articles |
 
-This separation ensures security without sacrificing editorial neutrality.
+## Getting Started
 
-## Installation
+**Prerequisites**
 
-### Prerequisites
-
-- Go 1.21+
-- Ollama with models installed:
-  - `gemma2` (security layer)
-  - `llama3.2` (curation layer)
+- Go 1.25+
+- [Ollama](https://ollama.com/) running locally with models pulled:
+  ```bash
+  ollama pull gemma3:4b
+  ollama pull llama3
+  ```
 - Majordomo (optional, for voice notifications)
 
-### Build
+**Build**
 
 ```bash
-cd herald
-go build -o herald ./cmd/herald
+go install ./cmd/herald ./cmd/herald-mcp ./cmd/herald-web
 ```
 
-## Output Formats
-
-FeedReader supports three output formats via the `--format` flag:
-
-### JSON (default) - Machine Parseable
-```bash
-./herald list --format=json | jq '.[].Title'
-./herald fetch --format=json > result.json
-```
-
-### Text - Tab-Delimited
-```bash
-./herald list --format=text | awk -F'\t' '{print $2}'
-./herald fetch --format=text | grep "processed="
-```
-
-### Human - Formatted for Reading
-```bash
-./herald list --format=human | less
-./herald fetch --format=human
-```
-
-All errors and warnings go to stderr, keeping stdout clean for piping.
-
-## Article Clustering
-
-Group articles covering the same event from different sources:
+**Initialize configuration**
 
 ```bash
-./herald list --cluster --format=human
+herald init-config
 ```
 
-The clustering feature uses Llama 3.2 to analyze article titles and detect related stories, providing topic summaries and grouping duplicate coverage.
+This creates `config/config.yaml`. Edit it to set your Ollama URL, model names, thresholds, and interest keywords.
 
-## Usage
-
-### 1. Initialize Configuration
+**Import feeds**
 
 ```bash
-./herald init-config
+herald import /path/to/subscriptions.opml
 ```
 
-This creates `config/config.yaml` with default settings. Edit as needed:
+**Fetch and process**
+
+```bash
+herald fetch
+```
+
+This fetches all subscribed feeds, runs the security and curation pipeline on new articles, clusters related stories, and notifies Majordomo about high-interest items.
+
+**Read articles**
+
+```bash
+herald list --limit 20 --format=human
+herald list --cluster --format=human   # grouped by topic
+```
+
+**Automate with cron**
+
+```cron
+*/30 * * * * herald fetch >> ~/.local/log/herald.log 2>&1
+```
+
+## Configuration
+
+Herald reads `config/config.yaml`. Key sections:
 
 ```yaml
-database:
-  path: ./herald.db
-
 ollama:
   base_url: http://localhost:11434
-  security_model: gemma2
-  curation_model: llama3.2
-
-majordomo:
-  enabled: true
-  chat_command: majordomo
-  target_persona: jarvis
+  security_model: gemma3:4b
+  curation_model: llama3
 
 thresholds:
-  interest_score: 8.0
-  security_score: 7.0
+  interest_score: 8.0    # articles above this score trigger notifications
+  security_score: 7.0    # articles below this score are flagged unsafe
 
 preferences:
   keywords:
-    - technology
     - security
     - AI
-  preferred_sources: []
+    - golang
 ```
 
-### 2. Import Feeds from OPML
-
-```bash
-./herald import /path/to/subscriptions.opml
-```
-
-### 3. Fetch and Process Feeds
-
-```bash
-./herald fetch
-```
-
-This command:
-- Fetches all enabled feeds
-- Stores new articles
-- Runs security checks (Gemma 2)
-- Scores articles for interest (Llama 3.2)
-- Notifies Majordomo about high-interest articles
-
-### 4. List Unread Articles
-
-```bash
-./herald list --limit 20
-```
-
-### 5. Mark Article as Read
-
-```bash
-./herald read <article-id>
-```
-
-## Automation with Cron
-
-Add to your crontab to fetch feeds every 30 minutes:
-
-```cron
-*/30 * * * * cd /path/to/herald && ./herald fetch >> fetch.log 2>&1
-```
-
-Or use Majordomo cron:
-
-```bash
-majordomo cron add "*/30 * * * *" "cd /path/to/herald && ./herald fetch"
-```
-
-## Database Schema
-
-### Tables
-
-- **feeds**: Subscription list with URLs and metadata
-- **articles**: Feed items with content and timestamps
-- **read_state**: Read status, interest scores, security scores
-- **user_preferences**: Future multi-user support
-
-## AI Model Selection
-
-### Why Gemma 2 for Security?
-
-Gemma 2 was trained with strong safety guardrails, making it excellent at:
-- Detecting prompt injection attempts
-- Identifying malicious content
-- Conservative security decisions
-
-### Why Llama 3.2 for Curation?
-
-Llama 3.2 provides:
-- Neutral interest scoring without content filtering
-- Good reasoning about relevance and news value
-- Balance between speed and quality
+AI prompts can be overridden in the config file or per-user in the database. See [docs/architecture.md](docs/architecture.md) for the full prompt system description.
 
 ## Majordomo Integration
 
-Feedreader integrates with [Majordomo](https://github.com/matthewjhunter/majordomo) for automated voice notifications of high-interest articles. The `process` command outputs JSON conforming to Majordomo's CommandOutput schema.
+Herald integrates with [Majordomo](https://github.com/matthewjhunter/majordomo) for voice notifications and AI persona access. The MCP server (`herald-mcp`) exposes 26 tools covering feed management, article reading, group browsing, preference management, and prompt customization.
 
-### Quick Setup
-
-1. **Configure herald** (see Configuration above)
-2. **Import feeds** for each user:
-   ```bash
-   herald import --user=1 ~/feeds.opml
-   ```
-3. **Add to Majordomo config** (`~/.config/majordomo/config.toml`):
-   ```toml
-   # Fetch feeds once
-   [[daemon.schedule]]
-   name = "herald-fetch"
-   cron = "*/15 * * * *"
-   persona = "jarvis"
-   command = "herald fetch-feeds --format=json"
-   format = "json"
-
-   # Process per user
-   [[daemon.schedule]]
-   name = "herald-process-user1"
-   cron = "*/15 * * * *"
-   persona = "jarvis"
-   command = "herald process --user=1 --format=json"
-   format = "json"
-   ```
-
-See [docs/majordomo-integration.md](docs/majordomo-integration.md) for complete integration guide and [examples/majordomo-config.toml](examples/majordomo-config.toml) for configuration templates.
-
-### Output Format
-```
-╔════════════════════════════════════════════════════════════════
-║ 🔔 MAJORDOMO NOTIFICATION → jarvis
-╠════════════════════════════════════════════════════════════════
-📰 High Interest Article (8.5/10)
-
-Title: Breaking News
-URL: https://example.com/article
-Summary: ...
-╚════════════════════════════════════════════════════════════════
-```
-
-## Troubleshooting
-
-### Ollama Connection Issues
-
-Verify Ollama is running:
-
-```bash
-curl http://localhost:11434/api/tags
-```
-
-### Missing Models
-
-Pull required models:
-
-```bash
-ollama pull gemma2
-ollama pull llama3.2
-```
-
-### Database Location
-
-Default database: `./herald.db`
-
-To use a different location, edit `config/config.yaml`:
-
-```yaml
-database:
-  path: /path/to/custom/herald.db
-```
-
-## Future Enhancements
-
-- **Learning Mechanism**: Track reading patterns to improve curation
-- **Multi-user Support**: Separate preferences and read states
-- **Web Interface**: Browser-based feed reader with backend API
-- **Full-text Extraction**: Fetch complete article content from web pages
+See [docs/majordomo-integration.md](docs/majordomo-integration.md) for the complete integration guide and [examples/majordomo-config.toml](examples/majordomo-config.toml) for configuration templates.
 
 ## License
 
-MIT License
-
-## Contributing
-
-Contributions welcome! Please open an issue or PR on GitHub.
+Apache 2.0 — see [LICENSE](LICENSE).
