@@ -292,12 +292,12 @@ func (f *Formatter) OutputMajordomoResult(result *FetchResult, userID int64, hig
 		text.WriteString("")
 	} else {
 		// Build notification text
-		text.WriteString(fmt.Sprintf("Found %d high-interest article(s):\n\n", result.HighInterest))
+		fmt.Fprintf(&text, "Found %d high-interest article(s):\n\n", result.HighInterest)
 
 		for _, article := range highInterestArticles {
-			text.WriteString(fmt.Sprintf("- [%s](%s)\n", article.Title, article.URL))
+			fmt.Fprintf(&text, "- [%s](%s)\n", article.Title, article.URL)
 			if article.Summary != "" {
-				text.WriteString(fmt.Sprintf("  %s\n\n", truncate(article.Summary, 200)))
+				fmt.Fprintf(&text, "  %s\n\n", truncate(article.Summary, 200))
 			}
 		}
 
