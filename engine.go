@@ -28,10 +28,9 @@ type Engine struct {
 
 // NewEngine creates a herald content engine backed by the given SQLite database.
 // The AI processor is created eagerly but only contacts Ollama when called.
+// If OllamaBaseURL is empty, AI processing is disabled; feed fetching and
+// reading still work normally.
 func NewEngine(cfg EngineConfig) (*Engine, error) {
-	if cfg.OllamaBaseURL == "" {
-		cfg.OllamaBaseURL = "http://localhost:11434"
-	}
 	if cfg.SecurityModel == "" {
 		cfg.SecurityModel = "gemma3:4b"
 	}
@@ -64,13 +63,15 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	if !cfg.ReadOnly {
 		fetcher = feeds.NewFetcher(store)
 
-		processor, err = ai.NewAIProcessor(
-			cfg.OllamaBaseURL, cfg.SecurityModel, cfg.CurationModel,
-			store, storeCfg,
-		)
-		if err != nil {
-			store.Close()
-			return nil, fmt.Errorf("create AI processor: %w", err)
+		if cfg.OllamaBaseURL != "" {
+			processor, err = ai.NewAIProcessor(
+				cfg.OllamaBaseURL, cfg.SecurityModel, cfg.CurationModel,
+				store, storeCfg,
+			)
+			if err != nil {
+				store.Close()
+				return nil, fmt.Errorf("create AI processor: %w", err)
+			}
 		}
 	}
 
@@ -124,7 +125,7 @@ func (e *Engine) FetchAllFeeds(ctx context.Context) (*FetchResult, error) {
 // Articles that fail individual AI steps are skipped, not fatal.
 func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]ScoredArticle, error) {
 	if e.ai == nil {
-		return nil, fmt.Errorf("AI processing not available in read-only mode")
+		return nil, nil
 	}
 	articles, err := e.store.GetUnscoredArticlesForUser(userID, 100)
 	if err != nil {
@@ -415,7 +416,7 @@ func (e *Engine) GetGroupArticles(groupID int64) (*ArticleGroup, error) {
 // GenerateBriefing creates a text briefing from high-interest unread articles.
 func (e *Engine) GenerateBriefing(userID int64) (string, error) {
 	if e.ai == nil {
-		return "", fmt.Errorf("AI processing not available in read-only mode")
+		return "", nil
 	}
 	articles, scores, err := e.store.GetArticlesByInterestScore(
 		userID, e.config.Thresholds.InterestScore, 20, 0, nil)
