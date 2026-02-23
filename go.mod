@@ -5,7 +5,7 @@ go 1.25.0
 toolchain go1.25.7
 
 require (
-	github.com/matthewjhunter/go-embedding v0.0.0
+	github.com/matthewjhunter/go-embedding v0.1.0
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/mmcdole/gofeed v1.3.0
 	github.com/modelcontextprotocol/go-sdk v1.3.0
@@ -14,8 +14,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.45.0
 )
-
-replace github.com/matthewjhunter/go-embedding => ../go-embedding
 
 require (
 	github.com/PuerkitoBio/goquery v1.8.0 // indirect
