@@ -433,13 +433,13 @@ func (e *Engine) GenerateBriefing(userID int64) (string, error) {
 			score = scores[i]
 		}
 
-		briefing.WriteString(fmt.Sprintf("## %s (%.1f/10)\n", article.Title, score))
-		briefing.WriteString(fmt.Sprintf("%s\n", article.URL))
+		fmt.Fprintf(&briefing, "## %s (%.1f/10)\n", article.Title, score)
+		fmt.Fprintf(&briefing, "%s\n", article.URL)
 
 		if summary, err := e.store.GetArticleSummary(userID, article.ID); err == nil && summary != nil {
-			briefing.WriteString(fmt.Sprintf("%s\n", summary.AISummary))
+			fmt.Fprintf(&briefing, "%s\n", summary.AISummary)
 		} else if article.Summary != "" {
-			briefing.WriteString(fmt.Sprintf("%s\n", article.Summary))
+			fmt.Fprintf(&briefing, "%s\n", article.Summary)
 		}
 		briefing.WriteString("\n")
 	}

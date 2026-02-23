@@ -192,7 +192,7 @@ func updateGroupSummary(ctx context.Context, store storage.Store, processor *ai.
 		// Get interest score
 		// For now, query from read_state
 		// TODO: could add a method to get this more efficiently
-		var score float64 = 5.0 // default
+		score := 5.0 // default
 
 		summaryInputs = append(summaryInputs, ai.GroupSummaryInput{
 			Title:     article.Title,

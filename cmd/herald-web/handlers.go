@@ -538,10 +538,7 @@ func (h *handlers) handleStarToggle(w http.ResponseWriter, r *http.Request) {
 
 	// Toggle: check current state by re-fetching the article view
 	// For simplicity, read a form value or default to starring
-	starred := true
-	if r.FormValue("starred") == "false" {
-		starred = false
-	}
+	starred := r.FormValue("starred") != "false"
 
 	if err := h.engine.StarArticle(uid, articleID, starred); err != nil {
 		h.renderError(w, http.StatusInternalServerError, "Failed to toggle star")
