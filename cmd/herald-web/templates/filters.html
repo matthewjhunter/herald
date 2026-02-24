@@ -33,7 +33,7 @@
     <article>
         <header><h3>Add Rule</h3></header>
         <form hx-post="/u/{{.UserID}}/filters" hx-target="#rules-list" hx-swap="innerHTML"
-              hx-on::after-request="if(event.detail.successful) this.reset(); document.getElementById('value-field').innerHTML='<select name=\'value\' id=\'value-select\' required><option value=\'\'>— select feed and axis first —</option></select>';">
+              hx-on::after-request="if(event.detail.successful && event.detail.elt === this) { this.reset(); document.getElementById('value-field').innerHTML='<select name=\'value\' id=\'value-select\' required><option value=\'\'>— select feed and axis first —</option></select>'; }">
             <div class="grid">
                 <div>
                     <label for="rule-feed">Feed (optional)</label>
