@@ -50,7 +50,9 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	}
 
 	storeCfg := storage.DefaultConfig()
-	storeCfg.Ollama.BaseURL = cfg.OllamaBaseURL
+	if cfg.OllamaBaseURL != "" {
+		storeCfg.Ollama.BaseURL = cfg.OllamaBaseURL
+	}
 	storeCfg.Ollama.SecurityModel = cfg.SecurityModel
 	storeCfg.Ollama.CurationModel = cfg.CurationModel
 	storeCfg.Thresholds.InterestScore = cfg.InterestThreshold
@@ -380,20 +382,11 @@ func (e *Engine) GetUserGroups(userID int64) ([]ArticleGroup, error) {
 
 // GetGroupArticles returns the articles in a specific group with their scores.
 func (e *Engine) GetGroupArticles(groupID int64) (*ArticleGroup, error) {
-	// Get group metadata
-	groups, err := e.store.GetUserGroups(0) // search all users
+	group, err := e.store.GetGroup(groupID)
 	if err != nil {
-		return nil, fmt.Errorf("get groups: %w", err)
-	}
-	var group *storage.ArticleGroup
-	for _, g := range groups {
-		if g.ID == groupID {
-			group = &g
-			break
-		}
+		return nil, fmt.Errorf("get group: %w", err)
 	}
 
-	// Fall back to querying articles directly if group metadata lookup failed
 	articles, err := e.store.GetGroupArticles(groupID)
 	if err != nil {
 		return nil, fmt.Errorf("get group articles: %w", err)

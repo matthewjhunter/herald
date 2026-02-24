@@ -37,15 +37,10 @@
             {{range .Group.Articles}}
             <tr>
                 <td>
-                    <a href="/u/{{$.UserID}}/articles/{{.ID}}"
-                       hx-get="/u/{{$.UserID}}/articles/{{.ID}}"
-                       hx-target="#reading-pane" hx-swap="innerHTML"
-                       hx-push-url="false">
-                        {{.Title}}
-                    </a>
+                    <a href="/u/{{$.UserID}}/articles/{{.ID}}">{{.Title}}</a>
                 </td>
                 <td>{{.Author}}</td>
-                <td>{{.PublishedDateFmt}}</td>
+                <td>{{.PublishedDate.Format "Jan 2, 2006"}}</td>
             </tr>
             {{end}}
         </tbody>

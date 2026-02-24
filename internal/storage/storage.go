@@ -481,6 +481,24 @@ func (s *SQLiteStore) UpdateFeedLastFetched(feedID int64) error {
 	return nil
 }
 
+// FindDuplicateArticle returns the ID of an existing article with the same title
+// and published date (used to suppress cross-posted duplicates from multiple feeds).
+// Returns 0 if no duplicate is found.
+func (s *SQLiteStore) FindDuplicateArticle(title string, publishedDate *time.Time) (int64, error) {
+	if title == "" || publishedDate == nil {
+		return 0, nil
+	}
+	var id int64
+	err := s.db.QueryRow(
+		"SELECT id FROM articles WHERE title = ? AND published_date = ? LIMIT 1",
+		title, publishedDate,
+	).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return id, err
+}
+
 // AddArticle adds a new article to the database
 func (s *SQLiteStore) AddArticle(article *Article) (int64, error) {
 	result, err := s.db.Exec(
@@ -790,6 +808,22 @@ func (s *SQLiteStore) GetUserGroups(userID int64) ([]ArticleGroup, error) {
 		groups = append(groups, g)
 	}
 	return groups, rows.Err()
+}
+
+// GetGroup returns a single article group by ID, regardless of user or member count.
+func (s *SQLiteStore) GetGroup(groupID int64) (*ArticleGroup, error) {
+	var g ArticleGroup
+	err := s.db.QueryRow(
+		"SELECT id, user_id, topic, created_at, updated_at FROM article_groups WHERE id = ?",
+		groupID,
+	).Scan(&g.ID, &g.UserID, &g.Topic, &g.CreatedAt, &g.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group: %w", err)
+	}
+	return &g, nil
 }
 
 // FindArticleGroup finds the group ID for an article, if it belongs to one

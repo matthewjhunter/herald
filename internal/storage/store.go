@@ -1,5 +1,7 @@
 package storage
 
+import "time"
+
 // Store defines the storage interface for herald's data layer.
 type Store interface {
 	Close() error
@@ -37,6 +39,7 @@ type Store interface {
 
 	// Articles
 	AddArticle(article *Article) (int64, error)
+	FindDuplicateArticle(title string, publishedDate *time.Time) (int64, error)
 	GetUnreadArticles(limit int) ([]Article, error)
 	GetArticle(articleID int64) (*Article, error)
 	GetArticlesByInterestScore(userID int64, threshold float64, limit, offset int, filterThreshold *int) ([]Article, []float64, error)
@@ -79,6 +82,7 @@ type Store interface {
 	UpdateGroupSummary(groupID int64, summary string, articleCount int, maxInterestScore *float64) error
 	GetGroupSummary(groupID int64) (*GroupSummary, error)
 	GetUserGroups(userID int64) ([]ArticleGroup, error)
+	GetGroup(groupID int64) (*ArticleGroup, error)
 	FindArticleGroup(articleID, userID int64) (*int64, error)
 
 	// Embedding-based group operations
