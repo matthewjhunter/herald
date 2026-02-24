@@ -29,6 +29,40 @@
         }
     });
 
+    // Sidebar drag-to-resize
+    (function() {
+        var handle = document.getElementById('sidebar-resize-handle');
+        var grid = document.getElementById('app-grid');
+        if (!handle || !grid) return;
+
+        // Restore saved width
+        var saved = localStorage.getItem('herald-sidebar-width');
+        if (saved) grid.style.setProperty('--sidebar-width', saved + 'px');
+
+        var dragging = false;
+
+        handle.addEventListener('mousedown', function(e) {
+            dragging = true;
+            handle.classList.add('dragging');
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', function(e) {
+            if (!dragging) return;
+            var rect = grid.getBoundingClientRect();
+            var width = Math.min(Math.max(e.clientX - rect.left, 150), 600);
+            grid.style.setProperty('--sidebar-width', width + 'px');
+        });
+
+        document.addEventListener('mouseup', function() {
+            if (!dragging) return;
+            dragging = false;
+            handle.classList.remove('dragging');
+            var width = getComputedStyle(grid).getPropertyValue('--sidebar-width').trim();
+            localStorage.setItem('herald-sidebar-width', parseInt(width));
+        });
+    })();
+
     // Restore scroll position after htmx swaps
     document.addEventListener('htmx:afterSwap', function(e) {
         if (e.detail.target.id === 'article-list') {

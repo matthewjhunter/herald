@@ -8,11 +8,12 @@
 </nav>
 {{end}}
 {{define "content"}}
-<div class="app-grid">
+<div class="app-grid" id="app-grid">
     <aside class="sidebar" id="sidebar"
            hx-get="/u/{{.UserID}}/sidebar" hx-trigger="feeds-changed from:body" hx-swap="innerHTML">
         {{template "feed_sidebar_content" .}}
     </aside>
+    <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
     <div class="content-split">
         <div class="article-list-pane" id="article-list"
              hx-get="/u/{{.UserID}}/articles" hx-trigger="load" hx-swap="innerHTML">

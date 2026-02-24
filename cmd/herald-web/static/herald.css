@@ -1,11 +1,22 @@
 /* Herald Web UI Layout */
 
-/* Main app grid: sidebar + content */
+/* Main app grid: sidebar + resize handle + content */
 .app-grid {
     display: grid;
-    grid-template-columns: 320px 1fr;
+    grid-template-columns: var(--sidebar-width, 300px) 4px 1fr;
     height: calc(100vh - 60px);
     overflow: hidden;
+}
+
+.sidebar-resize-handle {
+    cursor: col-resize;
+    background: var(--pico-muted-border-color);
+    transition: background 0.15s;
+}
+
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle.dragging {
+    background: var(--pico-primary);
 }
 
 /* Sidebar */
