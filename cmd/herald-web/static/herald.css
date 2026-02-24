@@ -3,7 +3,7 @@
 /* Main app grid: sidebar + content */
 .app-grid {
     display: grid;
-    grid-template-columns: 250px 1fr;
+    grid-template-columns: 320px 1fr;
     height: calc(100vh - 60px);
     overflow: hidden;
 }
@@ -19,10 +19,11 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.5rem 0.75rem;
+    padding: 0.3rem 0.5rem;
     border-radius: 4px;
     text-decoration: none;
     color: var(--pico-color);
+    font-size: 0.85rem;
 }
 
 .sidebar nav a:hover,
