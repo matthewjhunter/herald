@@ -135,12 +135,9 @@ tasks:
       - echo "Clean complete"
 
   install:
-    desc: Install binary to /usr/local/bin
-    deps: [build]
+    desc: Install herald as a systemd user service (runs systemd:install)
     cmds:
-      - echo "Installing {{.BINARY}} to /usr/local/bin..."
-      - sudo cp {{.BINARY}} /usr/local/bin/
-      - echo "Installation complete"
+      - task: systemd:install
 
   init-config:
     desc: Initialize default configuration
