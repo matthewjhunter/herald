@@ -35,6 +35,7 @@ func (h *handlers) init() {
 		"safeHTML": func(s string) template.HTML {
 			return template.HTML(s) //nolint:gosec // already sanitized by bluemonday
 		},
+		"assetVersion": func() string { return version },
 	}
 
 	tmplFS, _ := fs.Sub(embedded, "templates")

@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{block "title" .}}Herald{{end}}</title>
-    <link rel="stylesheet" href="/static/pico.min.css">
-    <link rel="stylesheet" href="/static/herald.css">
+    <link rel="stylesheet" href="/static/pico.min.css?v={{assetVersion}}">
+    <link rel="stylesheet" href="/static/herald.css?v={{assetVersion}}">
     <script>
         (function() {
             var t = localStorage.getItem('herald-theme');
@@ -20,7 +20,7 @@
         <button id="theme-toggle" class="theme-toggle outline" aria-label="Toggle theme">☀</button>
     </header>
     {{block "content" .}}{{end}}
-    <script src="/static/htmx.min.js"></script>
-    <script src="/static/herald.js"></script>
+    <script src="/static/htmx.min.js?v={{assetVersion}}"></script>
+    <script src="/static/herald.js?v={{assetVersion}}"></script>
 </body>
 </html>

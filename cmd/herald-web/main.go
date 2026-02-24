@@ -14,6 +14,9 @@ import (
 	herald "github.com/matthewjhunter/herald"
 )
 
+// version is injected at build time via -ldflags "-X main.version=<git-hash>".
+var version = "dev"
+
 func main() {
 	dbPath := flag.String("db", "./herald.db", "path to SQLite database")
 	addr := flag.String("addr", ":8080", "listen address")
