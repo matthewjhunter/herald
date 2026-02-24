@@ -1,6 +1,8 @@
 package storage
 
 type Config struct {
+	DefaultUserID int64 `yaml:"default_user_id"`
+
 	Database struct {
 		Path string `yaml:"path"`
 	} `yaml:"database"`
@@ -46,6 +48,7 @@ type Config struct {
 // DefaultConfig returns a config with sensible defaults
 func DefaultConfig() *Config {
 	cfg := &Config{}
+	cfg.DefaultUserID = 1
 	cfg.Database.Path = "./herald.db"
 	cfg.Ollama.BaseURL = "http://localhost:11434"
 	cfg.Ollama.SecurityModel = "gemma3:4b"

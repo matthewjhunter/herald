@@ -316,6 +316,9 @@ func importCmd() *cobra.Command {
 		Short: "Import feeds from an OPML file and subscribe user",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !cmd.Flags().Changed("user") {
+				userID = cfg.DefaultUserID
+			}
 			opmlPath := args[0]
 
 			store, err := storage.NewSQLiteStore(cfg.Database.Path)
@@ -333,7 +336,7 @@ func importCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().Int64VarP(&userID, "user", "u", 1, "user ID to subscribe to feeds (default: 1)")
+	cmd.Flags().Int64VarP(&userID, "user", "u", 0, "user ID to subscribe to feeds")
 	return cmd
 }
 
@@ -413,6 +416,9 @@ func processCmd() *cobra.Command {
 		Use:   "process",
 		Short: "Process articles with AI for a specific user",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !cmd.Flags().Changed("user") {
+				userID = cfg.DefaultUserID
+			}
 			ctx := context.Background()
 			formatter := output.NewFormatter(output.Format(outputFormat))
 
@@ -469,7 +475,7 @@ func processCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().Int64VarP(&userID, "user", "u", 1, "user ID to process articles for")
+	cmd.Flags().Int64VarP(&userID, "user", "u", 0, "user ID to process articles for")
 	return cmd
 }
 
@@ -675,6 +681,9 @@ func readCmd() *cobra.Command {
 		Short: "Mark an article as read",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !cmd.Flags().Changed("user") {
+				userID = cfg.DefaultUserID
+			}
 			var articleID int64
 			if _, err := fmt.Sscanf(args[0], "%d", &articleID); err != nil {
 				return fmt.Errorf("invalid article ID: %w", err)
@@ -694,7 +703,7 @@ func readCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().Int64VarP(&userID, "user", "u", 1, "user ID (default: 1)")
+	cmd.Flags().Int64VarP(&userID, "user", "u", 0, "user ID")
 	return cmd
 }
 
