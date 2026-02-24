@@ -78,6 +78,43 @@ tasks:
       - task: lint
       - task: vulncheck
 
+  systemd:install:
+    desc: Install systemd user services for herald and herald-web
+    deps: [build, build-web]
+    cmds:
+      - mkdir -p ~/.config/systemd/user
+      - cp systemd/herald.service ~/.config/systemd/user/herald.service
+      - cp systemd/herald-web.service ~/.config/systemd/user/herald-web.service
+      - systemctl --user daemon-reload
+      - systemctl --user enable herald herald-web
+      - echo "Services installed. Run 'task systemd:start' to start them."
+
+  systemd:start:
+    desc: Start herald and herald-web services
+    cmds:
+      - systemctl --user start herald herald-web
+      - systemctl --user status herald herald-web
+
+  systemd:stop:
+    desc: Stop herald and herald-web services
+    cmds:
+      - systemctl --user stop herald herald-web
+
+  systemd:restart:
+    desc: Restart herald and herald-web services (e.g. after rebuild)
+    cmds:
+      - systemctl --user restart herald herald-web
+
+  systemd:status:
+    desc: Show status of herald services
+    cmds:
+      - systemctl --user status herald herald-web
+
+  systemd:logs:
+    desc: Follow logs from herald services
+    cmds:
+      - journalctl --user -u herald -u herald-web -f
+
   hooks:install:
     desc: Install git hooks from githooks/
     cmds:

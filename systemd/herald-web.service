@@ -1,0 +1,14 @@
+[Unit]
+Description=Herald web UI
+After=network-online.target herald.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/go/src/github.com/matthewjhunter/herald
+ExecStart=%h/go/src/github.com/matthewjhunter/herald/herald-web --db %h/go/src/github.com/matthewjhunter/herald/herald.db --addr :8080
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
