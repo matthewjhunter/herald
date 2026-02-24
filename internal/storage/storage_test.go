@@ -122,11 +122,14 @@ func TestUpdateReadState(t *testing.T) {
 	}
 	articleID, _ := store.AddArticle(article)
 
-	// Update read state
+	// AI scores the article, then user marks it as read (separate operations).
 	interestScore := 8.5
 	securityScore := 9.0
-	if err := store.UpdateReadState(1, articleID, true, &interestScore, &securityScore); err != nil {
-		t.Fatalf("UpdateReadState failed: %v", err)
+	if err := store.UpdateReadState(1, articleID, false, &interestScore, &securityScore); err != nil {
+		t.Fatalf("UpdateReadState (AI scores) failed: %v", err)
+	}
+	if err := store.UpdateReadState(1, articleID, true, nil, nil); err != nil {
+		t.Fatalf("UpdateReadState (user read) failed: %v", err)
 	}
 
 	// Verify article is now marked as read
@@ -618,8 +621,8 @@ func TestReadStatePerUserIsolation(t *testing.T) {
 		t.Errorf("user 2: expected 0 high-interest articles, got %d", len(articles))
 	}
 
-	// User 1 marks read, user 2 still unread
-	store.UpdateReadState(1, articleID, true, &score1, &sec)
+	// User 1 marks read (AI already scored it above), user 2 still unread
+	store.UpdateReadState(1, articleID, true, nil, nil)
 	articles, _, _ = store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil)
 	if len(articles) != 0 {
 		t.Errorf("user 1 after mark-read: expected 0 articles, got %d", len(articles))

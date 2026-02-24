@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS read_state (
     interest_score REAL,
     security_score REAL,
     read_date DATETIME,
+    ai_scored BOOLEAN NOT NULL DEFAULT 0,
     PRIMARY KEY (user_id, article_id),
     FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
 );

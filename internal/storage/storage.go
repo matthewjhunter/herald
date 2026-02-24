@@ -131,6 +131,7 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		"ALTER TABLE feeds ADD COLUMN etag TEXT",
 		"ALTER TABLE feeds ADD COLUMN last_modified TEXT",
 		"ALTER TABLE article_groups ADD COLUMN embedding BLOB",
+		"ALTER TABLE read_state ADD COLUMN ai_scored BOOLEAN NOT NULL DEFAULT 0",
 		// Backfill article_authors from the existing articles.author column.
 		`INSERT OR IGNORE INTO article_authors (article_id, name)
 		 SELECT id, author FROM articles WHERE author != '' AND author IS NOT NULL`,
@@ -524,18 +525,35 @@ func (s *SQLiteStore) GetUnreadArticles(limit int) ([]Article, error) {
 	return articles, rows.Err()
 }
 
-// UpdateReadState updates or creates the read state for an article
+// UpdateReadState updates or creates the read state for an article.
+// When interestScore is non-nil this is an AI pipeline call: it sets scores
+// and marks the article as AI-scored without touching the user's read flag.
+// When interestScore is nil this is a user read/unread action: it updates
+// only the read flag and read_date without touching scores or ai_scored.
 func (s *SQLiteStore) UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64) error {
-	_, err := s.db.Exec(
-		`INSERT INTO read_state (user_id, article_id, read, interest_score, security_score, read_date)
-		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-		 ON CONFLICT(user_id, article_id) DO UPDATE SET
-		   read = excluded.read,
-		   interest_score = excluded.interest_score,
-		   security_score = excluded.security_score,
-		   read_date = CURRENT_TIMESTAMP`,
-		userID, articleID, read, interestScore, securityScore,
-	)
+	var err error
+	if interestScore != nil {
+		// AI pipeline: record scores, mark ai_scored=1, do not overwrite user's read flag.
+		_, err = s.db.Exec(
+			`INSERT INTO read_state (user_id, article_id, read, interest_score, security_score, ai_scored)
+			 VALUES (?, ?, 0, ?, ?, 1)
+			 ON CONFLICT(user_id, article_id) DO UPDATE SET
+			   interest_score = excluded.interest_score,
+			   security_score = excluded.security_score,
+			   ai_scored = 1`,
+			userID, articleID, interestScore, securityScore,
+		)
+	} else {
+		// User action: update only read flag, do not touch scores or ai_scored.
+		_, err = s.db.Exec(
+			`INSERT INTO read_state (user_id, article_id, read, read_date)
+			 VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+			 ON CONFLICT(user_id, article_id) DO UPDATE SET
+			   read = excluded.read,
+			   read_date = CURRENT_TIMESTAMP`,
+			userID, articleID, read,
+		)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to update read state: %w", err)
 	}
@@ -957,7 +975,7 @@ func (s *SQLiteStore) GetUnscoredArticleCount(userID int64) (int, error) {
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
-		WHERE uf.user_id = ? AND rs.article_id IS NULL`,
+		WHERE uf.user_id = ? AND (rs.article_id IS NULL OR rs.ai_scored = 0)`,
 		userID, userID,
 	).Scan(&count)
 	if err != nil {
@@ -993,7 +1011,7 @@ func (s *SQLiteStore) GetUnscoredArticlesForUser(userID int64, limit int) ([]Art
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
-		WHERE uf.user_id = ? AND rs.article_id IS NULL
+		WHERE uf.user_id = ? AND (rs.article_id IS NULL OR rs.ai_scored = 0)
 		ORDER BY a.published_date DESC
 		LIMIT ?
 	`
