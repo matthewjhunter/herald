@@ -101,7 +101,8 @@ tasks:
       - systemctl --user stop herald herald-web
 
   systemd:restart:
-    desc: Restart herald and herald-web services (e.g. after rebuild)
+    desc: Rebuild all binaries and restart herald and herald-web services
+    deps: [build, build-web]
     cmds:
       - systemctl --user restart herald herald-web
 
