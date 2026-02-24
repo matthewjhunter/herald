@@ -109,6 +109,7 @@
                 document.querySelectorAll('#article-list .article-row').forEach(function(el) {
                     el.classList.add('read');
                 });
+                htmx.trigger(document.body, 'feeds-changed');
             }
         });
     });
