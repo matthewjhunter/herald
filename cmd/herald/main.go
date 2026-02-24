@@ -245,6 +245,7 @@ func main() {
 	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "config file path (default: ./config/config.yaml)")
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "format", "f", "json", "output format: json, text, human (default: json)")
 
+	rootCmd.AddCommand(createUserCmd())
 	rootCmd.AddCommand(importCmd())
 	rootCmd.AddCommand(fetchFeedsCmd())
 	rootCmd.AddCommand(processCmd())
@@ -283,6 +284,29 @@ func loadConfig() error {
 	}
 
 	return nil
+}
+
+func createUserCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "create-user <name>",
+		Short: "Create a new user",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			store, err := storage.NewSQLiteStore(cfg.Database.Path)
+			if err != nil {
+				return fmt.Errorf("failed to open database: %w", err)
+			}
+			defer store.Close()
+
+			id, err := store.CreateUser(args[0])
+			if err != nil {
+				return fmt.Errorf("failed to create user: %w", err)
+			}
+
+			fmt.Printf("Created user %q with ID %d\n", args[0], id)
+			return nil
+		},
+	}
 }
 
 func importCmd() *cobra.Command {
