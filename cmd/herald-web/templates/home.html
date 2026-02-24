@@ -19,8 +19,12 @@
              hx-get="/u/{{.UserID}}/articles" hx-trigger="load" hx-swap="innerHTML">
             <div class="empty-state">Loading articles...</div>
         </div>
-        <div class="article-list-footer">
+        <div class="article-list-footer" style="display:flex;justify-content:space-between;align-items:center;">
             <button class="mark-all-read-btn" data-user-id="{{.UserID}}">Mark all as read</button>
+            <button id="unsubscribe-feed-btn" data-user-id="{{.UserID}}"
+                    class="outline" style="display:none;color:var(--pico-del-color);border-color:var(--pico-del-color);padding:0.25rem 0.75rem;font-size:0.85rem;">
+                Unsubscribe
+            </button>
         </div>
         <div class="reading-pane" id="reading-pane">
             <div class="empty-state">Select an article to read</div>

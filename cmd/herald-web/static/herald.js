@@ -93,6 +93,36 @@
         });
     })();
 
+    // Unsubscribe feed button — show when a specific feed is selected
+    document.addEventListener('click', function(e) {
+        var link = e.target.closest('a[data-feed-id]');
+        var btn = document.getElementById('unsubscribe-feed-btn');
+        if (!btn) return;
+        if (link) {
+            btn.dataset.feedId = link.dataset.feedId;
+            btn.title = 'Unsubscribe from ' + link.dataset.feedTitle;
+            btn.style.display = '';
+        } else if (e.target.closest('#sidebar a:not([data-feed-id])')) {
+            // "All Articles" or "Starred" — hide button
+            btn.style.display = 'none';
+            btn.dataset.feedId = '';
+        }
+    });
+
+    document.addEventListener('click', function(e) {
+        var btn = e.target.closest('#unsubscribe-feed-btn');
+        if (!btn || !btn.dataset.feedId) return;
+        var userID = btn.dataset.userId;
+        var feedID = btn.dataset.feedId;
+        if (!confirm('Unsubscribe from this feed?')) return;
+        fetch('/u/' + userID + '/feeds/' + feedID, {method: 'DELETE'})
+            .then(function(res) {
+                if (res.ok) {
+                    window.location.href = '/u/' + userID;
+                }
+            });
+    });
+
     // Mark all as read
     document.addEventListener('click', function(e) {
         var btn = e.target.closest('.mark-all-read-btn');
