@@ -89,11 +89,12 @@
         <header><h3>Discover Metadata</h3></header>
         <p class="secondary">Select a feed to see available authors and categories.</p>
         <label for="meta_feed">Feed</label>
-        <select id="meta_feed" name="feed_id"
+        <select id="meta_feed"
                 hx-get="/u/{{.UserID}}/feeds/metadata"
                 hx-target="#metadata-result"
                 hx-swap="innerHTML"
-                hx-trigger="change">
+                hx-trigger="change"
+                hx-vals="js:{feed_id: this.value}">
             <option value="">— select a feed —</option>
             {{range .Feeds}}
             <option value="{{.ID}}">{{.Title}}</option>
