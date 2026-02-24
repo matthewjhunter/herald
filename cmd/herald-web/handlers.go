@@ -109,13 +109,14 @@ type feedManageData struct {
 }
 
 type feedRow struct {
-	FeedID         int64
-	Title          string
-	URL            string
-	TotalArticles  int
-	UnreadArticles int
-	LastError      string
-	LastFetchedFmt string
+	FeedID          int64
+	Title           string
+	URL             string
+	TotalArticles   int
+	UnreadArticles  int
+	LastError       string
+	LastFetchedFmt  string
+	LastPostDateFmt string
 }
 
 type groupsData struct {
@@ -343,6 +344,9 @@ func (h *handlers) handleFeedsManage(w http.ResponseWriter, r *http.Request) {
 		if s, ok := statsMap[f.ID]; ok {
 			row.TotalArticles = s.TotalArticles
 			row.UnreadArticles = s.UnreadArticles
+			if s.LastPostDate != nil {
+				row.LastPostDateFmt = formatDate(s.LastPostDate)
+			}
 		}
 		data.Feeds = append(data.Feeds, row)
 	}
@@ -610,9 +614,7 @@ func (h *handlers) handleFeedSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Trigger sidebar refresh and redirect to feeds page
-	w.Header().Set("HX-Trigger", "feeds-changed")
-	h.handleFeedsManage(w, r)
+	w.Header().Set("HX-Redirect", fmt.Sprintf("/u/%d/feeds", uid))
 }
 
 func (h *handlers) handleFeedUnsubscribe(w http.ResponseWriter, r *http.Request) {
@@ -628,9 +630,7 @@ func (h *handlers) handleFeedUnsubscribe(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Trigger sidebar refresh and re-render feed list
-	w.Header().Set("HX-Trigger", "feeds-changed")
-	h.handleFeedsManage(w, r)
+	w.Header().Set("HX-Redirect", fmt.Sprintf("/u/%d/feeds", uid))
 }
 
 func (h *handlers) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
