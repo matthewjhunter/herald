@@ -63,6 +63,32 @@
         });
     })();
 
+    // Mark all as read
+    document.addEventListener('click', function(e) {
+        var btn = e.target.closest('.mark-all-read-btn');
+        if (!btn) return;
+
+        var userID = btn.dataset.userId;
+        var ids = Array.from(document.querySelectorAll('#article-list .article-row[data-article-id]'))
+            .map(function(el) { return el.dataset.articleId; })
+            .filter(Boolean)
+            .join(',');
+
+        if (!ids) return;
+
+        fetch('/u/' + userID + '/articles/mark-all-read', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: 'ids=' + encodeURIComponent(ids)
+        }).then(function(res) {
+            if (res.ok || res.status === 204) {
+                document.querySelectorAll('#article-list .article-row').forEach(function(el) {
+                    el.classList.add('read');
+                });
+            }
+        });
+    });
+
     // Restore scroll position after htmx swaps
     document.addEventListener('htmx:afterSwap', function(e) {
         if (e.detail.target.id === 'article-list') {

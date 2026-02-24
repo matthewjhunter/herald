@@ -528,6 +528,39 @@ func (h *handlers) handleSidebar(w http.ResponseWriter, r *http.Request) {
 	h.renderFragment(w, "feed_sidebar_content", data)
 }
 
+func (h *handlers) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
+	h.init()
+	uid := userIDFromRequest(r)
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	var ids []int64
+	for s := range strings.SplitSeq(r.FormValue("ids"), ",") {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+
+	if len(ids) > 0 {
+		if err := h.engine.MarkArticlesRead(uid, ids); err != nil {
+			http.Error(w, "failed to mark read", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.Header().Set("HX-Trigger", "articles-marked-read")
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *handlers) handleStarToggle(w http.ResponseWriter, r *http.Request) {
 	uid := userIDFromRequest(r)
 	articleID, err := strconv.ParseInt(r.PathValue("articleID"), 10, 64)

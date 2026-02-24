@@ -1,5 +1,5 @@
 {{define "article_row"}}
-<div class="article-row {{if .Read}}read{{end}}"
+<div class="article-row {{if .Read}}read{{end}}" data-article-id="{{.ID}}"
      hx-get="/u/{{.UserID}}/articles/{{.ID}}"
      hx-target="#reading-pane"
      hx-swap="innerHTML"

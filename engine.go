@@ -265,6 +265,16 @@ func (e *Engine) MarkArticleRead(userID, articleID int64) error {
 	return e.store.UpdateReadState(userID, articleID, true, nil, nil)
 }
 
+// MarkArticlesRead marks a list of articles as read.
+func (e *Engine) MarkArticlesRead(userID int64, articleIDs []int64) error {
+	for _, id := range articleIDs {
+		if err := e.store.UpdateReadState(userID, id, true, nil, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ImportOPML imports feeds from an OPML file and subscribes the user.
 func (e *Engine) ImportOPML(path string, userID int64) error {
 	return e.fetcher.ImportOPML(path, userID)

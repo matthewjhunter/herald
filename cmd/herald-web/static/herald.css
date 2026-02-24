@@ -59,9 +59,24 @@
 }
 
 .article-list-pane {
-    flex: 0 0 40%;
+    flex: 0 0 calc(40% - 36px);
     overflow-y: auto;
+}
+
+.article-list-footer {
+    flex: 0 0 36px;
+    display: flex;
+    align-items: center;
+    padding: 0 0.75rem;
     border-bottom: 1px solid var(--pico-muted-border-color);
+    border-top: 1px solid var(--pico-muted-border-color);
+}
+
+.mark-all-read-btn {
+    font-size: 0.8rem;
+    padding: 0.2rem 0.6rem;
+    margin: 0;
+    cursor: pointer;
 }
 
 .reading-pane {

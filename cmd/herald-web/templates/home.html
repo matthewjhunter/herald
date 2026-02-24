@@ -19,6 +19,9 @@
              hx-get="/u/{{.UserID}}/articles" hx-trigger="load" hx-swap="innerHTML">
             <div class="empty-state">Loading articles...</div>
         </div>
+        <div class="article-list-footer">
+            <button class="mark-all-read-btn" data-user-id="{{.UserID}}">Mark all as read</button>
+        </div>
         <div class="reading-pane" id="reading-pane">
             <div class="empty-state">Select an article to read</div>
         </div>

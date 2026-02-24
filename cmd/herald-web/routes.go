@@ -34,6 +34,7 @@ func newRouter(engine *herald.Engine) http.Handler {
 	mux.HandleFunc("GET /u/{userID}/articles", h.handleArticleList)
 	mux.HandleFunc("GET /u/{userID}/articles/{articleID}", h.handleArticleView)
 	mux.HandleFunc("GET /u/{userID}/sidebar", h.handleSidebar)
+	mux.HandleFunc("POST /u/{userID}/articles/mark-all-read", h.handleMarkAllRead)
 	mux.HandleFunc("POST /u/{userID}/articles/{articleID}/star", h.handleStarToggle)
 	mux.HandleFunc("POST /u/{userID}/feeds", h.handleFeedSubscribe)
 	mux.HandleFunc("DELETE /u/{userID}/feeds/{feedID}", h.handleFeedUnsubscribe)
