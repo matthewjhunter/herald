@@ -111,20 +111,20 @@
 <table>
     <thead>
         <tr>
+            <th>Feed</th>
             <th>Axis</th>
             <th>Value</th>
             <th>Score</th>
-            <th>Feed</th>
             <th></th>
         </tr>
     </thead>
     <tbody>
         {{range .Rules}}
         <tr>
+            <td>{{if .FeedTitle}}{{.FeedTitle}}{{else}}Global{{end}}</td>
             <td>{{.Axis}}</td>
             <td>{{.Value}}</td>
             <td>{{.Score}}</td>
-            <td>{{if .FeedTitle}}{{.FeedTitle}}{{else}}Global{{end}}</td>
             <td>
                 <button class="outline secondary" style="padding:0.25rem 0.5rem;font-size:0.8rem;"
                         hx-delete="/u/{{$.UserID}}/filters/{{.ID}}"
