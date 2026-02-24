@@ -49,6 +49,10 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 		if content == "" {
 			content = article.Summary
 		}
+		if content == "" {
+			formatter.Warning("skipping article %d %q: no content", article.ID, article.Title)
+			continue
+		}
 
 		// 1. Generate AI summary (cached per-user)
 		var aiSummary string
