@@ -6,7 +6,7 @@
 {{if .HasMore}}
 <div class="scroll-sentinel"
      hx-get="/u/{{$.UserID}}/articles?offset={{.NextOffset}}{{if $.FeedID}}&feed_id={{$.FeedID}}{{end}}{{if $.Starred}}&starred=1{{end}}"
-     hx-trigger="revealed"
+     hx-trigger="intersect root:#article-list"
      hx-swap="outerHTML">
     Loading more...
 </div>
