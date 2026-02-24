@@ -2,6 +2,12 @@
 (function() {
     'use strict';
 
+    // Expose helper for clearing the reading pane (called from sidebar links)
+    window.heraldClearReadingPane = function() {
+        var pane = document.getElementById('reading-pane');
+        if (pane) pane.innerHTML = '<div class="empty-state">Select an article to read</div>';
+    };
+
     // Theme toggle
     (function() {
         var btn = document.getElementById('theme-toggle');
