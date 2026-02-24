@@ -201,6 +201,11 @@ func (f *Fetcher) StoreArticles(feedID int64, feed *gofeed.Feed) (int, error) {
 			article.PublishedDate = item.UpdatedParsed
 		}
 
+		// Skip cross-posted duplicates: same title + published date from a different feed
+		if dupeID, err := f.store.FindDuplicateArticle(article.Title, article.PublishedDate); err == nil && dupeID > 0 {
+			continue
+		}
+
 		// Store article (ignore duplicates)
 		articleID, err := f.store.AddArticle(article)
 		if err == nil && articleID > 0 {
