@@ -33,32 +33,47 @@
     <article>
         <header><h3>Add Rule</h3></header>
         <form hx-post="/u/{{.UserID}}/filters" hx-target="#rules-list" hx-swap="innerHTML"
-              hx-on::after-request="if(event.detail.successful) this.reset();">
+              hx-on::after-request="if(event.detail.successful) this.reset(); document.getElementById('value-field').innerHTML='<select name=\'value\' id=\'value-select\' required><option value=\'\'>— select feed and axis first —</option></select>';">
             <div class="grid">
                 <div>
-                    <label for="axis">Axis</label>
-                    <select id="axis" name="axis" required>
+                    <label for="rule-feed">Feed (optional)</label>
+                    <select id="rule-feed" name="feed_id"
+                            hx-get="/u/{{.UserID}}/filters/values"
+                            hx-include="[name='axis']"
+                            hx-target="#value-field"
+                            hx-swap="innerHTML"
+                            hx-trigger="change">
+                        <option value="">Global (all feeds)</option>
+                        {{range .Feeds}}
+                        <option value="{{.ID}}">{{.Title}}</option>
+                        {{end}}
+                    </select>
+                </div>
+                <div>
+                    <label for="rule-axis">Axis</label>
+                    <select id="rule-axis" name="axis" required
+                            hx-get="/u/{{.UserID}}/filters/values"
+                            hx-include="[name='feed_id']"
+                            hx-target="#value-field"
+                            hx-swap="innerHTML"
+                            hx-trigger="change">
+                        <option value="">— select —</option>
                         <option value="author">Author</option>
                         <option value="category">Category</option>
                         <option value="tag">Tag</option>
                     </select>
                 </div>
                 <div>
-                    <label for="value">Value</label>
-                    <input type="text" id="value" name="value" placeholder="e.g. John Doe" required>
+                    <label for="value-select">Value</label>
+                    <div id="value-field">
+                        <select name="value" id="value-select" required>
+                            <option value="">— select feed and axis first —</option>
+                        </select>
+                    </div>
                 </div>
                 <div>
                     <label for="score">Score</label>
                     <input type="number" id="score" name="score" value="1" required>
-                </div>
-                <div>
-                    <label for="feed_id">Feed (optional)</label>
-                    <select id="feed_id" name="feed_id">
-                        <option value="">Global (all feeds)</option>
-                        {{range .Feeds}}
-                        <option value="{{.ID}}">{{.Title}}</option>
-                        {{end}}
-                    </select>
                 </div>
             </div>
             <button type="submit">Add Rule</button>
@@ -72,22 +87,18 @@
     {{if .Feeds}}
     <article>
         <header><h3>Discover Metadata</h3></header>
-        <p class="secondary">Select a feed to discover available authors and categories for creating rules.</p>
-        <div class="grid" style="align-items:end;">
-            <div>
-                <label for="meta_feed">Feed</label>
-                <select id="meta_feed">
-                    {{range .Feeds}}
-                    <option value="{{.ID}}">{{.Title}}</option>
-                    {{end}}
-                </select>
-            </div>
-            <div>
-                <button class="outline" onclick="htmx.ajax('GET', '/u/{{.UserID}}/feeds/' + document.getElementById('meta_feed').value + '/metadata', '#metadata-result')">
-                    Discover
-                </button>
-            </div>
-        </div>
+        <p class="secondary">Select a feed to see available authors and categories.</p>
+        <label for="meta_feed">Feed</label>
+        <select id="meta_feed" name="feed_id"
+                hx-get="/u/{{.UserID}}/feeds/metadata"
+                hx-target="#metadata-result"
+                hx-swap="innerHTML"
+                hx-trigger="change">
+            <option value="">— select a feed —</option>
+            {{range .Feeds}}
+            <option value="{{.ID}}">{{.Title}}</option>
+            {{end}}
+        </select>
         <div id="metadata-result" style="margin-top:1rem;"></div>
     </article>
     {{end}}

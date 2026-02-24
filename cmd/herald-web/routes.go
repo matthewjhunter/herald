@@ -43,6 +43,8 @@ func newRouter(engine *herald.Engine) http.Handler {
 	mux.HandleFunc("POST /u/{userID}/filters/threshold", h.handleFilterThreshold)
 	mux.HandleFunc("DELETE /u/{userID}/filters/{ruleID}", h.handleFilterDelete)
 	mux.HandleFunc("GET /u/{userID}/feeds/{feedID}/metadata", h.handleFeedMetadata)
+	mux.HandleFunc("GET /u/{userID}/feeds/metadata", h.handleFeedMetadataByQuery)
+	mux.HandleFunc("GET /u/{userID}/filters/values", h.handleFilterValues)
 
 	return mux
 }

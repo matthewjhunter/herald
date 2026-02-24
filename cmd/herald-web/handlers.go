@@ -805,6 +805,75 @@ func (h *handlers) handleFeedMetadata(w http.ResponseWriter, r *http.Request) {
 	h.renderFragment(w, "feed_metadata_fragment", meta)
 }
 
+func (h *handlers) handleFeedMetadataByQuery(w http.ResponseWriter, r *http.Request) {
+	feedIDStr := r.URL.Query().Get("feed_id")
+	if feedIDStr == "" {
+		h.renderFragment(w, "feed_metadata_fragment", &herald.FeedMetadata{})
+		return
+	}
+	feedID, err := strconv.ParseInt(feedIDStr, 10, 64)
+	if err != nil {
+		h.renderError(w, http.StatusBadRequest, "Invalid feed ID")
+		return
+	}
+	meta, err := h.engine.GetFeedMetadata(feedID)
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Failed to load metadata")
+		return
+	}
+	h.renderFragment(w, "feed_metadata_fragment", meta)
+}
+
+func (h *handlers) handleFilterValues(w http.ResponseWriter, r *http.Request) {
+	feedIDStr := r.URL.Query().Get("feed_id")
+	axis := r.URL.Query().Get("axis")
+
+	// No axis selected yet — return placeholder select
+	if axis == "" {
+		fmt.Fprint(w, `<select name="value" id="value-select" required><option value="">— select axis first —</option></select>`)
+		return
+	}
+
+	// tag axis has no discoverable metadata
+	if axis == "tag" || feedIDStr == "" {
+		fmt.Fprintf(w, `<input type="text" name="value" id="value-select" placeholder="e.g. security" required>`)
+		return
+	}
+
+	feedID, err := strconv.ParseInt(feedIDStr, 10, 64)
+	if err != nil {
+		fmt.Fprint(w, `<input type="text" name="value" id="value-select" placeholder="e.g. John Doe" required>`)
+		return
+	}
+
+	meta, err := h.engine.GetFeedMetadata(feedID)
+	if err != nil || meta == nil {
+		fmt.Fprint(w, `<input type="text" name="value" id="value-select" placeholder="e.g. John Doe" required>`)
+		return
+	}
+
+	var values []string
+	switch axis {
+	case "author":
+		values = meta.Authors
+	case "category":
+		values = meta.Categories
+	}
+
+	if len(values) == 0 {
+		fmt.Fprintf(w, `<input type="text" name="value" id="value-select" placeholder="no %ss found — type manually" required>`, axis)
+		return
+	}
+
+	var b strings.Builder
+	b.WriteString(`<select name="value" id="value-select" required><option value="">— select —</option>`)
+	for _, v := range values {
+		fmt.Fprintf(&b, `<option value="%s">%s</option>`, template.HTMLEscapeString(v), template.HTMLEscapeString(v))
+	}
+	b.WriteString(`</select>`)
+	fmt.Fprint(w, b.String())
+}
+
 func (h *handlers) renderFilterRulesFragment(w http.ResponseWriter, userID int64) {
 	rules, _ := h.engine.GetFilterRules(userID, nil)
 	feeds, _ := h.engine.GetUserFeeds(userID)
