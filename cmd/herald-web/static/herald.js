@@ -133,4 +133,44 @@
         var list = document.getElementById('article-list');
         if (list) sessionStorage.setItem('herald-scroll', list.scrollTop);
     });
+
+    // Sortable tables
+    (function() {
+        function cellValue(row, col) {
+            var cell = row.cells[col];
+            return cell ? cell.textContent.trim() : '';
+        }
+
+        function sortTable(table, col, asc) {
+            var tbody = table.tBodies[0];
+            var rows = Array.from(tbody.rows);
+            rows.sort(function(a, b) {
+                var av = cellValue(a, col);
+                var bv = cellValue(b, col);
+                // Numeric if both look numeric
+                var an = parseFloat(av), bn = parseFloat(bv);
+                if (!isNaN(an) && !isNaN(bn)) return asc ? an - bn : bn - an;
+                // Empty strings sort last
+                if (av === '' && bv !== '') return 1;
+                if (bv === '' && av !== '') return -1;
+                return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+            });
+            rows.forEach(function(r) { tbody.appendChild(r); });
+        }
+
+        document.addEventListener('click', function(e) {
+            var th = e.target.closest('th.sortable');
+            if (!th) return;
+            var table = th.closest('table');
+            if (!table) return;
+            var col = parseInt(th.dataset.col, 10);
+            var asc = !th.classList.contains('sort-asc');
+            // Reset all headers
+            Array.from(table.querySelectorAll('th.sortable')).forEach(function(h) {
+                h.classList.remove('sort-asc', 'sort-desc');
+            });
+            th.classList.add(asc ? 'sort-asc' : 'sort-desc');
+            sortTable(table, col, asc);
+        });
+    })();
 })();

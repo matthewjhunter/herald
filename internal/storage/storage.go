@@ -664,6 +664,7 @@ type FeedStats struct {
 	TotalArticles        int
 	UnreadArticles       int
 	UnsummarizedArticles int
+	LastPostDate         *time.Time
 }
 
 // GetFeedStats returns article counts per feed for a user.
@@ -672,7 +673,8 @@ func (s *SQLiteStore) GetFeedStats(userID int64) ([]FeedStats, error) {
 		SELECT f.id, f.title,
 			COUNT(a.id),
 			COUNT(a.id) - COALESCE(SUM(CASE WHEN rs.read = 1 THEN 1 ELSE 0 END), 0),
-			COUNT(a.id) - COUNT(asumm.article_id)
+			COUNT(a.id) - COUNT(asumm.article_id),
+			MAX(a.published_date)
 		FROM feeds f
 		JOIN user_feeds uf ON uf.feed_id = f.id AND uf.user_id = ?
 		JOIN articles a ON a.feed_id = f.id
@@ -690,8 +692,14 @@ func (s *SQLiteStore) GetFeedStats(userID int64) ([]FeedStats, error) {
 	var stats []FeedStats
 	for rows.Next() {
 		var fs FeedStats
-		if err := rows.Scan(&fs.FeedID, &fs.FeedTitle, &fs.TotalArticles, &fs.UnreadArticles, &fs.UnsummarizedArticles); err != nil {
+		var lastPost *string
+		if err := rows.Scan(&fs.FeedID, &fs.FeedTitle, &fs.TotalArticles, &fs.UnreadArticles, &fs.UnsummarizedArticles, &lastPost); err != nil {
 			return nil, fmt.Errorf("scan feed stats: %w", err)
+		}
+		if lastPost != nil {
+			if t, err := time.Parse(time.RFC3339, *lastPost); err == nil {
+				fs.LastPostDate = &t
+			}
 		}
 		stats = append(stats, fs)
 	}

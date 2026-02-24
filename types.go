@@ -72,11 +72,12 @@ type ArticleGroup struct {
 
 // FeedStats holds article counts for a single feed.
 type FeedStats struct {
-	FeedID               int64  `json:"feed_id"`
-	FeedTitle            string `json:"feed_title"`
-	TotalArticles        int    `json:"total_articles"`
-	UnreadArticles       int    `json:"unread_articles"`
-	UnsummarizedArticles int    `json:"unsummarized_articles"`
+	FeedID               int64      `json:"feed_id"`
+	FeedTitle            string     `json:"feed_title"`
+	TotalArticles        int        `json:"total_articles"`
+	UnreadArticles       int        `json:"unread_articles"`
+	UnsummarizedArticles int        `json:"unsummarized_articles"`
+	LastPostDate         *time.Time `json:"last_post_date,omitempty"`
 }
 
 // FeedStatsResult contains per-feed stats and an aggregate total.

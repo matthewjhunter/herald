@@ -467,6 +467,7 @@ func (e *Engine) GetFeedStats(userID int64) (*FeedStatsResult, error) {
 			TotalArticles:        fs.TotalArticles,
 			UnreadArticles:       fs.UnreadArticles,
 			UnsummarizedArticles: fs.UnsummarizedArticles,
+			LastPostDate:         fs.LastPostDate,
 		}
 		result.Total.TotalArticles += fs.TotalArticles
 		result.Total.UnreadArticles += fs.UnreadArticles

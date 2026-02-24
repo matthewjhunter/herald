@@ -25,13 +25,14 @@
 
     <div id="feed-list">
         {{if .Feeds}}
-        <table>
+        <table id="feeds-table">
             <thead>
                 <tr>
-                    <th>Feed</th>
-                    <th>Articles</th>
-                    <th>Unread</th>
-                    <th>Last Fetched</th>
+                    <th data-col="0" class="sortable">Feed</th>
+                    <th data-col="1" class="sortable" style="text-align:right;">Articles</th>
+                    <th data-col="2" class="sortable" style="text-align:right;">Unread</th>
+                    <th data-col="3" class="sortable">Last Post</th>
+                    <th data-col="4" class="sortable">Last Fetched</th>
                     <th></th>
                 </tr>
             </thead>
@@ -43,8 +44,9 @@
                         <small class="secondary">{{.URL}}</small>
                         {{if .LastError}}<br><small style="color:var(--pico-del-color);">Error: {{.LastError}}</small>{{end}}
                     </td>
-                    <td>{{.TotalArticles}}</td>
-                    <td>{{.UnreadArticles}}</td>
+                    <td style="text-align:right;">{{.TotalArticles}}</td>
+                    <td style="text-align:right;">{{.UnreadArticles}}</td>
+                    <td>{{.LastPostDateFmt}}</td>
                     <td>{{.LastFetchedFmt}}</td>
                     <td>
                         <button class="outline secondary" style="padding:0.25rem 0.5rem;font-size:0.8rem;"
@@ -58,6 +60,12 @@
                 {{end}}
             </tbody>
         </table>
+        <style>
+            #feeds-table th.sortable { cursor:pointer; user-select:none; white-space:nowrap; }
+            #feeds-table th.sortable:hover { opacity:0.75; }
+            #feeds-table th.sort-asc::after { content:" ▲"; font-size:0.7em; }
+            #feeds-table th.sort-desc::after { content:" ▼"; font-size:0.7em; }
+        </style>
         {{else}}
         <p class="empty-state">No feeds subscribed. Add one above.</p>
         {{end}}
