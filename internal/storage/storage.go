@@ -766,9 +766,15 @@ func (s *SQLiteStore) GetGroupSummary(groupID int64) (*GroupSummary, error) {
 	return &gs, nil
 }
 
-// GetUserGroups returns all groups for a user
+// GetUserGroups returns groups for a user that contain at least 2 articles.
+// Single-article groups are excluded as they represent ungrouped articles rather
+// than genuine topic clusters.
 func (s *SQLiteStore) GetUserGroups(userID int64) ([]ArticleGroup, error) {
-	query := "SELECT id, user_id, topic, created_at, updated_at FROM article_groups WHERE user_id = ? ORDER BY updated_at DESC"
+	query := `SELECT ag.id, ag.user_id, ag.topic, ag.created_at, ag.updated_at
+		FROM article_groups ag
+		WHERE ag.user_id = ?
+		  AND (SELECT COUNT(*) FROM article_group_members WHERE group_id = ag.id) >= 2
+		ORDER BY ag.updated_at DESC`
 	rows, err := s.db.Query(query, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user groups: %w", err)
