@@ -6,11 +6,18 @@
     <title>{{block "title" .}}Herald{{end}}</title>
     <link rel="stylesheet" href="/static/pico.min.css">
     <link rel="stylesheet" href="/static/herald.css">
+    <script>
+        (function() {
+            var t = localStorage.getItem('herald-theme');
+            if (t) document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
 </head>
 <body>
     <header class="top-nav">
         <h1><a href="/" style="text-decoration:none;color:inherit;">Herald</a></h1>
         {{block "nav" .}}{{end}}
+        <button id="theme-toggle" class="theme-toggle outline" aria-label="Toggle theme">☀</button>
     </header>
     {{block "content" .}}{{end}}
     <script src="/static/htmx.min.js"></script>

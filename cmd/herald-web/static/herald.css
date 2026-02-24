@@ -177,6 +177,16 @@
     font-size: 1.25rem;
 }
 
+/* Theme toggle */
+.theme-toggle {
+    padding: 0.2rem 0.5rem;
+    font-size: 1rem;
+    line-height: 1;
+    border-radius: 4px;
+    cursor: pointer;
+    min-width: 2rem;
+}
+
 /* Empty states */
 .empty-state {
     text-align: center;

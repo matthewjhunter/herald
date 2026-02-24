@@ -2,6 +2,30 @@
 (function() {
     'use strict';
 
+    // Theme toggle
+    (function() {
+        var btn = document.getElementById('theme-toggle');
+        if (!btn) return;
+
+        function currentTheme() {
+            return document.documentElement.getAttribute('data-theme') || 'auto';
+        }
+
+        function updateBtn(theme) {
+            btn.textContent = theme === 'dark' ? '☽' : '☀';
+            btn.title = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+        }
+
+        updateBtn(currentTheme());
+
+        btn.addEventListener('click', function() {
+            var next = currentTheme() === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            localStorage.setItem('herald-theme', next);
+            updateBtn(next);
+        });
+    })();
+
     // Keyboard shortcuts
     document.addEventListener('keydown', function(e) {
         // Skip if user is typing in an input
