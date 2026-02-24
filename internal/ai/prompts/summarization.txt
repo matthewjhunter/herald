@@ -1,7 +1,5 @@
-Summarize the following news article in 2-3 concise sentences. Focus on the key facts and main points.
+Write a 2-3 sentence summary of the article below. Output the summary sentences only — no lead-in phrase, no preamble, no explanation.
 
 Title: {{.Title}}
 
 Content: {{.Content}}
-
-Provide only the summary, no preamble or explanation.
