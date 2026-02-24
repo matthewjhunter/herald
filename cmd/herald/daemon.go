@@ -27,6 +27,15 @@ Handles SIGINT/SIGTERM for graceful shutdown (finishes the current cycle).`,
 			sig := make(chan os.Signal, 1)
 			signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 
+			// Cancel the context immediately on signal so in-flight
+			// HTTP and Ollama requests abort rather than waiting for
+			// the current cycle to complete.
+			go func() {
+				<-sig
+				log.Println("herald daemon: received shutdown signal, cancelling current cycle")
+				cancel()
+			}()
+
 			log.Printf("herald daemon: starting with interval %s", interval)
 
 			cycle := 1
@@ -35,6 +44,10 @@ Handles SIGINT/SIGTERM for graceful shutdown (finishes the current cycle).`,
 				log.Printf("herald daemon: cycle %d starting", cycle)
 
 				if err := doFetch(ctx); err != nil {
+					if ctx.Err() != nil {
+						log.Println("herald daemon: cycle cancelled, exiting")
+						return nil
+					}
 					log.Printf("herald daemon: cycle %d error: %v", cycle, err)
 				} else {
 					log.Printf("herald daemon: cycle %d completed in %s", cycle, time.Since(start).Round(time.Millisecond))
@@ -45,9 +58,8 @@ Handles SIGINT/SIGTERM for graceful shutdown (finishes the current cycle).`,
 				// Wait for the next tick or a shutdown signal.
 				timer := time.NewTimer(interval)
 				select {
-				case <-sig:
+				case <-ctx.Done():
 					timer.Stop()
-					log.Println("herald daemon: received shutdown signal, exiting")
 					return nil
 				case <-timer.C:
 				}
