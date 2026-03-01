@@ -192,6 +192,76 @@ func TestValidateCookie_Missing(t *testing.T) {
 	}
 }
 
+func TestNewValidator_Autodiscovery(t *testing.T) {
+	// Stand up a JWKS server (reuses the package-level testKey).
+	jwksSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := testKey.N.Bytes()
+		e := big.NewInt(int64(testKey.E)).Bytes()
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"keys":[{"kty":"RSA","kid":"test","n":"%s","e":"%s"}]}`,
+			base64.RawURLEncoding.EncodeToString(n),
+			base64.RawURLEncoding.EncodeToString(e),
+		)
+	}))
+	defer jwksSrv.Close()
+
+	// Stand up a discovery server pointing at the JWKS server.
+	discoverySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{
+			"jwks_uri": %q,
+			"authorization_endpoint": "https://auth.example.com/authorize",
+			"token_endpoint": "https://auth.example.com/token"
+		}`, jwksSrv.URL)
+	}))
+	defer discoverySrv.Close()
+
+	v, err := NewValidator(ValidatorConfig{
+		IssuerURL:   discoverySrv.URL,
+		CookieName:  "test_jwt",
+		ClientID:    "herald",
+		CallbackURL: "https://herald.example.com/auth/callback",
+	})
+	if err != nil {
+		t.Fatalf("NewValidator with autodiscovery: %v", err)
+	}
+
+	// JWKS endpoint should have been populated from the discovery document.
+	if v.cfg.JWKSEndpoint != jwksSrv.URL {
+		t.Errorf("JWKSEndpoint = %q, want %q", v.cfg.JWKSEndpoint, jwksSrv.URL)
+	}
+	// Authorize and token endpoints should be populated.
+	if v.discoveredAuthorizeURL != "https://auth.example.com/authorize" {
+		t.Errorf("discoveredAuthorizeURL = %q", v.discoveredAuthorizeURL)
+	}
+	if v.discoveredTokenURL != "https://auth.example.com/token" {
+		t.Errorf("discoveredTokenURL = %q", v.discoveredTokenURL)
+	}
+	// WebauthURL should be derived from the discovery server's scheme+host.
+	if v.cfg.WebauthURL == "" {
+		t.Error("WebauthURL not derived from IssuerURL")
+	}
+	// OIDCConfigured should report true.
+	if !v.OIDCConfigured() {
+		t.Error("OIDCConfigured() = false, want true")
+	}
+	// AuthorizeURL should use the discovered endpoint, not a TenantID construction.
+	authURL := v.AuthorizeURL("mystate", "mychallenge")
+	if !strings.HasPrefix(authURL, "https://auth.example.com/authorize") {
+		t.Errorf("AuthorizeURL = %q, want prefix https://auth.example.com/authorize", authURL)
+	}
+
+	// A valid token signed with testKey should validate.
+	token := makeToken(t, "sub-disco", "disco@example.com", "Disco User", "", time.Now().Add(time.Hour))
+	claims, err := v.Validate(token)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if claims.Sub != "sub-disco" {
+		t.Errorf("Sub = %q, want sub-disco", claims.Sub)
+	}
+}
+
 func TestWebauthLoginURL(t *testing.T) {
 	v := &Validator{cfg: ValidatorConfig{WebauthURL: "https://auth.example.com"}}
 

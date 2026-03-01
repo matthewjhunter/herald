@@ -23,29 +23,31 @@ func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 
 	// Auth flags.
-	webauthURL := flag.String("webauth-url", "", "base URL of webauth server (e.g. https://auth.infodancer.net)")
+	webauthIssuer := flag.String("webauth-issuer", "", "OIDC issuer URL, e.g. https://auth.infodancer.net/t/infodancer (enables autodiscovery)")
+	webauthURL := flag.String("webauth-url", "", "base URL of webauth server; derived from -webauth-issuer when omitted")
 	jwtCookie := flag.String("jwt-cookie", "infodancer_jwt", "name of the JWT cookie set by webauth")
-	jwksURL := flag.String("jwks-url", "", "JWKS endpoint URL (e.g. https://auth.infodancer.net/.well-known/jwks.json)")
+	jwksURL := flag.String("jwks-url", "", "JWKS endpoint URL; overrides autodiscovery when set")
 	pemKeyPath := flag.String("jwt-public-key", "", "path to RSA public key PEM file (dev fallback when JWKS not yet live)")
 	jwtIssuer := flag.String("jwt-issuer", "", "expected JWT issuer claim (empty = skip validation)")
-	webauthTenant := flag.String("webauth-tenant", "", "webauth tenant ID used for OIDC endpoints (e.g. infodancer)")
+	webauthTenant := flag.String("webauth-tenant", "", "webauth tenant ID for manual OIDC endpoint construction (not needed with -webauth-issuer)")
 	webauthClientID := flag.String("webauth-client-id", "", "Herald's registered OIDC client ID")
 	webauthCallbackURL := flag.String("webauth-callback-url", "", "Herald's registered OIDC callback URL (e.g. https://herald.infodancer.net/auth/callback)")
 
 	flag.Parse()
 
-	if *webauthURL == "" {
-		fmt.Fprintln(os.Stderr, "herald-web: -webauth-url is required")
+	if *webauthIssuer == "" && *webauthURL == "" {
+		fmt.Fprintln(os.Stderr, "herald-web: -webauth-issuer or -webauth-url is required")
 		os.Exit(1)
 	}
-	if *jwksURL == "" && *pemKeyPath == "" {
-		fmt.Fprintln(os.Stderr, "herald-web: one of -jwks-url or -jwt-public-key is required")
+	if *webauthIssuer == "" && *jwksURL == "" && *pemKeyPath == "" {
+		fmt.Fprintln(os.Stderr, "herald-web: one of -jwks-url or -jwt-public-key is required (or use -webauth-issuer for autodiscovery)")
 		os.Exit(1)
 	}
 
 	validator, err := auth.NewValidator(auth.ValidatorConfig{
 		Issuer:       *jwtIssuer,
 		CookieName:   *jwtCookie,
+		IssuerURL:    *webauthIssuer,
 		WebauthURL:   *webauthURL,
 		JWKSEndpoint: *jwksURL,
 		PEMKeyPath:   *pemKeyPath,
