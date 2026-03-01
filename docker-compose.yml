@@ -1,11 +1,13 @@
 services:
   herald-web:
     build: .
-    command: herald-web --db /data/herald.db --addr :8080
+    command: herald-web -config /etc/herald/herald-web.toml
     ports:
       - "8080:8080"
     volumes:
       - herald-data:/data
+      # Copy cmd/herald-web/herald-web.toml.example to config/herald-web.toml and edit.
+      - ./config:/etc/herald:ro
     restart: unless-stopped
     depends_on:
       - herald-fetcher
