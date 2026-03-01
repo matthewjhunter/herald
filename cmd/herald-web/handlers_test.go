@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
@@ -556,4 +557,195 @@ func timePtr(t time.Time) *time.Time { return &t }
 // itoa converts an int64 to a string path component.
 func itoa(n int64) string {
 	return url.PathEscape(strings.TrimSpace(strconv.FormatInt(n, 10)))
+}
+
+// newTestValidatorWithOIDC creates a Validator with OIDC config pointing at baseURL.
+func newTestValidatorWithOIDC(t *testing.T, baseURL string) *auth.Validator {
+	t.Helper()
+
+	pubDER, err := x509.MarshalPKIXPublicKey(&testKey.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal public key: %v", err)
+	}
+	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
+	pemPath := filepath.Join(t.TempDir(), "pub.pem")
+	if err := os.WriteFile(pemPath, pubPEM, 0600); err != nil {
+		t.Fatalf("write pem: %v", err)
+	}
+
+	v, err := auth.NewValidator(auth.ValidatorConfig{
+		CookieName:  "test_jwt",
+		WebauthURL:  baseURL,
+		PEMKeyPath:  pemPath,
+		TenantID:    "test-tenant",
+		ClientID:    "test-client",
+		CallbackURL: "https://herald.example.com/auth/callback",
+	})
+	if err != nil {
+		t.Fatalf("NewValidator with OIDC: %v", err)
+	}
+	return v
+}
+
+// --- Callback handler tests ---
+
+func TestHandleCallback_SetsJWTCookie(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// Mock webauth token endpoint: returns a valid signed access token.
+	accessToken := signTestToken("test-sub-1", "tester@example.com", "Tester")
+	mockWebauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+			"access_token": accessToken,
+			"token_type":   "Bearer",
+			"expires_in":   3600,
+		})
+	}))
+	defer mockWebauth.Close()
+
+	validator := newTestValidatorWithOIDC(t, mockWebauth.URL)
+	router := newRouter(tf.engine, validator)
+
+	state := "test-state-nonce"
+	verifier := "test-pkce-verifier"
+	req := httptest.NewRequest("GET", "/auth/callback?code=test-code&state="+state, nil)
+	req.AddCookie(&http.Cookie{Name: "oauth_state", Value: state})
+	req.AddCookie(&http.Cookie{Name: "oauth_verifier", Value: verifier})
+	req.AddCookie(&http.Cookie{Name: "oauth_redirect", Value: "/u/1"})
+
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusFound {
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusFound)
+	}
+	if loc := rr.Header().Get("Location"); loc != "/u/1" {
+		t.Errorf("Location: got %q, want /u/1", loc)
+	}
+
+	var jwtCookie *http.Cookie
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == "test_jwt" {
+			jwtCookie = c
+		}
+	}
+	if jwtCookie == nil || jwtCookie.Value == "" {
+		t.Error("JWT cookie should be set after successful callback")
+	}
+	if jwtCookie != nil && !jwtCookie.HttpOnly {
+		t.Error("JWT cookie must be HttpOnly")
+	}
+}
+
+func TestHandleCallback_DefaultRedirect(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	accessToken := signTestToken("test-sub-1", "tester@example.com", "Tester")
+	mockWebauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"access_token": accessToken}) //nolint:errcheck
+	}))
+	defer mockWebauth.Close()
+
+	validator := newTestValidatorWithOIDC(t, mockWebauth.URL)
+	router := newRouter(tf.engine, validator)
+
+	state := "test-state"
+	req := httptest.NewRequest("GET", "/auth/callback?code=test-code&state="+state, nil)
+	req.AddCookie(&http.Cookie{Name: "oauth_state", Value: state})
+	req.AddCookie(&http.Cookie{Name: "oauth_verifier", Value: "verifier"})
+	// No oauth_redirect cookie — should default to "/".
+
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusFound {
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusFound)
+	}
+	if loc := rr.Header().Get("Location"); loc != "/" {
+		t.Errorf("Location: got %q, want /", loc)
+	}
+}
+
+func TestHandleCallback_InvalidState(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	validator := newTestValidatorWithOIDC(t, "https://auth.example.com")
+	router := newRouter(tf.engine, validator)
+
+	req := httptest.NewRequest("GET", "/auth/callback?code=test-code&state=WRONG", nil)
+	req.AddCookie(&http.Cookie{Name: "oauth_state", Value: "correct-state"})
+	req.AddCookie(&http.Cookie{Name: "oauth_verifier", Value: "verifier"})
+
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want %d (state mismatch should be 400)", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestHandleCallback_MissingVerifier(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	validator := newTestValidatorWithOIDC(t, "https://auth.example.com")
+	router := newRouter(tf.engine, validator)
+
+	state := "test-state"
+	req := httptest.NewRequest("GET", "/auth/callback?code=test-code&state="+state, nil)
+	req.AddCookie(&http.Cookie{Name: "oauth_state", Value: state})
+	// oauth_verifier cookie omitted.
+
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want %d (missing verifier should be 400)", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestHandleCallback_TokenExchangeError(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// Mock that returns a 401 from the token endpoint.
+	mockWebauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "invalid_grant", http.StatusUnauthorized)
+	}))
+	defer mockWebauth.Close()
+
+	validator := newTestValidatorWithOIDC(t, mockWebauth.URL)
+	router := newRouter(tf.engine, validator)
+
+	state := "test-state"
+	req := httptest.NewRequest("GET", "/auth/callback?code=bad-code&state="+state, nil)
+	req.AddCookie(&http.Cookie{Name: "oauth_state", Value: state})
+	req.AddCookie(&http.Cookie{Name: "oauth_verifier", Value: "verifier"})
+
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadGateway {
+		t.Errorf("status: got %d, want %d (upstream failure should be 502)", rr.Code, http.StatusBadGateway)
+	}
+}
+
+func TestHandleCallback_UpstreamAuthError(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	validator := newTestValidatorWithOIDC(t, "https://auth.example.com")
+	router := newRouter(tf.engine, validator)
+
+	// Webauth redirects with ?error=access_denied when the user denies.
+	req := httptest.NewRequest("GET", "/auth/callback?error=access_denied&error_description=User+denied+access", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status: got %d, want %d (upstream error param should be 401)", rr.Code, http.StatusUnauthorized)
+	}
 }

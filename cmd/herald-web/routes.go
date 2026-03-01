@@ -26,6 +26,9 @@ func newRouter(engine *herald.Engine, validator *auth.Validator) http.Handler {
 	// Root: redirect to home page if authenticated, else webauth handles it via requireAuth.
 	mux.Handle("GET /{$}", auth(http.HandlerFunc(h.handleRoot)))
 
+	// Auth callback — receives the code from webauth, exchanges it for a JWT cookie.
+	mux.HandleFunc("GET /auth/callback", h.handleCallback)
+
 	// Logout — no auth check needed; just redirects to webauth logout.
 	mux.HandleFunc("GET /auth/logout", h.handleLogout)
 

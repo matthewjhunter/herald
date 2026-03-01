@@ -265,6 +265,71 @@ func (h *handlers) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, h.validator.WebauthLogoutURL(), http.StatusFound)
 }
 
+// handleCallback completes the OIDC authorization code flow.
+// It validates the state nonce, exchanges the code for an access token via PKCE,
+// sets the JWT as an HttpOnly cookie, and redirects to the original URL.
+func (h *handlers) handleCallback(w http.ResponseWriter, r *http.Request) {
+	code := r.URL.Query().Get("code")
+	stateParam := r.URL.Query().Get("state")
+
+	// Surface upstream errors (e.g. user denied access).
+	if errParam := r.URL.Query().Get("error"); errParam != "" {
+		log.Printf("herald-web: callback error from webauth: %s", errParam)
+		http.Error(w, "Authentication error: "+errParam, http.StatusUnauthorized)
+		return
+	}
+	if code == "" || stateParam == "" {
+		http.Error(w, "missing code or state", http.StatusBadRequest)
+		return
+	}
+
+	// Validate state nonce to prevent CSRF.
+	stateCookie, err := r.Cookie("oauth_state")
+	if err != nil || stateCookie.Value != stateParam {
+		http.Error(w, "invalid state parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Retrieve the PKCE verifier.
+	verifierCookie, err := r.Cookie("oauth_verifier")
+	if err != nil || verifierCookie.Value == "" {
+		http.Error(w, "missing PKCE verifier", http.StatusBadRequest)
+		return
+	}
+
+	// Determine where to send the user after login (defaults to root).
+	redirectTo := "/"
+	if rc, err := r.Cookie("oauth_redirect"); err == nil && rc.Value != "" {
+		redirectTo = rc.Value
+	}
+
+	// Exchange the authorization code for an access token.
+	accessToken, err := h.validator.ExchangeCode(r.Context(), code, verifierCookie.Value)
+	if err != nil {
+		log.Printf("herald-web: callback token exchange: %v", err)
+		http.Error(w, "Authentication failed", http.StatusBadGateway)
+		return
+	}
+
+	// Set the JWT as an HttpOnly session cookie.
+	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	http.SetCookie(w, &http.Cookie{
+		Name:     h.validator.CookieName(),
+		Value:    accessToken,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	// Clear the PKCE and state cookies.
+	for _, name := range []string{"oauth_verifier", "oauth_state", "oauth_redirect"} {
+		http.SetCookie(w, &http.Cookie{Name: name, Path: "/", MaxAge: -1})
+	}
+
+	http.Redirect(w, r, redirectTo, http.StatusFound)
+}
+
 func (h *handlers) handleHome(w http.ResponseWriter, r *http.Request) {
 	user := userFromContext(r.Context())
 	uid := user.ID
