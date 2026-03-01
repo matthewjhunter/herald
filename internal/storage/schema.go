@@ -35,8 +35,11 @@ CREATE INDEX IF NOT EXISTS idx_articles_published ON articles(published_date DES
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    oidc_sub TEXT UNIQUE,
+    email TEXT,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_sub ON users(oidc_sub) WHERE oidc_sub IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS read_state (
     user_id INTEGER NOT NULL DEFAULT 1,

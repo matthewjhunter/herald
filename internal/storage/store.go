@@ -9,6 +9,9 @@ type Store interface {
 	// Users
 	CreateUser(name string) (int64, error)
 	GetUserByName(name string) (*User, error)
+	GetUserByOIDCSub(sub string) (*User, error)
+	CreateUserWithOIDC(name, email, sub string) (*User, error)
+	UpdateUserOIDCEmail(id int64, email string) error
 	ListUsers() ([]User, error)
 
 	// User prompts

@@ -730,9 +730,46 @@ func (e *Engine) ListUsers() ([]User, error) {
 	}
 	result := make([]User, len(users))
 	for i, u := range users {
-		result[i] = User{ID: u.ID, Name: u.Name, CreatedAt: u.CreatedAt}
+		result[i] = userFromStorage(u)
 	}
 	return result, nil
+}
+
+// GetOrProvisionOIDCUser looks up a Herald user by their OIDC subject claim,
+// creating one if this is their first login. Email is synced on each login.
+func (e *Engine) GetOrProvisionOIDCUser(sub, name, email string) (*User, error) {
+	u, err := e.store.GetUserByOIDCSub(sub)
+	if err == nil {
+		// Existing user — sync email if it changed.
+		if email != "" {
+			currentEmail := ""
+			if u.Email != nil {
+				currentEmail = *u.Email
+			}
+			if email != currentEmail {
+				e.store.UpdateUserOIDCEmail(u.ID, email)
+			}
+		}
+		result := userFromStorage(*u)
+		return &result, nil
+	}
+
+	// First login — auto-provision.
+	newU, err := e.store.CreateUserWithOIDC(name, email, sub)
+	if err != nil {
+		return nil, fmt.Errorf("provision OIDC user: %w", err)
+	}
+	result := userFromStorage(*newU)
+	return &result, nil
+}
+
+// userFromStorage converts a storage.User to the public herald.User type.
+func userFromStorage(u storage.User) User {
+	email := ""
+	if u.Email != nil {
+		email = *u.Email
+	}
+	return User{ID: u.ID, Name: u.Name, Email: email, CreatedAt: u.CreatedAt}
 }
 
 // --- Filter rules ---

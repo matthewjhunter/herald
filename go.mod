@@ -5,6 +5,7 @@ go 1.25.0
 toolchain go1.25.7
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/matthewjhunter/go-embedding v0.1.0
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/mmcdole/gofeed v1.3.0

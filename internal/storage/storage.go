@@ -135,6 +135,10 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		// Backfill article_authors from the existing articles.author column.
 		`INSERT OR IGNORE INTO article_authors (article_id, name)
 		 SELECT id, author FROM articles WHERE author != '' AND author IS NOT NULL`,
+		// OIDC identity columns on users.
+		"ALTER TABLE users ADD COLUMN oidc_sub TEXT",
+		"ALTER TABLE users ADD COLUMN email TEXT",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_sub ON users(oidc_sub) WHERE oidc_sub IS NOT NULL",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -204,6 +208,8 @@ func (s *SQLiteStore) Close() error {
 type User struct {
 	ID        int64
 	Name      string
+	OIDCSub   *string // OIDC subject claim; nil for users created before OIDC
+	Email     *string // email from JWT; may be nil
 	CreatedAt time.Time
 }
 
@@ -223,18 +229,58 @@ func (s *SQLiteStore) CreateUser(name string) (int64, error) {
 func (s *SQLiteStore) GetUserByName(name string) (*User, error) {
 	var u User
 	err := s.db.QueryRow(
-		"SELECT id, name, created_at FROM users WHERE name = ?",
+		"SELECT id, name, oidc_sub, email, created_at FROM users WHERE name = ?",
 		name,
-	).Scan(&u.ID, &u.Name, &u.CreatedAt)
+	).Scan(&u.ID, &u.Name, &u.OIDCSub, &u.Email, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
 	return &u, nil
 }
 
+// GetUserByOIDCSub looks up a user by their OIDC subject claim.
+func (s *SQLiteStore) GetUserByOIDCSub(sub string) (*User, error) {
+	var u User
+	err := s.db.QueryRow(
+		"SELECT id, name, oidc_sub, email, created_at FROM users WHERE oidc_sub = ?",
+		sub,
+	).Scan(&u.ID, &u.Name, &u.OIDCSub, &u.Email, &u.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// CreateUserWithOIDC registers a new user with OIDC identity, returning the full User.
+func (s *SQLiteStore) CreateUserWithOIDC(name, email, sub string) (*User, error) {
+	var emailVal *string
+	if email != "" {
+		emailVal = &email
+	}
+	result, err := s.db.Exec(
+		"INSERT INTO users (name, oidc_sub, email) VALUES (?, ?, ?)",
+		name, sub, emailVal,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create OIDC user: %w", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	u := &User{ID: id, Name: name, OIDCSub: &sub, Email: emailVal}
+	return u, nil
+}
+
+// UpdateUserOIDCEmail updates the stored email for a user.
+func (s *SQLiteStore) UpdateUserOIDCEmail(id int64, email string) error {
+	_, err := s.db.Exec("UPDATE users SET email = ? WHERE id = ?", email, id)
+	return err
+}
+
 // ListUsers returns all registered users ordered by name.
 func (s *SQLiteStore) ListUsers() ([]User, error) {
-	rows, err := s.db.Query("SELECT id, name, created_at FROM users ORDER BY name")
+	rows, err := s.db.Query("SELECT id, name, oidc_sub, email, created_at FROM users ORDER BY name")
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
@@ -243,7 +289,7 @@ func (s *SQLiteStore) ListUsers() ([]User, error) {
 	var users []User
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Name, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Name, &u.OIDCSub, &u.Email, &u.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan user: %w", err)
 		}
 		users = append(users, u)

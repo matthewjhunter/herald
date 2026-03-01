@@ -1,20 +1,83 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	herald "github.com/matthewjhunter/herald"
+	"github.com/matthewjhunter/herald/internal/auth"
 	"github.com/matthewjhunter/herald/internal/storage"
 )
 
-// testSetup creates a read-only Engine with one user, one feed, and one article.
-// Returns the handlers wired to a router, plus IDs for the test fixtures.
+// testKey is generated once per test binary run.
+var testKey *rsa.PrivateKey
+
+func init() {
+	var err error
+	testKey, err = rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic("failed to generate test RSA key: " + err.Error())
+	}
+}
+
+// signTestToken creates a signed JWT for testing with the test RSA key.
+func signTestToken(sub, email, name string) string {
+	claims := jwt.MapClaims{
+		"sub":   sub,
+		"email": email,
+		"name":  name,
+		"exp":   time.Now().Add(time.Hour).Unix(),
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	signed, err := tok.SignedString(testKey)
+	if err != nil {
+		panic("sign test token: " + err.Error())
+	}
+	return signed
+}
+
+// newTestValidator creates a Validator backed by the test RSA key via a temp PEM file.
+func newTestValidator(t *testing.T) (*auth.Validator, string) {
+	t.Helper()
+
+	// Write public key as PKIX PEM.
+	pubDER, err := x509.MarshalPKIXPublicKey(&testKey.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal public key: %v", err)
+	}
+	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
+	pemPath := filepath.Join(t.TempDir(), "pub.pem")
+	if err := os.WriteFile(pemPath, pubPEM, 0600); err != nil {
+		t.Fatalf("write pem: %v", err)
+	}
+
+	v, err := auth.NewValidator(auth.ValidatorConfig{
+		CookieName: "test_jwt",
+		WebauthURL: "https://auth.example.com",
+		PEMKeyPath: pemPath,
+	})
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+
+	// Return a valid token for the canonical test user.
+	token := signTestToken("test-sub-1", "tester@example.com", "Tester")
+	return v, token
+}
+
+// testFixtures holds all resources for a handler integration test.
 type testFixtures struct {
 	router    http.Handler
 	engine    *herald.Engine
@@ -22,14 +85,14 @@ type testFixtures struct {
 	userID    int64
 	feedID    int64
 	articleID int64
+	jwtToken  string // valid JWT for the test user
 }
 
 func newTestFixtures(t *testing.T) *testFixtures {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 
-	// Create a writable engine to seed data.
-	writeEngine, err := herald.NewEngine(herald.EngineConfig{
+	engine, err := herald.NewEngine(herald.EngineConfig{
 		DBPath:   dbPath,
 		ReadOnly: true,
 	})
@@ -37,22 +100,22 @@ func newTestFixtures(t *testing.T) *testFixtures {
 		t.Fatalf("NewEngine: %v", err)
 	}
 
-	// We need the store directly to seed data.
 	st, err := storage.NewSQLiteStore(dbPath)
 	if err != nil {
 		t.Fatalf("NewSQLiteStore: %v", err)
 	}
 
-	uid, err := st.CreateUser("tester")
+	// Provision the OIDC user that matches the test JWT sub claim.
+	user, err := engine.GetOrProvisionOIDCUser("test-sub-1", "Tester", "tester@example.com")
 	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
+		t.Fatalf("GetOrProvisionOIDCUser: %v", err)
 	}
 
 	feedID, err := st.AddFeed("https://example.com/feed", "Test Feed", "A test feed")
 	if err != nil {
 		t.Fatalf("AddFeed: %v", err)
 	}
-	if err := st.SubscribeUserToFeed(uid, feedID); err != nil {
+	if err := st.SubscribeUserToFeed(user.ID, feedID); err != nil {
 		t.Fatalf("SubscribeUserToFeed: %v", err)
 	}
 
@@ -71,24 +134,26 @@ func newTestFixtures(t *testing.T) *testFixtures {
 		t.Fatalf("AddArticle: %v", err)
 	}
 
-	router := newRouter(writeEngine)
+	validator, jwtToken := newTestValidator(t)
+	router := newRouter(engine, validator)
 
 	t.Cleanup(func() {
-		writeEngine.Close()
+		engine.Close()
 		st.Close()
 	})
 
 	return &testFixtures{
 		router:    router,
-		engine:    writeEngine,
+		engine:    engine,
 		store:     st,
-		userID:    uid,
+		userID:    user.ID,
 		feedID:    feedID,
 		articleID: articleID,
+		jwtToken:  jwtToken,
 	}
 }
 
-// request is a convenience helper for making test HTTP requests.
+// request makes a test HTTP request. Adds the JWT cookie if tf is non-nil.
 func request(t *testing.T, handler http.Handler, method, path string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, nil)
@@ -100,104 +165,121 @@ func request(t *testing.T, handler http.Handler, method, path string, headers ma
 	return rr
 }
 
-func requestForm(t *testing.T, handler http.Handler, method, path string, form url.Values, headers map[string]string) *httptest.ResponseRecorder {
+// authedRequest makes a test HTTP request with the test JWT cookie.
+func authedRequest(t *testing.T, tf *testFixtures, method, path string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
-	body := form.Encode()
-	req := httptest.NewRequest(method, path, strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req := httptest.NewRequest(method, path, nil)
+	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: tf.jwtToken})
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
 	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, req)
+	tf.router.ServeHTTP(rr, req)
 	return rr
 }
 
-// --- Tests ---
-
-func TestHandleIndex_NoUsers(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "empty.db")
-	engine, err := herald.NewEngine(herald.EngineConfig{DBPath: dbPath, ReadOnly: true})
-	if err != nil {
-		t.Fatalf("NewEngine: %v", err)
-	}
-	defer engine.Close()
-
-	router := newRouter(engine)
-	rr := request(t, router, "GET", "/", nil)
-
-	if rr.Code != http.StatusOK {
-		t.Errorf("index status: got %d, want %d", rr.Code, http.StatusOK)
-	}
-	if ct := rr.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
-		t.Errorf("content-type: got %q, want text/html", ct)
-	}
-}
-
-func TestHandleIndex_CookieRedirect(t *testing.T) {
-	tf := newTestFixtures(t)
-
-	req := httptest.NewRequest("GET", "/", nil)
-	req.AddCookie(&http.Cookie{Name: "herald_user", Value: "1"})
+func authedRequestForm(t *testing.T, tf *testFixtures, method, path string, form url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+	body := form.Encode()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: tf.jwtToken})
 	rr := httptest.NewRecorder()
 	tf.router.ServeHTTP(rr, req)
+	return rr
+}
 
+// --- Auth tests ---
+
+func TestHandleRoot_UnauthenticatedRedirectsToWebauth(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// No JWT cookie → should redirect to webauth login.
+	rr := request(t, tf.router, "GET", "/", nil)
 	if rr.Code != http.StatusFound {
-		t.Errorf("redirect status: got %d, want %d", rr.Code, http.StatusFound)
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusFound)
 	}
 	loc := rr.Header().Get("Location")
-	if loc != "/u/1" {
-		t.Errorf("redirect location: got %q, want /u/1", loc)
+	if !strings.Contains(loc, "auth.example.com") {
+		t.Errorf("redirect location %q should point to webauth", loc)
 	}
 }
+
+func TestHandleRoot_AuthenticatedRedirectsToHome(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	rr := authedRequest(t, tf, "GET", "/", nil)
+	if rr.Code != http.StatusFound {
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusFound)
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "/u/") {
+		t.Errorf("redirect location %q should be /u/{id}", loc)
+	}
+}
+
+func TestRequireAuth_WrongUserIDForbidden(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// JWT is for user tf.userID; try to access a different user's route.
+	wrongUID := tf.userID + 999
+	path := "/u/" + itoa(wrongUID) + "/feeds"
+	rr := authedRequest(t, tf, "GET", path, nil)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("status: got %d, want %d (IDOR check)", rr.Code, http.StatusForbidden)
+	}
+}
+
+func TestHandleLogout(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	rr := authedRequest(t, tf, "GET", "/auth/logout", nil)
+	if rr.Code != http.StatusFound {
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusFound)
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "auth.example.com/logout") {
+		t.Errorf("redirect %q should point to webauth logout", loc)
+	}
+}
+
+// --- Handler tests ---
 
 func TestHandleHome(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	rr := request(t, tf.router, "GET", "/u/1", nil)
-
+	rr := authedRequest(t, tf, "GET", "/u/"+itoa(tf.userID), nil)
 	if rr.Code != http.StatusOK {
-		t.Errorf("home status: got %d, want %d", rr.Code, http.StatusOK)
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
 	}
 	body := rr.Body.String()
 	if !strings.Contains(body, "Test Feed") {
 		t.Error("home page should contain feed title")
 	}
-	// Should set cookie
-	cookies := rr.Result().Cookies()
-	found := false
-	for _, c := range cookies {
-		if c.Name == "herald_user" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("home should set herald_user cookie")
-	}
 }
 
-func TestHandleHome_InvalidUser(t *testing.T) {
+func TestHandleHome_Unauthenticated(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	rr := request(t, tf.router, "GET", "/u/0", nil)
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("invalid user status: got %d, want %d", rr.Code, http.StatusBadRequest)
+	rr := request(t, tf.router, "GET", "/u/"+itoa(tf.userID), nil)
+	if rr.Code != http.StatusFound {
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusFound)
+	}
+	if !strings.Contains(rr.Header().Get("Location"), "auth.example.com") {
+		t.Error("unauthenticated home should redirect to webauth")
 	}
 }
 
 func TestHandleArticleList_Default(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	rr := request(t, tf.router, "GET", "/u/1/articles", map[string]string{
+	rr := authedRequest(t, tf, "GET", "/u/"+itoa(tf.userID)+"/articles", map[string]string{
 		"HX-Request": "true",
 	})
-
 	if rr.Code != http.StatusOK {
-		t.Errorf("article list status: got %d, want %d", rr.Code, http.StatusOK)
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
 	}
-	body := rr.Body.String()
-	if !strings.Contains(body, "Test Article") {
+	if !strings.Contains(rr.Body.String(), "Test Article") {
 		t.Error("article list should contain article title")
 	}
 }
@@ -205,15 +287,12 @@ func TestHandleArticleList_Default(t *testing.T) {
 func TestHandleArticleList_ByFeed(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	rr := request(t, tf.router, "GET", "/u/1/articles?feed_id=1", map[string]string{
-		"HX-Request": "true",
-	})
-
+	path := "/u/" + itoa(tf.userID) + "/articles?feed_id=" + itoa(tf.feedID)
+	rr := authedRequest(t, tf, "GET", path, map[string]string{"HX-Request": "true"})
 	if rr.Code != http.StatusOK {
-		t.Errorf("article list by feed status: got %d, want %d", rr.Code, http.StatusOK)
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
 	}
-	body := rr.Body.String()
-	if !strings.Contains(body, "Test Article") {
+	if !strings.Contains(rr.Body.String(), "Test Article") {
 		t.Error("article list should contain article from the specified feed")
 	}
 }
@@ -221,16 +300,12 @@ func TestHandleArticleList_ByFeed(t *testing.T) {
 func TestHandleArticleList_Starred_Empty(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	rr := request(t, tf.router, "GET", "/u/1/articles?starred=1", map[string]string{
-		"HX-Request": "true",
-	})
-
+	path := "/u/" + itoa(tf.userID) + "/articles?starred=1"
+	rr := authedRequest(t, tf, "GET", path, map[string]string{"HX-Request": "true"})
 	if rr.Code != http.StatusOK {
-		t.Errorf("starred list status: got %d, want %d", rr.Code, http.StatusOK)
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
 	}
-	body := rr.Body.String()
-	// Should not contain the article since it's not starred
-	if strings.Contains(body, "Test Article") {
+	if strings.Contains(rr.Body.String(), "Test Article") {
 		t.Error("starred list should be empty when nothing is starred")
 	}
 }
@@ -238,32 +313,25 @@ func TestHandleArticleList_Starred_Empty(t *testing.T) {
 func TestHandleArticleView(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	rr := request(t, tf.router, "GET", "/u/1/articles/1", map[string]string{
-		"HX-Request": "true",
-	})
-
+	path := "/u/" + itoa(tf.userID) + "/articles/" + itoa(tf.articleID)
+	rr := authedRequest(t, tf, "GET", path, map[string]string{"HX-Request": "true"})
 	if rr.Code != http.StatusOK {
-		t.Errorf("article view status: got %d, want %d", rr.Code, http.StatusOK)
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
 	}
 	body := rr.Body.String()
 	if !strings.Contains(body, "Test Article") {
-		t.Error("article view should contain article title")
+		t.Error("article view should contain title")
 	}
 	if !strings.Contains(body, "Hello, world!") {
 		t.Error("article view should contain sanitized content")
-	}
-	// Verify XSS is stripped
-	if strings.Contains(body, "<script>") {
-		t.Error("article view should sanitize scripts")
 	}
 }
 
 func TestHandleArticleView_SanitizesXSS(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	// Add an article with malicious content
 	pub := time.Now()
-	_, err := tf.store.AddArticle(&storage.Article{
+	id, err := tf.store.AddArticle(&storage.Article{
 		FeedID:        tf.feedID,
 		GUID:          "xss-test",
 		Title:         "XSS Test",
@@ -275,10 +343,8 @@ func TestHandleArticleView_SanitizesXSS(t *testing.T) {
 		t.Fatalf("AddArticle: %v", err)
 	}
 
-	rr := request(t, tf.router, "GET", "/u/1/articles/2", map[string]string{
-		"HX-Request": "true",
-	})
-
+	path := "/u/" + itoa(tf.userID) + "/articles/" + itoa(id)
+	rr := authedRequest(t, tf, "GET", path, map[string]string{"HX-Request": "true"})
 	if rr.Code != http.StatusOK {
 		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
 	}
@@ -297,39 +363,31 @@ func TestHandleArticleView_SanitizesXSS(t *testing.T) {
 func TestHandleArticleView_NotFound(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	rr := request(t, tf.router, "GET", "/u/1/articles/99999", map[string]string{
-		"HX-Request": "true",
-	})
-
+	path := "/u/" + itoa(tf.userID) + "/articles/99999"
+	rr := authedRequest(t, tf, "GET", path, map[string]string{"HX-Request": "true"})
 	if rr.Code != http.StatusNotFound {
-		t.Errorf("not found status: got %d, want %d", rr.Code, http.StatusNotFound)
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusNotFound)
 	}
 }
 
 func TestHandleStarToggle(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	// Star the article
-	rr := requestForm(t, tf.router, "POST", "/u/1/articles/1/star",
-		url.Values{"starred": {"true"}}, nil)
+	path := "/u/" + itoa(tf.userID) + "/articles/" + itoa(tf.articleID) + "/star"
 
+	rr := authedRequestForm(t, tf, "POST", path, url.Values{"starred": {"true"}})
 	if rr.Code != http.StatusOK {
 		t.Errorf("star status: got %d, want %d", rr.Code, http.StatusOK)
 	}
-	body := rr.Body.String()
-	if !strings.Contains(body, "Starred") {
+	if !strings.Contains(rr.Body.String(), "Starred") {
 		t.Error("response should contain starred state")
 	}
 
-	// Unstar
-	rr = requestForm(t, tf.router, "POST", "/u/1/articles/1/star",
-		url.Values{"starred": {"false"}}, nil)
-
+	rr = authedRequestForm(t, tf, "POST", path, url.Values{"starred": {"false"}})
 	if rr.Code != http.StatusOK {
 		t.Errorf("unstar status: got %d, want %d", rr.Code, http.StatusOK)
 	}
-	body = rr.Body.String()
-	if !strings.Contains(body, "Star") {
+	if !strings.Contains(rr.Body.String(), "Star") {
 		t.Error("response should contain star button")
 	}
 }
@@ -337,15 +395,12 @@ func TestHandleStarToggle(t *testing.T) {
 func TestHandleSidebar(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	rr := request(t, tf.router, "GET", "/u/1/sidebar", map[string]string{
-		"HX-Request": "true",
-	})
-
+	path := "/u/" + itoa(tf.userID) + "/sidebar"
+	rr := authedRequest(t, tf, "GET", path, map[string]string{"HX-Request": "true"})
 	if rr.Code != http.StatusOK {
-		t.Errorf("sidebar status: got %d, want %d", rr.Code, http.StatusOK)
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
 	}
-	body := rr.Body.String()
-	if !strings.Contains(body, "Test Feed") {
+	if !strings.Contains(rr.Body.String(), "Test Feed") {
 		t.Error("sidebar should contain feed title")
 	}
 }
@@ -353,10 +408,9 @@ func TestHandleSidebar(t *testing.T) {
 func TestHandleFeedsManage(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	rr := request(t, tf.router, "GET", "/u/1/feeds", nil)
-
+	rr := authedRequest(t, tf, "GET", "/u/"+itoa(tf.userID)+"/feeds", nil)
 	if rr.Code != http.StatusOK {
-		t.Errorf("feeds manage status: got %d, want %d", rr.Code, http.StatusOK)
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
 	}
 	body := rr.Body.String()
 	if !strings.Contains(body, "Test Feed") {
@@ -370,39 +424,35 @@ func TestHandleFeedsManage(t *testing.T) {
 func TestHandleGroups(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	rr := request(t, tf.router, "GET", "/u/1/groups", nil)
-
+	rr := authedRequest(t, tf, "GET", "/u/"+itoa(tf.userID)+"/groups", nil)
 	if rr.Code != http.StatusOK {
-		t.Errorf("groups status: got %d, want %d", rr.Code, http.StatusOK)
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
 	}
 }
 
 func TestHandleSettings(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	rr := request(t, tf.router, "GET", "/u/1/settings", nil)
-
+	rr := authedRequest(t, tf, "GET", "/u/"+itoa(tf.userID)+"/settings", nil)
 	if rr.Code != http.StatusOK {
-		t.Errorf("settings status: got %d, want %d", rr.Code, http.StatusOK)
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
 	}
 }
 
 func TestHandleSettingsSave(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	rr := requestForm(t, tf.router, "POST", "/u/1/settings",
-		url.Values{
-			"keywords":           {"go, security, ai"},
-			"interest_threshold": {"7.5"},
-			"notify_when":        {"always"},
-			"notify_min_score":   {"6.0"},
-		}, nil)
-
+	path := "/u/" + itoa(tf.userID) + "/settings"
+	rr := authedRequestForm(t, tf, "POST", path, url.Values{
+		"keywords":           {"go, security, ai"},
+		"interest_threshold": {"7.5"},
+		"notify_when":        {"always"},
+		"notify_min_score":   {"6.0"},
+	})
 	if rr.Code != http.StatusOK {
-		t.Errorf("settings save status: got %d, want %d", rr.Code, http.StatusOK)
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
 	}
 
-	// Verify settings were persisted
 	prefs, err := tf.engine.GetPreferences(tf.userID)
 	if err != nil {
 		t.Fatalf("GetPreferences: %v", err)
@@ -415,34 +465,37 @@ func TestHandleSettingsSave(t *testing.T) {
 	}
 }
 
-func TestUserIDFromRequest(t *testing.T) {
-	// Valid userID
-	req := httptest.NewRequest("GET", "/u/42", nil)
-	req.SetPathValue("userID", "42")
-	if got := userIDFromRequest(req); got != 42 {
-		t.Errorf("valid userID: got %d, want 42", got)
-	}
+func TestHandleOIDCUserProvisioning(t *testing.T) {
+	tf := newTestFixtures(t)
 
-	// No userID path param
-	req = httptest.NewRequest("GET", "/", nil)
-	if got := userIDFromRequest(req); got != 0 {
-		t.Errorf("no userID: got %d, want 0", got)
+	// Second login with same sub but different name/email should succeed
+	// and return the same user (not duplicate).
+	user2, err := tf.engine.GetOrProvisionOIDCUser("test-sub-1", "Updated Name", "new@example.com")
+	if err != nil {
+		t.Fatalf("GetOrProvisionOIDCUser: %v", err)
 	}
-
-	// Invalid (non-numeric) userID
-	req = httptest.NewRequest("GET", "/u/abc", nil)
-	req.SetPathValue("userID", "abc")
-	if got := userIDFromRequest(req); got != -1 {
-		t.Errorf("invalid userID: got %d, want -1", got)
-	}
-
-	// Zero userID (invalid)
-	req = httptest.NewRequest("GET", "/u/0", nil)
-	req.SetPathValue("userID", "0")
-	if got := userIDFromRequest(req); got != -1 {
-		t.Errorf("zero userID: got %d, want -1", got)
+	if user2.ID != tf.userID {
+		t.Errorf("second login should return same user ID: got %d, want %d", user2.ID, tf.userID)
 	}
 }
+
+func TestHandleOIDCUserProvisioning_NewUser(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// A completely new sub should create a new user.
+	newUser, err := tf.engine.GetOrProvisionOIDCUser("brand-new-sub", "New Person", "new@example.com")
+	if err != nil {
+		t.Fatalf("GetOrProvisionOIDCUser: %v", err)
+	}
+	if newUser.ID == tf.userID {
+		t.Error("new sub should create a different user")
+	}
+	if newUser.Name != "New Person" {
+		t.Errorf("Name = %q, want %q", newUser.Name, "New Person")
+	}
+}
+
+// --- Utility tests ---
 
 func TestFormatDate(t *testing.T) {
 	tests := []struct {
@@ -487,13 +540,11 @@ func TestParseIntParam(t *testing.T) {
 func TestStaticFilesServed(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	// htmx.min.js should be served
 	rr := request(t, tf.router, "GET", "/static/htmx.min.js", nil)
 	if rr.Code != http.StatusOK {
 		t.Errorf("htmx.min.js status: got %d, want %d", rr.Code, http.StatusOK)
 	}
 
-	// herald.css should be served
 	rr = request(t, tf.router, "GET", "/static/herald.css", nil)
 	if rr.Code != http.StatusOK {
 		t.Errorf("herald.css status: got %d, want %d", rr.Code, http.StatusOK)
@@ -501,3 +552,8 @@ func TestStaticFilesServed(t *testing.T) {
 }
 
 func timePtr(t time.Time) *time.Time { return &t }
+
+// itoa converts an int64 to a string path component.
+func itoa(n int64) string {
+	return url.PathEscape(strings.TrimSpace(strconv.FormatInt(n, 10)))
+}

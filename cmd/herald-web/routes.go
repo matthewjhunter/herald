@@ -6,45 +6,52 @@ import (
 	"net/http"
 
 	herald "github.com/matthewjhunter/herald"
+	"github.com/matthewjhunter/herald/internal/auth"
 )
 
 //go:embed templates static
 var embedded embed.FS
 
 // newRouter sets up all routes using Go 1.22+ enhanced routing.
-func newRouter(engine *herald.Engine) http.Handler {
+func newRouter(engine *herald.Engine, validator *auth.Validator) http.Handler {
 	mux := http.NewServeMux()
 
-	// Static files
+	// Static files — no auth required.
 	staticFS, _ := fs.Sub(embedded, "static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)))
 
-	h := &handlers{engine: engine}
+	h := &handlers{engine: engine, validator: validator}
+	auth := h.requireAuth
 
-	// Full-page routes
-	mux.HandleFunc("GET /{$}", h.handleIndex)
-	mux.HandleFunc("GET /u/{userID}", h.handleHome)
-	mux.HandleFunc("GET /u/{userID}/feeds", h.handleFeedsManage)
-	mux.HandleFunc("GET /u/{userID}/groups", h.handleGroups)
-	mux.HandleFunc("GET /u/{userID}/groups/{groupID}", h.handleGroupDetail)
-	mux.HandleFunc("GET /u/{userID}/settings", h.handleSettings)
-	mux.HandleFunc("GET /u/{userID}/filters", h.handleFilters)
+	// Root: redirect to home page if authenticated, else webauth handles it via requireAuth.
+	mux.Handle("GET /{$}", auth(http.HandlerFunc(h.handleRoot)))
 
-	// htmx fragment routes
-	mux.HandleFunc("GET /u/{userID}/articles", h.handleArticleList)
-	mux.HandleFunc("GET /u/{userID}/articles/{articleID}", h.handleArticleView)
-	mux.HandleFunc("GET /u/{userID}/sidebar", h.handleSidebar)
-	mux.HandleFunc("POST /u/{userID}/articles/mark-all-read", h.handleMarkAllRead)
-	mux.HandleFunc("POST /u/{userID}/articles/{articleID}/star", h.handleStarToggle)
-	mux.HandleFunc("POST /u/{userID}/feeds", h.handleFeedSubscribe)
-	mux.HandleFunc("DELETE /u/{userID}/feeds/{feedID}", h.handleFeedUnsubscribe)
-	mux.HandleFunc("POST /u/{userID}/settings", h.handleSettingsSave)
-	mux.HandleFunc("POST /u/{userID}/filters", h.handleFilterAdd)
-	mux.HandleFunc("POST /u/{userID}/filters/threshold", h.handleFilterThreshold)
-	mux.HandleFunc("DELETE /u/{userID}/filters/{ruleID}", h.handleFilterDelete)
-	mux.HandleFunc("GET /u/{userID}/feeds/{feedID}/metadata", h.handleFeedMetadata)
-	mux.HandleFunc("GET /u/{userID}/feeds/metadata", h.handleFeedMetadataByQuery)
-	mux.HandleFunc("GET /u/{userID}/filters/values", h.handleFilterValues)
+	// Logout — no auth check needed; just redirects to webauth logout.
+	mux.HandleFunc("GET /auth/logout", h.handleLogout)
+
+	// Full-page user routes.
+	mux.Handle("GET /u/{userID}", auth(http.HandlerFunc(h.handleHome)))
+	mux.Handle("GET /u/{userID}/feeds", auth(http.HandlerFunc(h.handleFeedsManage)))
+	mux.Handle("GET /u/{userID}/groups", auth(http.HandlerFunc(h.handleGroups)))
+	mux.Handle("GET /u/{userID}/groups/{groupID}", auth(http.HandlerFunc(h.handleGroupDetail)))
+	mux.Handle("GET /u/{userID}/settings", auth(http.HandlerFunc(h.handleSettings)))
+	mux.Handle("GET /u/{userID}/filters", auth(http.HandlerFunc(h.handleFilters)))
+
+	// htmx fragment routes.
+	mux.Handle("GET /u/{userID}/articles", auth(http.HandlerFunc(h.handleArticleList)))
+	mux.Handle("GET /u/{userID}/articles/{articleID}", auth(http.HandlerFunc(h.handleArticleView)))
+	mux.Handle("GET /u/{userID}/sidebar", auth(http.HandlerFunc(h.handleSidebar)))
+	mux.Handle("POST /u/{userID}/articles/mark-all-read", auth(http.HandlerFunc(h.handleMarkAllRead)))
+	mux.Handle("POST /u/{userID}/articles/{articleID}/star", auth(http.HandlerFunc(h.handleStarToggle)))
+	mux.Handle("POST /u/{userID}/feeds", auth(http.HandlerFunc(h.handleFeedSubscribe)))
+	mux.Handle("DELETE /u/{userID}/feeds/{feedID}", auth(http.HandlerFunc(h.handleFeedUnsubscribe)))
+	mux.Handle("POST /u/{userID}/settings", auth(http.HandlerFunc(h.handleSettingsSave)))
+	mux.Handle("POST /u/{userID}/filters", auth(http.HandlerFunc(h.handleFilterAdd)))
+	mux.Handle("POST /u/{userID}/filters/threshold", auth(http.HandlerFunc(h.handleFilterThreshold)))
+	mux.Handle("DELETE /u/{userID}/filters/{ruleID}", auth(http.HandlerFunc(h.handleFilterDelete)))
+	mux.Handle("GET /u/{userID}/feeds/{feedID}/metadata", auth(http.HandlerFunc(h.handleFeedMetadata)))
+	mux.Handle("GET /u/{userID}/feeds/metadata", auth(http.HandlerFunc(h.handleFeedMetadataByQuery)))
+	mux.Handle("GET /u/{userID}/filters/values", auth(http.HandlerFunc(h.handleFilterValues)))
 
 	return mux
 }

@@ -11,15 +11,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/matthewjhunter/herald"
+	herald "github.com/matthewjhunter/herald"
+	"github.com/matthewjhunter/herald/internal/auth"
 	"github.com/microcosm-cc/bluemonday"
 )
 
 // handlers holds dependencies for all HTTP handler methods.
 type handlers struct {
-	engine *herald.Engine
-	pages  map[string]*template.Template // per-page template sets
-	policy *bluemonday.Policy
+	engine    *herald.Engine
+	validator *auth.Validator
+	pages     map[string]*template.Template // per-page template sets
+	policy    *bluemonday.Policy
 }
 
 // init parses templates and creates the sanitizer policy on first use.
@@ -44,7 +46,7 @@ func (h *handlers) init() {
 	shared := []string{"base.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "error.html"}
 
 	// Pages that get their own template tree.
-	pages := []string{"index.html", "home.html", "feeds_manage.html", "groups.html", "group_detail.html", "settings.html", "filters.html"}
+	pages := []string{"home.html", "feeds_manage.html", "groups.html", "group_detail.html", "settings.html", "filters.html"}
 
 	h.pages = make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
@@ -57,10 +59,6 @@ func (h *handlers) init() {
 }
 
 // --- Template data types ---
-
-type indexData struct {
-	Users []herald.User
-}
 
 type homeData struct {
 	UserID      int64
@@ -255,44 +253,21 @@ func parseInt64Param(r *http.Request, name string) int64 {
 
 // --- Full-page handlers ---
 
-func (h *handlers) handleIndex(w http.ResponseWriter, r *http.Request) {
-	// Check for user cookie redirect
-	if c, err := r.Cookie("herald_user"); err == nil {
-		if uid, err := strconv.ParseInt(c.Value, 10, 64); err == nil && uid > 0 {
-			http.Redirect(w, r, fmt.Sprintf("/u/%d", uid), http.StatusFound)
-			return
-		}
-	}
+// handleRoot redirects authenticated users to their home page.
+// requireAuth ensures unauthenticated requests never reach here.
+func (h *handlers) handleRoot(w http.ResponseWriter, r *http.Request) {
+	user := userFromContext(r.Context())
+	http.Redirect(w, r, fmt.Sprintf("/u/%d", user.ID), http.StatusFound)
+}
 
-	users, err := h.engine.ListUsers()
-	if err != nil {
-		h.renderError(w, http.StatusInternalServerError, "Failed to list users")
-		return
-	}
-
-	h.renderPage(w, r, "index.html", indexData{Users: users})
+// handleLogout redirects to the webauth logout endpoint.
+func (h *handlers) handleLogout(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, h.validator.WebauthLogoutURL(), http.StatusFound)
 }
 
 func (h *handlers) handleHome(w http.ResponseWriter, r *http.Request) {
-	uid := userIDFromRequest(r)
-	if uid < 0 {
-		http.Error(w, "invalid user ID", http.StatusBadRequest)
-		return
-	}
-	if uid == 0 {
-		http.Redirect(w, r, "/", http.StatusFound)
-		return
-	}
-
-	// Set cookie for future redirect
-	http.SetCookie(w, &http.Cookie{
-		Name:     "herald_user",
-		Value:    strconv.FormatInt(uid, 10),
-		Path:     "/",
-		MaxAge:   365 * 24 * 3600,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
+	user := userFromContext(r.Context())
+	uid := user.ID
 
 	stats, err := h.engine.GetFeedStats(uid)
 	if err != nil {
@@ -301,7 +276,8 @@ func (h *handlers) handleHome(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := homeData{
-		UserID: uid,
+		UserID:   uid,
+		UserName: user.Name,
 	}
 	if stats != nil {
 		data.Feeds = stats.Feeds
@@ -312,7 +288,7 @@ func (h *handlers) handleHome(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) handleFeedsManage(w http.ResponseWriter, r *http.Request) {
-	uid := userIDFromRequest(r)
+	uid := userFromContext(r.Context()).ID
 
 	feeds, err := h.engine.GetUserFeeds(uid)
 	if err != nil {
@@ -355,7 +331,7 @@ func (h *handlers) handleFeedsManage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) handleGroups(w http.ResponseWriter, r *http.Request) {
-	uid := userIDFromRequest(r)
+	uid := userFromContext(r.Context()).ID
 
 	groups, err := h.engine.GetUserGroups(uid)
 	if err != nil {
@@ -367,7 +343,7 @@ func (h *handlers) handleGroups(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) handleGroupDetail(w http.ResponseWriter, r *http.Request) {
-	uid := userIDFromRequest(r)
+	uid := userFromContext(r.Context()).ID
 	groupID, err := strconv.ParseInt(r.PathValue("groupID"), 10, 64)
 	if err != nil {
 		h.renderError(w, http.StatusBadRequest, "Invalid group ID")
@@ -384,7 +360,7 @@ func (h *handlers) handleGroupDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) handleSettings(w http.ResponseWriter, r *http.Request) {
-	uid := userIDFromRequest(r)
+	uid := userFromContext(r.Context()).ID
 
 	prefs, err := h.engine.GetPreferences(uid)
 	if err != nil {
@@ -406,7 +382,7 @@ func (h *handlers) handleSettings(w http.ResponseWriter, r *http.Request) {
 // --- htmx fragment handlers ---
 
 func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
-	uid := userIDFromRequest(r)
+	uid := userFromContext(r.Context()).ID
 	limit := parseIntParam(r, "limit", 30)
 	offset := parseIntParam(r, "offset", 0)
 	feedID := parseInt64Param(r, "feed_id")
@@ -466,7 +442,7 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 	h.init()
-	uid := userIDFromRequest(r)
+	uid := userFromContext(r.Context()).ID
 	articleID, err := strconv.ParseInt(r.PathValue("articleID"), 10, 64)
 	if err != nil {
 		h.renderError(w, http.StatusBadRequest, "Invalid article ID")
@@ -516,7 +492,7 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) handleSidebar(w http.ResponseWriter, r *http.Request) {
-	uid := userIDFromRequest(r)
+	uid := userFromContext(r.Context()).ID
 
 	stats, err := h.engine.GetFeedStats(uid)
 	if err != nil {
@@ -535,7 +511,7 @@ func (h *handlers) handleSidebar(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 	h.init()
-	uid := userIDFromRequest(r)
+	uid := userFromContext(r.Context()).ID
 
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -567,7 +543,7 @@ func (h *handlers) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) handleStarToggle(w http.ResponseWriter, r *http.Request) {
-	uid := userIDFromRequest(r)
+	uid := userFromContext(r.Context()).ID
 	articleID, err := strconv.ParseInt(r.PathValue("articleID"), 10, 64)
 	if err != nil {
 		h.renderError(w, http.StatusBadRequest, "Invalid article ID")
@@ -600,7 +576,7 @@ func (h *handlers) handleStarToggle(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) handleFeedSubscribe(w http.ResponseWriter, r *http.Request) {
-	uid := userIDFromRequest(r)
+	uid := userFromContext(r.Context()).ID
 	url := strings.TrimSpace(r.FormValue("url"))
 	title := strings.TrimSpace(r.FormValue("title"))
 
@@ -618,7 +594,7 @@ func (h *handlers) handleFeedSubscribe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) handleFeedUnsubscribe(w http.ResponseWriter, r *http.Request) {
-	uid := userIDFromRequest(r)
+	uid := userFromContext(r.Context()).ID
 	feedID, err := strconv.ParseInt(r.PathValue("feedID"), 10, 64)
 	if err != nil {
 		h.renderError(w, http.StatusBadRequest, "Invalid feed ID")
@@ -634,7 +610,7 @@ func (h *handlers) handleFeedUnsubscribe(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *handlers) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
-	uid := userIDFromRequest(r)
+	uid := userFromContext(r.Context()).ID
 
 	if err := r.ParseForm(); err != nil {
 		h.renderError(w, http.StatusBadRequest, "Invalid form data")
@@ -675,7 +651,7 @@ func (h *handlers) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 // --- Filter rules handlers ---
 
 func (h *handlers) handleFilters(w http.ResponseWriter, r *http.Request) {
-	uid := userIDFromRequest(r)
+	uid := userFromContext(r.Context()).ID
 
 	prefs, err := h.engine.GetPreferences(uid)
 	if err != nil {
@@ -724,7 +700,7 @@ func (h *handlers) handleFilters(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) handleFilterAdd(w http.ResponseWriter, r *http.Request) {
-	uid := userIDFromRequest(r)
+	uid := userFromContext(r.Context()).ID
 
 	axis := strings.TrimSpace(r.FormValue("axis"))
 	value := strings.TrimSpace(r.FormValue("value"))
@@ -759,7 +735,7 @@ func (h *handlers) handleFilterAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) handleFilterDelete(w http.ResponseWriter, r *http.Request) {
-	uid := userIDFromRequest(r)
+	uid := userFromContext(r.Context()).ID
 	ruleID, err := strconv.ParseInt(r.PathValue("ruleID"), 10, 64)
 	if err != nil {
 		h.renderError(w, http.StatusBadRequest, "Invalid rule ID")
@@ -775,7 +751,7 @@ func (h *handlers) handleFilterDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) handleFilterThreshold(w http.ResponseWriter, r *http.Request) {
-	uid := userIDFromRequest(r)
+	uid := userFromContext(r.Context()).ID
 	v := r.FormValue("filter_threshold")
 	if v == "" {
 		v = "0"

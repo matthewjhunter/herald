@@ -1,25 +1,58 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"strconv"
 	"time"
+
+	herald "github.com/matthewjhunter/herald"
 )
 
-// userIDFromRequest parses {userID} from the request path.
-// Returns 0 if the path parameter is absent.
-// Returns -1 if the path parameter is present but invalid.
-func userIDFromRequest(r *http.Request) int64 {
-	raw := r.PathValue("userID")
-	if raw == "" {
-		return 0
-	}
-	uid, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || uid <= 0 {
-		return -1
-	}
-	return uid
+// contextKey is an unexported type for context values set by this package.
+type contextKey struct{}
+
+// withUser stores the authenticated Herald user in the request context.
+func withUser(ctx context.Context, u *herald.User) context.Context {
+	return context.WithValue(ctx, contextKey{}, u)
+}
+
+// userFromContext retrieves the authenticated Herald user from the context.
+// Returns nil if no user is present (should not happen on authenticated routes).
+func userFromContext(ctx context.Context) *herald.User {
+	u, _ := ctx.Value(contextKey{}).(*herald.User)
+	return u
+}
+
+// requireAuth validates the JWT cookie, provisions the Herald user if needed,
+// and enforces that the {userID} in the URL matches the authenticated user.
+func (h *handlers) requireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claims, err := h.validator.ValidateCookie(r)
+		if err != nil {
+			http.Redirect(w, r, h.validator.WebauthLoginURL(r.URL.RequestURI()), http.StatusFound)
+			return
+		}
+
+		user, err := h.engine.GetOrProvisionOIDCUser(claims.Sub, claims.Name, claims.Email)
+		if err != nil {
+			log.Printf("herald-web: provision user: %v", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		// If the route includes {userID}, verify it matches the authenticated user.
+		if rawUID := r.PathValue("userID"); rawUID != "" {
+			uid, err := strconv.ParseInt(rawUID, 10, 64)
+			if err != nil || uid != user.ID {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+		}
+
+		next.ServeHTTP(w, r.WithContext(withUser(r.Context(), user)))
+	})
 }
 
 // logging logs each request with method, path, status, and duration.
