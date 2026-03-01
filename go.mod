@@ -11,6 +11,7 @@ require (
 	github.com/mmcdole/gofeed v1.3.0
 	github.com/modelcontextprotocol/go-sdk v1.3.0
 	github.com/ollama/ollama v0.16.2
+	github.com/pelletier/go-toml/v2 v2.2.2
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.45.0
