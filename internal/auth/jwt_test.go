@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,8 +33,8 @@ func newTestValidator(t *testing.T, issuer string) (*Validator, *httptest.Server
 
 	// Serve a minimal JWKS containing testKey.
 	jwksSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n := testKey.PublicKey.N.Bytes()
-		e := big.NewInt(int64(testKey.PublicKey.E)).Bytes()
+		n := testKey.N.Bytes()
+		e := big.NewInt(int64(testKey.E)).Bytes()
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"keys":[{"kty":"RSA","kid":"test","n":"%s","e":"%s"}]}`,
 			base64.RawURLEncoding.EncodeToString(n),
@@ -124,8 +125,18 @@ func TestValidate_TamperedToken(t *testing.T) {
 	defer srv.Close()
 
 	token := makeToken(t, "sub", "", "", "", time.Now().Add(time.Hour))
-	// Flip the last character to tamper with the signature.
-	tampered := token[:len(token)-1] + "X"
+	// Tamper with the signature by modifying the first character of the third
+	// dot-separated segment. The first character of any base64url block is always
+	// a full 6-bit value (never a padding-only position), so this reliably changes
+	// the decoded signature bytes regardless of key size.
+	parts := strings.SplitN(token, ".", 3)
+	sig := []byte(parts[2])
+	if sig[0] != 'A' {
+		sig[0] = 'A'
+	} else {
+		sig[0] = 'B'
+	}
+	tampered := parts[0] + "." + parts[1] + "." + string(sig)
 
 	_, err := v.Validate(tampered)
 	if err == nil {

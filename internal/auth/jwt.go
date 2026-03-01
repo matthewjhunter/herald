@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,12 +36,22 @@ type ValidatorConfig struct {
 	JWKSEndpoint string
 	// PEMKeyPath is the path to an RSA public key PEM file, used when JWKS is not yet live.
 	PEMKeyPath string
+	// TenantID is the webauth tenant ID used for the OIDC authorize and token endpoints.
+	TenantID string
+	// ClientID is Herald's registered OIDC client ID.
+	ClientID string
+	// CallbackURL is Herald's registered OIDC redirect URI.
+	CallbackURL string
+	// HTTPClient overrides the HTTP client used for token exchange and JWKS fetches.
+	// If nil a default client with a 10s timeout is used.
+	HTTPClient *http.Client
 }
 
 // Validator validates RS256 JWTs issued by the webauth server.
 // Keys are cached in memory and refreshed from JWKS on kid-miss or TTL expiry.
 type Validator struct {
 	cfg           ValidatorConfig
+	httpClient    *http.Client
 	mu            sync.RWMutex
 	keys          map[string]*rsa.PublicKey // kid → key ("" for PEM-loaded key without kid)
 	keysFetchedAt time.Time
@@ -52,15 +64,87 @@ func NewValidator(cfg ValidatorConfig) (*Validator, error) {
 	if cfg.JWKSEndpoint == "" && cfg.PEMKeyPath == "" {
 		return nil, fmt.Errorf("auth: one of JWKSEndpoint or PEMKeyPath must be set")
 	}
+	client := cfg.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
 	v := &Validator{
-		cfg:     cfg,
-		keys:    make(map[string]*rsa.PublicKey),
-		keysTTL: time.Hour,
+		cfg:        cfg,
+		httpClient: client,
+		keys:       make(map[string]*rsa.PublicKey),
+		keysTTL:    time.Hour,
 	}
 	if err := v.loadKeys(); err != nil {
 		return nil, err
 	}
 	return v, nil
+}
+
+// CookieName returns the name of the JWT session cookie.
+func (v *Validator) CookieName() string { return v.cfg.CookieName }
+
+// OIDCConfigured reports whether the OIDC callback flow is configured.
+func (v *Validator) OIDCConfigured() bool {
+	return v.cfg.TenantID != "" && v.cfg.ClientID != "" && v.cfg.CallbackURL != ""
+}
+
+// AuthorizeURL builds the OIDC authorization URL with PKCE.
+// state is an opaque nonce; challenge is the base64url-encoded SHA-256 of the PKCE verifier.
+func (v *Validator) AuthorizeURL(state, challenge string) string {
+	base := fmt.Sprintf("%s/t/%s/authorize", v.cfg.WebauthURL, v.cfg.TenantID)
+	u, _ := url.Parse(base)
+	q := u.Query()
+	q.Set("response_type", "code")
+	q.Set("client_id", v.cfg.ClientID)
+	q.Set("redirect_uri", v.cfg.CallbackURL)
+	q.Set("scope", "openid email profile")
+	q.Set("code_challenge", challenge)
+	q.Set("code_challenge_method", "S256")
+	q.Set("state", state)
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// ExchangeCode exchanges an authorization code for an access token.
+// verifier is the PKCE code_verifier that was used to derive the challenge.
+// Returns the access_token JWT string from the token endpoint response.
+func (v *Validator) ExchangeCode(ctx context.Context, code, verifier string) (string, error) {
+	tokenURL := fmt.Sprintf("%s/t/%s/token", v.cfg.WebauthURL, v.cfg.TenantID)
+
+	form := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"redirect_uri":  {v.cfg.CallbackURL},
+		"client_id":     {v.cfg.ClientID},
+		"code_verifier": {verifier},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", fmt.Errorf("build token request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := v.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("token request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("token endpoint returned %d", resp.StatusCode)
+	}
+
+	var body struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", fmt.Errorf("decode token response: %w", err)
+	}
+	if body.AccessToken == "" {
+		return "", fmt.Errorf("token response missing access_token")
+	}
+	return body.AccessToken, nil
 }
 
 // ValidateCookie extracts the JWT from the named cookie and validates it.
@@ -184,7 +268,7 @@ func (v *Validator) loadKeys() error {
 // fetchJWKS fetches RSA public keys from the JWKS endpoint and updates the cache.
 // Caller must hold the write lock (except during NewValidator).
 func (v *Validator) fetchJWKS() error {
-	resp, err := http.Get(v.cfg.JWKSEndpoint) //nolint:noctx
+	resp, err := v.httpClient.Get(v.cfg.JWKSEndpoint) //nolint:noctx
 	if err != nil {
 		return fmt.Errorf("fetch JWKS: %w", err)
 	}

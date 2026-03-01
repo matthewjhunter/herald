@@ -28,6 +28,9 @@ func main() {
 	jwksURL := flag.String("jwks-url", "", "JWKS endpoint URL (e.g. https://auth.infodancer.net/.well-known/jwks.json)")
 	pemKeyPath := flag.String("jwt-public-key", "", "path to RSA public key PEM file (dev fallback when JWKS not yet live)")
 	jwtIssuer := flag.String("jwt-issuer", "", "expected JWT issuer claim (empty = skip validation)")
+	webauthTenant := flag.String("webauth-tenant", "", "webauth tenant ID used for OIDC endpoints (e.g. infodancer)")
+	webauthClientID := flag.String("webauth-client-id", "", "Herald's registered OIDC client ID")
+	webauthCallbackURL := flag.String("webauth-callback-url", "", "Herald's registered OIDC callback URL (e.g. https://herald.infodancer.net/auth/callback)")
 
 	flag.Parse()
 
@@ -46,6 +49,9 @@ func main() {
 		WebauthURL:   *webauthURL,
 		JWKSEndpoint: *jwksURL,
 		PEMKeyPath:   *pemKeyPath,
+		TenantID:     *webauthTenant,
+		ClientID:     *webauthClientID,
+		CallbackURL:  *webauthCallbackURL,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "herald-web: %v\n", err)

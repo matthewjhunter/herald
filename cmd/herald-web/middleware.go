@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"log"
 	"net/http"
 	"strconv"
@@ -25,13 +28,69 @@ func userFromContext(ctx context.Context) *herald.User {
 	return u
 }
 
+// generateVerifier returns a random base64url-encoded PKCE code verifier.
+func generateVerifier() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// pkceChallenge returns the S256 code challenge for the given verifier.
+func pkceChallenge(verifier string) string {
+	h := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(h[:])
+}
+
+// generateNonce returns a random base64url-encoded state nonce.
+func generateNonce() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// setOAuthCookie sets a short-lived HttpOnly cookie for the OIDC flow.
+func setOAuthCookie(w http.ResponseWriter, name, value string, maxAge int, secure bool) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
 // requireAuth validates the JWT cookie, provisions the Herald user if needed,
 // and enforces that the {userID} in the URL matches the authenticated user.
 func (h *handlers) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, err := h.validator.ValidateCookie(r)
 		if err != nil {
-			http.Redirect(w, r, h.validator.WebauthLoginURL(r.URL.RequestURI()), http.StatusFound)
+			if h.validator.OIDCConfigured() {
+				verifier, err := generateVerifier()
+				if err != nil {
+					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+					return
+				}
+				state, err := generateNonce()
+				if err != nil {
+					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+					return
+				}
+				challenge := pkceChallenge(verifier)
+				secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+				setOAuthCookie(w, "oauth_verifier", verifier, 300, secure)
+				setOAuthCookie(w, "oauth_state", state, 300, secure)
+				setOAuthCookie(w, "oauth_redirect", r.URL.RequestURI(), 300, secure)
+				http.Redirect(w, r, h.validator.AuthorizeURL(state, challenge), http.StatusFound)
+			} else {
+				http.Redirect(w, r, h.validator.WebauthLoginURL(r.URL.RequestURI()), http.StatusFound)
+			}
 			return
 		}
 
