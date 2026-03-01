@@ -30,13 +30,23 @@ type ValidatorConfig struct {
 	Issuer string
 	// CookieName is the name of the cookie containing the JWT.
 	CookieName string
+
+	// IssuerURL is the OIDC issuer URL, e.g. "https://auth.infodancer.net/t/infodancer".
+	// When set, the OIDC discovery document is fetched from IssuerURL+"/.well-known/openid-configuration"
+	// and the JWKS, authorize, and token endpoints are configured automatically.
+	// JWKSEndpoint, WebauthURL, and TenantID may be omitted when IssuerURL is set.
+	IssuerURL string
+
 	// WebauthURL is the base URL of the webauth server (e.g. https://auth.infodancer.net).
+	// If empty and IssuerURL is set, it is derived from the IssuerURL scheme+host.
+	// Used for logout URL construction.
 	WebauthURL string
-	// JWKSEndpoint is the JWKS discovery URL. Takes precedence over PEMKeyPath.
+	// JWKSEndpoint overrides the JWKS URL from autodiscovery. Takes precedence over PEMKeyPath.
 	JWKSEndpoint string
 	// PEMKeyPath is the path to an RSA public key PEM file, used when JWKS is not yet live.
 	PEMKeyPath string
-	// TenantID is the webauth tenant ID used for the OIDC authorize and token endpoints.
+	// TenantID is the webauth tenant ID used for constructing OIDC endpoints when
+	// IssuerURL is not set. Ignored when autodiscovery is active.
 	TenantID string
 	// ClientID is Herald's registered OIDC client ID.
 	ClientID string
@@ -56,14 +66,17 @@ type Validator struct {
 	keys          map[string]*rsa.PublicKey // kid → key ("" for PEM-loaded key without kid)
 	keysFetchedAt time.Time
 	keysTTL       time.Duration
+
+	// Populated by OIDC autodiscovery when IssuerURL is set.
+	discoveredAuthorizeURL string
+	discoveredTokenURL     string
 }
 
 // NewValidator creates a Validator and eagerly loads public keys.
 // Returns an error if the key source is misconfigured or unreachable.
+// If cfg.IssuerURL is set, the OIDC discovery document is fetched first to
+// populate the JWKS endpoint and OIDC endpoints automatically.
 func NewValidator(cfg ValidatorConfig) (*Validator, error) {
-	if cfg.JWKSEndpoint == "" && cfg.PEMKeyPath == "" {
-		return nil, fmt.Errorf("auth: one of JWKSEndpoint or PEMKeyPath must be set")
-	}
 	client := cfg.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
@@ -73,6 +86,14 @@ func NewValidator(cfg ValidatorConfig) (*Validator, error) {
 		httpClient: client,
 		keys:       make(map[string]*rsa.PublicKey),
 		keysTTL:    time.Hour,
+	}
+	if cfg.IssuerURL != "" {
+		if err := v.fetchDiscovery(); err != nil {
+			return nil, err
+		}
+	}
+	if v.cfg.JWKSEndpoint == "" && v.cfg.PEMKeyPath == "" {
+		return nil, fmt.Errorf("auth: one of JWKSEndpoint or PEMKeyPath must be set (or set IssuerURL for autodiscovery)")
 	}
 	if err := v.loadKeys(); err != nil {
 		return nil, err
@@ -85,13 +106,19 @@ func (v *Validator) CookieName() string { return v.cfg.CookieName }
 
 // OIDCConfigured reports whether the OIDC callback flow is configured.
 func (v *Validator) OIDCConfigured() bool {
-	return v.cfg.TenantID != "" && v.cfg.ClientID != "" && v.cfg.CallbackURL != ""
+	if v.cfg.ClientID == "" || v.cfg.CallbackURL == "" {
+		return false
+	}
+	return v.discoveredAuthorizeURL != "" || v.cfg.TenantID != ""
 }
 
 // AuthorizeURL builds the OIDC authorization URL with PKCE.
 // state is an opaque nonce; challenge is the base64url-encoded SHA-256 of the PKCE verifier.
 func (v *Validator) AuthorizeURL(state, challenge string) string {
-	base := fmt.Sprintf("%s/t/%s/authorize", v.cfg.WebauthURL, v.cfg.TenantID)
+	base := v.discoveredAuthorizeURL
+	if base == "" {
+		base = fmt.Sprintf("%s/t/%s/authorize", v.cfg.WebauthURL, v.cfg.TenantID)
+	}
 	u, _ := url.Parse(base)
 	q := u.Query()
 	q.Set("response_type", "code")
@@ -109,7 +136,10 @@ func (v *Validator) AuthorizeURL(state, challenge string) string {
 // verifier is the PKCE code_verifier that was used to derive the challenge.
 // Returns the access_token JWT string from the token endpoint response.
 func (v *Validator) ExchangeCode(ctx context.Context, code, verifier string) (string, error) {
-	tokenURL := fmt.Sprintf("%s/t/%s/token", v.cfg.WebauthURL, v.cfg.TenantID)
+	tokenURL := v.discoveredTokenURL
+	if tokenURL == "" {
+		tokenURL = fmt.Sprintf("%s/t/%s/token", v.cfg.WebauthURL, v.cfg.TenantID)
+	}
 
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
@@ -255,6 +285,48 @@ func (v *Validator) findKey(kid string) (*rsa.PublicKey, bool) {
 		return key, true
 	}
 	return nil, false
+}
+
+// fetchDiscovery fetches the OIDC discovery document from IssuerURL and
+// populates discoveredAuthorizeURL, discoveredTokenURL, and cfg.JWKSEndpoint
+// (unless JWKSEndpoint was already set explicitly). Also derives cfg.WebauthURL
+// from the IssuerURL scheme+host when WebauthURL is not set.
+func (v *Validator) fetchDiscovery() error {
+	discoveryURL := strings.TrimRight(v.cfg.IssuerURL, "/") + "/.well-known/openid-configuration"
+	resp, err := v.httpClient.Get(discoveryURL) //nolint:noctx
+	if err != nil {
+		return fmt.Errorf("fetch OIDC discovery: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("OIDC discovery returned %d", resp.StatusCode)
+	}
+
+	var doc struct {
+		JWKSURI      string `json:"jwks_uri"`
+		AuthorizeURL string `json:"authorization_endpoint"`
+		TokenURL     string `json:"token_endpoint"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		return fmt.Errorf("parse OIDC discovery: %w", err)
+	}
+	if doc.JWKSURI == "" || doc.AuthorizeURL == "" || doc.TokenURL == "" {
+		return fmt.Errorf("OIDC discovery document missing required fields")
+	}
+
+	if v.cfg.JWKSEndpoint == "" {
+		v.cfg.JWKSEndpoint = doc.JWKSURI
+	}
+	v.discoveredAuthorizeURL = doc.AuthorizeURL
+	v.discoveredTokenURL = doc.TokenURL
+
+	if v.cfg.WebauthURL == "" {
+		u, err := url.Parse(v.cfg.IssuerURL)
+		if err == nil {
+			v.cfg.WebauthURL = u.Scheme + "://" + u.Host
+		}
+	}
+	return nil
 }
 
 // loadKeys loads keys from whichever source is configured.
