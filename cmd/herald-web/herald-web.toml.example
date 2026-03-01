@@ -1,0 +1,39 @@
+# herald-web configuration
+# Copy to herald-web.toml and edit before running.
+
+# Path to the SQLite database written by the herald CLI/poller.
+db   = "/var/lib/herald/herald.db"
+
+# TCP address to listen on.
+addr = ":8080"
+
+[webauth]
+# OIDC issuer URL — enables autodiscovery of JWKS, authorize, and token
+# endpoints.  Set this and you can omit webauth_url, tenant_id, and jwks_url.
+issuer_url   = "https://webauth.example.com/t/mytenant"
+
+# Herald's registered OIDC client ID and redirect URI.
+client_id    = "herald"
+callback_url = "https://herald.example.com/auth/callback"
+
+# Name of the JWT session cookie issued by the auth server.
+# Defaults to "infodancer_jwt" if omitted.
+cookie = "infodancer_jwt"
+
+# Optional: expected iss claim value.  Leave empty to skip the check.
+# jwt_issuer = "https://webauth.example.com/t/mytenant"
+
+# ── Override / dev-fallback options ───────────────────────────────────────────
+
+# webauth_url overrides the base URL derived from issuer_url (login/logout).
+# webauth_url = "https://webauth.example.com"
+
+# jwks_url overrides the JWKS endpoint from autodiscovery.
+# jwks_url = "https://webauth.example.com/.well-known/jwks.json"
+
+# pem_key_path loads an RSA public key PEM directly (dev fallback).
+# pem_key_path = "/etc/herald/jwt-public.pem"
+
+# tenant_id enables manual OIDC endpoint construction without autodiscovery.
+# Not needed when issuer_url is set.
+# tenant_id = "mytenant"
