@@ -5,6 +5,7 @@ go 1.25.0
 toolchain go1.25.7
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/matthewjhunter/go-embedding v0.1.0
 	github.com/microcosm-cc/bluemonday v1.0.27
@@ -13,11 +14,10 @@ require (
 	github.com/ollama/ollama v0.16.2
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.45.0
+	modernc.org/sqlite v1.46.1
 )
 
 require (
-	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/PuerkitoBio/goquery v1.8.0 // indirect
 	github.com/andybalholm/cascadia v1.3.1 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
