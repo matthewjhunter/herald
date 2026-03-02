@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -25,8 +26,11 @@ type Feed struct {
 	LastError    *string
 	ETag         string
 	LastModified string
-	Enabled      bool
-	CreatedAt    time.Time
+	Enabled           bool
+	CreatedAt         time.Time
+	ConsecutiveErrors int
+	NextFetchAt       *time.Time
+	Status            string // "active" or "dead"
 }
 
 type Article struct {
@@ -139,6 +143,11 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		"ALTER TABLE users ADD COLUMN oidc_sub TEXT",
 		"ALTER TABLE users ADD COLUMN email TEXT",
 		"CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_sub ON users(oidc_sub) WHERE oidc_sub IS NOT NULL",
+		// Adaptive fetch scheduling.
+		"ALTER TABLE feeds ADD COLUMN consecutive_errors INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE feeds ADD COLUMN next_fetch_at DATETIME",
+		"ALTER TABLE feeds ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
+		"CREATE INDEX IF NOT EXISTS idx_feeds_due ON feeds(next_fetch_at) WHERE status = 'active' AND enabled = 1",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -197,6 +206,114 @@ func needsReadStateMigration(db *sql.DB) bool {
 		}
 	}
 	return true // table exists but has no user_id column
+}
+
+// scanFeeds scans a *sql.Rows result set into a []Feed slice.
+// Each row must select: id, url, title, description, last_fetched, last_error,
+// etag, last_modified, enabled, created_at, consecutive_errors, next_fetch_at, status.
+func scanFeeds(rows *sql.Rows) ([]Feed, error) {
+	var feeds []Feed
+	for rows.Next() {
+		var f Feed
+		var etag, lastMod sql.NullString
+		if err := rows.Scan(
+			&f.ID, &f.URL, &f.Title, &f.Description, &f.LastFetched, &f.LastError,
+			&etag, &lastMod, &f.Enabled, &f.CreatedAt,
+			&f.ConsecutiveErrors, &f.NextFetchAt, &f.Status,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan feed: %w", err)
+		}
+		f.ETag = etag.String
+		f.LastModified = lastMod.String
+		feeds = append(feeds, f)
+	}
+	return feeds, rows.Err()
+}
+
+// computeFeedBaseInterval queries the last 11 article publish dates for feedID
+// and returns a fetch interval based on posting recency and frequency.
+func (s *SQLiteStore) computeFeedBaseInterval(feedID int64) time.Duration {
+	rows, err := s.db.Query(
+		`SELECT published_date FROM articles
+		 WHERE feed_id = ? AND published_date IS NOT NULL
+		 ORDER BY published_date DESC LIMIT 11`, feedID)
+	if err != nil {
+		return 24 * time.Hour
+	}
+	defer rows.Close()
+
+	var dates []time.Time
+	for rows.Next() {
+		var t time.Time
+		if err := rows.Scan(&t); err == nil {
+			dates = append(dates, t)
+		}
+	}
+	if len(dates) == 0 {
+		return 24 * time.Hour // new or empty feed
+	}
+
+	lastPostAge := time.Since(dates[0])
+
+	var gaps []time.Duration
+	for i := 0; i < len(dates)-1; i++ {
+		if gap := dates[i].Sub(dates[i+1]); gap > 0 {
+			gaps = append(gaps, gap)
+		}
+	}
+	var medianGap time.Duration
+	if len(gaps) > 0 {
+		sort.Slice(gaps, func(i, j int) bool { return gaps[i] < gaps[j] })
+		medianGap = gaps[len(gaps)/2]
+	}
+
+	return pickFetchInterval(lastPostAge, medianGap)
+}
+
+// pickFetchInterval maps posting recency and frequency to a base fetch interval.
+func pickFetchInterval(lastPostAge, medianPostInterval time.Duration) time.Duration {
+	const (
+		day   = 24 * time.Hour
+		week  = 7 * day
+		month = 30 * day
+	)
+	switch {
+	case lastPostAge < week:
+		switch {
+		case medianPostInterval < 6*time.Hour:
+			return 30 * time.Minute
+		case medianPostInterval < day:
+			return time.Hour
+		default:
+			return 4 * time.Hour
+		}
+	case lastPostAge < month:
+		return 12 * time.Hour
+	case lastPostAge < 3*month:
+		return day
+	case lastPostAge < 6*month:
+		return 3 * day
+	case lastPostAge < 365*day:
+		return week
+	default:
+		return 30 * day
+	}
+}
+
+// applyErrorBackoff returns base doubled for each consecutive error, capped at 30 days.
+func applyErrorBackoff(base time.Duration, consecutiveErrors int) time.Duration {
+	if consecutiveErrors <= 0 {
+		return base
+	}
+	n := consecutiveErrors
+	if n > 6 {
+		n = 6 // cap multiplier at 64×
+	}
+	backoff := base * time.Duration(1<<n)
+	if max := 30 * 24 * time.Hour; backoff > max {
+		return max
+	}
+	return backoff
 }
 
 // Close closes the database connection
@@ -469,44 +586,55 @@ func (s *SQLiteStore) AddFeed(url, title, description string) (int64, error) {
 	return result.LastInsertId()
 }
 
-// GetAllFeeds returns all enabled feeds
+// GetAllFeeds returns all active enabled feeds that are due for fetching.
 func (s *SQLiteStore) GetAllFeeds() ([]Feed, error) {
-	rows, err := s.db.Query("SELECT id, url, title, description, last_fetched, last_error, etag, last_modified, enabled, created_at FROM feeds WHERE enabled = 1")
+	rows, err := s.db.Query(`
+		SELECT id, url, title, description, last_fetched, last_error, etag, last_modified,
+		       enabled, created_at, consecutive_errors, next_fetch_at, status
+		FROM feeds
+		WHERE enabled = 1 AND status = 'active'
+		  AND (next_fetch_at IS NULL OR next_fetch_at <= CURRENT_TIMESTAMP)`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get feeds: %w", err)
 	}
 	defer rows.Close()
-
-	var feeds []Feed
-	for rows.Next() {
-		var f Feed
-		var etag, lastMod sql.NullString
-		if err := rows.Scan(&f.ID, &f.URL, &f.Title, &f.Description, &f.LastFetched, &f.LastError, &etag, &lastMod, &f.Enabled, &f.CreatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan feed: %w", err)
-		}
-		f.ETag = etag.String
-		f.LastModified = lastMod.String
-		feeds = append(feeds, f)
-	}
-	return feeds, rows.Err()
+	return scanFeeds(rows)
 }
 
-// UpdateFeedError records a fetch error for a feed.
+// UpdateFeedError records a fetch error, increments the consecutive error count,
+// schedules the next fetch with exponential backoff, and marks the feed as dead
+// when it has failed 5+ times without a successful fetch in the last 30 days.
 func (s *SQLiteStore) UpdateFeedError(feedID int64, errMsg string) error {
-	_, err := s.db.Exec("UPDATE feeds SET last_error = ? WHERE id = ?", errMsg, feedID)
-	if err != nil {
+	if _, err := s.db.Exec(
+		"UPDATE feeds SET last_error = ?, consecutive_errors = consecutive_errors + 1 WHERE id = ?",
+		errMsg, feedID,
+	); err != nil {
 		return fmt.Errorf("failed to update feed error: %w", err)
 	}
+
+	var consecutiveErrors int
+	var lastFetched sql.NullTime
+	if err := s.db.QueryRow(
+		"SELECT consecutive_errors, last_fetched FROM feeds WHERE id = ?", feedID,
+	).Scan(&consecutiveErrors, &lastFetched); err != nil {
+		return nil // best-effort scheduling; don't fail the caller
+	}
+
+	// Mark dead when persistently broken: 5+ errors and no success in 30+ days.
+	if consecutiveErrors >= 5 && (!lastFetched.Valid || time.Since(lastFetched.Time) > 30*24*time.Hour) {
+		s.db.Exec("UPDATE feeds SET status = 'dead' WHERE id = ?", feedID) //nolint:errcheck
+		return nil
+	}
+
+	base := s.computeFeedBaseInterval(feedID)
+	next := time.Now().Add(applyErrorBackoff(base, consecutiveErrors))
+	s.db.Exec("UPDATE feeds SET next_fetch_at = ? WHERE id = ?", next, feedID) //nolint:errcheck
 	return nil
 }
 
-// ClearFeedError clears the last error and updates last_fetched for a feed.
+// ClearFeedError clears the last error and schedules the next fetch.
 func (s *SQLiteStore) ClearFeedError(feedID int64) error {
-	_, err := s.db.Exec("UPDATE feeds SET last_error = NULL, last_fetched = CURRENT_TIMESTAMP WHERE id = ?", feedID)
-	if err != nil {
-		return fmt.Errorf("failed to clear feed error: %w", err)
-	}
-	return nil
+	return s.UpdateFeedLastFetched(feedID)
 }
 
 // UpdateFeedCacheHeaders stores the HTTP cache headers from the last successful fetch.
@@ -518,9 +646,16 @@ func (s *SQLiteStore) UpdateFeedCacheHeaders(feedID int64, etag, lastModified st
 	return nil
 }
 
-// UpdateFeedLastFetched updates the last fetched timestamp for a feed
+// UpdateFeedLastFetched records a successful fetch, resets error state, and
+// schedules the next fetch based on the feed's posting frequency.
 func (s *SQLiteStore) UpdateFeedLastFetched(feedID int64) error {
-	_, err := s.db.Exec("UPDATE feeds SET last_fetched = CURRENT_TIMESTAMP WHERE id = ?", feedID)
+	base := s.computeFeedBaseInterval(feedID)
+	next := time.Now().Add(base)
+	_, err := s.db.Exec(
+		`UPDATE feeds SET last_fetched = CURRENT_TIMESTAMP, last_error = NULL,
+		 consecutive_errors = 0, status = 'active', next_fetch_at = ? WHERE id = ?`,
+		next, feedID,
+	)
 	if err != nil {
 		return fmt.Errorf("failed to update feed last_fetched: %w", err)
 	}
@@ -910,62 +1045,40 @@ func (s *SQLiteStore) SubscribeUserToFeed(userID, feedID int64) error {
 	return nil
 }
 
-// GetUserFeeds returns all feeds a user is subscribed to
+// GetUserFeeds returns all feeds a user is subscribed to.
 func (s *SQLiteStore) GetUserFeeds(userID int64) ([]Feed, error) {
-	query := `
-		SELECT f.id, f.url, f.title, f.description, f.last_fetched, f.last_error, f.etag, f.last_modified, f.enabled, f.created_at
+	rows, err := s.db.Query(`
+		SELECT f.id, f.url, f.title, f.description, f.last_fetched, f.last_error, f.etag,
+		       f.last_modified, f.enabled, f.created_at,
+		       f.consecutive_errors, f.next_fetch_at, f.status
 		FROM feeds f
 		JOIN user_feeds uf ON f.id = uf.feed_id
 		WHERE uf.user_id = ? AND f.enabled = 1
-		ORDER BY f.title
-	`
-	rows, err := s.db.Query(query, userID)
+		ORDER BY f.title`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user feeds: %w", err)
 	}
 	defer rows.Close()
-
-	var feeds []Feed
-	for rows.Next() {
-		var f Feed
-		var etag, lastMod sql.NullString
-		if err := rows.Scan(&f.ID, &f.URL, &f.Title, &f.Description, &f.LastFetched, &f.LastError, &etag, &lastMod, &f.Enabled, &f.CreatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan feed: %w", err)
-		}
-		f.ETag = etag.String
-		f.LastModified = lastMod.String
-		feeds = append(feeds, f)
-	}
-	return feeds, rows.Err()
+	return scanFeeds(rows)
 }
 
-// GetAllSubscribedFeeds returns all feeds that ANY user is subscribed to
+// GetAllSubscribedFeeds returns all active enabled feeds that any user is subscribed
+// to and that are due for fetching.
 func (s *SQLiteStore) GetAllSubscribedFeeds() ([]Feed, error) {
-	query := `
-		SELECT DISTINCT f.id, f.url, f.title, f.description, f.last_fetched, f.last_error, f.etag, f.last_modified, f.enabled, f.created_at
+	rows, err := s.db.Query(`
+		SELECT DISTINCT f.id, f.url, f.title, f.description, f.last_fetched, f.last_error,
+		       f.etag, f.last_modified, f.enabled, f.created_at,
+		       f.consecutive_errors, f.next_fetch_at, f.status
 		FROM feeds f
 		JOIN user_feeds uf ON f.id = uf.feed_id
-		WHERE f.enabled = 1
-		ORDER BY f.title
-	`
-	rows, err := s.db.Query(query)
+		WHERE f.enabled = 1 AND f.status = 'active'
+		  AND (f.next_fetch_at IS NULL OR f.next_fetch_at <= CURRENT_TIMESTAMP)
+		ORDER BY f.title`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get subscribed feeds: %w", err)
 	}
 	defer rows.Close()
-
-	var feeds []Feed
-	for rows.Next() {
-		var f Feed
-		var etag, lastMod sql.NullString
-		if err := rows.Scan(&f.ID, &f.URL, &f.Title, &f.Description, &f.LastFetched, &f.LastError, &etag, &lastMod, &f.Enabled, &f.CreatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan feed: %w", err)
-		}
-		f.ETag = etag.String
-		f.LastModified = lastMod.String
-		feeds = append(feeds, f)
-	}
-	return feeds, rows.Err()
+	return scanFeeds(rows)
 }
 
 // GetFeedSubscribers returns all user IDs subscribed to a feed
