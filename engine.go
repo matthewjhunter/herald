@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"log"
@@ -352,6 +353,72 @@ func (e *Engine) DiscoverFeeds(ctx context.Context, pageURL string) ([]Discovere
 		out[i] = DiscoveredFeed{URL: f.URL, Title: f.Title, Type: f.Type}
 	}
 	return out, nil
+}
+
+// opml XML types for feed export.
+type opmlExport struct {
+	XMLName xml.Name `xml:"opml"`
+	Version string   `xml:"version,attr"`
+	Head    opmlHead `xml:"head"`
+	Body    opmlBody `xml:"body"`
+}
+
+type opmlHead struct {
+	Title       string `xml:"title"`
+	DateCreated string `xml:"dateCreated"`
+}
+
+type opmlBody struct {
+	Outlines []opmlOutline `xml:"outline"`
+}
+
+type opmlOutline struct {
+	Text   string `xml:"text,attr"`
+	Title  string `xml:"title,attr"`
+	Type   string `xml:"type,attr"`
+	XMLURL string `xml:"xmlUrl,attr"`
+}
+
+func marshalOPML(title string, feeds []storage.Feed) ([]byte, error) {
+	outlines := make([]opmlOutline, len(feeds))
+	for i, f := range feeds {
+		outlines[i] = opmlOutline{
+			Text:   f.Title,
+			Title:  f.Title,
+			Type:   "rss",
+			XMLURL: f.URL,
+		}
+	}
+	doc := opmlExport{
+		Version: "2.0",
+		Head:    opmlHead{Title: title, DateCreated: time.Now().UTC().Format(time.RFC1123)},
+		Body:    opmlBody{Outlines: outlines},
+	}
+	data, err := xml.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(xml.Header), data...), nil
+}
+
+// ExportOPML returns an OPML 2.0 document containing all feeds the given user
+// is subscribed to.
+func (e *Engine) ExportOPML(userID int64) ([]byte, error) {
+	feeds, err := e.store.GetUserFeeds(userID)
+	if err != nil {
+		return nil, fmt.Errorf("get user feeds: %w", err)
+	}
+	return marshalOPML("Herald Subscriptions", feeds)
+}
+
+// ExportAllFeedsOPML returns an OPML 2.0 document containing every feed
+// subscribed to by any user. Intended for admin use.
+func (e *Engine) ExportAllFeedsOPML() ([]byte, error) {
+	feeds, err := e.store.GetAllActiveSubscribedFeeds()
+	if err != nil {
+		return nil, fmt.Errorf("get all feeds: %w", err)
+	}
+	return marshalOPML("Herald - All Subscriptions", feeds)
 }
 
 // UnsubscribeFeed removes a user's subscription to a feed. If no subscribers

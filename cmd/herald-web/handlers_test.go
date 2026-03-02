@@ -206,28 +206,16 @@ func TestHandleRoot_UnauthenticatedRedirectsToWebauth(t *testing.T) {
 	}
 }
 
-func TestHandleRoot_AuthenticatedRedirectsToHome(t *testing.T) {
+func TestHandleRoot_AuthenticatedServesHome(t *testing.T) {
 	tf := newTestFixtures(t)
 
+	// Authenticated GET / should render the home page directly (no redirect).
 	rr := authedRequest(t, tf, "GET", "/", nil)
-	if rr.Code != http.StatusFound {
-		t.Errorf("status: got %d, want %d", rr.Code, http.StatusFound)
+	if rr.Code != http.StatusOK {
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
 	}
-	loc := rr.Header().Get("Location")
-	if !strings.Contains(loc, "/u/") {
-		t.Errorf("redirect location %q should be /u/{id}", loc)
-	}
-}
-
-func TestRequireAuth_WrongUserIDForbidden(t *testing.T) {
-	tf := newTestFixtures(t)
-
-	// JWT is for user tf.userID; try to access a different user's route.
-	wrongUID := tf.userID + 999
-	path := "/u/" + itoa(wrongUID) + "/feeds"
-	rr := authedRequest(t, tf, "GET", path, nil)
-	if rr.Code != http.StatusForbidden {
-		t.Errorf("status: got %d, want %d (IDOR check)", rr.Code, http.StatusForbidden)
+	if !strings.Contains(rr.Body.String(), "Test Feed") {
+		t.Error("home page should contain feed title")
 	}
 }
 
@@ -249,7 +237,7 @@ func TestHandleLogout(t *testing.T) {
 func TestHandleHome(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	rr := authedRequest(t, tf, "GET", "/u/"+itoa(tf.userID), nil)
+	rr := authedRequest(t, tf, "GET", "/", nil)
 	if rr.Code != http.StatusOK {
 		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
 	}
@@ -262,7 +250,7 @@ func TestHandleHome(t *testing.T) {
 func TestHandleHome_Unauthenticated(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	rr := request(t, tf.router, "GET", "/u/"+itoa(tf.userID), nil)
+	rr := request(t, tf.router, "GET", "/", nil)
 	if rr.Code != http.StatusFound {
 		t.Errorf("status: got %d, want %d", rr.Code, http.StatusFound)
 	}
@@ -274,7 +262,7 @@ func TestHandleHome_Unauthenticated(t *testing.T) {
 func TestHandleArticleList_Default(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	rr := authedRequest(t, tf, "GET", "/u/"+itoa(tf.userID)+"/articles", map[string]string{
+	rr := authedRequest(t, tf, "GET", "/articles", map[string]string{
 		"HX-Request": "true",
 	})
 	if rr.Code != http.StatusOK {
@@ -288,7 +276,7 @@ func TestHandleArticleList_Default(t *testing.T) {
 func TestHandleArticleList_ByFeed(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	path := "/u/" + itoa(tf.userID) + "/articles?feed_id=" + itoa(tf.feedID)
+	path := "/articles?feed_id=" + itoa(tf.feedID)
 	rr := authedRequest(t, tf, "GET", path, map[string]string{"HX-Request": "true"})
 	if rr.Code != http.StatusOK {
 		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
@@ -301,8 +289,7 @@ func TestHandleArticleList_ByFeed(t *testing.T) {
 func TestHandleArticleList_Starred_Empty(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	path := "/u/" + itoa(tf.userID) + "/articles?starred=1"
-	rr := authedRequest(t, tf, "GET", path, map[string]string{"HX-Request": "true"})
+	rr := authedRequest(t, tf, "GET", "/articles?starred=1", map[string]string{"HX-Request": "true"})
 	if rr.Code != http.StatusOK {
 		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
 	}
@@ -314,7 +301,7 @@ func TestHandleArticleList_Starred_Empty(t *testing.T) {
 func TestHandleArticleView(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	path := "/u/" + itoa(tf.userID) + "/articles/" + itoa(tf.articleID)
+	path := "/articles/" + itoa(tf.articleID)
 	rr := authedRequest(t, tf, "GET", path, map[string]string{"HX-Request": "true"})
 	if rr.Code != http.StatusOK {
 		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
@@ -344,7 +331,7 @@ func TestHandleArticleView_SanitizesXSS(t *testing.T) {
 		t.Fatalf("AddArticle: %v", err)
 	}
 
-	path := "/u/" + itoa(tf.userID) + "/articles/" + itoa(id)
+	path := "/articles/" + itoa(id)
 	rr := authedRequest(t, tf, "GET", path, map[string]string{"HX-Request": "true"})
 	if rr.Code != http.StatusOK {
 		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
@@ -364,7 +351,7 @@ func TestHandleArticleView_SanitizesXSS(t *testing.T) {
 func TestHandleArticleView_NotFound(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	path := "/u/" + itoa(tf.userID) + "/articles/99999"
+	path := "/articles/99999"
 	rr := authedRequest(t, tf, "GET", path, map[string]string{"HX-Request": "true"})
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("status: got %d, want %d", rr.Code, http.StatusNotFound)
@@ -374,7 +361,7 @@ func TestHandleArticleView_NotFound(t *testing.T) {
 func TestHandleStarToggle(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	path := "/u/" + itoa(tf.userID) + "/articles/" + itoa(tf.articleID) + "/star"
+	path := "/articles/" + itoa(tf.articleID) + "/star"
 
 	rr := authedRequestForm(t, tf, "POST", path, url.Values{"starred": {"true"}})
 	if rr.Code != http.StatusOK {
@@ -396,8 +383,7 @@ func TestHandleStarToggle(t *testing.T) {
 func TestHandleSidebar(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	path := "/u/" + itoa(tf.userID) + "/sidebar"
-	rr := authedRequest(t, tf, "GET", path, map[string]string{"HX-Request": "true"})
+	rr := authedRequest(t, tf, "GET", "/sidebar", map[string]string{"HX-Request": "true"})
 	if rr.Code != http.StatusOK {
 		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
 	}
@@ -409,7 +395,7 @@ func TestHandleSidebar(t *testing.T) {
 func TestHandleFeedsManage(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	rr := authedRequest(t, tf, "GET", "/u/"+itoa(tf.userID)+"/feeds", nil)
+	rr := authedRequest(t, tf, "GET", "/feeds", nil)
 	if rr.Code != http.StatusOK {
 		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
 	}
@@ -425,7 +411,7 @@ func TestHandleFeedsManage(t *testing.T) {
 func TestHandleGroups(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	rr := authedRequest(t, tf, "GET", "/u/"+itoa(tf.userID)+"/groups", nil)
+	rr := authedRequest(t, tf, "GET", "/groups", nil)
 	if rr.Code != http.StatusOK {
 		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
 	}
@@ -434,7 +420,7 @@ func TestHandleGroups(t *testing.T) {
 func TestHandleSettings(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	rr := authedRequest(t, tf, "GET", "/u/"+itoa(tf.userID)+"/settings", nil)
+	rr := authedRequest(t, tf, "GET", "/settings", nil)
 	if rr.Code != http.StatusOK {
 		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
 	}
@@ -443,8 +429,7 @@ func TestHandleSettings(t *testing.T) {
 func TestHandleSettingsSave(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	path := "/u/" + itoa(tf.userID) + "/settings"
-	rr := authedRequestForm(t, tf, "POST", path, url.Values{
+	rr := authedRequestForm(t, tf, "POST", "/settings", url.Values{
 		"keywords":           {"go, security, ai"},
 		"interest_threshold": {"7.5"},
 		"notify_when":        {"always"},

@@ -11,7 +11,7 @@
             <small class="secondary"> — {{.Type}}</small><br>
             <small class="secondary">{{.URL}}</small>
         </div>
-        <form hx-post="/u/{{$.UserID}}/feeds" hx-target="body" style="margin:0;">
+        <form hx-post="/feeds" hx-target="body" style="margin:0;">
             <input type="hidden" name="url" value="{{.URL}}">
             <input type="hidden" name="title" value="{{.Title}}">
             <button type="submit" style="margin:0;padding:0.3rem 0.75rem;font-size:0.85rem;">Subscribe</button>
@@ -25,10 +25,10 @@
 {{define "title"}}Herald - Manage Feeds{{end}}
 {{define "nav"}}
 <nav style="display:flex;gap:1rem;align-items:center;">
-    <a href="/u/{{.UserID}}">Articles</a>
-    <a href="/u/{{.UserID}}/feeds" aria-current="page">Feeds</a>
-    <a href="/u/{{.UserID}}/groups">Groups</a>
-    <a href="/u/{{.UserID}}/settings">Settings</a>
+    <a href="/">Articles</a>
+    <a href="/feeds" aria-current="page">Feeds</a>
+    <a href="/groups">Groups</a>
+    <a href="/settings">Settings</a>
 </nav>
 {{end}}
 {{define "content"}}
@@ -37,7 +37,7 @@
 
     <article>
         <header><h3>Subscribe to Feed</h3></header>
-        <form hx-post="/u/{{.UserID}}/feeds/discover" hx-target="#subscribe-result" hx-swap="innerHTML"
+        <form hx-post="/feeds/discover" hx-target="#subscribe-result" hx-swap="innerHTML"
               hx-on::after-request="if(event.detail.successful) this.reset();">
             <div class="grid">
                 <input type="url" name="url" placeholder="https://example.com/ or https://example.com/feed.xml" required>
@@ -50,12 +50,17 @@
 
     <article>
         <header><h3>Import OPML</h3></header>
-        <form method="post" action="/u/{{.UserID}}/feeds/import" enctype="multipart/form-data">
+        <form method="post" action="/feeds/import" enctype="multipart/form-data">
             <div class="grid">
                 <input type="file" name="opml" accept=".opml,.xml" required>
                 <button type="submit">Import</button>
             </div>
         </form>
+    </article>
+
+    <article>
+        <header><h3>Export OPML</h3></header>
+        <p><a href="/feeds/export.opml" role="button" class="outline secondary" style="display:inline-block;">Download Subscriptions</a></p>
     </article>
 
     <div id="feed-list">
@@ -85,7 +90,7 @@
                     <td>{{.LastFetchedFmt}}</td>
                     <td>
                         <button class="outline secondary" style="padding:0.25rem 0.5rem;font-size:0.8rem;"
-                                hx-delete="/u/{{$.UserID}}/feeds/{{.FeedID}}"
+                                hx-delete="/feeds/{{.FeedID}}"
                                 hx-target="#feed-list" hx-swap="innerHTML"
                                 hx-confirm="Unsubscribe from {{.Title}}?">
                             Unsubscribe

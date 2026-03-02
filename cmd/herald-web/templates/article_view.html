@@ -25,7 +25,7 @@
     </a>
     <button class="outline {{if .Starred}}contrast{{end}}"
             data-star-toggle
-            hx-post="/u/{{.UserID}}/articles/{{.ID}}/star"
+            hx-post="/articles/{{.ID}}/star"
             hx-swap="outerHTML">
         {{if .Starred}}&#9733; Starred{{else}}&#9734; Star{{end}}
     </button>

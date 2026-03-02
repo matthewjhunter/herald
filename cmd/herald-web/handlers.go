@@ -136,7 +136,6 @@ func (h *handlers) init() {
 // --- Template data types ---
 
 type homeData struct {
-	UserID      int64
 	UserName    string
 	Feeds       []herald.FeedStats
 	TotalUnread int
@@ -144,7 +143,6 @@ type homeData struct {
 }
 
 type articleListData struct {
-	UserID     int64
 	Articles   []articleRow
 	HasMore    bool
 	NextOffset int
@@ -154,7 +152,6 @@ type articleListData struct {
 
 type articleRow struct {
 	ID               int64
-	UserID           int64
 	Title            string
 	Author           string
 	FeedTitle        string
@@ -165,7 +162,6 @@ type articleRow struct {
 
 type articleViewData struct {
 	ID               int64
-	UserID           int64
 	Title            string
 	Author           string
 	FeedTitle        string
@@ -177,8 +173,7 @@ type articleViewData struct {
 }
 
 type feedManageData struct {
-	UserID int64
-	Feeds  []feedRow
+	Feeds []feedRow
 }
 
 type feedRow struct {
@@ -193,17 +188,14 @@ type feedRow struct {
 }
 
 type groupsData struct {
-	UserID int64
 	Groups []herald.ArticleGroup
 }
 
 type groupDetailData struct {
-	UserID int64
-	Group  *herald.ArticleGroup
+	Group *herald.ArticleGroup
 }
 
 type settingsData struct {
-	UserID            int64
 	Keywords          string
 	InterestThreshold float64
 	NotifyWhen        string
@@ -213,7 +205,6 @@ type settingsData struct {
 }
 
 type filtersData struct {
-	UserID          int64
 	FilterThreshold int
 	Rules           []filterRuleRow
 	Feeds           []herald.Feed
@@ -225,7 +216,6 @@ type filterRuleRow struct {
 	Value     string
 	Score     int
 	FeedTitle string
-	UserID    int64
 }
 
 type errorData struct {
@@ -330,13 +320,6 @@ func parseInt64Param(r *http.Request, name string) int64 {
 
 // --- Full-page handlers ---
 
-// handleRoot redirects authenticated users to their home page.
-// requireAuth ensures unauthenticated requests never reach here.
-func (h *handlers) handleRoot(w http.ResponseWriter, r *http.Request) {
-	user := userFromContext(r.Context())
-	http.Redirect(w, r, fmt.Sprintf("/u/%d", user.ID), http.StatusFound)
-}
-
 // handleLogout redirects to the webauth logout endpoint.
 func (h *handlers) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, h.validator.WebauthLogoutURL(), http.StatusFound)
@@ -418,7 +401,6 @@ func (h *handlers) handleHome(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := homeData{
-		UserID:   uid,
 		UserName: user.Name,
 	}
 	if stats != nil {
@@ -446,7 +428,7 @@ func (h *handlers) handleFeedsManage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	data := feedManageData{UserID: uid}
+	data := feedManageData{}
 	for _, f := range feeds {
 		row := feedRow{
 			FeedID: f.ID,
@@ -481,11 +463,10 @@ func (h *handlers) handleGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.renderPage(w, r, "groups.html", groupsData{UserID: uid, Groups: groups})
+	h.renderPage(w, r, "groups.html", groupsData{Groups: groups})
 }
 
 func (h *handlers) handleGroupDetail(w http.ResponseWriter, r *http.Request) {
-	uid := userFromContext(r.Context()).ID
 	groupID, err := strconv.ParseInt(r.PathValue("groupID"), 10, 64)
 	if err != nil {
 		h.renderError(w, http.StatusBadRequest, "Invalid group ID")
@@ -498,7 +479,7 @@ func (h *handlers) handleGroupDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.renderPage(w, r, "group_detail.html", groupDetailData{UserID: uid, Group: group})
+	h.renderPage(w, r, "group_detail.html", groupDetailData{Group: group})
 }
 
 func (h *handlers) handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -512,7 +493,6 @@ func (h *handlers) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := settingsData{
-		UserID:            uid,
 		Keywords:          strings.Join(prefs.Keywords, ", "),
 		InterestThreshold: prefs.InterestThreshold,
 		NotifyWhen:        prefs.NotifyWhen,
@@ -565,7 +545,6 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := articleListData{
-		UserID:     uid,
 		HasMore:    hasMore,
 		NextOffset: offset + limit,
 		FeedID:     feedID,
@@ -574,7 +553,6 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 	for _, a := range articles {
 		data.Articles = append(data.Articles, articleRow{
 			ID:               a.ID,
-			UserID:           uid,
 			Title:            a.Title,
 			Author:           a.Author,
 			FeedTitle:        feedTitles[a.FeedID],
@@ -623,7 +601,6 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 
 	data := articleViewData{
 		ID:               article.ID,
-		UserID:           uid,
 		Title:            article.Title,
 		Author:           article.Author,
 		FeedTitle:        feedTitle,
@@ -645,7 +622,7 @@ func (h *handlers) handleSidebar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := homeData{UserID: uid}
+	data := homeData{}
 	if stats != nil {
 		data.Feeds = stats.Feeds
 		data.TotalUnread = stats.Total.UnreadArticles
@@ -716,13 +693,12 @@ func (h *handlers) handleStarToggle(w http.ResponseWriter, r *http.Request) {
 		cls = "outline"
 	}
 	fmt.Fprintf(w,
-		`<button class="%s" data-star-toggle hx-post="/u/%d/articles/%d/star" hx-swap="outerHTML" hx-vals='{"starred":"%s"}'>%s</button>`,
-		cls, uid, articleID, nextState, label)
+		`<button class="%s" data-star-toggle hx-post="/articles/%d/star" hx-swap="outerHTML" hx-vals='{"starred":"%s"}'>%s</button>`,
+		cls, articleID, nextState, label)
 }
 
 // discoverResultsData is the template data for the feed_discover_results fragment.
 type discoverResultsData struct {
-	UserID  int64
 	PageURL string
 	Feeds   []herald.DiscoveredFeed
 	Error   string
@@ -737,13 +713,13 @@ func (h *handlers) handleFeedDiscover(w http.ResponseWriter, r *http.Request) {
 	title := strings.TrimSpace(r.FormValue("title"))
 
 	if rawURL == "" {
-		h.renderDiscoverResult(w, uid, rawURL, nil, "Feed URL is required")
+		h.renderDiscoverResult(w, rawURL, nil, "Feed URL is required")
 		return
 	}
 
 	// Happy path: URL is already a valid feed.
 	if err := h.engine.SubscribeFeed(uid, rawURL, title); err == nil {
-		w.Header().Set("HX-Redirect", fmt.Sprintf("/u/%d/feeds", uid))
+		w.Header().Set("HX-Redirect", "/feeds")
 		return
 	}
 
@@ -753,26 +729,48 @@ func (h *handlers) handleFeedDiscover(w http.ResponseWriter, r *http.Request) {
 
 	discovered, err := h.engine.DiscoverFeeds(ctx, rawURL)
 	if err != nil {
-		h.renderDiscoverResult(w, uid, rawURL, nil,
+		h.renderDiscoverResult(w, rawURL, nil,
 			fmt.Sprintf("Could not reach %s: %v", rawURL, err))
 		return
 	}
 	if len(discovered) == 0 {
-		h.renderDiscoverResult(w, uid, rawURL, nil,
+		h.renderDiscoverResult(w, rawURL, nil,
 			"No feeds found at this URL. Try entering the feed URL directly.")
 		return
 	}
 
-	h.renderDiscoverResult(w, uid, rawURL, discovered, "")
+	h.renderDiscoverResult(w, rawURL, discovered, "")
 }
 
-func (h *handlers) renderDiscoverResult(w http.ResponseWriter, uid int64, pageURL string, feeds []herald.DiscoveredFeed, errMsg string) {
+func (h *handlers) renderDiscoverResult(w http.ResponseWriter, pageURL string, feeds []herald.DiscoveredFeed, errMsg string) {
 	h.renderFragment(w, "feed_discover_results", discoverResultsData{
-		UserID:  uid,
 		PageURL: pageURL,
 		Feeds:   feeds,
 		Error:   errMsg,
 	})
+}
+
+func (h *handlers) handleOPMLExport(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	data, err := h.engine.ExportOPML(uid)
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Failed to export feeds")
+		return
+	}
+	w.Header().Set("Content-Type", "text/x-opml; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="herald-feeds.opml"`)
+	w.Write(data)
+}
+
+func (h *handlers) handleAdminOPMLExport(w http.ResponseWriter, _ *http.Request) {
+	data, err := h.engine.ExportAllFeedsOPML()
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Failed to export feeds")
+		return
+	}
+	w.Header().Set("Content-Type", "text/x-opml; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="herald-all-feeds.opml"`)
+	w.Write(data)
 }
 
 func (h *handlers) handleFeedSubscribe(w http.ResponseWriter, r *http.Request) {
@@ -790,7 +788,7 @@ func (h *handlers) handleFeedSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/u/%d/feeds", uid))
+	w.Header().Set("HX-Redirect", "/feeds")
 }
 
 func (h *handlers) handleFeedUnsubscribe(w http.ResponseWriter, r *http.Request) {
@@ -806,7 +804,7 @@ func (h *handlers) handleFeedUnsubscribe(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/u/%d/feeds", uid))
+	w.Header().Set("HX-Redirect", "/feeds")
 }
 
 func (h *handlers) handleOPMLImport(w http.ResponseWriter, r *http.Request) {
@@ -829,7 +827,7 @@ func (h *handlers) handleOPMLImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, fmt.Sprintf("/u/%d/feeds", uid), http.StatusSeeOther)
+	http.Redirect(w, r, "/feeds", http.StatusSeeOther)
 }
 
 func (h *handlers) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
@@ -907,19 +905,16 @@ func (h *handlers) handleUserPromptReset(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	http.Redirect(w, r, fmt.Sprintf("/u/%d/settings", uid), http.StatusSeeOther)
+	http.Redirect(w, r, "/settings", http.StatusSeeOther)
 }
 
 // adminPromptsData is the template data for the admin prompts page.
 type adminPromptsData struct {
-	UserID  int64
 	Prompts []promptUIEntry
 }
 
 func (h *handlers) handleAdminPrompts(w http.ResponseWriter, r *http.Request) {
-	uid := userFromContext(r.Context()).ID
 	data := adminPromptsData{
-		UserID:  uid,
 		Prompts: h.loadPromptEntries(0),
 	}
 	h.renderPage(w, r, "admin_prompts.html", data)
@@ -990,17 +985,15 @@ func (h *handlers) handleFilters(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := filtersData{
-		UserID:          uid,
 		FilterThreshold: prefs.FilterThreshold,
 		Feeds:           feeds,
 	}
 	for _, r := range rules {
 		row := filterRuleRow{
-			ID:     r.ID,
-			Axis:   r.Axis,
-			Value:  r.Value,
-			Score:  r.Score,
-			UserID: uid,
+			ID:    r.ID,
+			Axis:  r.Axis,
+			Value: r.Value,
+			Score: r.Score,
 		}
 		if r.FeedID != nil {
 			row.FeedTitle = feedTitles[*r.FeedID]
@@ -1172,14 +1165,13 @@ func (h *handlers) renderFilterRulesFragment(w http.ResponseWriter, userID int64
 		feedTitles[f.ID] = f.Title
 	}
 
-	data := filtersData{UserID: userID}
+	data := filtersData{}
 	for _, r := range rules {
 		row := filterRuleRow{
-			ID:     r.ID,
-			Axis:   r.Axis,
-			Value:  r.Value,
-			Score:  r.Score,
-			UserID: userID,
+			ID:    r.ID,
+			Axis:  r.Axis,
+			Value: r.Value,
+			Score: r.Score,
 		}
 		if r.FeedID != nil {
 			row.FeedTitle = feedTitles[*r.FeedID]

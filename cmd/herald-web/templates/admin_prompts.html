@@ -1,8 +1,8 @@
 {{define "title"}}Herald - Global AI Prompts{{end}}
 {{define "nav"}}
 <nav style="display:flex;gap:1rem;align-items:center;">
-    <a href="/u/{{.UserID}}">Articles</a>
-    <a href="/u/{{.UserID}}/settings">Settings</a>
+    <a href="/">Articles</a>
+    <a href="/settings">Settings</a>
     <span aria-current="page">Admin: Global Prompts</span>
 </nav>
 {{end}}
@@ -10,6 +10,7 @@
 <main class="container" style="max-width:800px;">
     <h2>Global AI Prompts</h2>
     <p class="secondary">These prompts are used as defaults for all users who have not set their own. Changes take effect on the next AI processing cycle.</p>
+    <p><a href="/admin/feeds/export.opml" class="secondary">Export all feeds (OPML)</a></p>
 
     {{range .Prompts}}
     <article>

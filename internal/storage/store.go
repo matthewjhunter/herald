@@ -100,6 +100,7 @@ type Store interface {
 	SubscribeUserToFeed(userID, feedID int64) error
 	GetUserFeeds(userID int64) ([]Feed, error)
 	GetAllSubscribedFeeds() ([]Feed, error)
+	GetAllActiveSubscribedFeeds() ([]Feed, error)
 	GetFeedSubscribers(feedID int64) ([]int64, error)
 	UnsubscribeUserFromFeed(userID, feedID int64) error
 	DeleteFeedIfOrphaned(feedID int64) (bool, error)

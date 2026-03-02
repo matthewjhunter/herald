@@ -1,27 +1,27 @@
 {{define "title"}}Herald - {{.UserName}}{{end}}
 {{define "nav"}}
 <nav style="display:flex;gap:1rem;align-items:center;">
-    <a href="/u/{{.UserID}}">Articles</a>
-    <a href="/u/{{.UserID}}/feeds">Feeds</a>
-    <a href="/u/{{.UserID}}/groups">Groups</a>
-    <a href="/u/{{.UserID}}/settings">Settings</a>
+    <a href="/">Articles</a>
+    <a href="/feeds">Feeds</a>
+    <a href="/groups">Groups</a>
+    <a href="/settings">Settings</a>
 </nav>
 {{end}}
 {{define "content"}}
 <div class="app-grid" id="app-grid">
     <aside class="sidebar" id="sidebar"
-           hx-get="/u/{{.UserID}}/sidebar" hx-trigger="feeds-changed from:body" hx-swap="innerHTML">
+           hx-get="/sidebar" hx-trigger="feeds-changed from:body" hx-swap="innerHTML">
         {{template "feed_sidebar_content" .}}
     </aside>
     <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
     <div class="content-split">
         <div class="article-list-pane" id="article-list"
-             hx-get="/u/{{.UserID}}/articles" hx-trigger="load" hx-swap="innerHTML">
+             hx-get="/articles" hx-trigger="load" hx-swap="innerHTML">
             <div class="empty-state">Loading articles...</div>
         </div>
         <div class="article-list-footer" style="display:flex;justify-content:space-between;align-items:center;">
-            <button class="mark-all-read-btn" data-user-id="{{.UserID}}">Mark all as read</button>
-            <button id="unsubscribe-feed-btn" data-user-id="{{.UserID}}"
+            <button class="mark-all-read-btn">Mark all as read</button>
+            <button id="unsubscribe-feed-btn"
                     class="outline" style="display:none;color:var(--pico-del-color);border-color:var(--pico-del-color);padding:0.25rem 0.75rem;font-size:0.85rem;">
                 Unsubscribe
             </button>

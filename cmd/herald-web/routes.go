@@ -23,47 +23,46 @@ func newRouter(engine *herald.Engine, validator *auth.Validator, adminRole strin
 	h := &handlers{engine: engine, validator: validator, adminRole: adminRole, adminUsers: adminUsers}
 	auth := h.requireAuth
 
-	// Root: redirect to home page if authenticated, else webauth handles it via requireAuth.
-	mux.Handle("GET /{$}", auth(http.HandlerFunc(h.handleRoot)))
-
 	// Auth callback — receives the code from webauth, exchanges it for a JWT cookie.
 	mux.HandleFunc("GET /auth/callback", h.handleCallback)
 
 	// Logout — no auth check needed; just redirects to webauth logout.
 	mux.HandleFunc("GET /auth/logout", h.handleLogout)
 
-	// Full-page user routes.
-	mux.Handle("GET /u/{userID}", auth(http.HandlerFunc(h.handleHome)))
-	mux.Handle("GET /u/{userID}/feeds", auth(http.HandlerFunc(h.handleFeedsManage)))
-	mux.Handle("GET /u/{userID}/groups", auth(http.HandlerFunc(h.handleGroups)))
-	mux.Handle("GET /u/{userID}/groups/{groupID}", auth(http.HandlerFunc(h.handleGroupDetail)))
-	mux.Handle("GET /u/{userID}/settings", auth(http.HandlerFunc(h.handleSettings)))
-	mux.Handle("GET /u/{userID}/filters", auth(http.HandlerFunc(h.handleFilters)))
+	// Full-page routes.
+	mux.Handle("GET /{$}", auth(http.HandlerFunc(h.handleHome)))
+	mux.Handle("GET /feeds", auth(http.HandlerFunc(h.handleFeedsManage)))
+	mux.Handle("GET /groups", auth(http.HandlerFunc(h.handleGroups)))
+	mux.Handle("GET /groups/{groupID}", auth(http.HandlerFunc(h.handleGroupDetail)))
+	mux.Handle("GET /settings", auth(http.HandlerFunc(h.handleSettings)))
+	mux.Handle("GET /filters", auth(http.HandlerFunc(h.handleFilters)))
 
 	// htmx fragment routes.
-	mux.Handle("GET /u/{userID}/articles", auth(http.HandlerFunc(h.handleArticleList)))
-	mux.Handle("GET /u/{userID}/articles/{articleID}", auth(http.HandlerFunc(h.handleArticleView)))
-	mux.Handle("GET /u/{userID}/sidebar", auth(http.HandlerFunc(h.handleSidebar)))
-	mux.Handle("POST /u/{userID}/articles/mark-all-read", auth(http.HandlerFunc(h.handleMarkAllRead)))
-	mux.Handle("POST /u/{userID}/articles/{articleID}/star", auth(http.HandlerFunc(h.handleStarToggle)))
-	mux.Handle("POST /u/{userID}/feeds/discover", auth(http.HandlerFunc(h.handleFeedDiscover)))
-	mux.Handle("POST /u/{userID}/feeds", auth(http.HandlerFunc(h.handleFeedSubscribe)))
-	mux.Handle("POST /u/{userID}/feeds/import", auth(http.HandlerFunc(h.handleOPMLImport)))
-	mux.Handle("DELETE /u/{userID}/feeds/{feedID}", auth(http.HandlerFunc(h.handleFeedUnsubscribe)))
-	mux.Handle("POST /u/{userID}/settings", auth(http.HandlerFunc(h.handleSettingsSave)))
-	mux.Handle("POST /u/{userID}/filters", auth(http.HandlerFunc(h.handleFilterAdd)))
-	mux.Handle("POST /u/{userID}/filters/threshold", auth(http.HandlerFunc(h.handleFilterThreshold)))
-	mux.Handle("DELETE /u/{userID}/filters/{ruleID}", auth(http.HandlerFunc(h.handleFilterDelete)))
-	mux.Handle("GET /u/{userID}/feeds/{feedID}/metadata", auth(http.HandlerFunc(h.handleFeedMetadata)))
-	mux.Handle("GET /u/{userID}/feeds/metadata", auth(http.HandlerFunc(h.handleFeedMetadataByQuery)))
-	mux.Handle("GET /u/{userID}/filters/values", auth(http.HandlerFunc(h.handleFilterValues)))
+	mux.Handle("GET /articles", auth(http.HandlerFunc(h.handleArticleList)))
+	mux.Handle("GET /articles/{articleID}", auth(http.HandlerFunc(h.handleArticleView)))
+	mux.Handle("GET /sidebar", auth(http.HandlerFunc(h.handleSidebar)))
+	mux.Handle("POST /articles/mark-all-read", auth(http.HandlerFunc(h.handleMarkAllRead)))
+	mux.Handle("POST /articles/{articleID}/star", auth(http.HandlerFunc(h.handleStarToggle)))
+	mux.Handle("GET /feeds/export.opml", auth(http.HandlerFunc(h.handleOPMLExport)))
+	mux.Handle("POST /feeds/discover", auth(http.HandlerFunc(h.handleFeedDiscover)))
+	mux.Handle("POST /feeds", auth(http.HandlerFunc(h.handleFeedSubscribe)))
+	mux.Handle("POST /feeds/import", auth(http.HandlerFunc(h.handleOPMLImport)))
+	mux.Handle("DELETE /feeds/{feedID}", auth(http.HandlerFunc(h.handleFeedUnsubscribe)))
+	mux.Handle("POST /settings", auth(http.HandlerFunc(h.handleSettingsSave)))
+	mux.Handle("POST /filters", auth(http.HandlerFunc(h.handleFilterAdd)))
+	mux.Handle("POST /filters/threshold", auth(http.HandlerFunc(h.handleFilterThreshold)))
+	mux.Handle("DELETE /filters/{ruleID}", auth(http.HandlerFunc(h.handleFilterDelete)))
+	mux.Handle("GET /feeds/{feedID}/metadata", auth(http.HandlerFunc(h.handleFeedMetadata)))
+	mux.Handle("GET /feeds/metadata", auth(http.HandlerFunc(h.handleFeedMetadataByQuery)))
+	mux.Handle("GET /filters/values", auth(http.HandlerFunc(h.handleFilterValues)))
 
 	// Per-user AI prompt customization.
-	mux.Handle("POST /u/{userID}/settings/prompts/{promptType}", auth(http.HandlerFunc(h.handleUserPromptSave)))
-	mux.Handle("DELETE /u/{userID}/settings/prompts/{promptType}", auth(http.HandlerFunc(h.handleUserPromptReset)))
+	mux.Handle("POST /settings/prompts/{promptType}", auth(http.HandlerFunc(h.handleUserPromptSave)))
+	mux.Handle("DELETE /settings/prompts/{promptType}", auth(http.HandlerFunc(h.handleUserPromptReset)))
 
-	// Admin-only global prompt management.
+	// Admin-only routes.
 	adminAuth := h.requireAdmin
+	mux.Handle("GET /admin/feeds/export.opml", auth(adminAuth(http.HandlerFunc(h.handleAdminOPMLExport))))
 	mux.Handle("GET /admin/prompts", auth(adminAuth(http.HandlerFunc(h.handleAdminPrompts))))
 	mux.Handle("POST /admin/prompts/{promptType}", auth(adminAuth(http.HandlerFunc(h.handleAdminPromptSave))))
 	mux.Handle("DELETE /admin/prompts/{promptType}", auth(adminAuth(http.HandlerFunc(h.handleAdminPromptReset))))
