@@ -31,14 +31,19 @@ type CurationResult struct {
 
 // NewAIProcessor creates a new AI processor
 func NewAIProcessor(baseURL, securityModel, curationModel string, store interface{}, config interface{}) (*AIProcessor, error) {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		// If env-based client fails, create one with the base URL
+	var client *api.Client
+	if baseURL != "" {
 		parsedURL, parseErr := url.Parse(baseURL)
 		if parseErr != nil {
 			return nil, fmt.Errorf("invalid base URL: %w", parseErr)
 		}
 		client = api.NewClient(parsedURL, nil)
+	} else {
+		var err error
+		client, err = api.ClientFromEnvironment()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Ollama client: %w", err)
+		}
 	}
 
 	// Type assertions for store and config (can be nil)
