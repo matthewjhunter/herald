@@ -7,12 +7,21 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// AdminConfig holds admin access configuration.
+type AdminConfig struct {
+	// Role is the JWT role claim value that grants admin access (default: "admin").
+	Role string `toml:"role"`
+	// Users is a fallback list of email addresses for when the IdP does not issue role claims.
+	Users []string `toml:"users"`
+}
+
 // Config holds all herald-web configuration. Values are loaded from a TOML
 // file and may be overridden by CLI flags.
 type Config struct {
 	DB      string        `toml:"db"`
 	Addr    string        `toml:"addr"`
 	Webauth WebauthConfig `toml:"webauth"`
+	Admin   AdminConfig   `toml:"admin"`
 }
 
 // WebauthConfig holds webauth OIDC and JWT settings.

@@ -93,7 +93,7 @@ func main() {
 	}
 	defer engine.Close()
 
-	mux := newRouter(engine, validator)
+	mux := newRouter(engine, validator, cfg.Admin.Role, cfg.Admin.Users)
 
 	srv := &http.Server{
 		Addr:         listenAddr,

@@ -136,7 +136,7 @@ func newTestFixtures(t *testing.T) *testFixtures {
 	}
 
 	validator, jwtToken := newTestValidator(t)
-	router := newRouter(engine, validator)
+	router := newRouter(engine, validator, "", nil)
 
 	t.Cleanup(func() {
 		engine.Close()
@@ -609,7 +609,7 @@ func TestHandleCallback_SetsJWTCookie(t *testing.T) {
 	defer mockWebauth.Close()
 
 	validator := newTestValidatorWithOIDC(t, mockWebauth.URL)
-	router := newRouter(tf.engine, validator)
+	router := newRouter(tf.engine, validator, "", nil)
 
 	state := "test-state-nonce"
 	verifier := "test-pkce-verifier"
@@ -653,7 +653,7 @@ func TestHandleCallback_DefaultRedirect(t *testing.T) {
 	defer mockWebauth.Close()
 
 	validator := newTestValidatorWithOIDC(t, mockWebauth.URL)
-	router := newRouter(tf.engine, validator)
+	router := newRouter(tf.engine, validator, "", nil)
 
 	state := "test-state"
 	req := httptest.NewRequest("GET", "/auth/callback?code=test-code&state="+state, nil)
@@ -676,7 +676,7 @@ func TestHandleCallback_InvalidState(t *testing.T) {
 	tf := newTestFixtures(t)
 
 	validator := newTestValidatorWithOIDC(t, "https://auth.example.com")
-	router := newRouter(tf.engine, validator)
+	router := newRouter(tf.engine, validator, "", nil)
 
 	req := httptest.NewRequest("GET", "/auth/callback?code=test-code&state=WRONG", nil)
 	req.AddCookie(&http.Cookie{Name: "oauth_state", Value: "correct-state"})
@@ -694,7 +694,7 @@ func TestHandleCallback_MissingVerifier(t *testing.T) {
 	tf := newTestFixtures(t)
 
 	validator := newTestValidatorWithOIDC(t, "https://auth.example.com")
-	router := newRouter(tf.engine, validator)
+	router := newRouter(tf.engine, validator, "", nil)
 
 	state := "test-state"
 	req := httptest.NewRequest("GET", "/auth/callback?code=test-code&state="+state, nil)
@@ -719,7 +719,7 @@ func TestHandleCallback_TokenExchangeError(t *testing.T) {
 	defer mockWebauth.Close()
 
 	validator := newTestValidatorWithOIDC(t, mockWebauth.URL)
-	router := newRouter(tf.engine, validator)
+	router := newRouter(tf.engine, validator, "", nil)
 
 	state := "test-state"
 	req := httptest.NewRequest("GET", "/auth/callback?code=bad-code&state="+state, nil)
@@ -738,7 +738,7 @@ func TestHandleCallback_UpstreamAuthError(t *testing.T) {
 	tf := newTestFixtures(t)
 
 	validator := newTestValidatorWithOIDC(t, "https://auth.example.com")
-	router := newRouter(tf.engine, validator)
+	router := newRouter(tf.engine, validator, "", nil)
 
 	// Webauth redirects with ?error=access_denied when the user denies.
 	req := httptest.NewRequest("GET", "/auth/callback?error=access_denied&error_description=User+denied+access", nil)

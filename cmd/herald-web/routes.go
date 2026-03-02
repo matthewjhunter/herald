@@ -13,14 +13,14 @@ import (
 var embedded embed.FS
 
 // newRouter sets up all routes using Go 1.22+ enhanced routing.
-func newRouter(engine *herald.Engine, validator *auth.Validator) http.Handler {
+func newRouter(engine *herald.Engine, validator *auth.Validator, adminRole string, adminUsers []string) http.Handler {
 	mux := http.NewServeMux()
 
 	// Static files — no auth required.
 	staticFS, _ := fs.Sub(embedded, "static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)))
 
-	h := &handlers{engine: engine, validator: validator}
+	h := &handlers{engine: engine, validator: validator, adminRole: adminRole, adminUsers: adminUsers}
 	auth := h.requireAuth
 
 	// Root: redirect to home page if authenticated, else webauth handles it via requireAuth.
@@ -56,6 +56,16 @@ func newRouter(engine *herald.Engine, validator *auth.Validator) http.Handler {
 	mux.Handle("GET /u/{userID}/feeds/{feedID}/metadata", auth(http.HandlerFunc(h.handleFeedMetadata)))
 	mux.Handle("GET /u/{userID}/feeds/metadata", auth(http.HandlerFunc(h.handleFeedMetadataByQuery)))
 	mux.Handle("GET /u/{userID}/filters/values", auth(http.HandlerFunc(h.handleFilterValues)))
+
+	// Per-user AI prompt customization.
+	mux.Handle("POST /u/{userID}/settings/prompts/{promptType}", auth(http.HandlerFunc(h.handleUserPromptSave)))
+	mux.Handle("DELETE /u/{userID}/settings/prompts/{promptType}", auth(http.HandlerFunc(h.handleUserPromptReset)))
+
+	// Admin-only global prompt management.
+	adminAuth := h.requireAdmin
+	mux.Handle("GET /admin/prompts", auth(adminAuth(http.HandlerFunc(h.handleAdminPrompts))))
+	mux.Handle("POST /admin/prompts/{promptType}", auth(adminAuth(http.HandlerFunc(h.handleAdminPromptSave))))
+	mux.Handle("DELETE /admin/prompts/{promptType}", auth(adminAuth(http.HandlerFunc(h.handleAdminPromptReset))))
 
 	return mux
 }

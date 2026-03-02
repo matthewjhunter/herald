@@ -1,0 +1,38 @@
+{{define "title"}}Herald - Global AI Prompts{{end}}
+{{define "nav"}}
+<nav style="display:flex;gap:1rem;align-items:center;">
+    <a href="/u/{{.UserID}}">Articles</a>
+    <a href="/u/{{.UserID}}/settings">Settings</a>
+    <span aria-current="page">Admin: Global Prompts</span>
+</nav>
+{{end}}
+{{define "content"}}
+<main class="container" style="max-width:800px;">
+    <h2>Global AI Prompts</h2>
+    <p class="secondary">These prompts are used as defaults for all users who have not set their own. Changes take effect on the next AI processing cycle.</p>
+
+    {{range .Prompts}}
+    <article>
+        <header>
+            <strong>{{.Label}}</strong>
+            {{if .IsCustom}}<small style="color:var(--pico-primary);">&nbsp;(global override active)</small>{{else}}<small class="secondary">&nbsp;(using embedded default)</small>{{end}}
+        </header>
+        <form hx-post="/admin/prompts/{{.Type}}" hx-swap="none"
+              hx-on::after-request="if(event.detail.successful){var b=this.querySelector('[data-save-btn]');b.textContent='Saved!';setTimeout(()=>b.textContent='Save',2000);}">
+            <textarea name="template" rows="8" style="font-family:monospace;font-size:0.85em;">{{.Template}}</textarea>
+            <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+                <button type="submit" data-save-btn style="margin:0;">Save</button>
+                {{if .IsCustom}}
+                <button type="button" class="outline secondary" style="margin:0;"
+                        hx-delete="/admin/prompts/{{.Type}}"
+                        hx-confirm="Reset '{{.Label}}' to embedded default?"
+                        hx-on::after-request="if(event.detail.successful) window.location.reload();">
+                    Reset to Embedded Default
+                </button>
+                {{end}}
+            </div>
+        </form>
+    </article>
+    {{end}}
+</main>
+{{end}}

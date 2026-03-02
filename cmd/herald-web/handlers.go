@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -18,10 +19,84 @@ import (
 
 // handlers holds dependencies for all HTTP handler methods.
 type handlers struct {
-	engine    *herald.Engine
-	validator *auth.Validator
-	pages     map[string]*template.Template // per-page template sets
-	policy    *bluemonday.Policy
+	engine     *herald.Engine
+	validator  *auth.Validator
+	pages      map[string]*template.Template // per-page template sets
+	policy     *bluemonday.Policy
+	adminRole  string   // JWT role value that grants admin access (default: "admin")
+	adminUsers []string // fallback email list when the IdP does not issue role claims
+}
+
+// isAdminCtx reports whether the request context carries admin privileges.
+// Checks JWT roles first; falls back to the config email list.
+func (h *handlers) isAdminCtx(ctx context.Context) bool {
+	role := h.adminRole
+	if role == "" {
+		role = "admin"
+	}
+	if claims := claimsFromContext(ctx); claims != nil {
+		for _, r := range claims.Roles {
+			if r == role {
+				return true
+			}
+		}
+	}
+	// Fallback: check the config email list.
+	if user := userFromContext(ctx); user != nil {
+		for _, email := range h.adminUsers {
+			if email == user.Email {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// requireAdmin is middleware that returns 403 for non-admin users.
+func (h *handlers) requireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !h.isAdminCtx(r.Context()) {
+			h.renderError(w, http.StatusForbidden, "Admin access required")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// promptUIEntry holds display data for a single prompt type in the settings UI.
+type promptUIEntry struct {
+	Type     string
+	Label    string
+	Template string
+	IsCustom bool
+}
+
+// promptTypeOrder defines the display order for prompt types in the UI.
+var promptTypeOrder = []string{"curation", "summarization", "group_summary", "related_groups"}
+
+var promptLabels = map[string]string{
+	"curation":       "Article Curation",
+	"summarization":  "Article Summarization",
+	"group_summary":  "Group Summary",
+	"related_groups": "Related Groups",
+}
+
+// loadPromptEntries builds the UI entry list for a given userID.
+func (h *handlers) loadPromptEntries(userID int64) []promptUIEntry {
+	var entries []promptUIEntry
+	for _, pt := range promptTypeOrder {
+		detail, err := h.engine.GetPrompt(userID, pt)
+		if err != nil {
+			continue
+		}
+		entries = append(entries, promptUIEntry{
+			Type:     pt,
+			Label:    promptLabels[pt],
+			Template: detail.Template,
+			IsCustom: detail.IsCustom,
+		})
+	}
+	return entries
 }
 
 // init parses templates and creates the sanitizer policy on first use.
@@ -46,7 +121,7 @@ func (h *handlers) init() {
 	shared := []string{"base.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "error.html"}
 
 	// Pages that get their own template tree.
-	pages := []string{"home.html", "feeds_manage.html", "groups.html", "group_detail.html", "settings.html", "filters.html"}
+	pages := []string{"home.html", "feeds_manage.html", "groups.html", "group_detail.html", "settings.html", "filters.html", "admin_prompts.html"}
 
 	h.pages = make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
@@ -133,6 +208,8 @@ type settingsData struct {
 	InterestThreshold float64
 	NotifyWhen        string
 	NotifyMinScore    float64
+	Prompts           []promptUIEntry
+	IsAdmin           bool
 }
 
 type filtersData struct {
@@ -425,7 +502,8 @@ func (h *handlers) handleGroupDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) handleSettings(w http.ResponseWriter, r *http.Request) {
-	uid := userFromContext(r.Context()).ID
+	user := userFromContext(r.Context())
+	uid := user.ID
 
 	prefs, err := h.engine.GetPreferences(uid)
 	if err != nil {
@@ -439,6 +517,8 @@ func (h *handlers) handleSettings(w http.ResponseWriter, r *http.Request) {
 		InterestThreshold: prefs.InterestThreshold,
 		NotifyWhen:        prefs.NotifyWhen,
 		NotifyMinScore:    prefs.NotifyMinScore,
+		Prompts:           h.loadPromptEntries(uid),
+		IsAdmin:           h.isAdminCtx(r.Context()),
 	}
 
 	h.renderPage(w, r, "settings.html", data)
@@ -734,6 +814,95 @@ func (h *handlers) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("HX-Trigger", "settings-saved")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, "Settings saved.")
+}
+
+// --- AI prompt handlers ---
+
+func (h *handlers) handleUserPromptSave(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	promptType := r.PathValue("promptType")
+
+	if err := r.ParseForm(); err != nil {
+		h.renderError(w, http.StatusBadRequest, "Invalid form data")
+		return
+	}
+
+	tmpl := strings.TrimSpace(r.FormValue("template"))
+	if tmpl == "" {
+		h.renderError(w, http.StatusBadRequest, "Prompt template cannot be empty")
+		return
+	}
+
+	if err := h.engine.SetPrompt(uid, promptType, tmpl, nil); err != nil {
+		h.renderError(w, http.StatusBadRequest, fmt.Sprintf("Failed to save prompt: %v", err))
+		return
+	}
+
+	w.Header().Set("HX-Trigger", "prompt-saved")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, "Prompt saved.")
+}
+
+func (h *handlers) handleUserPromptReset(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	promptType := r.PathValue("promptType")
+
+	if err := h.engine.ResetPrompt(uid, promptType); err != nil {
+		h.renderError(w, http.StatusBadRequest, fmt.Sprintf("Failed to reset prompt: %v", err))
+		return
+	}
+
+	http.Redirect(w, r, fmt.Sprintf("/u/%d/settings", uid), http.StatusSeeOther)
+}
+
+// adminPromptsData is the template data for the admin prompts page.
+type adminPromptsData struct {
+	UserID  int64
+	Prompts []promptUIEntry
+}
+
+func (h *handlers) handleAdminPrompts(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	data := adminPromptsData{
+		UserID:  uid,
+		Prompts: h.loadPromptEntries(0),
+	}
+	h.renderPage(w, r, "admin_prompts.html", data)
+}
+
+func (h *handlers) handleAdminPromptSave(w http.ResponseWriter, r *http.Request) {
+	promptType := r.PathValue("promptType")
+
+	if err := r.ParseForm(); err != nil {
+		h.renderError(w, http.StatusBadRequest, "Invalid form data")
+		return
+	}
+
+	tmpl := strings.TrimSpace(r.FormValue("template"))
+	if tmpl == "" {
+		h.renderError(w, http.StatusBadRequest, "Prompt template cannot be empty")
+		return
+	}
+
+	if err := h.engine.SetPrompt(0, promptType, tmpl, nil); err != nil {
+		h.renderError(w, http.StatusBadRequest, fmt.Sprintf("Failed to save global prompt: %v", err))
+		return
+	}
+
+	w.Header().Set("HX-Trigger", "prompt-saved")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, "Global prompt saved.")
+}
+
+func (h *handlers) handleAdminPromptReset(w http.ResponseWriter, r *http.Request) {
+	promptType := r.PathValue("promptType")
+
+	if err := h.engine.ResetPrompt(0, promptType); err != nil {
+		h.renderError(w, http.StatusBadRequest, fmt.Sprintf("Failed to reset global prompt: %v", err))
+		return
+	}
+
+	http.Redirect(w, r, "/admin/prompts", http.StatusSeeOther)
 }
 
 // --- Filter rules handlers ---

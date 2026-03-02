@@ -11,10 +11,14 @@ import (
 	"time"
 
 	herald "github.com/matthewjhunter/herald"
+	"github.com/matthewjhunter/herald/internal/auth"
 )
 
 // contextKey is an unexported type for context values set by this package.
 type contextKey struct{}
+
+// claimsContextKey stores the validated JWT claims in the request context.
+type claimsContextKey struct{}
 
 // withUser stores the authenticated Herald user in the request context.
 func withUser(ctx context.Context, u *herald.User) context.Context {
@@ -26,6 +30,17 @@ func withUser(ctx context.Context, u *herald.User) context.Context {
 func userFromContext(ctx context.Context) *herald.User {
 	u, _ := ctx.Value(contextKey{}).(*herald.User)
 	return u
+}
+
+// withClaims stores the validated JWT claims in the request context.
+func withClaims(ctx context.Context, c *auth.Claims) context.Context {
+	return context.WithValue(ctx, claimsContextKey{}, c)
+}
+
+// claimsFromContext retrieves the JWT claims from the context.
+func claimsFromContext(ctx context.Context) *auth.Claims {
+	c, _ := ctx.Value(claimsContextKey{}).(*auth.Claims)
+	return c
 }
 
 // generateVerifier returns a random base64url-encoded PKCE code verifier.
@@ -110,7 +125,9 @@ func (h *handlers) requireAuth(next http.Handler) http.Handler {
 			}
 		}
 
-		next.ServeHTTP(w, r.WithContext(withUser(r.Context(), user)))
+		ctx := withUser(r.Context(), user)
+		ctx = withClaims(ctx, claims)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

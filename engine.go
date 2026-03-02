@@ -708,6 +708,14 @@ func (e *Engine) ResetPrompt(userID int64, promptType string) error {
 	return e.store.DeleteUserPrompt(userID, promptType)
 }
 
+// DefaultPrompt returns the embedded default prompt template for a type.
+func (e *Engine) DefaultPrompt(promptType string) (string, error) {
+	if !allowedPromptTypes[promptType] {
+		return "", fmt.Errorf("unknown or restricted prompt type: %q", promptType)
+	}
+	return ai.DefaultPrompt(ai.PromptType(promptType))
+}
+
 // StarArticle sets or clears the starred flag on an article.
 func (e *Engine) StarArticle(userID, articleID int64, starred bool) error {
 	return e.store.UpdateStarred(userID, articleID, starred)

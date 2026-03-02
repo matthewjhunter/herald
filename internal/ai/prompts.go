@@ -53,8 +53,26 @@ func NewPromptLoader(store, config interface{}) *PromptLoader {
 	}
 }
 
-// GetPrompt loads a prompt with 3-tier fallback
-// Priority: user database -> config file -> embedded default
+// DefaultPrompt returns the embedded default prompt for the given type.
+func DefaultPrompt(pt PromptType) (string, error) {
+	switch pt {
+	case PromptTypeSecurity:
+		return defaultSecurityPrompt, nil
+	case PromptTypeCuration:
+		return defaultCurationPrompt, nil
+	case PromptTypeSummarization:
+		return defaultSummarizationPrompt, nil
+	case PromptTypeGroupSummary:
+		return defaultGroupSummaryPrompt, nil
+	case PromptTypeRelatedGroups:
+		return defaultRelatedGroupsPrompt, nil
+	default:
+		return "", fmt.Errorf("unknown prompt type: %s", pt)
+	}
+}
+
+// GetPrompt loads a prompt with 4-tier fallback
+// Priority: user database -> global admin (user_id=0) -> config file -> embedded default
 func (pl *PromptLoader) GetPrompt(userID int64, promptType PromptType) (string, error) {
 	cacheKey := fmt.Sprintf("%d:%s", userID, promptType)
 
@@ -63,13 +81,22 @@ func (pl *PromptLoader) GetPrompt(userID int64, promptType PromptType) (string, 
 		return cached, nil
 	}
 
-	// Tier 3: Check user database (highest priority)
+	// Tier 4: Check user-specific database entry (highest priority)
 	if pl.store != nil {
 		if store, ok := pl.store.(*storage.SQLiteStore); ok {
 			userPrompt, err := store.GetUserPrompt(userID, string(promptType))
 			if err == nil && userPrompt != "" {
 				pl.cache[cacheKey] = userPrompt
 				return userPrompt, nil
+			}
+
+			// Tier 3: Global admin override (user_id=0), only when fetching for a real user
+			if userID != 0 {
+				globalPrompt, err := store.GetUserPrompt(0, string(promptType))
+				if err == nil && globalPrompt != "" {
+					pl.cache[cacheKey] = globalPrompt
+					return globalPrompt, nil
+				}
 			}
 		}
 	}
