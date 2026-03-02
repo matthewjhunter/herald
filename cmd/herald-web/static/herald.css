@@ -51,6 +51,28 @@
     margin: 0.75rem 0;
 }
 
+/* Hide feeds with no unread articles */
+#sidebar.hide-empty-feeds a[data-feed-id]:not(:has(.unread-count)) {
+    display: none;
+}
+
+.sidebar-toggle-btn {
+    display: block;
+    width: 100%;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.8rem;
+    text-align: left;
+    color: var(--pico-muted-color);
+    background: none;
+    border: none;
+    cursor: pointer;
+    margin: 0;
+}
+
+.sidebar-toggle-btn:hover {
+    color: var(--pico-color);
+}
+
 /* Main content: article list + reading pane */
 .content-split {
     display: flex;
@@ -116,6 +138,11 @@
 
 .article-row.read {
     opacity: 0.6;
+}
+
+/* Hide read articles when toggle active */
+#article-list.hide-read .article-row.read {
+    display: none;
 }
 
 .article-row h4 {
