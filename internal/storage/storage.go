@@ -18,14 +18,14 @@ type SQLiteStore struct {
 var _ Store = (*SQLiteStore)(nil)
 
 type Feed struct {
-	ID           int64
-	URL          string
-	Title        string
-	Description  string
-	LastFetched  *time.Time
-	LastError    *string
-	ETag         string
-	LastModified string
+	ID                int64
+	URL               string
+	Title             string
+	Description       string
+	LastFetched       *time.Time
+	LastError         *string
+	ETag              string
+	LastModified      string
 	Enabled           bool
 	CreatedAt         time.Time
 	ConsecutiveErrors int
@@ -635,6 +635,22 @@ func (s *SQLiteStore) UpdateFeedError(feedID int64, errMsg string) error {
 // ClearFeedError clears the last error and schedules the next fetch.
 func (s *SQLiteStore) ClearFeedError(feedID int64) error {
 	return s.UpdateFeedLastFetched(feedID)
+}
+
+// MarkFeedFetched records a successful fetch and resets error state without
+// scheduling next_fetch_at. Use for initial subscriptions so the feed remains
+// immediately eligible for the next regular fetch cycle (next_fetch_at = NULL
+// means "due now").
+func (s *SQLiteStore) MarkFeedFetched(feedID int64) error {
+	_, err := s.db.Exec(
+		`UPDATE feeds SET last_fetched = CURRENT_TIMESTAMP, last_error = NULL,
+		 consecutive_errors = 0, status = 'active' WHERE id = ?`,
+		feedID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to mark feed fetched: %w", err)
+	}
+	return nil
 }
 
 // UpdateFeedCacheHeaders stores the HTTP cache headers from the last successful fetch.

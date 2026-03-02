@@ -333,7 +333,7 @@ func (e *Engine) SubscribeFeed(userID int64, url, title string) error {
 		e.store.UpdateFeedCacheHeaders(feedID, result.ETag, result.LastModified)
 	}
 
-	e.store.ClearFeedError(feedID)
+	e.store.MarkFeedFetched(feedID)
 
 	return e.store.SubscribeUserToFeed(userID, feedID)
 }
