@@ -93,6 +93,42 @@
         });
     })();
 
+    // Vertical drag-to-resize (article list height)
+    (function() {
+        var handle = document.getElementById('vertical-resize-handle');
+        var split = handle && handle.closest('.content-split');
+        if (!handle || !split) return;
+
+        var saved = localStorage.getItem('herald-list-height');
+        if (saved) split.style.setProperty('--article-list-height', saved);
+
+        var dragging = false;
+        var lastPct = null;
+
+        handle.addEventListener('mousedown', function(e) {
+            dragging = true;
+            handle.classList.add('dragging');
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', function(e) {
+            if (!dragging) return;
+            var rect = split.getBoundingClientRect();
+            var pct = (e.clientY - rect.top) / rect.height;
+            lastPct = Math.min(Math.max(pct, 0.2), 0.75);
+            split.style.setProperty('--article-list-height', (lastPct * 100) + '%');
+        });
+
+        document.addEventListener('mouseup', function() {
+            if (!dragging) return;
+            dragging = false;
+            handle.classList.remove('dragging');
+            if (lastPct !== null) {
+                localStorage.setItem('herald-list-height', (lastPct * 100) + '%');
+            }
+        });
+    })();
+
     // Unsubscribe feed button — show when a specific feed is selected
     document.addEventListener('click', function(e) {
         var link = e.target.closest('a[data-feed-id]');

@@ -59,8 +59,20 @@
 }
 
 .article-list-pane {
-    flex: 0 0 calc(40% - 36px);
+    flex: 0 0 calc(var(--article-list-height, 40%) - 36px);
     overflow-y: auto;
+}
+
+.vertical-resize-handle {
+    flex: 0 0 4px;
+    cursor: row-resize;
+    background: var(--pico-muted-border-color);
+    transition: background 0.15s;
+}
+
+.vertical-resize-handle:hover,
+.vertical-resize-handle.dragging {
+    background: var(--pico-primary);
 }
 
 .article-list-footer {
@@ -206,6 +218,6 @@
         flex-direction: column;
     }
     .article-list-pane {
-        flex: 0 0 50%;
+        flex: 0 0 calc(var(--article-list-height, 50%) - 36px);
     }
 }
