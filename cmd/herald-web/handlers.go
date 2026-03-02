@@ -674,6 +674,29 @@ func (h *handlers) handleFeedUnsubscribe(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("HX-Redirect", fmt.Sprintf("/u/%d/feeds", uid))
 }
 
+func (h *handlers) handleOPMLImport(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+
+	if err := r.ParseMultipartForm(4 << 20); err != nil {
+		h.renderError(w, http.StatusBadRequest, "Failed to parse upload")
+		return
+	}
+
+	f, _, err := r.FormFile("opml")
+	if err != nil {
+		h.renderError(w, http.StatusBadRequest, "No OPML file provided")
+		return
+	}
+	defer f.Close()
+
+	if err := h.engine.ImportOPMLReader(f, uid); err != nil {
+		h.renderError(w, http.StatusBadRequest, fmt.Sprintf("Failed to import OPML: %v", err))
+		return
+	}
+
+	http.Redirect(w, r, fmt.Sprintf("/u/%d/feeds", uid), http.StatusSeeOther)
+}
+
 func (h *handlers) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID
 

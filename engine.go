@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"strconv"
 	"strings"
@@ -280,6 +281,11 @@ func (e *Engine) MarkArticlesRead(userID int64, articleIDs []int64) error {
 // ImportOPML imports feeds from an OPML file and subscribes the user.
 func (e *Engine) ImportOPML(path string, userID int64) error {
 	return e.fetcher.ImportOPML(path, userID)
+}
+
+// ImportOPMLReader imports feeds from an OPML reader and subscribes the user.
+func (e *Engine) ImportOPMLReader(r io.Reader, userID int64) error {
+	return e.fetcher.ImportOPMLReader(r, userID)
 }
 
 // GetUserFeeds returns all feeds a user is subscribed to.
