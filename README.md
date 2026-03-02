@@ -32,7 +32,7 @@ Security and editorial judgment are different problems that benefit from differe
 ## Key Features
 
 - Two-model AI pipeline: security screening (Gemma) separated from interest curation (Llama)
-- RSS 2.0 and Atom 1.0 support with OPML import
+- RSS 2.0 and Atom 1.0 support with OPML import, export, and sync URL for RSS client integration
 - Vector-based article clustering across sources using cosine similarity
 - Per-user interest keywords, thresholds, and read state
 - Customizable AI prompts with 3-tier fallback: database → config → embedded defaults
