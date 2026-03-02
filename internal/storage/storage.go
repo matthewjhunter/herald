@@ -117,6 +117,20 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
+	// Enable WAL mode for better read/write concurrency.
+	// WAL allows readers to proceed concurrently with a single writer; the
+	// setting is persistent so one call at open time is sufficient.
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to set WAL mode: %w", err)
+	}
+
+	// Retry for up to 5 seconds instead of returning SQLITE_BUSY immediately.
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to set busy timeout: %w", err)
+	}
+
 	// Enable foreign keys
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		db.Close()
@@ -148,6 +162,10 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		"ALTER TABLE feeds ADD COLUMN next_fetch_at DATETIME",
 		"ALTER TABLE feeds ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
 		"CREATE INDEX IF NOT EXISTS idx_feeds_due ON feeds(next_fetch_at) WHERE status = 'active' AND enabled = 1",
+		// read_state PK is (user_id, article_id); joins on article_id alone need a separate index.
+		"CREATE INDEX IF NOT EXISTS idx_read_state_article_user ON read_state(article_id, user_id)",
+		// Composite index for feed+date queries (replaces two separate single-column indexes for this pattern).
+		"CREATE INDEX IF NOT EXISTS idx_articles_feed_published ON articles(feed_id, published_date DESC)",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
