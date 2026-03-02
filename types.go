@@ -107,6 +107,13 @@ type FilterRule struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// DiscoveredFeed represents a feed found via autodiscovery on a web page.
+type DiscoveredFeed struct {
+	URL   string `json:"url"`
+	Title string `json:"title,omitempty"`
+	Type  string `json:"type"` // "rss", "atom", or "json"
+}
+
 // FeedMetadata holds discoverable metadata for a feed's articles.
 type FeedMetadata struct {
 	FeedID     int64    `json:"feed_id"`

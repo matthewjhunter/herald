@@ -1,3 +1,27 @@
+{{define "feed_discover_results"}}
+{{if .Error}}
+<p style="color:var(--pico-del-color);margin-top:0.5rem;">{{.Error}}</p>
+{{else}}
+<div style="margin-top:0.75rem;">
+    <p style="margin-bottom:0.5rem;">Found {{len .Feeds}} feed(s) at <em>{{.PageURL}}</em>:</p>
+    {{range .Feeds}}
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:0.5rem 0;border-bottom:1px solid var(--pico-muted-border-color);">
+        <div>
+            <strong>{{if .Title}}{{.Title}}{{else}}(untitled){{end}}</strong>
+            <small class="secondary"> — {{.Type}}</small><br>
+            <small class="secondary">{{.URL}}</small>
+        </div>
+        <form hx-post="/u/{{$.UserID}}/feeds" hx-target="body" style="margin:0;">
+            <input type="hidden" name="url" value="{{.URL}}">
+            <input type="hidden" name="title" value="{{.Title}}">
+            <button type="submit" style="margin:0;padding:0.3rem 0.75rem;font-size:0.85rem;">Subscribe</button>
+        </form>
+    </div>
+    {{end}}
+</div>
+{{end}}
+{{end}}
+
 {{define "title"}}Herald - Manage Feeds{{end}}
 {{define "nav"}}
 <nav style="display:flex;gap:1rem;align-items:center;">
@@ -13,14 +37,15 @@
 
     <article>
         <header><h3>Subscribe to Feed</h3></header>
-        <form hx-post="/u/{{.UserID}}/feeds" hx-target="#feed-list" hx-swap="innerHTML"
+        <form hx-post="/u/{{.UserID}}/feeds/discover" hx-target="#subscribe-result" hx-swap="innerHTML"
               hx-on::after-request="if(event.detail.successful) this.reset();">
             <div class="grid">
-                <input type="url" name="url" placeholder="https://example.com/feed.xml" required>
+                <input type="url" name="url" placeholder="https://example.com/ or https://example.com/feed.xml" required>
                 <input type="text" name="title" placeholder="Title (optional)">
                 <button type="submit">Subscribe</button>
             </div>
         </form>
+        <div id="subscribe-result"></div>
     </article>
 
     <article>

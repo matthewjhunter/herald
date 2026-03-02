@@ -338,6 +338,22 @@ func (e *Engine) SubscribeFeed(userID int64, url, title string) error {
 	return e.store.SubscribeUserToFeed(userID, feedID)
 }
 
+// DiscoverFeeds fetches pageURL and returns any feeds found via standard
+// autodiscovery (<link rel="alternate"> in HTML <head>). If pageURL is
+// itself a valid feed it is returned as the sole result. Returns an empty
+// slice (not an error) when no feeds are found.
+func (e *Engine) DiscoverFeeds(ctx context.Context, pageURL string) ([]DiscoveredFeed, error) {
+	internal, err := e.fetcher.DiscoverFeeds(ctx, pageURL)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]DiscoveredFeed, len(internal))
+	for i, f := range internal {
+		out[i] = DiscoveredFeed{URL: f.URL, Title: f.Title, Type: f.Type}
+	}
+	return out, nil
+}
+
 // UnsubscribeFeed removes a user's subscription to a feed. If no subscribers
 // remain, the feed and its articles are deleted (via FK CASCADE).
 func (e *Engine) UnsubscribeFeed(userID, feedID int64) error {

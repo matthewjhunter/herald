@@ -46,6 +46,7 @@ func newRouter(engine *herald.Engine, validator *auth.Validator, adminRole strin
 	mux.Handle("GET /u/{userID}/sidebar", auth(http.HandlerFunc(h.handleSidebar)))
 	mux.Handle("POST /u/{userID}/articles/mark-all-read", auth(http.HandlerFunc(h.handleMarkAllRead)))
 	mux.Handle("POST /u/{userID}/articles/{articleID}/star", auth(http.HandlerFunc(h.handleStarToggle)))
+	mux.Handle("POST /u/{userID}/feeds/discover", auth(http.HandlerFunc(h.handleFeedDiscover)))
 	mux.Handle("POST /u/{userID}/feeds", auth(http.HandlerFunc(h.handleFeedSubscribe)))
 	mux.Handle("POST /u/{userID}/feeds/import", auth(http.HandlerFunc(h.handleOPMLImport)))
 	mux.Handle("DELETE /u/{userID}/feeds/{feedID}", auth(http.HandlerFunc(h.handleFeedUnsubscribe)))
