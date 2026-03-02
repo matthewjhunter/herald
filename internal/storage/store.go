@@ -96,6 +96,20 @@ type Store interface {
 	GetGroupArticleCount(groupID int64) (int, error)
 	UpdateGroupTopic(groupID int64, topic string) error
 
+	// Fever API
+	SetFeverCredential(userID int64, apiKey string) error
+	GetUserByFeverAPIKey(apiKey string) (*User, error)
+	GetFeverAPIKey(userID int64) (string, error)
+	DeleteFeverCredential(userID int64) error
+	GetFeverItems(userID int64, sinceID, maxID int64, withIDs []int64, limit int) ([]FeverItemRow, error)
+	GetFeverItemCount(userID int64) (int, error)
+	GetUnreadArticleIDsForUser(userID int64) ([]int64, error)
+	GetStarredArticleIDsForUser(userID int64) ([]int64, error)
+	MarkFeedArticlesRead(userID, feedID int64, before int64) error
+	MarkGroupArticlesRead(userID, groupID int64, before int64) error
+	MarkAllArticlesRead(userID int64, before int64) error
+	GetFeedGroupMemberships(userID int64) (map[int64][]int64, error)
+
 	// Subscriptions
 	SubscribeUserToFeed(userID, feedID int64) error
 	GetUserFeeds(userID int64) ([]Feed, error)

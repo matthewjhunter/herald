@@ -29,6 +29,10 @@ func newRouter(engine *herald.Engine, validator *auth.Validator, adminRole strin
 	// OPML sync — token-authenticated, no JWT required.
 	mux.HandleFunc("GET /opml/{userID}/{token}", h.handleOPMLSync)
 
+	// Fever API — uses its own api_key auth, not JWT.
+	mux.HandleFunc("GET /fever/", h.handleFever)
+	mux.HandleFunc("POST /fever/", h.handleFever)
+
 	// Logout — no auth check needed; just redirects to webauth logout.
 	mux.HandleFunc("GET /auth/logout", h.handleLogout)
 
@@ -53,6 +57,8 @@ func newRouter(engine *herald.Engine, validator *auth.Validator, adminRole strin
 	mux.Handle("DELETE /feeds/{feedID}", auth(http.HandlerFunc(h.handleFeedUnsubscribe)))
 	mux.Handle("POST /settings", auth(http.HandlerFunc(h.handleSettingsSave)))
 	mux.Handle("POST /settings/opml-token", auth(http.HandlerFunc(h.handleOPMLTokenGenerate)))
+	mux.Handle("POST /settings/fever", auth(http.HandlerFunc(h.handleFeverCredentialSave)))
+	mux.Handle("DELETE /settings/fever", auth(http.HandlerFunc(h.handleFeverCredentialDelete)))
 	mux.Handle("POST /filters", auth(http.HandlerFunc(h.handleFilterAdd)))
 	mux.Handle("POST /filters/threshold", auth(http.HandlerFunc(h.handleFilterThreshold)))
 	mux.Handle("DELETE /filters/{ruleID}", auth(http.HandlerFunc(h.handleFilterDelete)))
