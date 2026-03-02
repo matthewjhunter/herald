@@ -5,6 +5,7 @@
     <a href="/feeds">Feeds</a>
     <a href="/groups">Groups</a>
     <a href="/settings" aria-current="page">Settings</a>
+    {{if .IsAdmin}}<a href="/admin/stats">Admin: Stats</a><a href="/admin/prompts">Admin: Prompts</a>{{end}}
 </nav>
 {{end}}
 {{define "content"}}
