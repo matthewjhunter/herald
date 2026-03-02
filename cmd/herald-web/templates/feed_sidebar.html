@@ -1,18 +1,18 @@
 {{define "feed_sidebar_content"}}
 <nav>
-    <a href="#" hx-get="/u/{{.UserID}}/articles" hx-target="#article-list" hx-swap="innerHTML"
+    <a href="#" hx-get="/articles" hx-target="#article-list" hx-swap="innerHTML"
        hx-on:click="heraldClearReadingPane()"
        class="{{if not .ActiveFeed}}active{{end}}">
         All Articles
         {{if .TotalUnread}}<span class="unread-count">{{.TotalUnread}}</span>{{end}}
     </a>
-    <a href="#" hx-get="/u/{{.UserID}}/articles?starred=1" hx-target="#article-list" hx-swap="innerHTML"
+    <a href="#" hx-get="/articles?starred=1" hx-target="#article-list" hx-swap="innerHTML"
        hx-on:click="heraldClearReadingPane()">
         Starred
     </a>
     <hr>
     {{range .Feeds}}
-    <a href="#" hx-get="/u/{{$.UserID}}/articles?feed_id={{.FeedID}}" hx-target="#article-list" hx-swap="innerHTML"
+    <a href="#" hx-get="/articles?feed_id={{.FeedID}}" hx-target="#article-list" hx-swap="innerHTML"
        hx-on:click="heraldClearReadingPane()"
        class="{{if eq $.ActiveFeed .FeedID}}active{{end}}"
        data-feed-id="{{.FeedID}}" data-feed-title="{{.FeedTitle}}">
@@ -21,6 +21,6 @@
     </a>
     {{end}}
     <hr>
-    <a href="/u/{{.UserID}}/feeds">+ Manage Feeds</a>
+    <a href="/feeds">+ Manage Feeds</a>
 </nav>
 {{end}}

@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"log"
 	"net/http"
-	"strconv"
 	"time"
 
 	herald "github.com/matthewjhunter/herald"
@@ -114,15 +113,6 @@ func (h *handlers) requireAuth(next http.Handler) http.Handler {
 			log.Printf("herald-web: provision user: %v", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
-		}
-
-		// If the route includes {userID}, verify it matches the authenticated user.
-		if rawUID := r.PathValue("userID"); rawUID != "" {
-			uid, err := strconv.ParseInt(rawUID, 10, 64)
-			if err != nil || uid != user.ID {
-				http.Error(w, "Forbidden", http.StatusForbidden)
-				return
-			}
 		}
 
 		ctx := withUser(r.Context(), user)

@@ -1,10 +1,10 @@
 {{define "title"}}Herald - Filter Rules{{end}}
 {{define "nav"}}
 <nav style="display:flex;gap:1rem;align-items:center;">
-    <a href="/u/{{.UserID}}">Articles</a>
-    <a href="/u/{{.UserID}}/feeds">Feeds</a>
-    <a href="/u/{{.UserID}}/groups">Groups</a>
-    <a href="/u/{{.UserID}}/settings">Settings</a>
+    <a href="/">Articles</a>
+    <a href="/feeds">Feeds</a>
+    <a href="/groups">Groups</a>
+    <a href="/settings">Settings</a>
 </nav>
 {{end}}
 {{define "content"}}
@@ -17,7 +17,7 @@
 
     <article>
         <header><h3>Filter Threshold</h3></header>
-        <form hx-post="/u/{{.UserID}}/filters/threshold" hx-swap="none">
+        <form hx-post="/filters/threshold" hx-swap="none">
             <div class="grid" style="align-items:end;">
                 <div>
                     <label for="filter_threshold">Threshold</label>
@@ -32,13 +32,13 @@
 
     <article>
         <header><h3>Add Rule</h3></header>
-        <form hx-post="/u/{{.UserID}}/filters" hx-target="#rules-list" hx-swap="innerHTML"
+        <form hx-post="/filters" hx-target="#rules-list" hx-swap="innerHTML"
               hx-on::after-request="if(event.detail.successful && event.detail.elt === this) { this.reset(); document.getElementById('value-field').innerHTML='<select name=\'value\' id=\'value-select\' required><option value=\'\'>— select feed and axis first —</option></select>'; }">
             <div class="grid">
                 <div>
                     <label for="rule-feed">Feed (optional)</label>
                     <select id="rule-feed" name="feed_id"
-                            hx-get="/u/{{.UserID}}/filters/values"
+                            hx-get="/filters/values"
                             hx-include="[name='axis']"
                             hx-target="#value-field"
                             hx-swap="innerHTML"
@@ -52,7 +52,7 @@
                 <div>
                     <label for="rule-axis">Axis</label>
                     <select id="rule-axis" name="axis" required
-                            hx-get="/u/{{.UserID}}/filters/values"
+                            hx-get="/filters/values"
                             hx-include="[name='feed_id']"
                             hx-target="#value-field"
                             hx-swap="innerHTML"
@@ -90,7 +90,7 @@
         <p class="secondary">Select a feed to see available authors and categories.</p>
         <label for="meta_feed">Feed</label>
         <select id="meta_feed"
-                hx-get="/u/{{.UserID}}/feeds/metadata"
+                hx-get="/feeds/metadata"
                 hx-target="#metadata-result"
                 hx-swap="innerHTML"
                 hx-trigger="change"
@@ -127,7 +127,7 @@
             <td>{{.Score}}</td>
             <td>
                 <button class="outline secondary" style="padding:0.25rem 0.5rem;font-size:0.8rem;"
-                        hx-delete="/u/{{$.UserID}}/filters/{{.ID}}"
+                        hx-delete="/filters/{{.ID}}"
                         hx-target="#rules-list" hx-swap="innerHTML"
                         hx-confirm="Delete this rule?">
                     Delete

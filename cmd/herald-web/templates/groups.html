@@ -1,10 +1,10 @@
 {{define "title"}}Herald - Groups{{end}}
 {{define "nav"}}
 <nav style="display:flex;gap:1rem;align-items:center;">
-    <a href="/u/{{.UserID}}">Articles</a>
-    <a href="/u/{{.UserID}}/feeds">Feeds</a>
-    <a href="/u/{{.UserID}}/groups" aria-current="page">Groups</a>
-    <a href="/u/{{.UserID}}/settings">Settings</a>
+    <a href="/">Articles</a>
+    <a href="/feeds">Feeds</a>
+    <a href="/groups" aria-current="page">Groups</a>
+    <a href="/settings">Settings</a>
 </nav>
 {{end}}
 {{define "content"}}
@@ -16,7 +16,7 @@
         {{range .Groups}}
         <article style="margin:0;">
             <header>
-                <a href="/u/{{$.UserID}}/groups/{{.ID}}"><strong>{{.Topic}}</strong></a>
+                <a href="/groups/{{.ID}}"><strong>{{.Topic}}</strong></a>
             </header>
             {{if .Summary}}<p>{{.Summary}}</p>{{end}}
             <footer>
