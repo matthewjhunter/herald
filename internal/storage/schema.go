@@ -11,8 +11,12 @@ CREATE TABLE IF NOT EXISTS feeds (
     etag TEXT,
     last_modified TEXT,
     enabled BOOLEAN NOT NULL DEFAULT 1,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    consecutive_errors INTEGER NOT NULL DEFAULT 0,
+    next_fetch_at DATETIME,
+    status TEXT NOT NULL DEFAULT 'active'
 );
+CREATE INDEX IF NOT EXISTS idx_feeds_due ON feeds(next_fetch_at) WHERE status = 'active' AND enabled = 1;
 
 CREATE TABLE IF NOT EXISTS articles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

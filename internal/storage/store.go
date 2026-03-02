@@ -36,6 +36,7 @@ type Store interface {
 	GetAllFeeds() ([]Feed, error)
 	UpdateFeedError(feedID int64, errMsg string) error
 	ClearFeedError(feedID int64) error
+	MarkFeedFetched(feedID int64) error
 	UpdateFeedCacheHeaders(feedID int64, etag, lastModified string) error
 	UpdateFeedLastFetched(feedID int64) error
 	RenameFeed(feedID int64, title string) error

@@ -516,6 +516,7 @@ func doFetch(ctx context.Context) error {
 
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to fetch feed %s: %v\n", feed.URL, err)
+			store.UpdateFeedError(feed.ID, err.Error()) //nolint:errcheck
 			fetchResult.FeedsErrored++
 			continue
 		}
