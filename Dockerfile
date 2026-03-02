@@ -4,8 +4,9 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o /herald ./cmd/herald
-RUN go build -o /herald-web ./cmd/herald-web
+ARG GIT_SHA=dev
+RUN go build -ldflags "-X main.version=${GIT_SHA}" -o /herald-web ./cmd/herald-web && \
+    go build -o /herald ./cmd/herald
 
 # Stage 2: Runtime
 FROM alpine:3.21
