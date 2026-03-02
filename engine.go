@@ -992,6 +992,11 @@ func articlesFromInternal(articles []storage.Article) []Article {
 	return out
 }
 
+// GetDBStats returns article counts per feed and overall database totals.
+func (e *Engine) GetDBStats() (storage.DBStats, error) {
+	return e.store.GetDBStats()
+}
+
 func feedFromInternal(f storage.Feed) Feed {
 	return Feed{
 		ID:          f.ID,

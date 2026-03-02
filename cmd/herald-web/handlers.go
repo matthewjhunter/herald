@@ -123,7 +123,7 @@ func (h *handlers) init() {
 	shared := []string{"base.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "error.html"}
 
 	// Pages that get their own template tree.
-	pages := []string{"home.html", "feeds_manage.html", "groups.html", "group_detail.html", "settings.html", "filters.html", "admin_prompts.html"}
+	pages := []string{"home.html", "feeds_manage.html", "groups.html", "group_detail.html", "settings.html", "filters.html", "admin_prompts.html", "admin_stats.html"}
 
 	h.pages = make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
@@ -961,6 +961,49 @@ func (h *handlers) handleUserPromptReset(w http.ResponseWriter, r *http.Request)
 	}
 
 	http.Redirect(w, r, "/settings", http.StatusSeeOther)
+}
+
+// adminStatsData is the template data for the admin stats page.
+type adminStatsData struct {
+	TotalArticles int
+	TotalFeeds    int
+	TotalUsers    int
+	Feeds         []adminFeedStat
+}
+
+type adminFeedStat struct {
+	ID          int64
+	Title       string
+	URL         string
+	Status      string
+	Articles    int
+	Subscribers int
+}
+
+func (h *handlers) handleAdminStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := h.engine.GetDBStats()
+	if err != nil {
+		http.Error(w, "failed to load stats", http.StatusInternalServerError)
+		return
+	}
+
+	data := adminStatsData{
+		TotalArticles: stats.TotalArticles,
+		TotalFeeds:    stats.TotalFeeds,
+		TotalUsers:    stats.TotalUsers,
+	}
+	for _, f := range stats.Feeds {
+		data.Feeds = append(data.Feeds, adminFeedStat{
+			ID:          f.ID,
+			Title:       f.Title,
+			URL:         f.URL,
+			Status:      f.Status,
+			Articles:    f.Articles,
+			Subscribers: f.Subscribers,
+		})
+	}
+
+	h.renderPage(w, r, "admin_stats.html", data)
 }
 
 // adminPromptsData is the template data for the admin prompts page.

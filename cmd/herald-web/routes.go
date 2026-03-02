@@ -73,6 +73,7 @@ func newRouter(engine *herald.Engine, validator *auth.Validator, adminRole strin
 	// Admin-only routes.
 	adminAuth := h.requireAdmin
 	mux.Handle("GET /admin/feeds/export.opml", auth(adminAuth(http.HandlerFunc(h.handleAdminOPMLExport))))
+	mux.Handle("GET /admin/stats", auth(adminAuth(http.HandlerFunc(h.handleAdminStats))))
 	mux.Handle("GET /admin/prompts", auth(adminAuth(http.HandlerFunc(h.handleAdminPrompts))))
 	mux.Handle("POST /admin/prompts/{promptType}", auth(adminAuth(http.HandlerFunc(h.handleAdminPromptSave))))
 	mux.Handle("DELETE /admin/prompts/{promptType}", auth(adminAuth(http.HandlerFunc(h.handleAdminPromptReset))))

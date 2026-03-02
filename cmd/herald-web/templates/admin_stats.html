@@ -1,0 +1,55 @@
+{{define "title"}}Herald - Database Stats{{end}}
+{{define "nav"}}
+<nav style="display:flex;gap:1rem;align-items:center;">
+    <a href="/">Articles</a>
+    <a href="/settings">Settings</a>
+    <span aria-current="page">Admin: Stats</span>
+</nav>
+{{end}}
+{{define "content"}}
+<main class="container" style="max-width:900px;">
+    <h2>Database Statistics</h2>
+
+    <div style="display:flex;gap:2rem;margin-bottom:1.5rem;flex-wrap:wrap;">
+        <div>
+            <strong style="font-size:1.5em;">{{.TotalArticles}}</strong><br>
+            <small class="secondary">total articles</small>
+        </div>
+        <div>
+            <strong style="font-size:1.5em;">{{.TotalFeeds}}</strong><br>
+            <small class="secondary">feeds</small>
+        </div>
+        <div>
+            <strong style="font-size:1.5em;">{{.TotalUsers}}</strong><br>
+            <small class="secondary">users</small>
+        </div>
+    </div>
+
+    <h3>Articles per Feed</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Feed</th>
+                <th style="text-align:right;">Articles</th>
+                <th style="text-align:right;">Subscribers</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+        {{range .Feeds}}
+            <tr>
+                <td style="word-break:break-all;">
+                    {{if .Title}}{{.Title}}{{else}}<span class="secondary">{{.URL}}</span>{{end}}
+                    <br><small class="secondary" style="font-size:0.8em;">{{.URL}}</small>
+                </td>
+                <td style="text-align:right;">{{.Articles}}</td>
+                <td style="text-align:right;">{{.Subscribers}}</td>
+                <td>{{if eq .Status "dead"}}<span style="color:var(--pico-del-color);">dead</span>{{else}}{{.Status}}{{end}}</td>
+            </tr>
+        {{else}}
+            <tr><td colspan="4" class="secondary">No feeds found.</td></tr>
+        {{end}}
+        </tbody>
+    </table>
+</main>
+{{end}}
