@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -202,6 +204,7 @@ type settingsData struct {
 	NotifyMinScore    float64
 	Prompts           []promptUIEntry
 	IsAdmin           bool
+	OPMLSyncURL       string
 }
 
 type filtersData struct {
@@ -499,6 +502,14 @@ func (h *handlers) handleSettings(w http.ResponseWriter, r *http.Request) {
 		NotifyMinScore:    prefs.NotifyMinScore,
 		Prompts:           h.loadPromptEntries(uid),
 		IsAdmin:           h.isAdminCtx(r.Context()),
+	}
+
+	if tok, err := h.engine.GetUserPreference(uid, "opml_sync_token"); err == nil && tok != "" {
+		scheme := r.Header.Get("X-Forwarded-Proto")
+		if scheme == "" {
+			scheme = "https"
+		}
+		data.OPMLSyncURL = fmt.Sprintf("%s://%s/opml/%d/%s", scheme, r.Host, uid, tok)
 	}
 
 	h.renderPage(w, r, "settings.html", data)
@@ -1180,4 +1191,62 @@ func (h *handlers) renderFilterRulesFragment(w http.ResponseWriter, userID int64
 	}
 
 	h.renderFragment(w, "filter_rules_table", data)
+}
+
+// handleOPMLSync serves a user's OPML feed without requiring JWT auth.
+// The URL contains both the userID and a per-user secret token so only
+// the token holder can retrieve the feed list.
+func (h *handlers) handleOPMLSync(w http.ResponseWriter, r *http.Request) {
+	userID, err := strconv.ParseInt(r.PathValue("userID"), 10, 64)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	token := r.PathValue("token")
+	if token == "" {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	stored, err := h.engine.GetUserPreference(userID, "opml_sync_token")
+	if err != nil || stored == "" || stored != token {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	data, err := h.engine.ExportOPML(userID)
+	if err != nil {
+		http.Error(w, "failed to export OPML", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=herald.opml")
+	w.Write(data)
+}
+
+// handleOPMLTokenGenerate creates (or rotates) the user's OPML sync token.
+func (h *handlers) handleOPMLTokenGenerate(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+
+	var buf [32]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		http.Error(w, "failed to generate token", http.StatusInternalServerError)
+		return
+	}
+	token := hex.EncodeToString(buf[:])
+
+	if err := h.engine.SetUserPreference(uid, "opml_sync_token", token); err != nil {
+		http.Error(w, "failed to save token", http.StatusInternalServerError)
+		return
+	}
+
+	scheme := r.Header.Get("X-Forwarded-Proto")
+	if scheme == "" {
+		scheme = "https"
+	}
+	syncURL := fmt.Sprintf("%s://%s/opml/%d/%s", scheme, r.Host, uid, token)
+
+	w.Header().Set("Content-Type", "text/plain")
+	fmt.Fprint(w, syncURL)
 }

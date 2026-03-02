@@ -26,6 +26,9 @@ func newRouter(engine *herald.Engine, validator *auth.Validator, adminRole strin
 	// Auth callback — receives the code from webauth, exchanges it for a JWT cookie.
 	mux.HandleFunc("GET /auth/callback", h.handleCallback)
 
+	// OPML sync — token-authenticated, no JWT required.
+	mux.HandleFunc("GET /opml/{userID}/{token}", h.handleOPMLSync)
+
 	// Logout — no auth check needed; just redirects to webauth logout.
 	mux.HandleFunc("GET /auth/logout", h.handleLogout)
 
@@ -49,6 +52,7 @@ func newRouter(engine *herald.Engine, validator *auth.Validator, adminRole strin
 	mux.Handle("POST /feeds/import", auth(http.HandlerFunc(h.handleOPMLImport)))
 	mux.Handle("DELETE /feeds/{feedID}", auth(http.HandlerFunc(h.handleFeedUnsubscribe)))
 	mux.Handle("POST /settings", auth(http.HandlerFunc(h.handleSettingsSave)))
+	mux.Handle("POST /settings/opml-token", auth(http.HandlerFunc(h.handleOPMLTokenGenerate)))
 	mux.Handle("POST /filters", auth(http.HandlerFunc(h.handleFilterAdd)))
 	mux.Handle("POST /filters/threshold", auth(http.HandlerFunc(h.handleFilterThreshold)))
 	mux.Handle("DELETE /filters/{ruleID}", auth(http.HandlerFunc(h.handleFilterDelete)))

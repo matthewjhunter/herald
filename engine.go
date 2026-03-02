@@ -586,6 +586,18 @@ var allowedPromptTypes = map[string]bool{
 	"related_groups": true,
 }
 
+// GetUserPreference returns a single raw preference value for a user.
+func (e *Engine) GetUserPreference(userID int64, key string) (string, error) {
+	return e.store.GetUserPreference(userID, key)
+}
+
+// SetUserPreference stores a single raw preference value for a user.
+// Unlike SetPreference, this bypasses the MCP allowed-keys restriction
+// and is intended for internal/system preferences like opml_sync_token.
+func (e *Engine) SetUserPreference(userID int64, key, value string) error {
+	return e.store.SetUserPreference(userID, key, value)
+}
+
 // allowedPreferenceKeys lists preference keys that can be set via MCP.
 var allowedPreferenceKeys = map[string]bool{
 	"keywords":           true,
