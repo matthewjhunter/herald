@@ -16,8 +16,6 @@ CREATE TABLE IF NOT EXISTS feeds (
     next_fetch_at DATETIME,
     status TEXT NOT NULL DEFAULT 'active'
 );
-CREATE INDEX IF NOT EXISTS idx_feeds_due ON feeds(next_fetch_at) WHERE status = 'active' AND enabled = 1;
-
 CREATE TABLE IF NOT EXISTS articles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     feed_id INTEGER NOT NULL,
