@@ -23,6 +23,16 @@
         </form>
     </article>
 
+    <article>
+        <header><h3>Import OPML</h3></header>
+        <form method="post" action="/u/{{.UserID}}/feeds/import" enctype="multipart/form-data">
+            <div class="grid">
+                <input type="file" name="opml" accept=".opml,.xml" required>
+                <button type="submit">Import</button>
+            </div>
+        </form>
+    </article>
+
     <div id="feed-list">
         {{if .Feeds}}
         <table id="feeds-table">

@@ -105,13 +105,25 @@ func (f *Fetcher) FetchFeed(ctx context.Context, feed storage.Feed) (*FetchResul
 	}, nil
 }
 
+// ImportOPMLReader imports feeds from an OPML reader and subscribes user to them.
+func (f *Fetcher) ImportOPMLReader(r io.Reader, userID int64) error {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return fmt.Errorf("failed to read OPML: %w", err)
+	}
+	return f.importOPMLBytes(data, userID)
+}
+
 // ImportOPML imports feeds from an OPML file and subscribes user to them
 func (f *Fetcher) ImportOPML(opmlPath string, userID int64) error {
 	data, err := os.ReadFile(opmlPath)
 	if err != nil {
 		return fmt.Errorf("failed to read OPML file: %w", err)
 	}
+	return f.importOPMLBytes(data, userID)
+}
 
+func (f *Fetcher) importOPMLBytes(data []byte, userID int64) error {
 	var opml OPML
 	if err := xml.Unmarshal(data, &opml); err != nil {
 		return fmt.Errorf("failed to parse OPML: %w", err)
