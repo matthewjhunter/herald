@@ -96,6 +96,9 @@ type Store interface {
 	GetGroupArticleCount(groupID int64) (int, error)
 	UpdateGroupTopic(groupID int64, topic string) error
 
+	// Admin stats
+	GetDBStats() (DBStats, error)
+
 	// Fever API
 	SetFeverCredential(userID int64, apiKey string) error
 	GetUserByFeverAPIKey(apiKey string) (*User, error)

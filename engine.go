@@ -422,16 +422,19 @@ func (e *Engine) ExportAllFeedsOPML() ([]byte, error) {
 }
 
 // UnsubscribeFeed removes a user's subscription to a feed. If no subscribers
-// remain, the feed and its articles are deleted (via FK CASCADE).
+// remain, the feed and its articles are deleted asynchronously so the caller
+// returns immediately regardless of how many articles need to be cleaned up.
 func (e *Engine) UnsubscribeFeed(userID, feedID int64) error {
 	if err := e.store.UnsubscribeUserFromFeed(userID, feedID); err != nil {
 		return fmt.Errorf("unsubscribe: %w", err)
 	}
-	if deleted, err := e.store.DeleteFeedIfOrphaned(feedID); err != nil {
-		return fmt.Errorf("cleanup orphaned feed: %w", err)
-	} else if deleted {
-		log.Printf("herald: deleted orphaned feed %d", feedID)
-	}
+	go func() {
+		if deleted, err := e.store.DeleteFeedIfOrphaned(feedID); err != nil {
+			log.Printf("herald: cleanup orphaned feed %d: %v", feedID, err)
+		} else if deleted {
+			log.Printf("herald: deleted orphaned feed %d", feedID)
+		}
+	}()
 	return nil
 }
 
@@ -990,6 +993,11 @@ func articlesFromInternal(articles []storage.Article) []Article {
 		out[i] = articleFromInternal(a)
 	}
 	return out
+}
+
+// GetDBStats returns article counts per feed and overall database totals.
+func (e *Engine) GetDBStats() (storage.DBStats, error) {
+	return e.store.GetDBStats()
 }
 
 func feedFromInternal(f storage.Feed) Feed {

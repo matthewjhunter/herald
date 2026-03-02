@@ -11,7 +11,7 @@ import (
 
 // SQLiteStore implements the Store interface using SQLite.
 type SQLiteStore struct {
-	db *sql.DB
+	db *tracedDB
 }
 
 // Compile-time check that SQLiteStore implements Store.
@@ -200,7 +200,7 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		}
 	}
 
-	return &SQLiteStore{db: db}, nil
+	return &SQLiteStore{db: &tracedDB{DB: db}}, nil
 }
 
 // needsReadStateMigration checks whether the read_state table uses the old
@@ -1166,9 +1166,41 @@ func (s *SQLiteStore) UnsubscribeUserFromFeed(userID, feedID int64) error {
 }
 
 // DeleteFeedIfOrphaned deletes a feed only if no users are subscribed to it.
-// Returns true if the feed was deleted. CASCADE handles articles, read_state,
-// summaries, and group member cleanup.
+// Returns true if the feed was deleted.
+//
+// Articles are removed in batches before the feed itself is deleted. Each batch
+// is its own transaction so the WAL write lock is released briefly between
+// iterations, keeping the site responsive when unsubscribing from large feeds.
+// FK CASCADE handles read_state, summaries, authors, and group-member cleanup
+// for each batch of articles.
 func (s *SQLiteStore) DeleteFeedIfOrphaned(feedID int64) (bool, error) {
+	// Fast path: skip deletes if the feed still has subscribers.
+	var n int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM user_feeds WHERE feed_id = ?", feedID).Scan(&n); err != nil {
+		return false, fmt.Errorf("failed to check subscribers: %w", err)
+	}
+	if n > 0 {
+		return false, nil
+	}
+
+	// Delete articles in batches. Each batch commits independently so long
+	// feed removals don't starve concurrent readers/writers.
+	const batchSize = 500
+	for {
+		res, err := s.db.Exec(
+			`DELETE FROM articles WHERE id IN (SELECT id FROM articles WHERE feed_id = ? LIMIT ?)`,
+			feedID, batchSize,
+		)
+		if err != nil {
+			return false, fmt.Errorf("failed to batch-delete articles for feed %d: %w", feedID, err)
+		}
+		if deleted, _ := res.RowsAffected(); deleted == 0 {
+			break
+		}
+	}
+
+	// Delete the feed. The NOT EXISTS guard prevents deletion if another user
+	// re-subscribed between the subscriber check above and this point.
 	result, err := s.db.Exec(
 		"DELETE FROM feeds WHERE id = ? AND NOT EXISTS (SELECT 1 FROM user_feeds WHERE feed_id = ?)",
 		feedID, feedID,

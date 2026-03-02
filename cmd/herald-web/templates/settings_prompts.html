@@ -1,4 +1,4 @@
-{{define "title"}}Herald - Global AI Prompts{{end}}
+{{define "title"}}Herald - AI Prompts{{end}}
 {{define "nav"}}
 <nav style="display:flex;gap:1rem;align-items:center;">
     <a href="/">Articles</a>
@@ -8,46 +8,51 @@
 </nav>
 {{end}}
 {{define "content"}}
-<main class="container" style="max-width:800px;">
+<main class="container" style="max-width:600px;">
+    <h2>AI Prompts</h2>
+
     <div style="border-bottom:1px solid var(--pico-muted-border-color);margin-bottom:1.5rem;padding-bottom:0.5rem;">
         <nav style="display:flex;gap:1.5rem;flex-wrap:wrap;">
             <a href="/settings">Basic</a>
             <a href="/settings/sync">Reader Sync</a>
             <a href="/filters">Filters</a>
-            <a href="/settings/prompts">AI Prompts</a>
+            <a href="/settings/prompts" aria-current="page">AI Prompts</a>
         </nav>
+        {{if .IsAdmin}}
         <nav style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-top:0.25rem;font-size:0.9em;">
             <span class="secondary" style="align-self:center;">Admin:</span>
             <a href="/admin/stats">Stats</a>
-            <a href="/admin/prompts" aria-current="page">Prompts</a>
+            <a href="/admin/prompts">Prompts</a>
         </nav>
+        {{end}}
     </div>
-    <h2>Global AI Prompts</h2>
-    <p class="secondary">These prompts are used as defaults for all users who have not set their own. Changes take effect on the next AI processing cycle.</p>
-    <p><a href="/admin/feeds/export.opml" class="secondary">Export all feeds (OPML)</a></p>
+
+    <p class="secondary">Customize how AI evaluates and summarizes your articles. Each prompt is pre-filled with the current effective default.</p>
 
     {{range .Prompts}}
     <article>
         <header>
             <strong>{{.Label}}</strong>
-            {{if .IsCustom}}<small style="color:var(--pico-primary);">&nbsp;(global override active)</small>{{else}}<small class="secondary">&nbsp;(using embedded default)</small>{{end}}
+            {{if .IsCustom}}<small style="color:var(--pico-primary);">&nbsp;(customized)</small>{{end}}
         </header>
-        <form hx-post="/admin/prompts/{{.Type}}" hx-swap="none"
+        <form hx-post="/settings/prompts/{{.Type}}" hx-swap="none"
               hx-on::after-request="if(event.detail.successful){var b=this.querySelector('[data-save-btn]');b.textContent='Saved!';setTimeout(()=>b.textContent='Save',2000);}">
-            <textarea name="template" rows="8" style="font-family:monospace;font-size:0.85em;">{{.Template}}</textarea>
+            <textarea name="template" rows="6" style="font-family:monospace;font-size:0.85em;">{{.Template}}</textarea>
             <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
                 <button type="submit" data-save-btn style="margin:0;">Save</button>
                 {{if .IsCustom}}
                 <button type="button" class="outline secondary" style="margin:0;"
-                        hx-delete="/admin/prompts/{{.Type}}"
-                        hx-confirm="Reset '{{.Label}}' to embedded default?"
+                        hx-delete="/settings/prompts/{{.Type}}"
+                        hx-confirm="Reset '{{.Label}}' to default?"
                         hx-on::after-request="if(event.detail.successful) window.location.reload();">
-                    Reset to Embedded Default
+                    Reset to Default
                 </button>
                 {{end}}
             </div>
         </form>
     </article>
+    {{else}}
+    <p class="secondary">No AI prompts configured.</p>
     {{end}}
 </main>
 {{end}}
