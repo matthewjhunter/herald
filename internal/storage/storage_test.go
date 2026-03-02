@@ -1,9 +1,12 @@
 package storage
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func newTestStore(t *testing.T) (*SQLiteStore, func()) {
@@ -1033,5 +1036,54 @@ func TestFilteredQueriesNoRulesPassthrough(t *testing.T) {
 	}
 	if len(articles) != 1 {
 		t.Errorf("expected 1 article (no rules passthrough), got %d", len(articles))
+	}
+}
+
+// TestMigrationFromPreOIDCSchema verifies that NewSQLiteStore successfully opens
+// an existing database that was created before the oidc_sub/email columns were
+// added to the users table.  This is a regression test for the crash-loop
+// caused by the schema init trying to CREATE UNIQUE INDEX on a column that
+// didn't yet exist.
+func TestMigrationFromPreOIDCSchema(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "pre-oidc.db")
+
+	// Bootstrap an old-style database with the users table missing oidc_sub and email.
+	legacyDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	_, err = legacyDB.Exec(`
+		CREATE TABLE users (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			name       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)
+	`)
+	if err != nil {
+		t.Fatalf("create legacy users table: %v", err)
+	}
+	_, err = legacyDB.Exec(`INSERT INTO users (name) VALUES ('alice')`)
+	if err != nil {
+		t.Fatalf("insert legacy user: %v", err)
+	}
+	legacyDB.Close()
+
+	// NewSQLiteStore must not crash-loop on this database.
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore on pre-oidc schema: %v", err)
+	}
+	defer store.Close()
+
+	// The migrated users table must expose oidc_sub and email via the normal API.
+	users, err := store.ListUsers()
+	if err != nil {
+		t.Fatalf("ListUsers after migration: %v", err)
+	}
+	if len(users) != 1 || users[0].Name != "alice" {
+		t.Errorf("unexpected users after migration: %+v", users)
+	}
+	if users[0].OIDCSub != nil {
+		t.Errorf("expected nil OIDCSub for legacy user, got %v", users[0].OIDCSub)
 	}
 }
