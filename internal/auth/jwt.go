@@ -22,6 +22,7 @@ type Claims struct {
 	Sub   string
 	Email string
 	Name  string
+	Roles []string // from the "roles" claim (may be absent)
 }
 
 // ValidatorConfig configures JWT validation.
@@ -209,6 +210,7 @@ func (v *Validator) Validate(tokenStr string) (*Claims, error) {
 		Sub:   stringClaim(mapClaims, "sub"),
 		Email: stringClaim(mapClaims, "email"),
 		Name:  stringClaim(mapClaims, "name"),
+		Roles: stringSliceClaim(mapClaims, "roles"),
 	}
 	if claims.Sub == "" {
 		return nil, fmt.Errorf("token missing sub claim")
@@ -411,4 +413,26 @@ func rsaKeyFromJWK(nB64, eB64 string) (*rsa.PublicKey, error) {
 func stringClaim(claims jwt.MapClaims, key string) string {
 	v, _ := claims[key].(string)
 	return v
+}
+
+// stringSliceClaim extracts a []string from a JWT claim that may be encoded
+// as []interface{} (standard JSON decode) or []string.
+func stringSliceClaim(claims jwt.MapClaims, key string) []string {
+	raw, ok := claims[key]
+	if !ok {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []interface{}:
+		result := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				result = append(result, s)
+			}
+		}
+		return result
+	}
+	return nil
 }

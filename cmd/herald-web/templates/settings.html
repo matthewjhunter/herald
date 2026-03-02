@@ -38,5 +38,40 @@
 
     <hr>
     <p><a href="/u/{{.UserID}}/filters">Manage Filter Rules</a> &mdash; score articles by author, category, or tag.</p>
+
+    {{if .Prompts}}
+    <hr>
+    <h3>AI Prompts</h3>
+    <p class="secondary">Customize how AI evaluates and summarizes your articles. Each prompt is pre-filled with the current effective default.</p>
+
+    {{range .Prompts}}
+    <article>
+        <header>
+            <strong>{{.Label}}</strong>
+            {{if .IsCustom}}<small style="color:var(--pico-primary);">&nbsp;(customized)</small>{{end}}
+        </header>
+        <form hx-post="/u/{{$.UserID}}/settings/prompts/{{.Type}}" hx-swap="none"
+              hx-on::after-request="if(event.detail.successful){var b=this.querySelector('[data-save-btn]');b.textContent='Saved!';setTimeout(()=>b.textContent='Save',2000);}">
+            <textarea name="template" rows="6" style="font-family:monospace;font-size:0.85em;">{{.Template}}</textarea>
+            <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+                <button type="submit" data-save-btn style="margin:0;">Save</button>
+                {{if .IsCustom}}
+                <button type="button" class="outline secondary" style="margin:0;"
+                        hx-delete="/u/{{$.UserID}}/settings/prompts/{{.Type}}"
+                        hx-confirm="Reset '{{.Label}}' to default?"
+                        hx-on::after-request="if(event.detail.successful) window.location.reload();">
+                    Reset to Default
+                </button>
+                {{end}}
+            </div>
+        </form>
+    </article>
+    {{end}}
+    {{end}}
+
+    {{if .IsAdmin}}
+    <hr>
+    <p><a href="/admin/prompts">Manage Global AI Prompts</a> &mdash; set the defaults all users inherit.</p>
+    {{end}}
 </main>
 {{end}}
