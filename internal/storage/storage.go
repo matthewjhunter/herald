@@ -11,7 +11,7 @@ import (
 
 // SQLiteStore implements the Store interface using SQLite.
 type SQLiteStore struct {
-	db *sql.DB
+	db *tracedDB
 }
 
 // Compile-time check that SQLiteStore implements Store.
@@ -200,7 +200,7 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		}
 	}
 
-	return &SQLiteStore{db: db}, nil
+	return &SQLiteStore{db: &tracedDB{DB: db}}, nil
 }
 
 // needsReadStateMigration checks whether the read_state table uses the old
