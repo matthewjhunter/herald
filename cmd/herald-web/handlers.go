@@ -720,6 +720,61 @@ func (h *handlers) handleStarToggle(w http.ResponseWriter, r *http.Request) {
 		cls, uid, articleID, nextState, label)
 }
 
+// discoverResultsData is the template data for the feed_discover_results fragment.
+type discoverResultsData struct {
+	UserID  int64
+	PageURL string
+	Feeds   []herald.DiscoveredFeed
+	Error   string
+}
+
+// handleFeedDiscover is the entry point for the subscribe form. It tries to
+// subscribe to the URL directly first; if that fails (e.g. it's a webpage,
+// not a feed) it runs autodiscovery and returns a selection fragment.
+func (h *handlers) handleFeedDiscover(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	rawURL := strings.TrimSpace(r.FormValue("url"))
+	title := strings.TrimSpace(r.FormValue("title"))
+
+	if rawURL == "" {
+		h.renderDiscoverResult(w, uid, rawURL, nil, "Feed URL is required")
+		return
+	}
+
+	// Happy path: URL is already a valid feed.
+	if err := h.engine.SubscribeFeed(uid, rawURL, title); err == nil {
+		w.Header().Set("HX-Redirect", fmt.Sprintf("/u/%d/feeds", uid))
+		return
+	}
+
+	// Not a direct feed — attempt autodiscovery.
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	discovered, err := h.engine.DiscoverFeeds(ctx, rawURL)
+	if err != nil {
+		h.renderDiscoverResult(w, uid, rawURL, nil,
+			fmt.Sprintf("Could not reach %s: %v", rawURL, err))
+		return
+	}
+	if len(discovered) == 0 {
+		h.renderDiscoverResult(w, uid, rawURL, nil,
+			"No feeds found at this URL. Try entering the feed URL directly.")
+		return
+	}
+
+	h.renderDiscoverResult(w, uid, rawURL, discovered, "")
+}
+
+func (h *handlers) renderDiscoverResult(w http.ResponseWriter, uid int64, pageURL string, feeds []herald.DiscoveredFeed, errMsg string) {
+	h.renderFragment(w, "feed_discover_results", discoverResultsData{
+		UserID:  uid,
+		PageURL: pageURL,
+		Feeds:   feeds,
+		Error:   errMsg,
+	})
+}
+
 func (h *handlers) handleFeedSubscribe(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID
 	url := strings.TrimSpace(r.FormValue("url"))
