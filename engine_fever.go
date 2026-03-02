@@ -84,4 +84,3 @@ func (e *Engine) GetFeedGroupMemberships(userID int64) (map[int64][]int64, error
 func (e *Engine) MarkArticleUnread(userID, articleID int64) error {
 	return e.store.UpdateReadState(userID, articleID, false, nil, nil)
 }
-
