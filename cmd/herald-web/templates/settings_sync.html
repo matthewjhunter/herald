@@ -1,0 +1,91 @@
+{{define "title"}}Herald - Reader Sync{{end}}
+{{define "nav"}}
+<nav style="display:flex;gap:1rem;align-items:center;">
+    <a href="/">Articles</a>
+    <a href="/feeds">Feeds</a>
+    <a href="/groups">Groups</a>
+    <a href="/settings">Settings</a>
+</nav>
+{{end}}
+{{define "content"}}
+<main class="container" style="max-width:600px;">
+    <h2>Reader Sync</h2>
+
+    <div style="border-bottom:1px solid var(--pico-muted-border-color);margin-bottom:1.5rem;padding-bottom:0.5rem;">
+        <nav style="display:flex;gap:1.5rem;flex-wrap:wrap;">
+            <a href="/settings">Basic</a>
+            <a href="/settings/sync" aria-current="page">Reader Sync</a>
+            <a href="/filters">Filters</a>
+            <a href="/settings/prompts">AI Prompts</a>
+        </nav>
+        {{if .IsAdmin}}
+        <nav style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-top:0.25rem;font-size:0.9em;">
+            <span class="secondary" style="align-self:center;">Admin:</span>
+            <a href="/admin/stats">Stats</a>
+            <a href="/admin/prompts">Prompts</a>
+        </nav>
+        {{end}}
+    </div>
+
+    <h3>OPML Sync</h3>
+    <p class="secondary">A private URL you can give to any RSS client that supports OPML sync. It returns your current feed subscriptions without requiring login.</p>
+    {{if .OPMLSyncURL}}
+    <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.5rem;">
+        <input type="text" id="opml-url-field" value="{{.OPMLSyncURL}}" readonly style="font-size:0.85em;font-family:monospace;"
+               onclick="this.select()">
+    </div>
+    <button class="outline secondary" style="font-size:0.85em;"
+            hx-post="/settings/opml-token"
+            hx-swap="none"
+            hx-on::after-request="if(event.detail.successful){document.querySelector('#opml-url-field').value=event.detail.xhr.responseText; document.querySelector('#opml-url-field').select();}">
+        Regenerate URL
+    </button>
+    {{else}}
+    <button hx-post="/settings/opml-token"
+            hx-swap="none"
+            hx-on::after-request="if(event.detail.successful) window.location.reload();">
+        Generate sync URL
+    </button>
+    {{end}}
+
+    <hr>
+    <h3>Fever API</h3>
+    <p class="secondary">Connect RSS clients that support the Fever sync protocol (e.g. Reeder, NetNewsWire). Use any email and password — only the MD5 hash is stored. Your existing login credentials are not used. <a href="https://github.com/matthewjhunter/herald/blob/main/docs/fever-api.md" target="_blank" rel="noopener">Compatible apps →</a></p>
+    {{if .FeverEnabled}}
+    <p><strong>Fever API is active.</strong> Configure your client with:</p>
+    <ul style="font-size:0.9em;">
+        <li><strong>Server:</strong> <code>{{.FeverURL}}</code></li>
+        <li><strong>Email/Password:</strong> whatever you set below</li>
+    </ul>
+    <details>
+        <summary style="cursor:pointer;font-size:0.9em;">Change credentials</summary>
+        <form method="post" action="/settings/fever" style="margin-top:0.75rem;">
+            <label for="fever_email_change">Email</label>
+            <input type="email" id="fever_email_change" name="fever_email" required>
+            <label for="fever_password_change">Password</label>
+            <input type="password" id="fever_password_change" name="fever_password" required>
+            <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+                <button type="submit" style="margin:0;">Update</button>
+                <button type="submit" formaction="/settings/fever" formmethod="post"
+                        class="outline secondary" style="margin:0;"
+                        hx-delete="/settings/fever" hx-swap="none"
+                        hx-confirm="Remove Fever API access?"
+                        hx-on::after-request="if(event.detail.successful) window.location.reload();">
+                    Remove
+                </button>
+            </div>
+        </form>
+    </details>
+    {{else}}
+    <form method="post" action="/settings/fever">
+        <label for="fever_email">Email</label>
+        <input type="email" id="fever_email" name="fever_email" required
+               placeholder="any email you want clients to use">
+        <label for="fever_password">Password</label>
+        <input type="password" id="fever_password" name="fever_password" required
+               placeholder="any password you want clients to use">
+        <button type="submit">Enable Fever API</button>
+    </form>
+    {{end}}
+</main>
+{{end}}

@@ -123,7 +123,7 @@ func (h *handlers) init() {
 	shared := []string{"base.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "error.html"}
 
 	// Pages that get their own template tree.
-	pages := []string{"home.html", "feeds_manage.html", "groups.html", "group_detail.html", "settings.html", "filters.html", "admin_prompts.html", "admin_stats.html"}
+	pages := []string{"home.html", "feeds_manage.html", "groups.html", "group_detail.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_stats.html"}
 
 	h.pages = make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
@@ -202,17 +202,26 @@ type settingsData struct {
 	InterestThreshold float64
 	NotifyWhen        string
 	NotifyMinScore    float64
-	Prompts           []promptUIEntry
 	IsAdmin           bool
-	OPMLSyncURL       string
-	FeverEnabled      bool
-	FeverURL          string
+}
+
+type settingsSyncData struct {
+	OPMLSyncURL  string
+	FeverEnabled bool
+	FeverURL     string
+	IsAdmin      bool
+}
+
+type settingsPromptsData struct {
+	Prompts []promptUIEntry
+	IsAdmin bool
 }
 
 type filtersData struct {
 	FilterThreshold int
 	Rules           []filterRuleRow
 	Feeds           []herald.Feed
+	IsAdmin         bool
 }
 
 type filterRuleRow struct {
@@ -502,9 +511,18 @@ func (h *handlers) handleSettings(w http.ResponseWriter, r *http.Request) {
 		InterestThreshold: prefs.InterestThreshold,
 		NotifyWhen:        prefs.NotifyWhen,
 		NotifyMinScore:    prefs.NotifyMinScore,
-		Prompts:           h.loadPromptEntries(uid),
 		IsAdmin:           h.isAdminCtx(r.Context()),
 	}
+
+	h.renderPage(w, r, "settings.html", data)
+}
+
+func (h *handlers) handleSettingsSync(w http.ResponseWriter, r *http.Request) {
+	user := userFromContext(r.Context())
+	uid := user.ID
+	isAdmin := h.isAdminCtx(r.Context())
+
+	data := settingsSyncData{IsAdmin: isAdmin}
 
 	if tok, err := h.engine.GetUserPreference(uid, "opml_sync_token"); err == nil && tok != "" {
 		scheme := r.Header.Get("X-Forwarded-Proto")
@@ -523,7 +541,16 @@ func (h *handlers) handleSettings(w http.ResponseWriter, r *http.Request) {
 		data.FeverURL = fmt.Sprintf("%s://%s/fever/", scheme, r.Host)
 	}
 
-	h.renderPage(w, r, "settings.html", data)
+	h.renderPage(w, r, "settings_sync.html", data)
+}
+
+func (h *handlers) handleSettingsPrompts(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	data := settingsPromptsData{
+		Prompts: h.loadPromptEntries(uid),
+		IsAdmin: h.isAdminCtx(r.Context()),
+	}
+	h.renderPage(w, r, "settings_prompts.html", data)
 }
 
 // --- htmx fragment handlers ---
@@ -1085,6 +1112,7 @@ func (h *handlers) handleFilters(w http.ResponseWriter, r *http.Request) {
 	data := filtersData{
 		FilterThreshold: prefs.FilterThreshold,
 		Feeds:           feeds,
+		IsAdmin:         h.isAdminCtx(r.Context()),
 	}
 	for _, r := range rules {
 		row := filterRuleRow{

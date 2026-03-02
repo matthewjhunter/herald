@@ -1,4 +1,4 @@
-{{define "title"}}Herald - Filter Rules{{end}}
+{{define "title"}}Herald - Filters{{end}}
 {{define "nav"}}
 <nav style="display:flex;gap:1rem;align-items:center;">
     <a href="/">Articles</a>
@@ -9,7 +9,24 @@
 {{end}}
 {{define "content"}}
 <main class="container" style="max-width:800px;">
-    <h2>Filter Rules</h2>
+    <h2>Filters</h2>
+
+    <div style="border-bottom:1px solid var(--pico-muted-border-color);margin-bottom:1.5rem;padding-bottom:0.5rem;">
+        <nav style="display:flex;gap:1.5rem;flex-wrap:wrap;">
+            <a href="/settings">Basic</a>
+            <a href="/settings/sync">Reader Sync</a>
+            <a href="/filters" aria-current="page">Filters</a>
+            <a href="/settings/prompts">AI Prompts</a>
+        </nav>
+        {{if .IsAdmin}}
+        <nav style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-top:0.25rem;font-size:0.9em;">
+            <span class="secondary" style="align-self:center;">Admin:</span>
+            <a href="/admin/stats">Stats</a>
+            <a href="/admin/prompts">Prompts</a>
+        </nav>
+        {{end}}
+    </div>
+
     <p class="secondary">
         Rules score articles by author, category, or tag. Scores are additive.
         Set a <strong>filter threshold</strong> below; articles scoring below it are hidden.

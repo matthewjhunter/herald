@@ -42,6 +42,8 @@ func newRouter(engine *herald.Engine, validator *auth.Validator, adminRole strin
 	mux.Handle("GET /groups", auth(http.HandlerFunc(h.handleGroups)))
 	mux.Handle("GET /groups/{groupID}", auth(http.HandlerFunc(h.handleGroupDetail)))
 	mux.Handle("GET /settings", auth(http.HandlerFunc(h.handleSettings)))
+	mux.Handle("GET /settings/sync", auth(http.HandlerFunc(h.handleSettingsSync)))
+	mux.Handle("GET /settings/prompts", auth(http.HandlerFunc(h.handleSettingsPrompts)))
 	mux.Handle("GET /filters", auth(http.HandlerFunc(h.handleFilters)))
 
 	// htmx fragment routes.
