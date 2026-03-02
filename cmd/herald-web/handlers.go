@@ -205,6 +205,8 @@ type settingsData struct {
 	Prompts           []promptUIEntry
 	IsAdmin           bool
 	OPMLSyncURL       string
+	FeverEnabled      bool
+	FeverURL          string
 }
 
 type filtersData struct {
@@ -510,6 +512,15 @@ func (h *handlers) handleSettings(w http.ResponseWriter, r *http.Request) {
 			scheme = "https"
 		}
 		data.OPMLSyncURL = fmt.Sprintf("%s://%s/opml/%d/%s", scheme, r.Host, uid, tok)
+	}
+
+	if ok, _ := h.engine.HasFeverCredential(uid); ok {
+		data.FeverEnabled = true
+		scheme := r.Header.Get("X-Forwarded-Proto")
+		if scheme == "" {
+			scheme = "https"
+		}
+		data.FeverURL = fmt.Sprintf("%s://%s/fever/", scheme, r.Host)
 	}
 
 	h.renderPage(w, r, "settings.html", data)
@@ -878,6 +889,39 @@ func (h *handlers) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("HX-Trigger", "settings-saved")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, "Settings saved.")
+}
+
+// handleFeverCredentialSave creates or rotates the user's Fever API key.
+// The API key is stored as MD5(email:password) — the email and password
+// themselves are never persisted.
+func (h *handlers) handleFeverCredentialSave(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+
+	email := r.FormValue("fever_email")
+	password := r.FormValue("fever_password")
+	if email == "" || password == "" {
+		http.Error(w, "email and password required", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.engine.SetFeverCredential(uid, email, password); err != nil {
+		http.Error(w, "failed to save Fever credentials", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/settings", http.StatusSeeOther)
+}
+
+// handleFeverCredentialDelete removes the user's Fever API key.
+func (h *handlers) handleFeverCredentialDelete(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+
+	if err := h.engine.DeleteFeverCredential(uid); err != nil {
+		http.Error(w, "failed to remove Fever credentials", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/settings", http.StatusSeeOther)
 }
 
 // --- AI prompt handlers ---

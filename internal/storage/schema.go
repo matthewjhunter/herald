@@ -158,4 +158,11 @@ CREATE INDEX IF NOT EXISTS idx_filter_rules_user ON filter_rules(user_id);
 CREATE INDEX IF NOT EXISTS idx_filter_rules_lookup ON filter_rules(user_id, axis, value);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_filter_rules_unique
     ON filter_rules(user_id, COALESCE(feed_id, -1), axis, value);
+
+CREATE TABLE IF NOT EXISTS fever_credentials (
+    user_id INTEGER PRIMARY KEY,
+    api_key TEXT NOT NULL UNIQUE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_fever_credentials_key ON fever_credentials(api_key);
 `
