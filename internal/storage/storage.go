@@ -112,29 +112,23 @@ type FilterRule struct {
 
 // NewSQLiteStore creates a new database connection and initializes the schema.
 func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
-	db, err := sql.Open("sqlite", dbPath+"?_time_format=sqlite")
+	// busy_timeout and foreign_keys are connection-level PRAGMAs; embedding
+	// them in the DSN via _pragma ensures every connection in the pool gets
+	// them automatically, avoiding write-lock hangs and broken FK cascades.
+	dsn := dbPath + "?_time_format=sqlite" +
+		"&_pragma=busy_timeout(5000)" +
+		"&_pragma=foreign_keys(on)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Enable WAL mode for better read/write concurrency.
-	// WAL allows readers to proceed concurrently with a single writer; the
-	// setting is persistent so one call at open time is sufficient.
+	// Enable WAL mode — a persistent database-level setting, so one Exec
+	// at open time is sufficient. WAL allows concurrent reads alongside
+	// a single writer.
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to set WAL mode: %w", err)
-	}
-
-	// Retry for up to 5 seconds instead of returning SQLITE_BUSY immediately.
-	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to set busy timeout: %w", err)
-	}
-
-	// Enable foreign keys
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
 
 	// Initialize schema
