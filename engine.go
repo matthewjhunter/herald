@@ -60,21 +60,20 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	storeCfg.Thresholds.SecurityScore = cfg.SecurityThreshold
 	storeCfg.Preferences.Keywords = cfg.Keywords
 
-	var fetcher *feeds.Fetcher
+	// Fetcher is always created; it is a stateless HTTP client wrapper with no
+	// background goroutines.  Background polling (FetchAllFeeds) is only called
+	// by the daemon process and is separately guarded by ReadOnly.
+	fetcher := feeds.NewFetcher(store)
+
 	var processor *ai.AIProcessor
-
-	if !cfg.ReadOnly {
-		fetcher = feeds.NewFetcher(store)
-
-		if cfg.OllamaBaseURL != "" {
-			processor, err = ai.NewAIProcessor(
-				cfg.OllamaBaseURL, cfg.SecurityModel, cfg.CurationModel,
-				store, storeCfg,
-			)
-			if err != nil {
-				store.Close()
-				return nil, fmt.Errorf("create AI processor: %w", err)
-			}
+	if !cfg.ReadOnly && cfg.OllamaBaseURL != "" {
+		processor, err = ai.NewAIProcessor(
+			cfg.OllamaBaseURL, cfg.SecurityModel, cfg.CurationModel,
+			store, storeCfg,
+		)
+		if err != nil {
+			store.Close()
+			return nil, fmt.Errorf("create AI processor: %w", err)
 		}
 	}
 
