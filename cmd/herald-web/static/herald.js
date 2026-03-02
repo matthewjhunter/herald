@@ -198,6 +198,63 @@
         if (list) sessionStorage.setItem('herald-scroll', list.scrollTop);
     });
 
+    // Hide-empty-feeds sidebar toggle
+    (function() {
+        var STORAGE_KEY = 'herald-hide-empty-feeds';
+        var sidebar = document.getElementById('sidebar');
+
+        function isHiding() {
+            return localStorage.getItem(STORAGE_KEY) !== 'false';
+        }
+
+        function applyState() {
+            var hiding = isHiding();
+            if (sidebar) sidebar.classList.toggle('hide-empty-feeds', hiding);
+            var btn = document.getElementById('hide-empty-feeds-btn');
+            if (btn) btn.textContent = hiding ? 'Show all feeds' : 'Hide empty feeds';
+        }
+
+        document.addEventListener('click', function(e) {
+            var btn = e.target.closest('#hide-empty-feeds-btn');
+            if (!btn) return;
+            localStorage.setItem(STORAGE_KEY, isHiding() ? 'false' : 'true');
+            applyState();
+        });
+
+        // Re-apply after htmx re-renders sidebar innerHTML (button gets recreated)
+        document.addEventListener('htmx:afterSwap', function(e) {
+            if (e.detail.target.id === 'sidebar') applyState();
+        });
+
+        applyState();
+    })();
+
+    // Hide-read articles toggle
+    (function() {
+        var STORAGE_KEY = 'herald-hide-read';
+        var list = document.getElementById('article-list');
+        var btn = document.getElementById('hide-read-btn');
+
+        function isHiding() {
+            return localStorage.getItem(STORAGE_KEY) !== 'false';
+        }
+
+        function applyState() {
+            var hiding = isHiding();
+            if (list) list.classList.toggle('hide-read', hiding);
+            if (btn) btn.textContent = hiding ? 'Show read' : 'Hide read';
+        }
+
+        if (btn) {
+            btn.addEventListener('click', function() {
+                localStorage.setItem(STORAGE_KEY, isHiding() ? 'false' : 'true');
+                applyState();
+            });
+        }
+
+        applyState();
+    })();
+
     // Sortable tables
     (function() {
         function cellValue(row, col) {
