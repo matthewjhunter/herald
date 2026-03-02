@@ -46,6 +46,7 @@ func newRouter(engine *herald.Engine, validator *auth.Validator, adminRole strin
 	mux.Handle("GET /u/{userID}/sidebar", auth(http.HandlerFunc(h.handleSidebar)))
 	mux.Handle("POST /u/{userID}/articles/mark-all-read", auth(http.HandlerFunc(h.handleMarkAllRead)))
 	mux.Handle("POST /u/{userID}/articles/{articleID}/star", auth(http.HandlerFunc(h.handleStarToggle)))
+	mux.Handle("GET /u/{userID}/feeds/export.opml", auth(http.HandlerFunc(h.handleOPMLExport)))
 	mux.Handle("POST /u/{userID}/feeds/discover", auth(http.HandlerFunc(h.handleFeedDiscover)))
 	mux.Handle("POST /u/{userID}/feeds", auth(http.HandlerFunc(h.handleFeedSubscribe)))
 	mux.Handle("POST /u/{userID}/feeds/import", auth(http.HandlerFunc(h.handleOPMLImport)))
@@ -62,8 +63,9 @@ func newRouter(engine *herald.Engine, validator *auth.Validator, adminRole strin
 	mux.Handle("POST /u/{userID}/settings/prompts/{promptType}", auth(http.HandlerFunc(h.handleUserPromptSave)))
 	mux.Handle("DELETE /u/{userID}/settings/prompts/{promptType}", auth(http.HandlerFunc(h.handleUserPromptReset)))
 
-	// Admin-only global prompt management.
+	// Admin-only routes.
 	adminAuth := h.requireAdmin
+	mux.Handle("GET /admin/feeds/export.opml", auth(adminAuth(http.HandlerFunc(h.handleAdminOPMLExport))))
 	mux.Handle("GET /admin/prompts", auth(adminAuth(http.HandlerFunc(h.handleAdminPrompts))))
 	mux.Handle("POST /admin/prompts/{promptType}", auth(adminAuth(http.HandlerFunc(h.handleAdminPromptSave))))
 	mux.Handle("DELETE /admin/prompts/{promptType}", auth(adminAuth(http.HandlerFunc(h.handleAdminPromptReset))))

@@ -775,6 +775,29 @@ func (h *handlers) renderDiscoverResult(w http.ResponseWriter, uid int64, pageUR
 	})
 }
 
+func (h *handlers) handleOPMLExport(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	data, err := h.engine.ExportOPML(uid)
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Failed to export feeds")
+		return
+	}
+	w.Header().Set("Content-Type", "text/x-opml; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="herald-feeds.opml"`)
+	w.Write(data)
+}
+
+func (h *handlers) handleAdminOPMLExport(w http.ResponseWriter, _ *http.Request) {
+	data, err := h.engine.ExportAllFeedsOPML()
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Failed to export feeds")
+		return
+	}
+	w.Header().Set("Content-Type", "text/x-opml; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="herald-all-feeds.opml"`)
+	w.Write(data)
+}
+
 func (h *handlers) handleFeedSubscribe(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID
 	url := strings.TrimSpace(r.FormValue("url"))

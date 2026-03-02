@@ -58,6 +58,11 @@
         </form>
     </article>
 
+    <article>
+        <header><h3>Export OPML</h3></header>
+        <p><a href="/u/{{.UserID}}/feeds/export.opml" role="button" class="outline secondary" style="display:inline-block;">Download Subscriptions</a></p>
+    </article>
+
     <div id="feed-list">
         {{if .Feeds}}
         <table id="feeds-table">

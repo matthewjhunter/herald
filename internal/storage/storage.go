@@ -1122,6 +1122,24 @@ func (s *SQLiteStore) GetAllSubscribedFeeds() ([]Feed, error) {
 	return scanFeeds(rows)
 }
 
+// GetAllActiveSubscribedFeeds returns all enabled feeds that any user is subscribed to,
+// without any scheduling filter. Intended for export operations.
+func (s *SQLiteStore) GetAllActiveSubscribedFeeds() ([]Feed, error) {
+	rows, err := s.db.Query(`
+		SELECT DISTINCT f.id, f.url, f.title, f.description, f.last_fetched, f.last_error,
+		       f.etag, f.last_modified, f.enabled, f.created_at,
+		       f.consecutive_errors, f.next_fetch_at, f.status
+		FROM feeds f
+		JOIN user_feeds uf ON f.id = uf.feed_id
+		WHERE f.enabled = 1
+		ORDER BY f.title`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all active subscribed feeds: %w", err)
+	}
+	defer rows.Close()
+	return scanFeeds(rows)
+}
+
 // GetFeedSubscribers returns all user IDs subscribed to a feed
 func (s *SQLiteStore) GetFeedSubscribers(feedID int64) ([]int64, error) {
 	rows, err := s.db.Query("SELECT user_id FROM user_feeds WHERE feed_id = ?", feedID)
