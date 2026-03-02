@@ -33,7 +33,6 @@ CREATE TABLE IF NOT EXISTS articles (
     UNIQUE(feed_id, guid)
 );
 
-CREATE INDEX IF NOT EXISTS idx_articles_feed_id ON articles(feed_id);
 CREATE INDEX IF NOT EXISTS idx_articles_published ON articles(published_date DESC);
 
 CREATE TABLE IF NOT EXISTS users (
@@ -57,6 +56,10 @@ CREATE TABLE IF NOT EXISTS read_state (
     FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
 );
 
+CREATE INDEX IF NOT EXISTS idx_read_state_article_user ON read_state(article_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_read_state_user_starred ON read_state(user_id) WHERE starred = 1;
+CREATE INDEX IF NOT EXISTS idx_read_state_user_unscored ON read_state(user_id) WHERE ai_scored = 0;
+
 CREATE TABLE IF NOT EXISTS user_preferences (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL DEFAULT 1,
@@ -73,7 +76,6 @@ CREATE TABLE IF NOT EXISTS user_feeds (
     FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_user_feeds_user ON user_feeds(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_feeds_feed ON user_feeds(feed_id);
 
 CREATE TABLE IF NOT EXISTS article_summaries (
@@ -126,8 +128,6 @@ CREATE TABLE IF NOT EXISTS user_prompts (
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, prompt_type)
 );
-
-CREATE INDEX IF NOT EXISTS idx_user_prompts_user ON user_prompts(user_id);
 
 CREATE TABLE IF NOT EXISTS article_authors (
     article_id INTEGER NOT NULL,

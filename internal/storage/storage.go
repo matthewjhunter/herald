@@ -166,6 +166,13 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		"CREATE INDEX IF NOT EXISTS idx_read_state_article_user ON read_state(article_id, user_id)",
 		// Composite index for feed+date queries (replaces two separate single-column indexes for this pattern).
 		"CREATE INDEX IF NOT EXISTS idx_articles_feed_published ON articles(feed_id, published_date DESC)",
+		// Partial indexes for starred and unscored article lookups.
+		"CREATE INDEX IF NOT EXISTS idx_read_state_user_starred ON read_state(user_id) WHERE starred = 1",
+		"CREATE INDEX IF NOT EXISTS idx_read_state_user_unscored ON read_state(user_id) WHERE ai_scored = 0",
+		// Drop redundant indexes superseded by PKs or better composite indexes.
+		"DROP INDEX IF EXISTS idx_articles_feed_id",
+		"DROP INDEX IF EXISTS idx_user_feeds_user",
+		"DROP INDEX IF EXISTS idx_user_prompts_user",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
