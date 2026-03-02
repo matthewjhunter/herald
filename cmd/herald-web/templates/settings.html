@@ -37,6 +37,28 @@
     </form>
 
     <hr>
+    <h3>OPML Sync</h3>
+    <p class="secondary">A private URL you can give to any RSS client that supports OPML sync. It returns your current feed subscriptions without requiring login.</p>
+    {{if .OPMLSyncURL}}
+    <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.5rem;">
+        <input type="text" id="opml-url-field" value="{{.OPMLSyncURL}}" readonly style="font-size:0.85em;font-family:monospace;"
+               onclick="this.select()">
+    </div>
+    <button class="outline secondary" style="font-size:0.85em;"
+            hx-post="/settings/opml-token"
+            hx-swap="none"
+            hx-on::after-request="if(event.detail.successful){document.querySelector('#opml-url-field').value=event.detail.xhr.responseText; document.querySelector('#opml-url-field').select();}">
+        Regenerate URL
+    </button>
+    {{else}}
+    <button hx-post="/settings/opml-token"
+            hx-swap="none"
+            hx-on::after-request="if(event.detail.successful) window.location.reload();">
+        Generate sync URL
+    </button>
+    {{end}}
+
+    <hr>
     <p><a href="/filters">Manage Filter Rules</a> &mdash; score articles by author, category, or tag.</p>
 
     {{if .Prompts}}
