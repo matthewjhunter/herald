@@ -89,6 +89,7 @@ type UserPrompt struct {
 	PromptType     string
 	PromptTemplate string
 	Temperature    *float64
+	Model          string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
@@ -167,6 +168,7 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		"DROP INDEX IF EXISTS idx_articles_feed_id",
 		"DROP INDEX IF EXISTS idx_user_feeds_user",
 		"DROP INDEX IF EXISTS idx_user_prompts_user",
+		"ALTER TABLE user_prompts ADD COLUMN model TEXT",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -467,16 +469,30 @@ func (s *SQLiteStore) GetUserPromptTemperature(userID int64, promptType string) 
 	return temperature.Float64, nil
 }
 
+// GetUserPromptModel retrieves a user's custom model for a prompt type
+func (s *SQLiteStore) GetUserPromptModel(userID int64, promptType string) (string, error) {
+	var model sql.NullString
+	err := s.db.QueryRow(
+		"SELECT model FROM user_prompts WHERE user_id = ? AND prompt_type = ?",
+		userID, promptType,
+	).Scan(&model)
+	if err != nil {
+		return "", err
+	}
+	return model.String, nil
+}
+
 // SetUserPrompt sets a custom prompt template for a user
-func (s *SQLiteStore) SetUserPrompt(userID int64, promptType, promptTemplate string, temperature *float64) error {
+func (s *SQLiteStore) SetUserPrompt(userID int64, promptType, promptTemplate string, temperature *float64, model *string) error {
 	_, err := s.db.Exec(
-		`INSERT INTO user_prompts (user_id, prompt_type, prompt_template, temperature, updated_at)
-		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+		`INSERT INTO user_prompts (user_id, prompt_type, prompt_template, temperature, model, updated_at)
+		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		 ON CONFLICT(user_id, prompt_type) DO UPDATE SET
 		   prompt_template = excluded.prompt_template,
 		   temperature = excluded.temperature,
+		   model = COALESCE(excluded.model, model),
 		   updated_at = CURRENT_TIMESTAMP`,
-		userID, promptType, promptTemplate, temperature,
+		userID, promptType, promptTemplate, temperature, model,
 	)
 	return err
 }
@@ -493,7 +509,7 @@ func (s *SQLiteStore) DeleteUserPrompt(userID int64, promptType string) error {
 // ListUserPrompts lists all custom prompts for a user
 func (s *SQLiteStore) ListUserPrompts(userID int64) ([]UserPrompt, error) {
 	rows, err := s.db.Query(
-		`SELECT prompt_type, prompt_template, temperature, created_at, updated_at
+		`SELECT prompt_type, prompt_template, temperature, model, created_at, updated_at
 		 FROM user_prompts WHERE user_id = ? ORDER BY prompt_type`,
 		userID,
 	)
@@ -506,7 +522,9 @@ func (s *SQLiteStore) ListUserPrompts(userID int64) ([]UserPrompt, error) {
 	for rows.Next() {
 		var p UserPrompt
 		var temp sql.NullFloat64
-		err := rows.Scan(&p.PromptType, &p.PromptTemplate, &temp, &p.CreatedAt, &p.UpdatedAt)
+		var model sql.NullString
+		err := rows.Scan(&p.PromptType, &p.PromptTemplate, &temp, &model, &p.CreatedAt, &p.UpdatedAt)
+		p.Model = model.String
 		if err != nil {
 			return nil, err
 		}

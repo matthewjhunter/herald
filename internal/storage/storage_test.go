@@ -710,7 +710,7 @@ func TestUserPrompts(t *testing.T) {
 
 	// Set a prompt
 	temp := 0.7
-	if err := store.SetUserPrompt(1, "security", "custom security prompt", &temp); err != nil {
+	if err := store.SetUserPrompt(1, "security", "custom security prompt", &temp, nil); err != nil {
 		t.Fatalf("SetUserPrompt failed: %v", err)
 	}
 

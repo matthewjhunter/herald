@@ -68,6 +68,9 @@ func newRouter(engine *herald.Engine, validator *auth.Validator, adminRole strin
 	mux.Handle("GET /feeds/metadata", auth(http.HandlerFunc(h.handleFeedMetadataByQuery)))
 	mux.Handle("GET /filters/values", auth(http.HandlerFunc(h.handleFilterValues)))
 
+	// Ollama model list (used by prompt settings pages).
+	mux.Handle("GET /api/ollama/models", auth(http.HandlerFunc(h.handleOllamaModels)))
+
 	// Per-user AI prompt customization.
 	mux.Handle("POST /settings/prompts/{promptType}", auth(http.HandlerFunc(h.handleUserPromptSave)))
 	mux.Handle("DELETE /settings/prompts/{promptType}", auth(http.HandlerFunc(h.handleUserPromptReset)))

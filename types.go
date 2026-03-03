@@ -133,6 +133,7 @@ type PromptDetail struct {
 	Type        string  `json:"type"`
 	Template    string  `json:"template"`
 	Temperature float64 `json:"temperature"`
+	Model       string  `json:"model"`
 	IsCustom    bool    `json:"is_custom"`
 }
 

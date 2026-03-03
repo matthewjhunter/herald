@@ -69,12 +69,13 @@ func (h *handlers) handleFever(w http.ResponseWriter, r *http.Request) {
 		h.feverAddSavedIDs(user.ID, resp)
 	}
 
-	// &favicons and &links are part of the spec; return empty arrays.
+	// &favicons returns an empty array (no favicon storage in Herald).
 	if _, ok := r.Form["favicons"]; ok {
 		resp["favicons"] = []any{}
 	}
+	// &links returns article clusters as Fever hot links.
 	if _, ok := r.Form["links"]; ok {
-		resp["links"] = []any{}
+		h.feverAddLinks(user.ID, resp)
 	}
 
 	writeFeverJSON(w, resp)
@@ -303,6 +304,45 @@ func (h *handlers) feverAddSavedIDs(userID int64, resp map[string]any) {
 		parts[i] = strconv.FormatInt(id, 10)
 	}
 	resp["saved_item_ids"] = strings.Join(parts, ",")
+}
+
+// feverLink is the Fever wire format for a single hot link (&links endpoint).
+type feverLink struct {
+	ID          int64  `json:"id"`
+	FeedID      int64  `json:"feed_id"`
+	ItemID      int64  `json:"item_id"`
+	Temperature int    `json:"temperature"`
+	IsItem      int    `json:"is_item"`
+	IsLocal     int    `json:"is_local"`
+	IsSaved     int    `json:"is_saved"`
+	Title       string `json:"title"`
+	URL         string `json:"url"`
+	ItemIDs     string `json:"item_ids"`
+}
+
+func (h *handlers) feverAddLinks(userID int64, resp map[string]any) {
+	groups, err := h.engine.GetFeverLinks(userID)
+	if err != nil {
+		resp["links"] = []any{}
+		return
+	}
+
+	links := make([]feverLink, len(groups))
+	for i, g := range groups {
+		links[i] = feverLink{
+			ID:          g.GroupID,
+			FeedID:      g.FeedID,
+			ItemID:      g.ItemID,
+			Temperature: g.Temperature,
+			IsItem:      1,
+			IsLocal:     1,
+			IsSaved:     g.IsSaved,
+			Title:       g.Title,
+			URL:         g.URL,
+			ItemIDs:     g.ItemIDs,
+		}
+	}
+	resp["links"] = links
 }
 
 func writeFeverJSON(w http.ResponseWriter, data map[string]any) {

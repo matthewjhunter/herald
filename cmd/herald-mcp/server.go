@@ -369,7 +369,7 @@ func registerTools(s *mcp.Server, hs *heraldServer) {
 			return errResult("at least one of template or temperature is required")
 		}
 		userID := hs.resolveUser(ptrStr(input.Speaker))
-		if err := hs.engine.SetPrompt(userID, input.PromptType, template, input.Temperature); err != nil {
+		if err := hs.engine.SetPrompt(userID, input.PromptType, template, input.Temperature, nil); err != nil {
 			return errResult("%v", err)
 		}
 		log.Printf("prompt_set: type=%s", input.PromptType)

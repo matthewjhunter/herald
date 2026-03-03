@@ -80,6 +80,11 @@ func (e *Engine) GetFeedGroupMemberships(userID int64) (map[int64][]int64, error
 	return e.store.GetFeedGroupMemberships(userID)
 }
 
+// GetFeverLinks returns article groups as Fever hot links.
+func (e *Engine) GetFeverLinks(userID int64) ([]storage.FeverLink, error) {
+	return e.store.GetFeverLinks(userID)
+}
+
 // MarkArticleUnread marks a single article as unread.
 func (e *Engine) MarkArticleUnread(userID, articleID int64) error {
 	return e.store.UpdateReadState(userID, articleID, false, nil, nil)

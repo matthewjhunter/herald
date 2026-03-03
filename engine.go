@@ -756,6 +756,7 @@ func (e *Engine) GetPrompt(userID int64, promptType string) (*PromptDetail, erro
 	}
 
 	temperature := promptLoader.GetTemperature(userID, ai.PromptType(promptType))
+	model := promptLoader.GetModel(userID, ai.PromptType(promptType))
 
 	// Determine if this is a custom prompt
 	isCustom := false
@@ -767,17 +768,26 @@ func (e *Engine) GetPrompt(userID int64, promptType string) (*PromptDetail, erro
 		Type:        promptType,
 		Template:    template,
 		Temperature: temperature,
+		Model:       model,
 		IsCustom:    isCustom,
 	}, nil
 }
 
-// SetPrompt customizes a prompt template and/or temperature.
-func (e *Engine) SetPrompt(userID int64, promptType, template string, temp *float64) error {
+// ListModels returns available Ollama models.
+func (e *Engine) ListModels(ctx context.Context) ([]string, error) {
+	if e.ai == nil {
+		return nil, nil
+	}
+	return e.ai.ListModels(ctx)
+}
+
+// SetPrompt customizes a prompt template, temperature, and/or model.
+func (e *Engine) SetPrompt(userID int64, promptType, template string, temp *float64, model *string) error {
 	if !allowedPromptTypes[promptType] {
 		return fmt.Errorf("unknown or restricted prompt type: %q", promptType)
 	}
 
-	// If only temperature is being set, we need to fetch the existing template
+	// If only temperature/model is being set, we need to fetch the existing template
 	if template == "" {
 		existing, err := e.store.GetUserPrompt(userID, promptType)
 		if err == sql.ErrNoRows || existing == "" {
@@ -794,8 +804,7 @@ func (e *Engine) SetPrompt(userID int64, promptType, template string, temp *floa
 		}
 	}
 
-	// If temperature not specified, preserve existing or use nil
-	return e.store.SetUserPrompt(userID, promptType, template, temp)
+	return e.store.SetUserPrompt(userID, promptType, template, temp, model)
 }
 
 // ResetPrompt reverts a prompt type to its embedded default.

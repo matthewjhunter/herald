@@ -17,7 +17,8 @@ type Store interface {
 	// User prompts
 	GetUserPrompt(userID int64, promptType string) (string, error)
 	GetUserPromptTemperature(userID int64, promptType string) (float64, error)
-	SetUserPrompt(userID int64, promptType, promptTemplate string, temperature *float64) error
+	GetUserPromptModel(userID int64, promptType string) (string, error)
+	SetUserPrompt(userID int64, promptType, promptTemplate string, temperature *float64, model *string) error
 	DeleteUserPrompt(userID int64, promptType string) error
 	ListUserPrompts(userID int64) ([]UserPrompt, error)
 
@@ -112,6 +113,7 @@ type Store interface {
 	MarkGroupArticlesRead(userID, groupID int64, before int64) error
 	MarkAllArticlesRead(userID int64, before int64) error
 	GetFeedGroupMemberships(userID int64) (map[int64][]int64, error)
+	GetFeverLinks(userID int64) ([]FeverLink, error)
 
 	// Subscriptions
 	SubscribeUserToFeed(userID, feedID int64) error

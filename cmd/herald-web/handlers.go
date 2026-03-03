@@ -67,10 +67,12 @@ func (h *handlers) requireAdmin(next http.Handler) http.Handler {
 
 // promptUIEntry holds display data for a single prompt type in the settings UI.
 type promptUIEntry struct {
-	Type     string
-	Label    string
-	Template string
-	IsCustom bool
+	Type            string
+	Label           string
+	Template        string
+	Model           string
+	IsCustom        bool
+	AvailableModels []string
 }
 
 // promptTypeOrder defines the display order for prompt types in the UI.
@@ -85,6 +87,7 @@ var promptLabels = map[string]string{
 
 // loadPromptEntries builds the UI entry list for a given userID.
 func (h *handlers) loadPromptEntries(userID int64) []promptUIEntry {
+	models, _ := h.engine.ListModels(context.Background())
 	var entries []promptUIEntry
 	for _, pt := range promptTypeOrder {
 		detail, err := h.engine.GetPrompt(userID, pt)
@@ -92,10 +95,12 @@ func (h *handlers) loadPromptEntries(userID int64) []promptUIEntry {
 			continue
 		}
 		entries = append(entries, promptUIEntry{
-			Type:     pt,
-			Label:    promptLabels[pt],
-			Template: detail.Template,
-			IsCustom: detail.IsCustom,
+			Type:            pt,
+			Label:           promptLabels[pt],
+			Template:        detail.Template,
+			Model:           detail.Model,
+			IsCustom:        detail.IsCustom,
+			AvailableModels: models,
 		})
 	}
 	return entries
@@ -968,7 +973,12 @@ func (h *handlers) handleUserPromptSave(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := h.engine.SetPrompt(uid, promptType, tmpl, nil); err != nil {
+	var modelPtr *string
+	if m := strings.TrimSpace(r.FormValue("model")); m != "" {
+		modelPtr = &m
+	}
+
+	if err := h.engine.SetPrompt(uid, promptType, tmpl, nil, modelPtr); err != nil {
 		h.renderError(w, http.StatusBadRequest, fmt.Sprintf("Failed to save prompt: %v", err))
 		return
 	}
@@ -976,6 +986,15 @@ func (h *handlers) handleUserPromptSave(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("HX-Trigger", "prompt-saved")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, "Prompt saved.")
+}
+
+func (h *handlers) handleOllamaModels(w http.ResponseWriter, r *http.Request) {
+	models, err := h.engine.ListModels(r.Context())
+	if err != nil || models == nil {
+		models = []string{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(models)
 }
 
 func (h *handlers) handleUserPromptReset(w http.ResponseWriter, r *http.Request) {
@@ -1059,7 +1078,12 @@ func (h *handlers) handleAdminPromptSave(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := h.engine.SetPrompt(0, promptType, tmpl, nil); err != nil {
+	var modelPtr *string
+	if m := strings.TrimSpace(r.FormValue("model")); m != "" {
+		modelPtr = &m
+	}
+
+	if err := h.engine.SetPrompt(0, promptType, tmpl, nil, modelPtr); err != nil {
 		h.renderError(w, http.StatusBadRequest, fmt.Sprintf("Failed to save global prompt: %v", err))
 		return
 	}
