@@ -233,6 +233,49 @@
     color: var(--pico-muted-color);
 }
 
+/* Settings pages */
+.settings-page {
+    max-width: 720px;
+}
+
+.settings-subnav {
+    border-bottom: 1px solid var(--pico-muted-border-color);
+    margin-bottom: 1.5rem;
+    padding-bottom: 0.5rem;
+}
+
+.settings-subnav > nav {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.settings-subnav > nav a {
+    text-decoration: none;
+    color: var(--pico-muted-color);
+    padding-bottom: 0.35rem;
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.settings-subnav > nav a:hover {
+    color: var(--pico-color);
+}
+
+.settings-subnav > nav a[aria-current="page"] {
+    color: var(--pico-primary);
+    border-bottom: 2px solid var(--pico-primary);
+    font-weight: 600;
+}
+
+.settings-subnav .admin-nav {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+}
+
 /* Responsive: collapse sidebar on mobile */
 @media (max-width: 768px) {
     .app-grid {
