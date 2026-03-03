@@ -70,7 +70,7 @@ func TestGetPrompt_DatabaseOverride(t *testing.T) {
 	defer cleanup()
 
 	// Set a custom prompt in the database
-	if err := store.SetUserPrompt(1, "security", "db security prompt", nil); err != nil {
+	if err := store.SetUserPrompt(1, "security", "db security prompt", nil, nil); err != nil {
 		t.Fatalf("SetUserPrompt failed: %v", err)
 	}
 

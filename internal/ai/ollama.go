@@ -111,8 +111,13 @@ func (p *AIProcessor) SecurityCheck(ctx context.Context, userID int64, title, co
 	// Get temperature
 	temperature := p.promptLoader.GetTemperature(userID, PromptTypeSecurity)
 
+	model := p.promptLoader.GetModel(userID, PromptTypeSecurity)
+	if model == "" {
+		model = p.securityModel
+	}
+
 	req := &api.GenerateRequest{
-		Model:  p.securityModel,
+		Model:  model,
 		Prompt: prompt,
 		Stream: new(bool), // false
 		Options: map[string]interface{}{
@@ -174,8 +179,13 @@ func (p *AIProcessor) CurateArticle(ctx context.Context, userID int64, title, co
 	// Get temperature
 	temperature := p.promptLoader.GetTemperature(userID, PromptTypeCuration)
 
+	model := p.promptLoader.GetModel(userID, PromptTypeCuration)
+	if model == "" {
+		model = p.curationModel
+	}
+
 	req := &api.GenerateRequest{
-		Model:  p.curationModel,
+		Model:  model,
 		Prompt: prompt,
 		Stream: new(bool), // false
 		Options: map[string]interface{}{
@@ -206,6 +216,19 @@ func (p *AIProcessor) CurateArticle(ctx context.Context, userID int64, title, co
 	}
 
 	return &result, nil
+}
+
+// ListModels returns the names of all models available in Ollama.
+func (p *AIProcessor) ListModels(ctx context.Context) ([]string, error) {
+	list, err := p.client.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(list.Models))
+	for _, m := range list.Models {
+		names = append(names, m.Name)
+	}
+	return names, nil
 }
 
 // truncateText truncates text to maxLen characters

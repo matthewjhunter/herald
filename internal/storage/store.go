@@ -17,7 +17,8 @@ type Store interface {
 	// User prompts
 	GetUserPrompt(userID int64, promptType string) (string, error)
 	GetUserPromptTemperature(userID int64, promptType string) (float64, error)
-	SetUserPrompt(userID int64, promptType, promptTemplate string, temperature *float64) error
+	GetUserPromptModel(userID int64, promptType string) (string, error)
+	SetUserPrompt(userID int64, promptType, promptTemplate string, temperature *float64, model *string) error
 	DeleteUserPrompt(userID int64, promptType string) error
 	ListUserPrompts(userID int64) ([]UserPrompt, error)
 

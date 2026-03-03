@@ -199,6 +199,40 @@ func (pl *PromptLoader) GetTemperature(userID int64, promptType PromptType) floa
 	}
 }
 
+// GetModel returns the effective model for a prompt type with fallback.
+// Priority: user database -> global admin (user_id=0) -> config file -> empty string
+func (pl *PromptLoader) GetModel(userID int64, promptType PromptType) string {
+	if pl.store != nil {
+		if store, ok := pl.store.(*storage.SQLiteStore); ok {
+			model, err := store.GetUserPromptModel(userID, string(promptType))
+			if err == nil && model != "" {
+				return model
+			}
+			if userID != 0 {
+				model, err = store.GetUserPromptModel(0, string(promptType))
+				if err == nil && model != "" {
+					return model
+				}
+			}
+		}
+	}
+	if pl.config != nil {
+		if config, ok := pl.config.(*storage.Config); ok {
+			switch promptType {
+			case PromptTypeSecurity:
+				if config.Ollama.SecurityModel != "" {
+					return config.Ollama.SecurityModel
+				}
+			default:
+				if config.Ollama.CurationModel != "" {
+					return config.Ollama.CurationModel
+				}
+			}
+		}
+	}
+	return ""
+}
+
 // ExecutePrompt renders a prompt template with the given data
 func ExecutePrompt(promptTemplate string, data interface{}) (string, error) {
 	tmpl, err := template.New("prompt").Parse(promptTemplate)

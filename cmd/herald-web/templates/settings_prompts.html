@@ -30,6 +30,7 @@
     <p class="secondary">Customize how AI evaluates and summarizes your articles. Each prompt is pre-filled with the current effective default.</p>
 
     {{range .Prompts}}
+    {{$entry := .}}
     <article>
         <header>
             <strong>{{.Label}}</strong>
@@ -38,6 +39,16 @@
         <form hx-post="/settings/prompts/{{.Type}}" hx-swap="none"
               hx-on::after-request="if(event.detail.successful){var b=this.querySelector('[data-save-btn]');b.textContent='Saved!';setTimeout(()=>b.textContent='Save',2000);}">
             <textarea name="template" rows="6" style="font-family:monospace;font-size:0.85em;">{{.Template}}</textarea>
+            <label style="margin-top:0.5rem;font-size:0.9em;">Model</label>
+            {{if .AvailableModels}}
+            <select name="model" style="margin-bottom:0.5rem;">
+                {{range .AvailableModels}}
+                <option value="{{.}}" {{if eq . $entry.Model}}selected{{end}}>{{.}}</option>
+                {{end}}
+            </select>
+            {{else}}
+            <input type="text" name="model" value="{{.Model}}" placeholder="e.g. llama3.2:3b" style="margin-bottom:0.5rem;">
+            {{end}}
             <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
                 <button type="submit" data-save-btn style="margin:0;">Save</button>
                 {{if .IsCustom}}
