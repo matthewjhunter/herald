@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -246,6 +247,109 @@ func (s *SQLiteStore) GetFeverAPIKey(userID int64) (string, error) {
 func (s *SQLiteStore) DeleteFeverCredential(userID int64) error {
 	_, err := s.db.Exec(`DELETE FROM fever_credentials WHERE user_id = ?`, userID)
 	return err
+}
+
+// FeverLink is an article group represented as a Fever hot link.
+type FeverLink struct {
+	GroupID     int64
+	FeedID      int64
+	ItemID      int64  // primary article ID
+	IsSaved     int    // 1 if primary article is starred
+	Temperature int    // 0-100
+	Title       string // primary article title
+	URL         string // primary article URL
+	ItemIDs     string // comma-separated article IDs in the group
+}
+
+// GetFeverLinks returns article groups as Fever hot links for the &links endpoint.
+// Only groups with >= 2 articles are included, ordered by most recently updated.
+// Temperature is derived from max_interest_score (scaled ×10) when available,
+// otherwise from article count (×25, capped at 100).
+func (s *SQLiteStore) GetFeverLinks(userID int64) ([]FeverLink, error) {
+	rows, err := s.db.Query(`
+		SELECT
+			ag.id,
+			agm.article_id,
+			a.feed_id,
+			a.title,
+			a.url,
+			COALESCE(rs.starred, 0),
+			COALESCE(gs.max_interest_score, 0)
+		FROM article_groups ag
+		JOIN article_group_members agm ON agm.group_id = ag.id
+		JOIN articles a ON a.id = agm.article_id
+		LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = ?
+		LEFT JOIN group_summaries gs ON gs.group_id = ag.id
+		WHERE ag.user_id = ?
+		ORDER BY ag.updated_at DESC, agm.added_at ASC`,
+		userID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("fever links: %w", err)
+	}
+	defer rows.Close()
+
+	type memberRow struct {
+		articleID int64
+		feedID    int64
+		title     string
+		url       string
+		isSaved   int
+		score     float64
+	}
+
+	var order []int64
+	byGroup := map[int64][]memberRow{}
+
+	for rows.Next() {
+		var groupID int64
+		var m memberRow
+		if err := rows.Scan(&groupID, &m.articleID, &m.feedID, &m.title, &m.url, &m.isSaved, &m.score); err != nil {
+			return nil, fmt.Errorf("fever links scan: %w", err)
+		}
+		if _, seen := byGroup[groupID]; !seen {
+			order = append(order, groupID)
+		}
+		byGroup[groupID] = append(byGroup[groupID], m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	links := make([]FeverLink, 0, len(order))
+	for _, groupID := range order {
+		members := byGroup[groupID]
+		if len(members) < 2 {
+			continue
+		}
+		primary := members[0]
+
+		ids := make([]string, len(members))
+		for i, m := range members {
+			ids[i] = strconv.FormatInt(m.articleID, 10)
+		}
+
+		temp := 0
+		if primary.score > 0 {
+			temp = int(primary.score * 10)
+		} else {
+			temp = len(members) * 25
+		}
+		if temp > 100 {
+			temp = 100
+		}
+
+		links = append(links, FeverLink{
+			GroupID:     groupID,
+			FeedID:      primary.feedID,
+			ItemID:      primary.articleID,
+			IsSaved:     primary.isSaved,
+			Temperature: temp,
+			Title:       primary.title,
+			URL:         primary.url,
+			ItemIDs:     strings.Join(ids, ","),
+		})
+	}
+	return links, nil
 }
 
 // GetFeedGroupMemberships returns a map from article_group_id to the set of

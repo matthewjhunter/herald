@@ -64,7 +64,7 @@ The Fever protocol syncs:
 
 Herald returns article clusters as Fever groups. Most clients display these as folders.
 
-The `&links` endpoint (Fever's "hot links" feature) returns an empty list. Herald's link-trending feature (#33) will populate this in a future release.
+The `&links` endpoint returns Herald's AI-curated article clusters as Fever hot links. In clients like Reeder, these appear in the **Sparks** section. Each cluster becomes one link; the `temperature` field reflects the article's interest score (or cluster size if no score is available), and `item_ids` carries all related article IDs so the client can show full coverage of a topic.
 
 ---
 
