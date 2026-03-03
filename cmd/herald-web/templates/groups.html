@@ -15,13 +15,13 @@
     <div style="display:flex;flex-direction:column;gap:0.75rem;">
         {{range .Groups}}
         <article style="margin:0;">
-            <header>
+            <header style="display:flex;justify-content:space-between;align-items:baseline;gap:1rem;">
                 <a href="/groups/{{.ID}}"><strong>{{.Topic}}</strong></a>
+                <small class="secondary" style="white-space:nowrap;flex-shrink:0;">
+                    {{.Count}} article{{if ne .Count 1}}s{{end}}{{if .MaxScore}} &middot; {{printf "%.1f" .MaxScore}}{{end}}
+                </small>
             </header>
-            {{if .Summary}}<p>{{.Summary}}</p>{{end}}
-            <footer>
-                <small>{{.Count}} articles{{if .MaxScore}} &middot; Top score: {{printf "%.1f" .MaxScore}}{{end}}</small>
-            </footer>
+            {{if .Summary}}<p style="margin:0.5rem 0 0;">{{.Summary}}</p>{{end}}
         </article>
         {{end}}
     </div>

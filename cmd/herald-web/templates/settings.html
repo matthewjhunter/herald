@@ -8,19 +8,19 @@
 </nav>
 {{end}}
 {{define "content"}}
-<main class="container" style="max-width:600px;">
+<main class="container settings-page">
     <h2>Settings</h2>
 
-    <div style="border-bottom:1px solid var(--pico-muted-border-color);margin-bottom:1.5rem;padding-bottom:0.5rem;">
-        <nav style="display:flex;gap:1.5rem;flex-wrap:wrap;">
+    <div class="settings-subnav">
+        <nav>
             <a href="/settings" aria-current="page">Basic</a>
             <a href="/settings/sync">Reader Sync</a>
             <a href="/filters">Filters</a>
             <a href="/settings/prompts">AI Prompts</a>
         </nav>
         {{if .IsAdmin}}
-        <nav style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-top:0.25rem;font-size:0.9em;">
-            <span class="secondary" style="align-self:center;">Admin:</span>
+        <nav class="admin-nav">
+            <span class="secondary">Admin:</span>
             <a href="/admin/stats">Stats</a>
             <a href="/admin/prompts">Prompts</a>
         </nav>
