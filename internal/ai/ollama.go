@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -37,7 +38,7 @@ func NewAIProcessor(baseURL, securityModel, curationModel string, store interfac
 		if parseErr != nil {
 			return nil, fmt.Errorf("invalid base URL: %w", parseErr)
 		}
-		client = api.NewClient(parsedURL, nil)
+		client = api.NewClient(parsedURL, http.DefaultClient)
 	} else {
 		var err error
 		client, err = api.ClientFromEnvironment()
