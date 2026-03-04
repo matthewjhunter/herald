@@ -1,12 +1,5 @@
 {{define "title"}}Herald - Groups{{end}}
-{{define "nav"}}
-<nav style="display:flex;gap:1rem;align-items:center;">
-    <a href="/">Articles</a>
-    <a href="/feeds">Feeds</a>
-    <a href="/groups" aria-current="page">Groups</a>
-    <a href="/settings">Settings</a>
-</nav>
-{{end}}
+{{define "nav"}}{{template "shared-nav" "groups"}}{{end}}
 {{define "content"}}
 <main class="container">
     <h2>Article Groups</h2>

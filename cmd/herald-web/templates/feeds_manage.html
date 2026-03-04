@@ -23,14 +23,7 @@
 {{end}}
 
 {{define "title"}}Herald - Manage Feeds{{end}}
-{{define "nav"}}
-<nav style="display:flex;gap:1rem;align-items:center;">
-    <a href="/">Articles</a>
-    <a href="/feeds" aria-current="page">Feeds</a>
-    <a href="/groups">Groups</a>
-    <a href="/settings">Settings</a>
-</nav>
-{{end}}
+{{define "nav"}}{{template "shared-nav" "feeds"}}{{end}}
 {{define "content"}}
 <main class="container">
     <h2>Manage Feeds</h2>

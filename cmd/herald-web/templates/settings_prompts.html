@@ -1,12 +1,5 @@
 {{define "title"}}Herald - AI Prompts{{end}}
-{{define "nav"}}
-<nav style="display:flex;gap:1rem;align-items:center;">
-    <a href="/">Articles</a>
-    <a href="/feeds">Feeds</a>
-    <a href="/groups">Groups</a>
-    <a href="/settings">Settings</a>
-</nav>
-{{end}}
+{{define "nav"}}{{template "shared-nav" "settings"}}{{end}}
 {{define "content"}}
 <main class="container settings-page">
     <h2>AI Prompts</h2>
