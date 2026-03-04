@@ -1,0 +1,17 @@
+{{define "settings-subnav"}}
+<div class="settings-subnav">
+    <nav>
+        <a href="/settings"{{if eq .Active "basic"}} aria-current="page"{{end}}>Basic</a>
+        <a href="/settings/sync"{{if eq .Active "sync"}} aria-current="page"{{end}}>Reader Sync</a>
+        <a href="/filters"{{if eq .Active "filters"}} aria-current="page"{{end}}>Filters</a>
+        <a href="/settings/prompts"{{if eq .Active "prompts"}} aria-current="page"{{end}}>AI Prompts</a>
+    </nav>
+    {{if .IsAdmin}}
+    <nav class="admin-nav">
+        <span class="secondary">Admin:</span>
+        <a href="/admin/stats"{{if eq .Active "admin-stats"}} aria-current="page"{{end}}>Stats</a>
+        <a href="/admin/prompts"{{if eq .Active "admin-prompts"}} aria-current="page"{{end}}>Prompts</a>
+    </nav>
+    {{end}}
+</div>
+{{end}}

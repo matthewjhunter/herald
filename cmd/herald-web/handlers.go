@@ -120,12 +120,26 @@ func (h *handlers) init() {
 			return template.HTML(s) //nolint:gosec // already sanitized by bluemonday
 		},
 		"assetVersion": func() string { return version },
+		"dict": func(pairs ...any) (map[string]any, error) {
+			if len(pairs)%2 != 0 {
+				return nil, fmt.Errorf("dict requires an even number of arguments")
+			}
+			d := make(map[string]any, len(pairs)/2)
+			for i := 0; i < len(pairs); i += 2 {
+				key, ok := pairs[i].(string)
+				if !ok {
+					return nil, fmt.Errorf("dict keys must be strings")
+				}
+				d[key] = pairs[i+1]
+			}
+			return d, nil
+		},
 	}
 
 	tmplFS, _ := fs.Sub(embedded, "templates")
 
 	// Shared partials included in every page template.
-	shared := []string{"base.html", "nav.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "error.html"}
+	shared := []string{"base.html", "nav.html", "settings_subnav.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "error.html"}
 
 	// Pages that get their own template tree.
 	pages := []string{"home.html", "feeds_manage.html", "groups.html", "group_detail.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_stats.html"}
