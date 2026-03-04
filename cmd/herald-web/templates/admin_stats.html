@@ -1,27 +1,8 @@
 {{define "title"}}Herald - Database Stats{{end}}
-{{define "nav"}}
-<nav style="display:flex;gap:1rem;align-items:center;">
-    <a href="/">Articles</a>
-    <a href="/feeds">Feeds</a>
-    <a href="/groups">Groups</a>
-    <a href="/settings">Settings</a>
-</nav>
-{{end}}
+{{define "nav"}}{{template "shared-nav" "settings"}}{{end}}
 {{define "content"}}
 <main class="container" style="max-width:900px;">
-    <div style="border-bottom:1px solid var(--pico-muted-border-color);margin-bottom:1.5rem;padding-bottom:0.5rem;">
-        <nav style="display:flex;gap:1.5rem;flex-wrap:wrap;">
-            <a href="/settings">Basic</a>
-            <a href="/settings/sync">Reader Sync</a>
-            <a href="/filters">Filters</a>
-            <a href="/settings/prompts">AI Prompts</a>
-        </nav>
-        <nav style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-top:0.25rem;font-size:0.9em;">
-            <span class="secondary" style="align-self:center;">Admin:</span>
-            <a href="/admin/stats" aria-current="page">Stats</a>
-            <a href="/admin/prompts">Prompts</a>
-        </nav>
-    </div>
+    {{template "settings-subnav" (dict "Active" "admin-stats" "IsAdmin" true)}}
     <h2>Database Statistics</h2>
 
     <div style="display:flex;gap:2rem;margin-bottom:1.5rem;flex-wrap:wrap;">

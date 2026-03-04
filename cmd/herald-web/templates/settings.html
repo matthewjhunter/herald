@@ -1,31 +1,10 @@
 {{define "title"}}Herald - Settings{{end}}
-{{define "nav"}}
-<nav style="display:flex;gap:1rem;align-items:center;">
-    <a href="/">Articles</a>
-    <a href="/feeds">Feeds</a>
-    <a href="/groups">Groups</a>
-    <a href="/settings" aria-current="page">Settings</a>
-</nav>
-{{end}}
+{{define "nav"}}{{template "shared-nav" "settings"}}{{end}}
 {{define "content"}}
 <main class="container settings-page">
     <h2>Settings</h2>
 
-    <div class="settings-subnav">
-        <nav>
-            <a href="/settings" aria-current="page">Basic</a>
-            <a href="/settings/sync">Reader Sync</a>
-            <a href="/filters">Filters</a>
-            <a href="/settings/prompts">AI Prompts</a>
-        </nav>
-        {{if .IsAdmin}}
-        <nav class="admin-nav">
-            <span class="secondary">Admin:</span>
-            <a href="/admin/stats">Stats</a>
-            <a href="/admin/prompts">Prompts</a>
-        </nav>
-        {{end}}
-    </div>
+    {{template "settings-subnav" (dict "Active" "basic" "IsAdmin" .IsAdmin)}}
 
     <form hx-post="/settings" hx-swap="none">
         <label for="keywords">Interest Keywords</label>

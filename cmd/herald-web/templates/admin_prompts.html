@@ -1,27 +1,8 @@
 {{define "title"}}Herald - Global AI Prompts{{end}}
-{{define "nav"}}
-<nav style="display:flex;gap:1rem;align-items:center;">
-    <a href="/">Articles</a>
-    <a href="/feeds">Feeds</a>
-    <a href="/groups">Groups</a>
-    <a href="/settings">Settings</a>
-</nav>
-{{end}}
+{{define "nav"}}{{template "shared-nav" "settings"}}{{end}}
 {{define "content"}}
 <main class="container" style="max-width:800px;">
-    <div style="border-bottom:1px solid var(--pico-muted-border-color);margin-bottom:1.5rem;padding-bottom:0.5rem;">
-        <nav style="display:flex;gap:1.5rem;flex-wrap:wrap;">
-            <a href="/settings">Basic</a>
-            <a href="/settings/sync">Reader Sync</a>
-            <a href="/filters">Filters</a>
-            <a href="/settings/prompts">AI Prompts</a>
-        </nav>
-        <nav style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-top:0.25rem;font-size:0.9em;">
-            <span class="secondary" style="align-self:center;">Admin:</span>
-            <a href="/admin/stats">Stats</a>
-            <a href="/admin/prompts" aria-current="page">Prompts</a>
-        </nav>
-    </div>
+    {{template "settings-subnav" (dict "Active" "admin-prompts" "IsAdmin" true)}}
     <h2>Global AI Prompts</h2>
     <p class="secondary">These prompts are used as defaults for all users who have not set their own. Changes take effect on the next AI processing cycle.</p>
     <p><a href="/admin/feeds/export.opml" class="secondary">Export all feeds (OPML)</a></p>
