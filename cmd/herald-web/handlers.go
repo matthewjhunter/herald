@@ -654,7 +654,7 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 	if content == "" {
 		content = article.Summary
 	}
-	sanitized := h.policy.Sanitize(content)
+	sanitized := normalizeContent(h.policy.Sanitize(content))
 
 	// Look up feed title
 	feedTitle := ""

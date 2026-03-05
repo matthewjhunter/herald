@@ -184,6 +184,14 @@
 .reading-pane .article-content img {
     max-width: 100%;
     height: auto;
+    display: block;
+    margin: 1rem 0;
+    float: none !important;
+}
+
+.reading-pane .article-content {
+    overflow-wrap: break-word;
+    word-break: break-word;
 }
 
 .reading-pane .article-actions {
