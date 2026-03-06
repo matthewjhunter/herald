@@ -166,6 +166,20 @@ CREATE TABLE IF NOT EXISTS fever_credentials (
 );
 CREATE INDEX IF NOT EXISTS idx_fever_credentials_key ON fever_credentials(api_key);
 
+CREATE TABLE IF NOT EXISTS article_images (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    article_id INTEGER NOT NULL,
+    original_url TEXT NOT NULL,
+    data BLOB NOT NULL,
+    mime_type TEXT NOT NULL,
+    width INTEGER NOT NULL DEFAULT 0,
+    height INTEGER NOT NULL DEFAULT 0,
+    fetched_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(article_id, original_url),
+    FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_article_images_article ON article_images(article_id);
+
 CREATE TABLE IF NOT EXISTS feed_favicons (
     feed_id INTEGER PRIMARY KEY,
     data BLOB NOT NULL,

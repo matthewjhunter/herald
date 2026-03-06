@@ -172,6 +172,9 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		// Full-text fetch tracking: marks whether we've attempted to replace
 		// truncated feed content with the full article text.
 		"ALTER TABLE articles ADD COLUMN full_text_fetched BOOLEAN NOT NULL DEFAULT 0",
+		// Image cache tracking: marks whether we've attempted to cache all
+		// images referenced in this article's content.
+		"ALTER TABLE articles ADD COLUMN images_cached BOOLEAN NOT NULL DEFAULT 0",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -1873,4 +1876,121 @@ func (s *SQLiteStore) GetSubscribedFeedsWithoutFavicons() ([]Feed, error) {
 	defer rows.Close()
 
 	return scanFeeds(rows)
+}
+
+// --- Article images ---
+
+// ArticleImage holds a cached image extracted from article content.
+type ArticleImage struct {
+	ID          int64
+	ArticleID   int64
+	OriginalURL string
+	Data        []byte
+	MimeType    string
+	Width       int
+	Height      int
+	FetchedAt   time.Time
+}
+
+// StoreArticleImage upserts a cached image for an article.
+// Returns the row ID of the inserted or existing image.
+func (s *SQLiteStore) StoreArticleImage(articleID int64, originalURL string, data []byte, mimeType string, width, height int) (int64, error) {
+	res, err := s.db.Exec(
+		`INSERT INTO article_images (article_id, original_url, data, mime_type, width, height)
+		 VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(article_id, original_url) DO UPDATE SET
+		   data = excluded.data, mime_type = excluded.mime_type,
+		   width = excluded.width, height = excluded.height,
+		   fetched_at = CURRENT_TIMESTAMP`,
+		articleID, originalURL, data, mimeType, width, height,
+	)
+	if err != nil {
+		return 0, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	// LastInsertId returns 0 on a no-op upsert in SQLite; look up the real ID.
+	if id == 0 {
+		err = s.db.QueryRow(
+			`SELECT id FROM article_images WHERE article_id = ? AND original_url = ?`,
+			articleID, originalURL,
+		).Scan(&id)
+	}
+	return id, err
+}
+
+// GetArticleImage returns a single cached image by its ID.
+func (s *SQLiteStore) GetArticleImage(imageID int64) (*ArticleImage, error) {
+	var img ArticleImage
+	err := s.db.QueryRow(
+		`SELECT id, article_id, original_url, data, mime_type, width, height, fetched_at
+		 FROM article_images WHERE id = ?`, imageID,
+	).Scan(&img.ID, &img.ArticleID, &img.OriginalURL, &img.Data,
+		&img.MimeType, &img.Width, &img.Height, &img.FetchedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get article image: %w", err)
+	}
+	return &img, nil
+}
+
+// GetArticleImageMap returns a map of original URL → image ID for all cached
+// images belonging to an article. Used to rewrite HTML at serve time.
+func (s *SQLiteStore) GetArticleImageMap(articleID int64) (map[string]int64, error) {
+	rows, err := s.db.Query(
+		`SELECT id, original_url FROM article_images WHERE article_id = ?`, articleID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get article image map: %w", err)
+	}
+	defer rows.Close()
+
+	m := make(map[string]int64)
+	for rows.Next() {
+		var id int64
+		var u string
+		if err := rows.Scan(&id, &u); err != nil {
+			return nil, fmt.Errorf("scan article image: %w", err)
+		}
+		m[u] = id
+	}
+	return m, rows.Err()
+}
+
+// GetArticlesNeedingImageCache returns the most recently fetched articles
+// whose images have not yet been cached (images_cached = 0), newest first.
+func (s *SQLiteStore) GetArticlesNeedingImageCache(limit int) ([]Article, error) {
+	const query = `
+		SELECT id, feed_id, guid, title, url, COALESCE(content,''), COALESCE(summary,''),
+		       COALESCE(author,''), published_date, fetched_date
+		FROM articles
+		WHERE images_cached = 0
+		ORDER BY fetched_date DESC
+		LIMIT ?`
+	rows, err := s.db.Query(query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get articles needing image cache: %w", err)
+	}
+	defer rows.Close()
+
+	var articles []Article
+	for rows.Next() {
+		var a Article
+		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
+			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate); err != nil {
+			return nil, fmt.Errorf("scan article: %w", err)
+		}
+		articles = append(articles, a)
+	}
+	return articles, rows.Err()
+}
+
+// MarkArticleImagesCached sets images_cached = 1 for the article.
+func (s *SQLiteStore) MarkArticleImagesCached(articleID int64) error {
+	_, err := s.db.Exec(`UPDATE articles SET images_cached = 1 WHERE id = ?`, articleID)
+	return err
 }

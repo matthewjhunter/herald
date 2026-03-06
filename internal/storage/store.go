@@ -57,6 +57,13 @@ type Store interface {
 	UpdateArticleContent(articleID int64, content string) error
 	MarkArticleFullTextFetched(articleID int64) error
 
+	// Article images
+	StoreArticleImage(articleID int64, originalURL string, data []byte, mimeType string, width, height int) (int64, error)
+	GetArticleImage(imageID int64) (*ArticleImage, error)
+	GetArticleImageMap(articleID int64) (map[string]int64, error)
+	GetArticlesNeedingImageCache(limit int) ([]Article, error)
+	MarkArticleImagesCached(articleID int64) error
+
 	GetStarredArticles(userID int64, limit, offset int, filterThreshold *int) ([]Article, error)
 
 	// Article metadata
