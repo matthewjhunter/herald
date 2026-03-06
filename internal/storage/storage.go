@@ -118,8 +118,10 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 	// busy_timeout and foreign_keys are connection-level PRAGMAs; embedding
 	// them in the DSN via _pragma ensures every connection in the pool gets
 	// them automatically, avoiding write-lock hangs and broken FK cascades.
+	// 15s timeout: the daemon writes aggressively during feed fetches and
+	// image caching; 5s was too short for multi-process WAL contention.
 	dsn := dbPath + "?_time_format=sqlite" +
-		"&_pragma=busy_timeout(5000)" +
+		"&_pragma=busy_timeout(15000)" +
 		"&_pragma=foreign_keys(on)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -976,6 +978,17 @@ func (s *SQLiteStore) GetFeedStats(userID int64) ([]FeedStats, error) {
 	}
 	defer rows.Close()
 
+	// Time formats the driver may use for stored DATETIME values.
+	// MAX() returns a plain string so we parse manually instead of
+	// scanning into *time.Time (which the driver handles for named columns
+	// but not aggregates).
+	timeFormats := []string{
+		"2006-01-02T15:04:05.999999999Z07:00", // RFC3339Nano
+		"2006-01-02T15:04:05Z07:00",           // RFC3339
+		"2006-01-02T15:04:05",                 // ISO without tz
+		"2006-01-02 15:04:05",                 // SQLite native
+	}
+
 	var stats []FeedStats
 	for rows.Next() {
 		var fs FeedStats
@@ -984,8 +997,11 @@ func (s *SQLiteStore) GetFeedStats(userID int64) ([]FeedStats, error) {
 			return nil, fmt.Errorf("scan feed stats: %w", err)
 		}
 		if lastPost != nil {
-			if t, err := time.Parse(time.RFC3339, *lastPost); err == nil {
-				fs.LastPostDate = &t
+			for _, layout := range timeFormats {
+				if t, err := time.Parse(layout, *lastPost); err == nil {
+					fs.LastPostDate = &t
+					break
+				}
 			}
 		}
 		stats = append(stats, fs)
