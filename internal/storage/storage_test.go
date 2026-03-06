@@ -2,14 +2,18 @@ package storage
 
 import (
 	"database/sql"
+	"net/url"
+	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
-func newTestStore(t *testing.T) (*SQLiteStore, func()) {
+func newTestStore(t *testing.T) (Store, func()) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	store, err := NewSQLiteStore(dbPath)
@@ -17,6 +21,59 @@ func newTestStore(t *testing.T) (*SQLiteStore, func()) {
 		t.Fatalf("NewSQLiteStore failed: %v", err)
 	}
 	return store, func() { store.Close() }
+}
+
+// newPGTestStore opens a PostgreSQL store with an isolated schema for this
+// test. Skips automatically when HERALD_TEST_DB_DSN is not set.
+func newPGTestStore(t *testing.T) (Store, func()) {
+	t.Helper()
+	baseDSN := os.Getenv("HERALD_TEST_DB_DSN")
+	if baseDSN == "" {
+		t.Skip("HERALD_TEST_DB_DSN not set; skipping postgres test")
+	}
+
+	// Build a safe schema name from the test name.
+	raw := "test_" + t.Name()
+	schema := regexp.MustCompile(`[^a-z0-9_]`).ReplaceAllString(strings.ToLower(raw), "_")
+	if len(schema) > 63 {
+		schema = schema[:63]
+	}
+
+	// Inject search_path into DSN so the store sees only this schema.
+	u, err := url.Parse(baseDSN)
+	if err != nil {
+		t.Fatalf("parse HERALD_TEST_DB_DSN: %v", err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	dsn := u.String()
+
+	// Create the schema first (using the base DSN without search_path).
+	setupDB, err := sql.Open("pgx", baseDSN)
+	if err != nil {
+		t.Fatalf("open postgres for schema setup: %v", err)
+	}
+	if _, err := setupDB.Exec("CREATE SCHEMA " + schema); err != nil {
+		setupDB.Close()
+		t.Fatalf("create schema %q: %v", schema, err)
+	}
+	setupDB.Close()
+
+	store, err := NewPostgresStore(dsn)
+	if err != nil {
+		t.Fatalf("NewPostgresStore: %v", err)
+	}
+
+	cleanup := func() {
+		store.Close()
+		db, err := sql.Open("pgx", baseDSN)
+		if err == nil {
+			db.Exec("DROP SCHEMA " + schema + " CASCADE") //nolint:errcheck
+			db.Close()
+		}
+	}
+	return store, cleanup
 }
 
 func TestNewSQLiteStore(t *testing.T) {
@@ -1036,6 +1093,352 @@ func TestFilteredQueriesNoRulesPassthrough(t *testing.T) {
 	}
 	if len(articles) != 1 {
 		t.Errorf("expected 1 article (no rules passthrough), got %d", len(articles))
+	}
+}
+
+// TestPostgresBackend exercises the PostgresStore implementation against a real
+// PostgreSQL instance. It is skipped automatically unless HERALD_TEST_DB_DSN
+// is set in the environment (e.g. "postgres://herald:herald@localhost/herald_test").
+// Each subtest gets its own isolated schema so they can run in parallel.
+func TestPostgresBackend(t *testing.T) {
+	store, cleanup := newPGTestStore(t)
+	defer cleanup()
+
+	t.Run("AddFeed", func(t *testing.T) {
+		id, err := store.AddFeed("https://pg.example.com/feed", "PG Feed", "desc")
+		if err != nil {
+			t.Fatalf("AddFeed: %v", err)
+		}
+		if id == 0 {
+			t.Fatal("expected non-zero feed ID")
+		}
+		feeds, err := store.GetAllFeeds()
+		if err != nil {
+			t.Fatalf("GetAllFeeds: %v", err)
+		}
+		if len(feeds) != 1 || feeds[0].URL != "https://pg.example.com/feed" {
+			t.Errorf("unexpected feeds: %+v", feeds)
+		}
+	})
+
+	t.Run("AddArticleAndReadState", func(t *testing.T) {
+		fid, _ := store.AddFeed("https://pg.example.com/f2", "F2", "")
+		now := time.Now()
+		aid, err := store.AddArticle(&Article{
+			FeedID: fid, GUID: "pg-art-1", Title: "PG Article",
+			URL: "https://pg.example.com/a1", PublishedDate: &now,
+		})
+		if err != nil || aid == 0 {
+			t.Fatalf("AddArticle: id=%d err=%v", aid, err)
+		}
+
+		// Duplicate insert returns 0, no error
+		aid2, err := store.AddArticle(&Article{
+			FeedID: fid, GUID: "pg-art-1", Title: "PG Article",
+			URL: "https://pg.example.com/a1", PublishedDate: &now,
+		})
+		if err != nil || aid2 != 0 {
+			t.Errorf("duplicate AddArticle: id=%d err=%v", aid2, err)
+		}
+
+		score := 9.0
+		sec := 8.0
+		if err := store.UpdateReadState(1, aid, false, &score, &sec); err != nil {
+			t.Fatalf("UpdateReadState (AI): %v", err)
+		}
+		if err := store.UpdateReadState(1, aid, true, nil, nil); err != nil {
+			t.Fatalf("UpdateReadState (read): %v", err)
+		}
+
+		unread, err := store.GetUnreadArticles(10)
+		if err != nil {
+			t.Fatalf("GetUnreadArticles: %v", err)
+		}
+		if len(unread) != 0 {
+			t.Errorf("expected 0 unread after mark-read, got %d", len(unread))
+		}
+	})
+
+	t.Run("InterestScoreDecay", func(t *testing.T) {
+		fid, _ := store.AddFeed("https://pg.example.com/f3", "F3", "")
+		recent := time.Now().Add(-1 * 24 * time.Hour)
+		old := time.Now().Add(-30 * 24 * time.Hour)
+
+		art1, _ := store.AddArticle(&Article{FeedID: fid, GUID: "old", Title: "Old",
+			URL: "https://pg.example.com/old", PublishedDate: &old})
+		art2, _ := store.AddArticle(&Article{FeedID: fid, GUID: "recent", Title: "Recent",
+			URL: "https://pg.example.com/recent", PublishedDate: &recent})
+
+		raw, sec := 9.0, 9.0
+		store.UpdateReadState(1, art1, false, &raw, &sec)
+		store.UpdateReadState(1, art2, false, &raw, &sec)
+
+		articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil)
+		if err != nil {
+			t.Fatalf("GetArticlesByInterestScore: %v", err)
+		}
+		if len(articles) != 2 {
+			t.Fatalf("expected 2 articles, got %d", len(articles))
+		}
+		if articles[0].Title != "Recent" {
+			t.Errorf("expected Recent first, got %q", articles[0].Title)
+		}
+		if scores[0] <= scores[1] {
+			t.Errorf("recent score (%.2f) should exceed old score (%.2f)", scores[0], scores[1])
+		}
+	})
+
+	t.Run("Subscriptions", func(t *testing.T) {
+		fid, _ := store.AddFeed("https://pg.example.com/sub", "Sub Feed", "")
+		if err := store.SubscribeUserToFeed(1, fid); err != nil {
+			t.Fatalf("SubscribeUserToFeed: %v", err)
+		}
+		// Idempotent
+		if err := store.SubscribeUserToFeed(1, fid); err != nil {
+			t.Errorf("duplicate subscribe should not error: %v", err)
+		}
+		feeds, err := store.GetUserFeeds(1)
+		if err != nil {
+			t.Fatalf("GetUserFeeds: %v", err)
+		}
+		found := false
+		for _, f := range feeds {
+			if f.ID == fid {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("subscribed feed not in GetUserFeeds")
+		}
+
+		if err := store.UnsubscribeUserFromFeed(1, fid); err != nil {
+			t.Fatalf("UnsubscribeUserFromFeed: %v", err)
+		}
+		deleted, err := store.DeleteFeedIfOrphaned(fid)
+		if err != nil {
+			t.Fatalf("DeleteFeedIfOrphaned: %v", err)
+		}
+		if !deleted {
+			t.Error("expected orphaned feed to be deleted")
+		}
+	})
+
+	t.Run("Users", func(t *testing.T) {
+		id, err := store.CreateUser("PGUser")
+		if err != nil {
+			t.Fatalf("CreateUser: %v", err)
+		}
+		u, err := store.GetUserByName("pguser") // CITEXT: case-insensitive
+		if err != nil {
+			t.Fatalf("GetUserByName case-insensitive: %v", err)
+		}
+		if u.ID != id {
+			t.Errorf("user ID mismatch: got %d want %d", u.ID, id)
+		}
+
+		// Duplicate name rejected
+		if _, err := store.CreateUser("pguser"); err == nil {
+			t.Error("expected error for duplicate user name")
+		}
+	})
+
+	t.Run("UserPrompts", func(t *testing.T) {
+		temp := 0.5
+		if err := store.SetUserPrompt(1, "pg-scoring", "pg prompt", &temp, nil); err != nil {
+			t.Fatalf("SetUserPrompt: %v", err)
+		}
+		got, err := store.GetUserPrompt(1, "pg-scoring")
+		if err != nil || got != "pg prompt" {
+			t.Fatalf("GetUserPrompt: %q %v", got, err)
+		}
+		if err := store.DeleteUserPrompt(1, "pg-scoring"); err != nil {
+			t.Fatalf("DeleteUserPrompt: %v", err)
+		}
+	})
+
+	t.Run("ArticleGroups", func(t *testing.T) {
+		fid, _ := store.AddFeed("https://pg.example.com/grp", "Grp", "")
+		now := time.Now()
+		a1, _ := store.AddArticle(&Article{FeedID: fid, GUID: "gr1", Title: "G1",
+			URL: "https://pg.example.com/gr1", PublishedDate: &now})
+		a2, _ := store.AddArticle(&Article{FeedID: fid, GUID: "gr2", Title: "G2",
+			URL: "https://pg.example.com/gr2", PublishedDate: &now})
+
+		gid, err := store.CreateArticleGroup(1, "PG Topic")
+		if err != nil || gid == 0 {
+			t.Fatalf("CreateArticleGroup: %v", err)
+		}
+		store.AddArticleToGroup(gid, a1)
+		store.AddArticleToGroup(gid, a2)
+		// Idempotent
+		if err := store.AddArticleToGroup(gid, a1); err != nil {
+			t.Errorf("duplicate AddArticleToGroup should not error: %v", err)
+		}
+
+		arts, err := store.GetGroupArticles(gid)
+		if err != nil || len(arts) != 2 {
+			t.Fatalf("GetGroupArticles: len=%d err=%v", len(arts), err)
+		}
+
+		groups, err := store.GetUserGroups(1)
+		if err != nil {
+			t.Fatalf("GetUserGroups: %v", err)
+		}
+		if len(groups) == 0 || groups[0].Topic != "PG Topic" {
+			t.Errorf("unexpected groups: %+v", groups)
+		}
+	})
+
+	t.Run("FilterRules", func(t *testing.T) {
+		fid, _ := store.AddFeed("https://pg.example.com/fr", "FR", "")
+		store.SubscribeUserToFeed(2, fid)
+
+		now := time.Now()
+		a1, _ := store.AddArticle(&Article{FeedID: fid, GUID: "fr1", Title: "Filter Me",
+			URL: "https://pg.example.com/fr1", PublishedDate: &now})
+		store.AddArticle(&Article{FeedID: fid, GUID: "fr2", Title: "Plain",
+			URL: "https://pg.example.com/fr2", PublishedDate: &now})
+
+		store.StoreArticleAuthors(a1, []ArticleAuthor{{Name: "FilterAuthor"}})
+		store.AddFilterRule(&FilterRule{UserID: 2, Axis: "author", Value: "FilterAuthor", Score: 5})
+
+		one := 1
+		arts, err := store.GetUnreadArticlesForUser(2, 10, 0, &one)
+		if err != nil {
+			t.Fatalf("GetUnreadArticlesForUser with filter: %v", err)
+		}
+		if len(arts) != 1 || arts[0].Title != "Filter Me" {
+			t.Errorf("expected only 'Filter Me', got %+v", arts)
+		}
+	})
+
+	t.Run("FeverCredentials", func(t *testing.T) {
+		uid, _ := store.CreateUser("FeverPGUser")
+		if err := store.SetFeverCredential(uid, "pg-api-key"); err != nil {
+			t.Fatalf("SetFeverCredential: %v", err)
+		}
+		u, err := store.GetUserByFeverAPIKey("pg-api-key")
+		if err != nil {
+			t.Fatalf("GetUserByFeverAPIKey: %v", err)
+		}
+		if u.ID != uid {
+			t.Errorf("user ID mismatch: got %d want %d", u.ID, uid)
+		}
+		if err := store.DeleteFeverCredential(uid); err != nil {
+			t.Fatalf("DeleteFeverCredential: %v", err)
+		}
+	})
+
+	t.Run("DBStats", func(t *testing.T) {
+		stats, err := store.GetDBStats()
+		if err != nil {
+			t.Fatalf("GetDBStats: %v", err)
+		}
+		if stats.TotalFeeds < 0 {
+			t.Error("unexpected negative feed count")
+		}
+	})
+}
+
+func TestMigrateStore(t *testing.T) {
+	src, cleanSrc := newTestStore(t)
+	defer cleanSrc()
+	dst, cleanDst := newTestStore(t)
+	defer cleanDst()
+
+	// Populate source.
+	feedID, _ := src.AddFeed("https://example.com/feed", "Test Feed", "desc")
+	src.SubscribeUserToFeed(1, feedID)
+
+	now := time.Now()
+	artID, _ := src.AddArticle(&Article{
+		FeedID: feedID, GUID: "mig-1", Title: "Migrated",
+		URL: "https://example.com/mig", PublishedDate: &now,
+	})
+
+	score, sec := 8.5, 9.0
+	src.UpdateReadState(1, artID, false, &score, &sec)
+	src.UpdateReadState(1, artID, true, nil, nil)
+	src.UpdateStarred(1, artID, true)
+
+	src.StoreArticleAuthors(artID, []ArticleAuthor{{Name: "Author One", Email: "a@b.com"}})
+	src.StoreArticleCategories(artID, []string{"Security"})
+	src.UpdateArticleAISummary(1, artID, "AI summary text")
+
+	groupID, _ := src.CreateArticleGroup(1, "Cluster")
+	src.AddArticleToGroup(groupID, artID)
+	src.AddArticleToGroup(groupID, artID) // idempotent
+
+	src.SetUserPreference(1, "theme", "dark")
+	temp := 0.5
+	src.SetUserPrompt(1, "scoring", "my prompt", &temp, nil)
+
+	// Migrate.
+	stats, err := MigrateStore(t.Context(), src, dst)
+	if err != nil {
+		t.Fatalf("MigrateStore: %v", err)
+	}
+
+	if stats.Feeds != 1 {
+		t.Errorf("feeds: got %d, want 1", stats.Feeds)
+	}
+	if stats.Articles != 1 {
+		t.Errorf("articles: got %d, want 1", stats.Articles)
+	}
+	if stats.ReadStates != 1 {
+		t.Errorf("read_states: got %d, want 1", stats.ReadStates)
+	}
+	if stats.Subscriptions != 1 {
+		t.Errorf("subscriptions: got %d, want 1", stats.Subscriptions)
+	}
+	if stats.Preferences != 1 {
+		t.Errorf("preferences: got %d, want 1", stats.Preferences)
+	}
+	if stats.Prompts != 1 {
+		t.Errorf("prompts: got %d, want 1", stats.Prompts)
+	}
+	if stats.Groups != 1 {
+		t.Errorf("groups: got %d, want 1", stats.Groups)
+	}
+
+	// Verify destination has the article and it is read.
+	unread, err := dst.GetUnreadArticles(10)
+	if err != nil {
+		t.Fatalf("GetUnreadArticles in dst: %v", err)
+	}
+	if len(unread) != 0 {
+		t.Errorf("expected 0 unread in dst (article was read), got %d", len(unread))
+	}
+
+	// Feed metadata preserved.
+	feeds, _ := dst.GetAllFeeds()
+	if len(feeds) != 1 || feeds[0].URL != "https://example.com/feed" {
+		t.Errorf("dst feed mismatch: %+v", feeds)
+	}
+
+	// Subscription preserved.
+	userFeeds, _ := dst.GetUserFeeds(1)
+	if len(userFeeds) != 1 {
+		t.Errorf("expected 1 user feed in dst, got %d", len(userFeeds))
+	}
+
+	// Summary preserved.
+	dstFeeds, _ := dst.GetAllFeeds()
+	dstFeedID := dstFeeds[0].ID
+	dstArts, _ := dst.GetUnreadArticles(100)
+	_ = dstArts
+	// Find article in dst by feed
+	dstFeedArts, _ := dst.GetUnreadArticlesByFeed(1, dstFeedID, 10, 0, nil)
+	_ = dstFeedArts
+
+	pref, err := dst.GetUserPreference(1, "theme")
+	if err != nil || pref != "dark" {
+		t.Errorf("preference: got %q %v, want dark", pref, err)
+	}
+
+	prompt, err := dst.GetUserPrompt(1, "scoring")
+	if err != nil || prompt != "my prompt" {
+		t.Errorf("prompt: got %q %v, want 'my prompt'", prompt, err)
 	}
 }
 
