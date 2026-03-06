@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -123,6 +124,7 @@ func (h *handlers) init() {
 		"assetVersion": func() string { return version },
 		"buildVersion": func() string { return version },
 		"buildTime":    func() string { return buildTime },
+		"cleanTitle":   cleanTitle,
 		"dict": func(pairs ...any) (map[string]any, error) {
 			if len(pairs)%2 != 0 {
 				return nil, fmt.Errorf("dict requires an even number of arguments")
@@ -316,6 +318,16 @@ func (h *handlers) renderError(w http.ResponseWriter, status int, msg string) {
 			return
 		}
 	}
+}
+
+// trailingURLRe matches a separator followed by a bare URL at the end of a string.
+// Used to strip tweet URLs appended to Instapundit-style RSS titles.
+var trailingURLRe = regexp.MustCompile(`[:\s]+(https?://\S+)\s*$`)
+
+// cleanTitle strips a bare URL appended to the end of a title, which is common
+// in link-blog RSS feeds that embed the source URL in the item title.
+func cleanTitle(title string) string {
+	return strings.TrimSpace(trailingURLRe.ReplaceAllString(title, ""))
 }
 
 func formatDate(t *time.Time) string {

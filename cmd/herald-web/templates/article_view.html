@@ -1,6 +1,6 @@
 {{define "article_view"}}
 <div class="article-header">
-    <h2>{{.Title}}</h2>
+    <h2>{{cleanTitle .Title}}</h2>
     <div class="meta">
         {{if .FeedTitle}}<strong>{{.FeedTitle}}</strong> &middot; {{end}}
         {{if .Author}}{{.Author}} &middot; {{end}}
