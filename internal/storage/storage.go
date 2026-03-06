@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -2028,4 +2029,14 @@ func (s *SQLiteStore) GetArticlesNeedingImageCache(limit int) ([]Article, error)
 func (s *SQLiteStore) MarkArticleImagesCached(articleID int64) error {
 	_, err := s.db.Exec(`UPDATE articles SET images_cached = 1 WHERE id = ?`, articleID)
 	return err
+}
+
+// NewStore returns a Store backed by the appropriate database driver.
+// A DSN beginning with "postgres://" or "postgresql://" selects PostgreSQL;
+// all other values are treated as a SQLite file path.
+func NewStore(dsn string) (Store, error) {
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		return NewPostgresStore(dsn)
+	}
+	return NewSQLiteStore(dsn)
 }

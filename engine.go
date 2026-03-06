@@ -46,7 +46,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		cfg.SecurityThreshold = 7.0
 	}
 
-	store, err := storage.NewSQLiteStore(cfg.DBPath)
+	store, err := storage.NewStore(cfg.DBPath)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}

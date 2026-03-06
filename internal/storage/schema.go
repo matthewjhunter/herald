@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS articles (
     fetched_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     linked_url TEXT NOT NULL DEFAULT '',
     linked_content TEXT NOT NULL DEFAULT '',
+    full_text_fetched BOOLEAN NOT NULL DEFAULT 0,
+    images_cached BOOLEAN NOT NULL DEFAULT 0,
     FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE,
     UNIQUE(feed_id, guid)
 );
@@ -93,6 +95,7 @@ CREATE TABLE IF NOT EXISTS article_groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL DEFAULT 1,
     topic TEXT NOT NULL,
+    embedding BLOB,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -124,6 +127,7 @@ CREATE TABLE IF NOT EXISTS user_prompts (
     prompt_type TEXT NOT NULL,
     prompt_template TEXT NOT NULL,
     temperature REAL,
+    model TEXT,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, prompt_type)

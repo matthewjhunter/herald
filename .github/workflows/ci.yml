@@ -13,6 +13,22 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: herald_test
+          POSTGRES_USER: herald
+          POSTGRES_PASSWORD: herald
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U herald"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      HERALD_TEST_DB_DSN: postgres://herald:herald@localhost:5432/herald_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
