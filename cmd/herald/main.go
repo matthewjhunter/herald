@@ -258,6 +258,7 @@ func main() {
 	rootCmd.AddCommand(listCmd())
 	rootCmd.AddCommand(readCmd())
 	rootCmd.AddCommand(initConfigCmd())
+	rootCmd.AddCommand(migrateDBCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -296,7 +297,7 @@ func createUserCmd() *cobra.Command {
 		Short: "Create a new user",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := storage.NewSQLiteStore(cfg.Database.Path)
+			store, err := storage.NewStore(cfg.Database.Path)
 			if err != nil {
 				return fmt.Errorf("failed to open database: %w", err)
 			}
@@ -325,7 +326,7 @@ func importCmd() *cobra.Command {
 			}
 			opmlPath := args[0]
 
-			store, err := storage.NewSQLiteStore(cfg.Database.Path)
+			store, err := storage.NewStore(cfg.Database.Path)
 			if err != nil {
 				return fmt.Errorf("failed to open database: %w", err)
 			}
@@ -352,7 +353,7 @@ func fetchFeedsCmd() *cobra.Command {
 			ctx := context.Background()
 			formatter := output.NewFormatter(output.Format(outputFormat))
 
-			store, err := storage.NewSQLiteStore(cfg.Database.Path)
+			store, err := storage.NewStore(cfg.Database.Path)
 			if err != nil {
 				return fmt.Errorf("failed to open database: %w", err)
 			}
@@ -426,7 +427,7 @@ func processCmd() *cobra.Command {
 			ctx := context.Background()
 			formatter := output.NewFormatter(output.Format(outputFormat))
 
-			store, err := storage.NewSQLiteStore(cfg.Database.Path)
+			store, err := storage.NewStore(cfg.Database.Path)
 			if err != nil {
 				return fmt.Errorf("failed to open database: %w", err)
 			}
@@ -489,7 +490,7 @@ func processCmd() *cobra.Command {
 func doFetch(ctx context.Context) error {
 	formatter := output.NewFormatter(output.Format(outputFormat))
 
-	store, err := storage.NewSQLiteStore(cfg.Database.Path)
+	store, err := storage.NewStore(cfg.Database.Path)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
@@ -654,7 +655,7 @@ func listCmd() *cobra.Command {
 			ctx := context.Background()
 			formatter := output.NewFormatter(output.Format(outputFormat))
 
-			store, err := storage.NewSQLiteStore(cfg.Database.Path)
+			store, err := storage.NewStore(cfg.Database.Path)
 			if err != nil {
 				return fmt.Errorf("failed to open database: %w", err)
 			}
@@ -716,7 +717,7 @@ func readCmd() *cobra.Command {
 				return fmt.Errorf("invalid article ID: %w", err)
 			}
 
-			store, err := storage.NewSQLiteStore(cfg.Database.Path)
+			store, err := storage.NewStore(cfg.Database.Path)
 			if err != nil {
 				return fmt.Errorf("failed to open database: %w", err)
 			}
@@ -769,4 +770,65 @@ func initConfigCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func migrateDBCmd() *cobra.Command {
+	var srcDSN, dstDSN string
+	cmd := &cobra.Command{
+		Use:   "migrate-db",
+		Short: "Migrate data between storage backends (SQLite ↔ PostgreSQL)",
+		Long: `Copies all data from a source store to a destination store.
+
+Both --src and --dst accept either a SQLite file path or a postgres:// DSN.
+The destination store must already exist (schema is applied automatically).
+
+Example — SQLite to PostgreSQL:
+  herald migrate-db --src ./herald.db --dst postgres://user:pass@localhost/herald
+
+Example — PostgreSQL to SQLite:
+  herald migrate-db --src postgres://user:pass@localhost/herald --dst ./herald.db`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if srcDSN == "" || dstDSN == "" {
+				return fmt.Errorf("--src and --dst are required")
+			}
+
+			ctx := context.Background()
+
+			src, err := storage.NewStore(srcDSN)
+			if err != nil {
+				return fmt.Errorf("failed to open source store: %w", err)
+			}
+			defer src.Close()
+
+			dst, err := storage.NewStore(dstDSN)
+			if err != nil {
+				return fmt.Errorf("failed to open destination store: %w", err)
+			}
+			defer dst.Close()
+
+			fmt.Println("Starting migration...")
+			stats, err := storage.MigrateStore(ctx, src, dst)
+			if err != nil {
+				return fmt.Errorf("migration failed: %w", err)
+			}
+
+			fmt.Printf("Migration complete:\n")
+			fmt.Printf("  Feeds:         %d\n", stats.Feeds)
+			fmt.Printf("  Users:         %d\n", stats.Users)
+			fmt.Printf("  Articles:      %d\n", stats.Articles)
+			fmt.Printf("  Read states:   %d\n", stats.ReadStates)
+			fmt.Printf("  Subscriptions: %d\n", stats.Subscriptions)
+			fmt.Printf("  Preferences:   %d\n", stats.Preferences)
+			fmt.Printf("  Prompts:       %d\n", stats.Prompts)
+			fmt.Printf("  Groups:        %d\n", stats.Groups)
+			fmt.Printf("  Filter rules:  %d\n", stats.FilterRules)
+			fmt.Printf("  Fever creds:   %d\n", stats.FeverCreds)
+			fmt.Printf("  Favicons:      %d\n", stats.Favicons)
+			fmt.Printf("  Images:        %d\n", stats.Images)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&srcDSN, "src", "", "source DSN: SQLite file path or postgres:// URL")
+	cmd.Flags().StringVar(&dstDSN, "dst", "", "destination DSN: SQLite file path or postgres:// URL")
+	return cmd
 }
