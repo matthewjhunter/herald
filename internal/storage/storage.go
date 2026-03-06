@@ -1797,3 +1797,80 @@ func (s *SQLiteStore) HasFilterRules(userID int64) (bool, error) {
 	}
 	return count > 0, nil
 }
+
+// --- Feed favicons ---
+
+// FeedFavicon holds a cached favicon for a feed.
+type FeedFavicon struct {
+	FeedID    int64
+	Data      []byte
+	MimeType  string
+	FetchedAt time.Time
+}
+
+// StoreFeedFavicon upserts a favicon for the given feed.
+func (s *SQLiteStore) StoreFeedFavicon(feedID int64, data []byte, mimeType string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO feed_favicons (feed_id, data, mime_type, fetched_at)
+		 VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+		 ON CONFLICT(feed_id) DO UPDATE SET data = excluded.data,
+		   mime_type = excluded.mime_type, fetched_at = CURRENT_TIMESTAMP`,
+		feedID, data, mimeType,
+	)
+	return err
+}
+
+// GetFeedFavicon returns the cached favicon for a feed, or nil if none exists.
+func (s *SQLiteStore) GetFeedFavicon(feedID int64) (*FeedFavicon, error) {
+	var f FeedFavicon
+	err := s.db.QueryRow(
+		`SELECT feed_id, data, mime_type, fetched_at FROM feed_favicons WHERE feed_id = ?`, feedID,
+	).Scan(&f.FeedID, &f.Data, &f.MimeType, &f.FetchedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get feed favicon: %w", err)
+	}
+	return &f, nil
+}
+
+// GetAllFeedFavicons returns all cached favicons (used by Fever API &favicons).
+func (s *SQLiteStore) GetAllFeedFavicons() ([]FeedFavicon, error) {
+	rows, err := s.db.Query(`SELECT feed_id, data, mime_type, fetched_at FROM feed_favicons`)
+	if err != nil {
+		return nil, fmt.Errorf("get all feed favicons: %w", err)
+	}
+	defer rows.Close()
+
+	var favicons []FeedFavicon
+	for rows.Next() {
+		var f FeedFavicon
+		if err := rows.Scan(&f.FeedID, &f.Data, &f.MimeType, &f.FetchedAt); err != nil {
+			return nil, fmt.Errorf("scan feed favicon: %w", err)
+		}
+		favicons = append(favicons, f)
+	}
+	return favicons, rows.Err()
+}
+
+// GetSubscribedFeedsWithoutFavicons returns subscribed feeds that have no
+// cached favicon, ordered by ID. Used to drive background favicon fetching.
+func (s *SQLiteStore) GetSubscribedFeedsWithoutFavicons() ([]Feed, error) {
+	const query = `
+		SELECT DISTINCT f.id, f.url, f.title, f.description,
+		       f.last_fetched, f.last_error, f.etag, f.last_modified,
+		       f.enabled, f.created_at, f.consecutive_errors, f.next_fetch_at, f.status
+		FROM feeds f
+		JOIN user_feeds uf ON f.id = uf.feed_id
+		LEFT JOIN feed_favicons ff ON f.id = ff.feed_id
+		WHERE ff.feed_id IS NULL
+		ORDER BY f.id`
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("get feeds without favicons: %w", err)
+	}
+	defer rows.Close()
+
+	return scanFeeds(rows)
+}

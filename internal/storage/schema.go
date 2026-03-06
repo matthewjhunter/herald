@@ -165,4 +165,12 @@ CREATE TABLE IF NOT EXISTS fever_credentials (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_fever_credentials_key ON fever_credentials(api_key);
+
+CREATE TABLE IF NOT EXISTS feed_favicons (
+    feed_id INTEGER PRIMARY KEY,
+    data BLOB NOT NULL,
+    mime_type TEXT NOT NULL,
+    fetched_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE
+);
 `

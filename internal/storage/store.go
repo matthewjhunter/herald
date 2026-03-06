@@ -118,6 +118,12 @@ type Store interface {
 	GetFeedGroupMemberships(userID int64) (map[int64][]int64, error)
 	GetFeverLinks(userID int64) ([]FeverLink, error)
 
+	// Feed favicons
+	StoreFeedFavicon(feedID int64, data []byte, mimeType string) error
+	GetFeedFavicon(feedID int64) (*FeedFavicon, error)
+	GetAllFeedFavicons() ([]FeedFavicon, error)
+	GetSubscribedFeedsWithoutFavicons() ([]Feed, error)
+
 	// Subscriptions
 	SubscribeUserToFeed(userID, feedID int64) error
 	GetUserFeeds(userID int64) ([]Feed, error)
