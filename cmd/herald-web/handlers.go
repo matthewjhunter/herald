@@ -120,6 +120,8 @@ func (h *handlers) init() {
 			return template.HTML(s) //nolint:gosec // already sanitized by bluemonday
 		},
 		"assetVersion": func() string { return version },
+		"buildVersion": func() string { return version },
+		"buildTime":    func() string { return buildTime },
 		"dict": func(pairs ...any) (map[string]any, error) {
 			if len(pairs)%2 != 0 {
 				return nil, fmt.Errorf("dict requires an even number of arguments")

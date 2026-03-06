@@ -20,7 +20,7 @@ tasks:
     desc: Build the web application
     cmds:
       - echo "Building herald-web..."
-      - go build -ldflags "-X main.version=$(git rev-parse --short HEAD)" -o herald-web ./cmd/herald-web
+      - go build -ldflags "-X main.version=$(git rev-parse --short HEAD) -X main.buildTime=$(date -u +%Y-%m-%dT%H:%MZ)" -o herald-web ./cmd/herald-web
 
   build-all:
     desc: Build all applications

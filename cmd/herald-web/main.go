@@ -15,8 +15,9 @@ import (
 	"github.com/matthewjhunter/herald/internal/auth"
 )
 
-// version is injected at build time via -ldflags "-X main.version=<git-hash>".
+// version and buildTime are injected at build time via ldflags.
 var version = "dev"
+var buildTime = "unknown"
 
 func main() {
 	configPath := flag.String("config", "", "path to TOML config file")
