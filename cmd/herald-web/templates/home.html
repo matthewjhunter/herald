@@ -3,7 +3,7 @@
 {{define "content"}}
 <div class="app-grid" id="app-grid">
     <aside class="sidebar" id="sidebar"
-           hx-get="/sidebar" hx-trigger="feeds-changed from:body" hx-swap="innerHTML">
+           hx-get="/sidebar" hx-trigger="feeds-changed from:body, every 300s" hx-swap="innerHTML">
         {{template "feed_sidebar_content" .}}
     </aside>
     <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
