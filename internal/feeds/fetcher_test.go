@@ -7,11 +7,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/matthewjhunter/herald/internal/storage"
 	"github.com/mmcdole/gofeed"
+	ext "github.com/mmcdole/gofeed/extensions"
 )
 
 func newTestStore(t *testing.T) (*storage.SQLiteStore, func()) {
@@ -394,6 +396,96 @@ func TestFetchFeedConditionalNoHeaders(t *testing.T) {
 	}
 	if result.LastModified != "" {
 		t.Errorf("expected empty last-modified, got %q", result.LastModified)
+	}
+}
+
+// --- YouTube media:group extraction ---
+
+func makeYouTubeItem(link, thumbURL, description string) *gofeed.Item {
+	return &gofeed.Item{
+		GUID:  "yt:video:abc123",
+		Title: "Test Video",
+		Link:  link,
+		Extensions: ext.Extensions{
+			"media": {
+				"group": []ext.Extension{
+					{
+						Name: "group",
+						Children: map[string][]ext.Extension{
+							"thumbnail":   {{Attrs: map[string]string{"url": thumbURL}}},
+							"description": {{Value: description}},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestMediaGroupHTML_WithGroupChildren(t *testing.T) {
+	item := makeYouTubeItem("https://www.youtube.com/watch?v=abc123",
+		"https://i.ytimg.com/vi/abc123/hqdefault.jpg",
+		"This is the video description.")
+
+	html := mediaGroupHTML(item)
+	if html == "" {
+		t.Fatal("expected non-empty HTML from media:group")
+	}
+	if !strings.Contains(html, "hqdefault.jpg") {
+		t.Errorf("expected thumbnail URL in output, got: %q", html)
+	}
+	if !strings.Contains(html, "This is the video description") {
+		t.Errorf("expected description in output, got: %q", html)
+	}
+}
+
+func TestMediaGroupHTML_NoExtensions(t *testing.T) {
+	item := &gofeed.Item{GUID: "plain", Title: "No media"}
+	if got := mediaGroupHTML(item); got != "" {
+		t.Errorf("expected empty string, got %q", got)
+	}
+}
+
+func TestStoreArticles_YouTubeMediaGroup(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, _ := store.AddFeed("https://www.youtube.com/feeds/videos.xml?channel_id=UC123", "Test Channel", "")
+
+	now := time.Now()
+	item := makeYouTubeItem("https://www.youtube.com/watch?v=abc123",
+		"https://i.ytimg.com/vi/abc123/hqdefault.jpg",
+		"Interesting video about stuff.")
+	item.PublishedParsed = &now
+
+	feed := &gofeed.Feed{Items: []*gofeed.Item{item}}
+	fetcher := NewFetcher(store)
+
+	stored, err := fetcher.StoreArticles(feedID, feed)
+	if err != nil {
+		t.Fatalf("StoreArticles: %v", err)
+	}
+	if stored != 1 {
+		t.Fatalf("expected 1 stored, got %d", stored)
+	}
+
+	articles, err := store.GetUnreadArticles(10)
+	if err != nil {
+		t.Fatalf("GetUnreadArticles: %v", err)
+	}
+	if len(articles) != 1 {
+		t.Fatalf("expected 1 article, got %d", len(articles))
+	}
+
+	article, err := store.GetArticle(articles[0].ID)
+	if err != nil {
+		t.Fatalf("GetArticle: %v", err)
+	}
+	if !strings.Contains(article.Content, "hqdefault.jpg") {
+		t.Errorf("expected thumbnail in content, got: %q", article.Content)
+	}
+	if !strings.Contains(article.Content, "Interesting video about stuff") {
+		t.Errorf("expected description in content, got: %q", article.Content)
 	}
 }
 

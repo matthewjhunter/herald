@@ -206,6 +206,14 @@ func (f *Fetcher) StoreArticles(feedID int64, feed *gofeed.Feed) (int, error) {
 			article.Content = item.Description
 		}
 
+		// YouTube (and other media feeds) store content in <media:group> extensions.
+		// If we still have no content, synthesize HTML from the media group.
+		if article.Content == "" {
+			if html := mediaGroupHTML(item); html != "" {
+				article.Content = html
+			}
+		}
+
 		// Parse published date
 		if item.PublishedParsed != nil {
 			article.PublishedDate = item.PublishedParsed
@@ -249,6 +257,54 @@ func (f *Fetcher) StoreArticles(feedID int64, feed *gofeed.Feed) (int, error) {
 	}
 
 	return stored, nil
+}
+
+// mediaGroupHTML extracts a description and thumbnail from a <media:group>
+// extension element (used by YouTube Atom feeds) and returns a simple HTML
+// snippet, or "" if nothing useful is found.
+func mediaGroupHTML(item *gofeed.Item) string {
+	media, ok := item.Extensions["media"]
+	if !ok {
+		return ""
+	}
+
+	var thumb, desc string
+
+	// Direct media:thumbnail / media:description at item level
+	if thumbs, ok := media["thumbnail"]; ok && len(thumbs) > 0 {
+		thumb = thumbs[0].Attrs["url"]
+	}
+	if descs, ok := media["description"]; ok && len(descs) > 0 {
+		desc = descs[0].Value
+	}
+
+	// Nested inside media:group
+	if groups, ok := media["group"]; ok && len(groups) > 0 {
+		children := groups[0].Children
+		if thumb == "" {
+			if thumbs, ok := children["thumbnail"]; ok && len(thumbs) > 0 {
+				thumb = thumbs[0].Attrs["url"]
+			}
+		}
+		if desc == "" {
+			if descs, ok := children["description"]; ok && len(descs) > 0 {
+				desc = descs[0].Value
+			}
+		}
+	}
+
+	if thumb == "" && desc == "" {
+		return ""
+	}
+
+	var html string
+	if thumb != "" {
+		html += `<p><a href="` + item.Link + `"><img src="` + thumb + `" alt="video thumbnail"></a></p>`
+	}
+	if desc != "" {
+		html += "<p>" + desc + "</p>"
+	}
+	return html
 }
 
 // FetchStats summarizes a feed polling cycle at the fetcher level.
