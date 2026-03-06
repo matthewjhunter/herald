@@ -547,6 +547,14 @@ func doFetch(ctx context.Context) error {
 		}
 	}
 
+	// Fetch full text for any articles whose feed content appears truncated.
+	// This runs after all feeds are stored so the AI pipeline gets the best content.
+	if fullTextUpdated, err := fetcher.FetchFullTextForArticles(ctx); err != nil {
+		formatter.Warning("full-text fetch error: %v", err)
+	} else if fullTextUpdated > 0 {
+		fmt.Fprintf(os.Stdout, "Updated full text for %d articles\n", fullTextUpdated)
+	}
+
 	if fetchResult.NewArticles == 0 {
 		return formatter.OutputFetchResult(fetchResult)
 	}
