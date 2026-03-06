@@ -875,6 +875,24 @@ func (h *handlers) handleFeedUnsubscribe(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("HX-Redirect", "/feeds")
 }
 
+// handleFeedFavicon serves the cached favicon for a feed as an image.
+// Returns 404 if no favicon has been fetched yet.
+func (h *handlers) handleFeedFavicon(w http.ResponseWriter, r *http.Request) {
+	feedID, err := strconv.ParseInt(r.PathValue("feedID"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	fav, err := h.engine.GetFeedFavicon(feedID)
+	if err != nil || fav == nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", fav.MimeType)
+	w.Header().Set("Cache-Control", "public, max-age=604800") // 7 days
+	w.Write(fav.Data)                                         //nolint:errcheck
+}
+
 func (h *handlers) handleOPMLImport(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID
 

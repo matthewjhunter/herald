@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -69,9 +71,9 @@ func (h *handlers) handleFever(w http.ResponseWriter, r *http.Request) {
 		h.feverAddSavedIDs(user.ID, resp)
 	}
 
-	// &favicons returns an empty array (no favicon storage in Herald).
+	// &favicons returns base64-encoded feed icons.
 	if _, ok := r.Form["favicons"]; ok {
-		resp["favicons"] = []any{}
+		h.feverAddFavicons(resp)
 	}
 	// &links returns article clusters as Fever hot links.
 	if _, ok := r.Form["links"]; ok {
@@ -158,14 +160,27 @@ func (h *handlers) feverAddFeeds(userID int64, resp map[string]any) {
 		return
 	}
 
+	// Build a set of feed IDs that have a cached favicon for fast lookup.
+	faviconFeeds := make(map[int64]bool)
+	if favicons, err := h.engine.GetAllFeedFavicons(); err == nil {
+		for _, fav := range favicons {
+			faviconFeeds[fav.FeedID] = true
+		}
+	}
+
 	ff := make([]feverFeed, len(feeds))
 	for i, f := range feeds {
 		var lastUpdated int64
 		if f.LastFetched != nil {
 			lastUpdated = f.LastFetched.Unix()
 		}
+		var faviconID int64
+		if faviconFeeds[f.ID] {
+			faviconID = f.ID // favicon_id == feed_id in herald
+		}
 		ff[i] = feverFeed{
 			ID:                f.ID,
+			FaviconID:         faviconID,
 			Title:             f.Title,
 			URL:               f.URL,
 			SiteURL:           f.URL, // no separate site URL stored
@@ -343,6 +358,28 @@ func (h *handlers) feverAddLinks(userID int64, resp map[string]any) {
 		}
 	}
 	resp["links"] = links
+}
+
+// feverFavicon is the Fever wire format for a favicon (&favicons endpoint).
+type feverFavicon struct {
+	ID   int64  `json:"id"`
+	Data string `json:"data"` // "mime_type;base64,<base64-encoded-data>"
+}
+
+func (h *handlers) feverAddFavicons(resp map[string]any) {
+	favicons, err := h.engine.GetAllFeedFavicons()
+	if err != nil || len(favicons) == 0 {
+		resp["favicons"] = []any{}
+		return
+	}
+	ff := make([]feverFavicon, len(favicons))
+	for i, f := range favicons {
+		ff[i] = feverFavicon{
+			ID:   f.FeedID,
+			Data: fmt.Sprintf("%s;base64,%s", f.MimeType, base64.StdEncoding.EncodeToString(f.Data)),
+		}
+	}
+	resp["favicons"] = ff
 }
 
 func writeFeverJSON(w http.ResponseWriter, data map[string]any) {

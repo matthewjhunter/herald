@@ -555,6 +555,13 @@ func doFetch(ctx context.Context) error {
 		fmt.Fprintf(os.Stdout, "Updated full text for %d articles\n", fullTextUpdated)
 	}
 
+	// Fetch and cache favicons for any newly-subscribed feeds.
+	if faviconStored, err := fetcher.FetchFaviconsForFeeds(ctx); err != nil {
+		formatter.Warning("favicon fetch error: %v", err)
+	} else if faviconStored > 0 {
+		fmt.Fprintf(os.Stdout, "Cached favicons for %d feeds\n", faviconStored)
+	}
+
 	if fetchResult.NewArticles == 0 {
 		return formatter.OutputFetchResult(fetchResult)
 	}

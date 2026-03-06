@@ -85,6 +85,16 @@ func (e *Engine) GetFeverLinks(userID int64) ([]storage.FeverLink, error) {
 	return e.store.GetFeverLinks(userID)
 }
 
+// GetAllFeedFavicons returns all cached feed favicons for the Fever &favicons endpoint.
+func (e *Engine) GetAllFeedFavicons() ([]storage.FeedFavicon, error) {
+	return e.store.GetAllFeedFavicons()
+}
+
+// GetFeedFavicon returns the cached favicon for a specific feed.
+func (e *Engine) GetFeedFavicon(feedID int64) (*storage.FeedFavicon, error) {
+	return e.store.GetFeedFavicon(feedID)
+}
+
 // MarkArticleUnread marks a single article as unread.
 func (e *Engine) MarkArticleUnread(userID, articleID int64) error {
 	return e.store.UpdateReadState(userID, articleID, false, nil, nil)
