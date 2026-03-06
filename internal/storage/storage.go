@@ -169,6 +169,9 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		"DROP INDEX IF EXISTS idx_user_feeds_user",
 		"DROP INDEX IF EXISTS idx_user_prompts_user",
 		"ALTER TABLE user_prompts ADD COLUMN model TEXT",
+		// Full-text fetch tracking: marks whether we've attempted to replace
+		// truncated feed content with the full article text.
+		"ALTER TABLE articles ADD COLUMN full_text_fetched BOOLEAN NOT NULL DEFAULT 0",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -775,6 +778,47 @@ func (s *SQLiteStore) GetUnreadArticles(limit int) ([]Article, error) {
 		articles = append(articles, a)
 	}
 	return articles, rows.Err()
+}
+
+// GetArticlesNeedingFullText returns the most recently fetched articles that
+// have not yet been processed for full-text extraction, newest first.
+func (s *SQLiteStore) GetArticlesNeedingFullText(limit int) ([]Article, error) {
+	const query = `
+		SELECT id, feed_id, guid, title, url, COALESCE(content,''), COALESCE(summary,''),
+		       COALESCE(author,''), published_date, fetched_date
+		FROM articles
+		WHERE full_text_fetched = 0
+		ORDER BY fetched_date DESC
+		LIMIT ?`
+	rows, err := s.db.Query(query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get articles needing full text: %w", err)
+	}
+	defer rows.Close()
+
+	var articles []Article
+	for rows.Next() {
+		var a Article
+		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
+			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate); err != nil {
+			return nil, fmt.Errorf("scan article: %w", err)
+		}
+		articles = append(articles, a)
+	}
+	return articles, rows.Err()
+}
+
+// UpdateArticleContent replaces an article's content field in the database.
+func (s *SQLiteStore) UpdateArticleContent(articleID int64, content string) error {
+	_, err := s.db.Exec(`UPDATE articles SET content = ? WHERE id = ?`, content, articleID)
+	return err
+}
+
+// MarkArticleFullTextFetched sets full_text_fetched = 1 for the article,
+// recording that we have already processed it (whether or not we updated the content).
+func (s *SQLiteStore) MarkArticleFullTextFetched(articleID int64) error {
+	_, err := s.db.Exec(`UPDATE articles SET full_text_fetched = 1 WHERE id = ?`, articleID)
+	return err
 }
 
 // UpdateReadState updates or creates the read state for an article.
