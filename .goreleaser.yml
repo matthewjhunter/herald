@@ -36,6 +36,9 @@ builds:
     binary: herald-web
     env:
       - CGO_ENABLED=0
+    ldflags:
+      - -X main.version={{.Commit}}
+      - -X main.buildTime={{.Date}}
     goos:
       - linux
       - darwin

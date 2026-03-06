@@ -5,7 +5,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG GIT_SHA=dev
-RUN go build -ldflags "-X main.version=${GIT_SHA}" -o /herald-web ./cmd/herald-web && \
+ARG BUILD_TIME=unknown
+RUN go build -ldflags "-X main.version=${GIT_SHA} -X main.buildTime=${BUILD_TIME}" -o /herald-web ./cmd/herald-web && \
     go build -o /herald ./cmd/herald
 
 # Stage 2: Runtime
