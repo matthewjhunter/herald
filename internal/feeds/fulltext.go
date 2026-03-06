@@ -48,12 +48,22 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 			continue
 		}
 		// Link-blog posts (e.g. Instapundit) are intentionally short: just a
-		// linked headline with no commentary. Fetching the post page produces
-		// boilerplate (affiliate disclaimers, etc.) not article content.
-		// Detect this by checking if the short content already contains an
-		// outbound link pointing somewhere other than the article's own URL.
-		if isLinkPost(article.Content, article.URL) {
+		// linked headline. Fetch readability from the linked article, not the
+		// blog post page (which yields only boilerplate like affiliate notices).
+		if linkedURL := extractLinkPostURL(article.Content, article.URL); linkedURL != "" {
+			full, err := fetchReadableContent(ctx, f.client, linkedURL)
 			markDone()
+			if err != nil {
+				log.Printf("herald: linked-article fetch failed for article %d (%s): %v", article.ID, linkedURL, err)
+				continue
+			}
+			if textLength(full) >= 300 {
+				if err := f.store.UpdateArticleLinkedContent(article.ID, linkedURL, full); err != nil {
+					log.Printf("herald: failed to store linked content for article %d: %v", article.ID, err)
+				} else {
+					updated++
+				}
+			}
 			continue
 		}
 
@@ -96,17 +106,22 @@ func isTruncated(content string) bool {
 }
 
 // isLinkPost reports whether short content looks like an intentional link-blog
-// post rather than a truncated excerpt. The heuristic: text is very short
-// (<= 200 chars after stripping tags) AND the content contains at least one
-// <a href> pointing to a different host than the article's own URL. These
-// posts are complete as-is; fetching the post page only yields boilerplate.
+// post rather than a truncated excerpt.
 func isLinkPost(content, articleURL string) bool {
+	return extractLinkPostURL(content, articleURL) != ""
+}
+
+// extractLinkPostURL returns the first outbound URL from a short link-blog
+// post. The heuristic: text is very short (<= 200 chars after stripping tags)
+// AND the content contains at least one <a href> pointing to a different host
+// than the article's own URL. Returns "" if not a link post.
+func extractLinkPostURL(content, articleURL string) string {
 	if textLength(content) > 200 {
-		return false
+		return ""
 	}
 	articleHost := ""
 	if u, err := url.Parse(articleURL); err == nil {
-		articleHost = u.Hostname()
+		articleHost = u.Host
 	}
 	// Walk href="..." occurrences with simple string scanning.
 	lower := strings.ToLower(content)
@@ -123,12 +138,12 @@ func isLinkPost(content, articleURL string) bool {
 		href := rest[:end]
 		lower = rest[end:]
 		if strings.HasPrefix(href, "http") {
-			if u, err := url.Parse(href); err == nil && u.Hostname() != articleHost {
-				return true
+			if u, err := url.Parse(href); err == nil && u.Host != articleHost {
+				return href
 			}
 		}
 	}
-	return false
+	return ""
 }
 
 // textLength counts non-whitespace characters outside of HTML tags.

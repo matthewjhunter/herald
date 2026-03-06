@@ -993,6 +993,8 @@ func articleFromInternal(a storage.Article) Article {
 		Author:        a.Author,
 		PublishedDate: a.PublishedDate,
 		FetchedDate:   a.FetchedDate,
+		LinkedURL:     a.LinkedURL,
+		LinkedContent: a.LinkedContent,
 	}
 }
 

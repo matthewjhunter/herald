@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS articles (
     author TEXT,
     published_date DATETIME,
     fetched_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    linked_url TEXT NOT NULL DEFAULT '',
+    linked_content TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE,
     UNIQUE(feed_id, guid)
 );

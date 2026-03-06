@@ -288,6 +288,69 @@ func TestFetchFullTextForArticles_DoesNotRetry(t *testing.T) {
 	}
 }
 
+func TestFetchFullTextForArticles_LinkPost(t *testing.T) {
+	// Two servers: one for the "blog post" page, one for the "linked article".
+	linkedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, fullArticleHTML)
+	}))
+	defer linkedSrv.Close()
+
+	// The blog post server should NOT be called; fetchs go to linkedSrv.
+	postSrvCalled := 0
+	postSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		postSrvCalled++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer postSrv.Close()
+
+	store := newFullTextTestStore(t)
+	feedID, _ := store.AddFeed(postSrv.URL, "Link Blog", "")
+
+	pub := time.Now()
+	// RSS content is just a link to the external article.
+	linkContent := `<a href="` + linkedSrv.URL + `/article">Headline text goes here</a>`
+	articleID, err := store.AddArticle(&storage.Article{
+		FeedID:        feedID,
+		GUID:          "ft-link-1",
+		Title:         "Headline text goes here",
+		URL:           postSrv.URL + "/post/1",
+		Content:       linkContent,
+		PublishedDate: &pub,
+	})
+	if err != nil {
+		t.Fatalf("AddArticle: %v", err)
+	}
+
+	fetcher := NewFetcher(store)
+	n, err := fetcher.FetchFullTextForArticles(context.Background())
+	if err != nil {
+		t.Fatalf("FetchFullTextForArticles: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 article updated, got %d", n)
+	}
+	if postSrvCalled != 0 {
+		t.Errorf("blog post server should not have been called, got %d calls", postSrvCalled)
+	}
+
+	updated, err := store.GetArticle(articleID)
+	if err != nil {
+		t.Fatalf("GetArticle: %v", err)
+	}
+	// Original post content should be preserved.
+	if updated.Content != linkContent {
+		t.Errorf("original content should be unchanged, got %q", updated.Content)
+	}
+	// Linked content should be populated from the external article.
+	if len(updated.LinkedContent) == 0 {
+		t.Error("expected linked_content to be populated")
+	}
+	if updated.LinkedURL != linkedSrv.URL+"/article" {
+		t.Errorf("linked_url = %q, want %q", updated.LinkedURL, linkedSrv.URL+"/article")
+	}
+}
+
 // helpers
 
 func newFullTextTestStore(t *testing.T) *storage.SQLiteStore {

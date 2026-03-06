@@ -35,6 +35,8 @@ type Article struct {
 	Author        string     `json:"author"`
 	PublishedDate *time.Time `json:"published_date,omitempty"`
 	FetchedDate   time.Time  `json:"fetched_date"`
+	LinkedURL     string     `json:"linked_url,omitempty"`
+	LinkedContent string     `json:"linked_content,omitempty"`
 }
 
 // Feed represents an RSS/Atom feed subscription.

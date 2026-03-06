@@ -44,6 +44,8 @@ type Article struct {
 	Author        string
 	PublishedDate *time.Time
 	FetchedDate   time.Time
+	LinkedURL     string // outbound link extracted from a link-blog post
+	LinkedContent string // readability content fetched from LinkedURL
 }
 
 type ArticleSummary struct {
@@ -175,6 +177,10 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		// Image cache tracking: marks whether we've attempted to cache all
 		// images referenced in this article's content.
 		"ALTER TABLE articles ADD COLUMN images_cached BOOLEAN NOT NULL DEFAULT 0",
+		// Link-blog post support: outbound URL extracted from short link posts
+		// and the readability content fetched from that URL.
+		"ALTER TABLE articles ADD COLUMN linked_url TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE articles ADD COLUMN linked_content TEXT NOT NULL DEFAULT ''",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -1313,14 +1319,27 @@ func (s *SQLiteStore) GetArticle(articleID int64) (*Article, error) {
 	var a Article
 	err := s.db.QueryRow(
 		`SELECT id, feed_id, guid, title, url, content, summary,
-		        author, published_date, fetched_date
+		        author, published_date, fetched_date,
+		        COALESCE(linked_url,''), COALESCE(linked_content,'')
 		 FROM articles WHERE id = ?`, articleID,
 	).Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
-		&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate)
+		&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate,
+		&a.LinkedURL, &a.LinkedContent)
 	if err != nil {
 		return nil, fmt.Errorf("get article %d: %w", articleID, err)
 	}
 	return &a, nil
+}
+
+// UpdateArticleLinkedContent stores the outbound link URL and the readability
+// content fetched from it for a link-blog post. The original post content is
+// left unchanged; this data is displayed alongside it in the reading pane.
+func (s *SQLiteStore) UpdateArticleLinkedContent(articleID int64, linkedURL, linkedContent string) error {
+	_, err := s.db.Exec(
+		`UPDATE articles SET linked_url = ?, linked_content = ? WHERE id = ?`,
+		linkedURL, linkedContent, articleID,
+	)
+	return err
 }
 
 // GetUnscoredArticleCount returns the number of articles from the user's

@@ -55,6 +55,7 @@ type Store interface {
 	GetUnsummarizedArticleCount(userID int64) (int, error)
 	GetArticlesNeedingFullText(limit int) ([]Article, error)
 	UpdateArticleContent(articleID int64, content string) error
+	UpdateArticleLinkedContent(articleID int64, linkedURL, linkedContent string) error
 	MarkArticleFullTextFetched(articleID int64) error
 
 	// Article images
