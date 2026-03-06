@@ -59,6 +59,39 @@ func TestIsTruncated_HTMLFull(t *testing.T) {
 	}
 }
 
+// --- isLinkPost tests ---
+
+func TestIsLinkPost_ExternalLink(t *testing.T) {
+	// Instapundit-style: short content that IS an outbound link.
+	content := `<a href="https://freebeacon.com/some-article/">Kennedy Scion Had No Earned Income</a>`
+	if !isLinkPost(content, "https://instapundit.com/780696/") {
+		t.Error("expected short content with external link to be a link post")
+	}
+}
+
+func TestIsLinkPost_SameHost(t *testing.T) {
+	// Link pointing back to the same host is not a link post.
+	content := `<a href="https://example.com/other-article">Related article</a>`
+	if isLinkPost(content, "https://example.com/post/123") {
+		t.Error("same-host link should not be treated as a link post")
+	}
+}
+
+func TestIsLinkPost_LongContent(t *testing.T) {
+	// Long content is never a link post regardless of links.
+	content := `<p>` + repeatStr("Long article body. ", 20) + `</p><a href="https://other.com/x">source</a>`
+	if isLinkPost(content, "https://blog.com/post") {
+		t.Error("long content should not be treated as a link post")
+	}
+}
+
+func TestIsLinkPost_NoLinks(t *testing.T) {
+	// Short content with no links is just truncated, not a link post.
+	if isLinkPost("Short summary with no links.", "https://example.com/post") {
+		t.Error("short content without links should not be a link post")
+	}
+}
+
 // --- textLength tests ---
 
 func TestTextLength_PlainText(t *testing.T) {

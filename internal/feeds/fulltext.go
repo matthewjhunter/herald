@@ -47,6 +47,15 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 			markDone()
 			continue
 		}
+		// Link-blog posts (e.g. Instapundit) are intentionally short: just a
+		// linked headline with no commentary. Fetching the post page produces
+		// boilerplate (affiliate disclaimers, etc.) not article content.
+		// Detect this by checking if the short content already contains an
+		// outbound link pointing somewhere other than the article's own URL.
+		if isLinkPost(article.Content, article.URL) {
+			markDone()
+			continue
+		}
 
 		full, err := fetchReadableContent(ctx, f.client, article.URL)
 		markDone()
@@ -55,8 +64,10 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 			continue
 		}
 
-		// Only replace content if we got substantially more text than the feed provided.
-		if textLength(full) > textLength(article.Content) {
+		// Only replace content if we got substantially more text than the feed
+		// provided — at least 300 chars more. This prevents boilerplate text
+		// (sidebars, disclaimers) from displacing real RSS content.
+		if textLength(full) >= textLength(article.Content)+300 {
 			if err := f.store.UpdateArticleContent(article.ID, full); err != nil {
 				log.Printf("herald: failed to store full text for article %d: %v", article.ID, err)
 			} else {
@@ -79,6 +90,42 @@ func isTruncated(content string) bool {
 	for _, suffix := range []string{"...", "…", "[…]", "[ ... ]", "[read more]", "[continue reading]"} {
 		if strings.HasSuffix(strings.ToLower(plain), suffix) {
 			return true
+		}
+	}
+	return false
+}
+
+// isLinkPost reports whether short content looks like an intentional link-blog
+// post rather than a truncated excerpt. The heuristic: text is very short
+// (<= 200 chars after stripping tags) AND the content contains at least one
+// <a href> pointing to a different host than the article's own URL. These
+// posts are complete as-is; fetching the post page only yields boilerplate.
+func isLinkPost(content, articleURL string) bool {
+	if textLength(content) > 200 {
+		return false
+	}
+	articleHost := ""
+	if u, err := url.Parse(articleURL); err == nil {
+		articleHost = u.Hostname()
+	}
+	// Walk href="..." occurrences with simple string scanning.
+	lower := strings.ToLower(content)
+	for {
+		i := strings.Index(lower, `href="`)
+		if i < 0 {
+			break
+		}
+		rest := lower[i+6:]
+		end := strings.IndexByte(rest, '"')
+		if end < 0 {
+			break
+		}
+		href := rest[:end]
+		lower = rest[end:]
+		if strings.HasPrefix(href, "http") {
+			if u, err := url.Parse(href); err == nil && u.Hostname() != articleHost {
+				return true
+			}
 		}
 	}
 	return false
