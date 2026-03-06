@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -184,15 +185,18 @@ type articleRow struct {
 }
 
 type articleViewData struct {
-	ID               int64
-	Title            string
-	Author           string
-	FeedTitle        string
-	URL              string
-	PublishedDateFmt string
-	AISummary        string
-	SanitizedContent template.HTML
-	Starred          bool
+	ID                     int64
+	Title                  string
+	Author                 string
+	FeedTitle              string
+	URL                    string
+	PublishedDateFmt       string
+	AISummary              string
+	SanitizedContent       template.HTML
+	Starred                bool
+	LinkedURL              string
+	LinkedDomain           string
+	SanitizedLinkedContent template.HTML
 }
 
 type feedManageData struct {
@@ -681,6 +685,19 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 		PublishedDateFmt: formatDate(article.PublishedDate),
 		AISummary:        article.AISummary,
 		SanitizedContent: template.HTML(sanitized), //nolint:gosec // sanitized by bluemonday
+		LinkedURL:        article.LinkedURL,
+	}
+	if article.LinkedURL != "" {
+		if u, err := url.Parse(article.LinkedURL); err == nil {
+			data.LinkedDomain = u.Hostname()
+		}
+		if article.LinkedContent != "" {
+			sanitizedLinked := normalizeContent(h.policy.Sanitize(article.LinkedContent))
+			if imageMap, err := h.engine.GetArticleImageMap(article.ID); err == nil && len(imageMap) > 0 {
+				sanitizedLinked = rewriteImageURLs(sanitizedLinked, imageMap)
+			}
+			data.SanitizedLinkedContent = template.HTML(sanitizedLinked) //nolint:gosec // sanitized by bluemonday
+		}
 	}
 
 	h.renderFragment(w, "article_view", data)

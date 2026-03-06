@@ -19,10 +19,25 @@
     {{.SanitizedContent}}
 </div>
 
+{{if .SanitizedLinkedContent}}
+<hr>
+<p class="linked-source" style="font-size:0.8rem;opacity:0.65;margin-bottom:0.5rem;">
+    Full article from: <a href="{{.LinkedURL}}" target="_blank" rel="noopener">{{.LinkedURL}}</a>
+</p>
+<div class="article-content linked-article-content">
+    {{.SanitizedLinkedContent}}
+</div>
+{{end}}
+
 <div class="article-actions">
     <a href="{{.URL}}" target="_blank" rel="noopener" role="button" class="outline" data-original>
-        Open Original
+        {{if .LinkedURL}}Open Post{{else}}Open Original{{end}}
     </a>
+    {{if .LinkedURL}}
+    <a href="{{.LinkedURL}}" target="_blank" rel="noopener" role="button" class="outline">
+        Open Article
+    </a>
+    {{end}}
     <button class="outline {{if .Starred}}contrast{{end}}"
             data-star-toggle
             hx-post="/articles/{{.ID}}/star"
