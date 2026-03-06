@@ -190,6 +190,9 @@
             var saved = sessionStorage.getItem('herald-scroll');
             if (saved) e.detail.target.scrollTop = parseInt(saved, 10);
         }
+        if (e.detail.target.id === 'reading-pane') {
+            e.detail.target.scrollTop = 0;
+        }
     });
 
     // Save scroll position before navigation
