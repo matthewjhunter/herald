@@ -555,6 +555,13 @@ func doFetch(ctx context.Context) error {
 		fmt.Fprintf(os.Stdout, "Updated full text for %d articles\n", fullTextUpdated)
 	}
 
+	// Cache images referenced in article content.
+	if imagesStored, err := fetcher.CacheArticleImages(ctx); err != nil {
+		formatter.Warning("image cache error: %v", err)
+	} else if imagesStored > 0 {
+		fmt.Fprintf(os.Stdout, "Cached %d article images\n", imagesStored)
+	}
+
 	// Fetch and cache favicons for any newly-subscribed feeds.
 	if faviconStored, err := fetcher.FetchFaviconsForFeeds(ctx); err != nil {
 		formatter.Warning("favicon fetch error: %v", err)

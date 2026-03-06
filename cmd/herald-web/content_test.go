@@ -80,3 +80,44 @@ func TestNormalizeContent_DataURINotDeduped(t *testing.T) {
 		t.Errorf("data URIs should not be deduped, got %d\n%s", count, got)
 	}
 }
+
+func TestRewriteImageURLs_ReplacesKnownURL(t *testing.T) {
+	imageMap := map[string]int64{"https://example.com/photo.jpg": 42}
+	input := `<p>Text</p><img src="https://example.com/photo.jpg"/>`
+	got := rewriteImageURLs(input, imageMap)
+	if !strings.Contains(got, `/images/42`) {
+		t.Errorf("expected /images/42 in output, got:\n%s", got)
+	}
+	if strings.Contains(got, "example.com/photo.jpg") {
+		t.Errorf("original URL should be replaced, got:\n%s", got)
+	}
+}
+
+func TestRewriteImageURLs_PreservesUnknownURL(t *testing.T) {
+	imageMap := map[string]int64{"https://example.com/other.jpg": 99}
+	input := `<img src="https://example.com/photo.jpg"/>`
+	got := rewriteImageURLs(input, imageMap)
+	if !strings.Contains(got, "photo.jpg") {
+		t.Errorf("unknown URL should be preserved, got:\n%s", got)
+	}
+}
+
+func TestRewriteImageURLs_EmptyMap(t *testing.T) {
+	input := `<img src="https://example.com/photo.jpg"/>`
+	got := rewriteImageURLs(input, nil)
+	if got != input {
+		t.Errorf("empty map should return input unchanged")
+	}
+}
+
+func TestRewriteImageURLs_MultipleImages(t *testing.T) {
+	imageMap := map[string]int64{
+		"https://example.com/a.jpg": 1,
+		"https://example.com/b.jpg": 2,
+	}
+	input := `<img src="https://example.com/a.jpg"/><img src="https://example.com/b.jpg"/>`
+	got := rewriteImageURLs(input, imageMap)
+	if !strings.Contains(got, "/images/1") || !strings.Contains(got, "/images/2") {
+		t.Errorf("expected both images rewritten, got:\n%s", got)
+	}
+}

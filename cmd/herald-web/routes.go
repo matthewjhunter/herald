@@ -52,6 +52,7 @@ func newRouter(engine *herald.Engine, validator *auth.Validator, adminRole strin
 	mux.Handle("GET /sidebar", auth(http.HandlerFunc(h.handleSidebar)))
 	mux.Handle("POST /articles/mark-all-read", auth(http.HandlerFunc(h.handleMarkAllRead)))
 	mux.Handle("POST /articles/{articleID}/star", auth(http.HandlerFunc(h.handleStarToggle)))
+	mux.Handle("GET /images/{imageID}", auth(http.HandlerFunc(h.handleArticleImage)))
 	mux.Handle("GET /feeds/{feedID}/favicon", auth(http.HandlerFunc(h.handleFeedFavicon)))
 	mux.Handle("GET /feeds/export.opml", auth(http.HandlerFunc(h.handleOPMLExport)))
 	mux.Handle("POST /feeds/discover", auth(http.HandlerFunc(h.handleFeedDiscover)))

@@ -649,12 +649,15 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 	// Auto-mark as read
 	h.engine.MarkArticleRead(uid, articleID)
 
-	// Sanitize HTML content
+	// Sanitize HTML content, then rewrite <img src> to local cached URLs.
 	content := article.Content
 	if content == "" {
 		content = article.Summary
 	}
 	sanitized := normalizeContent(h.policy.Sanitize(content))
+	if imageMap, err := h.engine.GetArticleImageMap(article.ID); err == nil && len(imageMap) > 0 {
+		sanitized = rewriteImageURLs(sanitized, imageMap)
+	}
 
 	// Look up feed title
 	feedTitle := ""
@@ -873,6 +876,23 @@ func (h *handlers) handleFeedUnsubscribe(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.Header().Set("HX-Redirect", "/feeds")
+}
+
+// handleArticleImage serves a cached article image by its ID.
+func (h *handlers) handleArticleImage(w http.ResponseWriter, r *http.Request) {
+	imageID, err := strconv.ParseInt(r.PathValue("imageID"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	img, err := h.engine.GetArticleImage(imageID)
+	if err != nil || img == nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", img.MimeType)
+	w.Header().Set("Cache-Control", "public, max-age=2592000") // 30 days
+	w.Write(img.Data)                                          //nolint:errcheck
 }
 
 // handleFeedFavicon serves the cached favicon for a feed as an image.

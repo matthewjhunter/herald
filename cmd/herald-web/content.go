@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
@@ -105,6 +106,48 @@ func getAttr(n *html.Node, key string) string {
 		}
 	}
 	return ""
+}
+
+// rewriteImageURLs replaces <img src="originalURL"> with <img src="/images/{id}">
+// for every URL present in imageMap. URLs not in the map are left unchanged,
+// so articles with partially cached images still display what's available.
+func rewriteImageURLs(content string, imageMap map[string]int64) string {
+	if len(imageMap) == 0 || content == "" {
+		return content
+	}
+
+	doc, err := html.Parse(strings.NewReader(content))
+	if err != nil {
+		return content
+	}
+
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.DataAtom == atom.Img {
+			for i, a := range n.Attr {
+				if a.Key == "src" {
+					if id, ok := imageMap[a.Val]; ok {
+						n.Attr[i].Val = fmt.Sprintf("/images/%d", id)
+					}
+					break
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+
+	var buf strings.Builder
+	body := findBody(doc)
+	if body == nil {
+		return content
+	}
+	for c := body.FirstChild; c != nil; c = c.NextSibling {
+		html.Render(&buf, c) //nolint:errcheck
+	}
+	return buf.String()
 }
 
 func findBody(n *html.Node) *html.Node {

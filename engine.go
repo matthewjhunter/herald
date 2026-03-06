@@ -1009,6 +1009,18 @@ func (e *Engine) GetDBStats() (storage.DBStats, error) {
 	return e.store.GetDBStats()
 }
 
+// GetArticleImageMap returns a map of original image URL → cached image ID
+// for all images belonging to an article. Used by the web layer to rewrite
+// <img src> attributes to local /images/{id} paths at serve time.
+func (e *Engine) GetArticleImageMap(articleID int64) (map[string]int64, error) {
+	return e.store.GetArticleImageMap(articleID)
+}
+
+// GetArticleImage returns a cached image by its ID.
+func (e *Engine) GetArticleImage(imageID int64) (*storage.ArticleImage, error) {
+	return e.store.GetArticleImage(imageID)
+}
+
 func feedFromInternal(f storage.Feed) Feed {
 	return Feed{
 		ID:          f.ID,
