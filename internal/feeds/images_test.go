@@ -350,7 +350,7 @@ func TestResolveTwitterPics_ResolvesToImage(t *testing.T) {
 	// extractOGImage checks for "https://pbs.twimg.com/" prefix — swap that check in the test
 	// by pointing og:image to a URL that starts with the imgSrv URL.
 	// Since we can't make imgSrv.URL start with "https://pbs.twimg.com/", test extractOGImage directly.
-	html := fmt.Sprintf(`<html><head><meta property="og:image" content="https://pbs.twimg.com/media/TEST?format=jpg"></head></html>`)
+	html := `<html><head><meta property="og:image" content="https://pbs.twimg.com/media/TEST?format=jpg"></head></html>`
 	got, err := extractOGImage(bytes.NewReader([]byte(html)))
 	if err != nil {
 		t.Fatalf("extractOGImage: %v", err)
