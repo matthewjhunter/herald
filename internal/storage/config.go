@@ -1,5 +1,7 @@
 package storage
 
+import "time"
+
 type Config struct {
 	DefaultUserID int64 `yaml:"default_user_id"`
 
@@ -8,10 +10,11 @@ type Config struct {
 	} `yaml:"database"`
 
 	Ollama struct {
-		BaseURL        string `yaml:"base_url"`
-		SecurityModel  string `yaml:"security_model"`
-		CurationModel  string `yaml:"curation_model"`
-		EmbeddingModel string `yaml:"embedding_model"`
+		BaseURL        string        `yaml:"base_url"`
+		SecurityModel  string        `yaml:"security_model"`
+		CurationModel  string        `yaml:"curation_model"`
+		EmbeddingModel string        `yaml:"embedding_model"`
+		Timeout        time.Duration `yaml:"timeout"`
 	} `yaml:"ollama"`
 
 	Thresholds struct {
@@ -54,6 +57,7 @@ func DefaultConfig() *Config {
 	cfg.Ollama.SecurityModel = "gemma3:4b"
 	cfg.Ollama.CurationModel = "llama3"
 	cfg.Ollama.EmbeddingModel = "embeddinggemma"
+	cfg.Ollama.Timeout = 2 * time.Minute
 	cfg.Grouping.SimilarityThreshold = 0.75
 	cfg.Thresholds.InterestScore = 8.0
 	cfg.Thresholds.SecurityScore = 7.0

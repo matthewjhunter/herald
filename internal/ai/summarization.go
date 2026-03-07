@@ -40,8 +40,10 @@ func (p *AIProcessor) SummarizeArticle(ctx context.Context, userID int64, title,
 		},
 	}
 
+	callCtx, cancel := p.withCallTimeout(ctx)
+	defer cancel()
 	var fullResponse strings.Builder
-	err = p.client.Generate(ctx, req, func(resp api.GenerateResponse) error {
+	err = p.client.Generate(callCtx, req, func(resp api.GenerateResponse) error {
 		fullResponse.WriteString(resp.Response)
 		return nil
 	})
@@ -105,8 +107,10 @@ func (p *AIProcessor) GenerateGroupSummary(ctx context.Context, userID int64, to
 		},
 	}
 
+	callCtx, cancel := p.withCallTimeout(ctx)
+	defer cancel()
 	var fullResponse strings.Builder
-	err = p.client.Generate(ctx, req, func(resp api.GenerateResponse) error {
+	err = p.client.Generate(callCtx, req, func(resp api.GenerateResponse) error {
 		fullResponse.WriteString(resp.Response)
 		return nil
 	})
@@ -134,8 +138,10 @@ Summary:
 		},
 	}
 
+	callCtx, cancel := p.withCallTimeout(ctx)
+	defer cancel()
 	var fullResponse strings.Builder
-	err := p.client.Generate(ctx, req, func(resp api.GenerateResponse) error {
+	err := p.client.Generate(callCtx, req, func(resp api.GenerateResponse) error {
 		fullResponse.WriteString(resp.Response)
 		return nil
 	})
@@ -217,8 +223,10 @@ func (p *AIProcessor) FindRelatedGroups(ctx context.Context, userID int64, newAr
 		},
 	}
 
+	callCtx, cancel := p.withCallTimeout(ctx)
+	defer cancel()
 	var fullResponse strings.Builder
-	err = p.client.Generate(ctx, req, func(resp api.GenerateResponse) error {
+	err = p.client.Generate(callCtx, req, func(resp api.GenerateResponse) error {
 		fullResponse.WriteString(resp.Response)
 		return nil
 	})

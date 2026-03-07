@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
+	"github.com/matthewjhunter/herald/internal/storage"
 	"github.com/ollama/ollama/api"
 )
 
@@ -16,6 +18,13 @@ type AIProcessor struct {
 	securityModel string
 	curationModel string
 	promptLoader  *PromptLoader
+	callTimeout   time.Duration
+}
+
+// withCallTimeout wraps ctx with the per-call Ollama timeout so that a hung
+// inference request cannot block the daemon cycle indefinitely.
+func (p *AIProcessor) withCallTimeout(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, p.callTimeout)
 }
 
 type SecurityResult struct {
@@ -62,11 +71,17 @@ func NewAIProcessor(baseURL, securityModel, curationModel string, store interfac
 	// Create prompt loader with nil-safe constructor
 	promptLoader := newPromptLoaderSafe(storePtr, configPtr)
 
+	callTimeout := 2 * time.Minute
+	if cfg, ok := config.(*storage.Config); ok && cfg != nil && cfg.Ollama.Timeout > 0 {
+		callTimeout = cfg.Ollama.Timeout
+	}
+
 	return &AIProcessor{
 		client:        client,
 		securityModel: securityModel,
 		curationModel: curationModel,
 		promptLoader:  promptLoader,
+		callTimeout:   callTimeout,
 	}, nil
 }
 
@@ -125,8 +140,10 @@ func (p *AIProcessor) SecurityCheck(ctx context.Context, userID int64, title, co
 		},
 	}
 
+	callCtx, cancel := p.withCallTimeout(ctx)
+	defer cancel()
 	var fullResponse strings.Builder
-	err = p.client.Generate(ctx, req, func(resp api.GenerateResponse) error {
+	err = p.client.Generate(callCtx, req, func(resp api.GenerateResponse) error {
 		fullResponse.WriteString(resp.Response)
 		return nil
 	})
@@ -193,8 +210,10 @@ func (p *AIProcessor) CurateArticle(ctx context.Context, userID int64, title, co
 		},
 	}
 
+	callCtx, cancel := p.withCallTimeout(ctx)
+	defer cancel()
 	var fullResponse strings.Builder
-	err = p.client.Generate(ctx, req, func(resp api.GenerateResponse) error {
+	err = p.client.Generate(callCtx, req, func(resp api.GenerateResponse) error {
 		fullResponse.WriteString(resp.Response)
 		return nil
 	})

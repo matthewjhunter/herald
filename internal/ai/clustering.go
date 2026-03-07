@@ -60,8 +60,10 @@ Rules:
 		},
 	}
 
+	callCtx, cancel := p.withCallTimeout(ctx)
+	defer cancel()
 	var fullResponse strings.Builder
-	err := p.client.Generate(ctx, req, func(resp api.GenerateResponse) error {
+	err := p.client.Generate(callCtx, req, func(resp api.GenerateResponse) error {
 		fullResponse.WriteString(resp.Response)
 		return nil
 	})
