@@ -668,12 +668,16 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 	h.engine.MarkArticleRead(uid, articleID)
 
 	// Sanitize HTML content, then rewrite <img src> to local cached URLs.
+	// Share a single seen map across both content blocks so images that appear
+	// in the RSS content are not repeated in the linked full-text content.
 	content := article.Content
 	if content == "" {
 		content = article.Summary
 	}
-	sanitized := normalizeContent(h.policy.Sanitize(content))
-	if imageMap, err := h.engine.GetArticleImageMap(article.ID); err == nil && len(imageMap) > 0 {
+	seenImages := make(map[string]bool)
+	imageMap, _ := h.engine.GetArticleImageMap(article.ID)
+	sanitized := normalizeContentWithSeen(h.policy.Sanitize(content), seenImages)
+	if len(imageMap) > 0 {
 		sanitized = rewriteImageURLs(sanitized, imageMap)
 	}
 
@@ -704,8 +708,8 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 			data.LinkedDomain = u.Hostname()
 		}
 		if article.LinkedContent != "" {
-			sanitizedLinked := normalizeContent(h.policy.Sanitize(article.LinkedContent))
-			if imageMap, err := h.engine.GetArticleImageMap(article.ID); err == nil && len(imageMap) > 0 {
+			sanitizedLinked := normalizeContentWithSeen(h.policy.Sanitize(article.LinkedContent), seenImages)
+			if len(imageMap) > 0 {
 				sanitizedLinked = rewriteImageURLs(sanitizedLinked, imageMap)
 			}
 			data.SanitizedLinkedContent = template.HTML(sanitizedLinked) //nolint:gosec // sanitized by bluemonday

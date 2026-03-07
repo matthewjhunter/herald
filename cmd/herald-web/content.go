@@ -15,6 +15,10 @@ import (
 //   - Strips inline width/height attributes from images (CSS handles sizing)
 //   - Removes float styles from images to prevent layout blowouts
 func normalizeContent(s string) string {
+	return normalizeContentWithSeen(s, make(map[string]bool))
+}
+
+func normalizeContentWithSeen(s string, seen map[string]bool) string {
 	if s == "" {
 		return ""
 	}
@@ -24,7 +28,6 @@ func normalizeContent(s string) string {
 		return s
 	}
 
-	seen := make(map[string]bool)
 	processNode(doc, seen)
 
 	var buf strings.Builder
