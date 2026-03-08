@@ -7,11 +7,20 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/matthewjhunter/herald/internal/storage"
 	"github.com/mmcdole/gofeed"
 )
+
+// sanitizeText strips null bytes and invalid UTF-8 sequences from feed/web
+// content. PostgreSQL rejects text containing 0x00 even though it is a valid
+// UTF-8 byte; SQLite accepts it silently, so the problem only surfaces on PG.
+func sanitizeText(s string) string {
+	s = strings.ToValidUTF8(s, "")
+	return strings.ReplaceAll(s, "\x00", "")
+}
 
 type Fetcher struct {
 	parser *gofeed.Parser
@@ -193,17 +202,17 @@ func (f *Fetcher) StoreArticles(feedID int64, feed *gofeed.Feed) (int, error) {
 		article := &storage.Article{
 			FeedID:  feedID,
 			GUID:    item.GUID,
-			Title:   item.Title,
+			Title:   sanitizeText(item.Title),
 			URL:     item.Link,
-			Summary: item.Description,
-			Author:  author,
+			Summary: sanitizeText(item.Description),
+			Author:  sanitizeText(author),
 		}
 
 		// Use content if available, otherwise use description
 		if item.Content != "" {
-			article.Content = item.Content
+			article.Content = sanitizeText(item.Content)
 		} else {
-			article.Content = item.Description
+			article.Content = sanitizeText(item.Description)
 		}
 
 		// YouTube (and other media feeds) store content in <media:group> extensions.

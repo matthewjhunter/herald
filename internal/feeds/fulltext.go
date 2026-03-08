@@ -58,7 +58,7 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 				continue
 			}
 			if textLength(full) >= 300 {
-				if err := f.store.UpdateArticleLinkedContent(article.ID, linkedURL, full); err != nil {
+				if err := f.store.UpdateArticleLinkedContent(article.ID, linkedURL, sanitizeText(full)); err != nil {
 					log.Printf("herald: failed to store linked content for article %d: %v", article.ID, err)
 				} else {
 					updated++
@@ -78,7 +78,7 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 		// provided — at least 300 chars more. This prevents boilerplate text
 		// (sidebars, disclaimers) from displacing real RSS content.
 		if textLength(full) >= textLength(article.Content)+300 {
-			if err := f.store.UpdateArticleContent(article.ID, full); err != nil {
+			if err := f.store.UpdateArticleContent(article.ID, sanitizeText(full)); err != nil {
 				log.Printf("herald: failed to store full text for article %d: %v", article.ID, err)
 			} else {
 				updated++
