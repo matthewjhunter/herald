@@ -11,6 +11,7 @@ type Config struct {
 
 	Ollama struct {
 		BaseURL        string        `yaml:"base_url"`
+		APIKey         string        `yaml:"api_key"`
 		SecurityModel  string        `yaml:"security_model"`
 		CurationModel  string        `yaml:"curation_model"`
 		EmbeddingModel string        `yaml:"embedding_model"`

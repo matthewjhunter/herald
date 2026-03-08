@@ -36,7 +36,7 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 
 	// Create GroupMatcher for vector-based group matching
 	var groupMatcher *ai.GroupMatcher
-	embedder := embedding.NewOllamaEmbedder(appCfg.Ollama.BaseURL, appCfg.Ollama.EmbeddingModel)
+	embedder := embedding.NewOpenAIEmbedder(appCfg.Ollama.BaseURL, appCfg.Ollama.APIKey, appCfg.Ollama.EmbeddingModel)
 	groupMatcher = ai.NewGroupMatcher(embedder, store, appCfg.Grouping.SimilarityThreshold)
 
 	unscoredArticles, err := store.GetUnscoredArticlesForUser(userID, 100)

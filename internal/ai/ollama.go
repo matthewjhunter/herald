@@ -4,24 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
 	"github.com/matthewjhunter/herald/internal/storage"
-	"github.com/ollama/ollama/api"
 )
 
 type AIProcessor struct {
-	client        *api.Client
+	client        *openAIClient
 	securityModel string
 	curationModel string
 	promptLoader  *PromptLoader
 	callTimeout   time.Duration
 }
 
-// withCallTimeout wraps ctx with the per-call Ollama timeout so that a hung
+// withCallTimeout wraps ctx with the per-call timeout so that a hung
 // inference request cannot block the daemon cycle indefinitely.
 func (p *AIProcessor) withCallTimeout(parent context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(parent, p.callTimeout)
@@ -39,45 +36,28 @@ type CurationResult struct {
 	Reasoning     string  `json:"reasoning"`
 }
 
-// NewAIProcessor creates a new AI processor
+// NewAIProcessor creates a new AI processor backed by an OpenAI-compatible
+// endpoint (LiteLLM, OpenAI, Ollama with --api-key, etc.).
 func NewAIProcessor(baseURL, securityModel, curationModel string, store interface{}, config interface{}) (*AIProcessor, error) {
-	var client *api.Client
-	if baseURL != "" {
-		parsedURL, parseErr := url.Parse(baseURL)
-		if parseErr != nil {
-			return nil, fmt.Errorf("invalid base URL: %w", parseErr)
-		}
-		client = api.NewClient(parsedURL, http.DefaultClient)
-	} else {
-		var err error
-		client, err = api.ClientFromEnvironment()
-		if err != nil {
-			return nil, fmt.Errorf("failed to create Ollama client: %w", err)
-		}
+	if baseURL == "" {
+		baseURL = "http://localhost:11434"
 	}
 
-	// Type assertions for store and config (can be nil)
-	var storePtr interface{}
-	var configPtr interface{}
-
-	// Accept nil or proper types for backwards compatibility
-	if store != nil {
-		storePtr = store
-	}
-	if config != nil {
-		configPtr = config
-	}
-
-	// Create prompt loader with nil-safe constructor
-	promptLoader := newPromptLoaderSafe(storePtr, configPtr)
-
+	var apiKey string
 	callTimeout := 2 * time.Minute
-	if cfg, ok := config.(*storage.Config); ok && cfg != nil && cfg.Ollama.Timeout > 0 {
-		callTimeout = cfg.Ollama.Timeout
+	if cfg, ok := config.(*storage.Config); ok && cfg != nil {
+		if cfg.Ollama.APIKey != "" {
+			apiKey = cfg.Ollama.APIKey
+		}
+		if cfg.Ollama.Timeout > 0 {
+			callTimeout = cfg.Ollama.Timeout
+		}
 	}
+
+	promptLoader := newPromptLoaderSafe(store, config)
 
 	return &AIProcessor{
-		client:        client,
+		client:        newOpenAIClient(baseURL, apiKey),
 		securityModel: securityModel,
 		curationModel: curationModel,
 		promptLoader:  promptLoader,
@@ -85,35 +65,22 @@ func NewAIProcessor(baseURL, securityModel, curationModel string, store interfac
 	}, nil
 }
 
-// newPromptLoaderSafe creates a PromptLoader with nil-safe type assertions
+// newPromptLoaderSafe creates a PromptLoader with nil-safe type assertions.
 func newPromptLoaderSafe(store, config interface{}) *PromptLoader {
-	var s interface{}
-	var c interface{}
-
-	// Only pass non-nil values to PromptLoader
-	if store != nil {
-		s = store
-	}
-	if config != nil {
-		c = config
-	}
-
 	return &PromptLoader{
-		store:  s,
-		config: c,
+		store:  store,
+		config: config,
 		cache:  make(map[string]string),
 	}
 }
 
-// SecurityCheck analyzes content for security threats (prompt injection, malicious content)
+// SecurityCheck analyzes content for security threats (prompt injection, malicious content).
 func (p *AIProcessor) SecurityCheck(ctx context.Context, userID int64, title, content string) (*SecurityResult, error) {
-	// Load prompt template
 	promptTemplate, err := p.promptLoader.GetPrompt(userID, PromptTypeSecurity)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load security prompt: %w", err)
 	}
 
-	// Render prompt with data
 	data := map[string]interface{}{
 		"Title":   title,
 		"Content": truncateText(content, 2000),
@@ -123,41 +90,22 @@ func (p *AIProcessor) SecurityCheck(ctx context.Context, userID int64, title, co
 		return nil, fmt.Errorf("failed to render security prompt: %w", err)
 	}
 
-	// Get temperature
 	temperature := p.promptLoader.GetTemperature(userID, PromptTypeSecurity)
-
 	model := p.promptLoader.GetModel(userID, PromptTypeSecurity)
 	if model == "" {
 		model = p.securityModel
 	}
 
-	req := &api.GenerateRequest{
-		Model:  model,
-		Prompt: prompt,
-		Stream: new(bool), // false
-		Options: map[string]interface{}{
-			"temperature": temperature,
-		},
-	}
-
 	callCtx, cancel := p.withCallTimeout(ctx)
 	defer cancel()
-	var fullResponse strings.Builder
-	err = p.client.Generate(callCtx, req, func(resp api.GenerateResponse) error {
-		fullResponse.WriteString(resp.Response)
-		return nil
-	})
+
+	responseText, err := p.client.generate(callCtx, model, prompt, temperature)
 	if err != nil {
 		return nil, fmt.Errorf("ollama security check failed: %w", err)
 	}
 
-	// Parse JSON response
-	responseText := fullResponse.String()
-	responseText = extractJSON(responseText)
-
 	var result SecurityResult
-	if err := json.Unmarshal([]byte(responseText), &result); err != nil {
-		// If JSON parsing fails, return a conservative default
+	if err := json.Unmarshal([]byte(extractJSON(responseText)), &result); err != nil {
 		return &SecurityResult{
 			Safe:          false,
 			Score:         5.0,
@@ -169,20 +117,18 @@ func (p *AIProcessor) SecurityCheck(ctx context.Context, userID int64, title, co
 	return &result, nil
 }
 
-// CurateArticle scores an article for interest/relevance
+// CurateArticle scores an article for interest/relevance.
 func (p *AIProcessor) CurateArticle(ctx context.Context, userID int64, title, content string, keywords []string) (*CurationResult, error) {
 	keywordStr := "No specific preferences"
 	if len(keywords) > 0 {
 		keywordStr = strings.Join(keywords, ", ")
 	}
 
-	// Load prompt template
 	promptTemplate, err := p.promptLoader.GetPrompt(userID, PromptTypeCuration)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load curation prompt: %w", err)
 	}
 
-	// Render prompt with data
 	data := map[string]interface{}{
 		"Title":    title,
 		"Content":  truncateText(content, 2000),
@@ -193,41 +139,22 @@ func (p *AIProcessor) CurateArticle(ctx context.Context, userID int64, title, co
 		return nil, fmt.Errorf("failed to render curation prompt: %w", err)
 	}
 
-	// Get temperature
 	temperature := p.promptLoader.GetTemperature(userID, PromptTypeCuration)
-
 	model := p.promptLoader.GetModel(userID, PromptTypeCuration)
 	if model == "" {
 		model = p.curationModel
 	}
 
-	req := &api.GenerateRequest{
-		Model:  model,
-		Prompt: prompt,
-		Stream: new(bool), // false
-		Options: map[string]interface{}{
-			"temperature": temperature,
-		},
-	}
-
 	callCtx, cancel := p.withCallTimeout(ctx)
 	defer cancel()
-	var fullResponse strings.Builder
-	err = p.client.Generate(callCtx, req, func(resp api.GenerateResponse) error {
-		fullResponse.WriteString(resp.Response)
-		return nil
-	})
+
+	responseText, err := p.client.generate(callCtx, model, prompt, temperature)
 	if err != nil {
 		return nil, fmt.Errorf("ollama curation failed: %w", err)
 	}
 
-	// Parse JSON response
-	responseText := fullResponse.String()
-	responseText = extractJSON(responseText)
-
 	var result CurationResult
-	if err := json.Unmarshal([]byte(responseText), &result); err != nil {
-		// If JSON parsing fails, return neutral score
+	if err := json.Unmarshal([]byte(extractJSON(responseText)), &result); err != nil {
 		return &CurationResult{
 			InterestScore: 5.0,
 			Reasoning:     "Failed to parse curation response",
@@ -237,20 +164,12 @@ func (p *AIProcessor) CurateArticle(ctx context.Context, userID int64, title, co
 	return &result, nil
 }
 
-// ListModels returns the names of all models available in Ollama.
+// ListModels returns the names of all models available at the configured endpoint.
 func (p *AIProcessor) ListModels(ctx context.Context) ([]string, error) {
-	list, err := p.client.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-	names := make([]string, 0, len(list.Models))
-	for _, m := range list.Models {
-		names = append(names, m.Name)
-	}
-	return names, nil
+	return p.client.listModels(ctx)
 }
 
-// truncateText truncates text to maxLen characters
+// truncateText truncates text to maxLen characters.
 func truncateText(text string, maxLen int) string {
 	if len(text) <= maxLen {
 		return text
@@ -258,9 +177,8 @@ func truncateText(text string, maxLen int) string {
 	return text[:maxLen] + "..."
 }
 
-// extractJSON attempts to extract JSON from a text response that might contain extra text
+// extractJSON attempts to extract JSON from a text response that might contain extra text.
 func extractJSON(text string) string {
-	// Find first { and last }
 	start := strings.Index(text, "{")
 	end := strings.LastIndex(text, "}")
 	if start >= 0 && end > start {

@@ -8,7 +8,6 @@ import (
 
 	"github.com/matthewjhunter/herald/internal/output"
 	"github.com/matthewjhunter/herald/internal/storage"
-	"github.com/ollama/ollama/api"
 )
 
 // ClusterArticles groups articles covering the same event/topic
@@ -51,28 +50,14 @@ Rules:
 - Merge similar topics (e.g., "Tech layoffs" and "Google layoffs" should be one group)`,
 		strings.Join(articleDescs, "\n"))
 
-	req := &api.GenerateRequest{
-		Model:  p.curationModel,
-		Prompt: prompt,
-		Stream: new(bool), // false
-		Options: map[string]interface{}{
-			"temperature": 0.3,
-		},
-	}
-
 	callCtx, cancel := p.withCallTimeout(ctx)
 	defer cancel()
-	var fullResponse strings.Builder
-	err := p.client.Generate(callCtx, req, func(resp api.GenerateResponse) error {
-		fullResponse.WriteString(resp.Response)
-		return nil
-	})
+
+	responseText, err := p.client.generate(callCtx, p.curationModel, prompt, 0.3)
 	if err != nil {
 		return nil, fmt.Errorf("clustering failed: %w", err)
 	}
-
-	// Parse JSON response
-	responseText := extractJSON(fullResponse.String())
+	responseText = extractJSON(responseText)
 
 	var result struct {
 		Groups []struct {
