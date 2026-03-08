@@ -206,6 +206,23 @@ func TestHandleRoot_UnauthenticatedRedirectsToWebauth(t *testing.T) {
 	}
 }
 
+func TestRequireAuth_HTMXUnauthenticatedUsesHXRedirect(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// HTMX partial request without auth → HX-Redirect header + 401, not a 302.
+	rr := request(t, tf.router, "GET", "/articles", map[string]string{"HX-Request": "true"})
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+	hxRedirect := rr.Header().Get("HX-Redirect")
+	if !strings.Contains(hxRedirect, "auth.example.com") {
+		t.Errorf("HX-Redirect %q should point to webauth", hxRedirect)
+	}
+	if loc := rr.Header().Get("Location"); loc != "" {
+		t.Errorf("Location header should be empty for HTMX requests, got %q", loc)
+	}
+}
+
 func TestHandleRoot_AuthenticatedServesHome(t *testing.T) {
 	tf := newTestFixtures(t)
 

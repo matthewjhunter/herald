@@ -85,6 +85,7 @@ func (h *handlers) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, err := h.validator.ValidateCookie(r)
 		if err != nil {
+			var loginURL string
 			if h.validator.OIDCConfigured() {
 				verifier, err := generateVerifier()
 				if err != nil {
@@ -101,9 +102,18 @@ func (h *handlers) requireAuth(next http.Handler) http.Handler {
 				setOAuthCookie(w, "oauth_verifier", verifier, 300, secure)
 				setOAuthCookie(w, "oauth_state", state, 300, secure)
 				setOAuthCookie(w, "oauth_redirect", r.URL.RequestURI(), 300, secure)
-				http.Redirect(w, r, h.validator.AuthorizeURL(state, challenge), http.StatusFound)
+				loginURL = h.validator.AuthorizeURL(state, challenge)
 			} else {
-				http.Redirect(w, r, h.validator.WebauthLoginURL(r.URL.RequestURI()), http.StatusFound)
+				loginURL = h.validator.WebauthLoginURL(r.URL.RequestURI())
+			}
+			// For HTMX partial requests, use HX-Redirect so the browser
+			// performs a full page navigation rather than swapping auth HTML
+			// into a partial target and silently doing nothing.
+			if r.Header.Get("HX-Request") == "true" {
+				w.Header().Set("HX-Redirect", loginURL)
+				w.WriteHeader(http.StatusUnauthorized)
+			} else {
+				http.Redirect(w, r, loginURL, http.StatusFound)
 			}
 			return
 		}
