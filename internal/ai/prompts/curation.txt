@@ -6,14 +6,18 @@ Content: {{.Content}}
 
 User interests: {{.Keywords}}
 
-Consider:
-- News value and importance
-- Relevance to user interests
-- Timeliness and uniqueness
-- Quality of content
+Score using the full range. High scores should be rare:
+- 10: Breaking news with urgency for everyone — war breaking out, major terrorist attack, large-scale natural disaster. Score 10 only for events demanding immediate attention regardless of user interests.
+- 9: Breaking news of direct interest to this user specifically, first reports of major national news stories (not follow-up coverage or continuous updates), or regional events near the user that may pose a personal risk.
+- 7-8: Interesting — worth reading, relevant to user interests or broadly informative
+- 5-6: Moderate — mildly relevant or routine coverage of familiar topics
+- 3-4: Low — tangentially related or low-quality content
+- 0-2: Irrelevant — no connection to user interests, filler, or noise
+
+Do not score follow-up articles, opinion pieces, or commentary about major events at 9-10 — reserve those scores for first reports of genuinely breaking developments.
 
 Respond ONLY with valid JSON in this exact format:
 {
   "interest_score": <0-10>,
-  "reasoning": "<brief explanation>"
+  "reasoning": "<one sentence explanation>"
 }
