@@ -89,6 +89,66 @@ type FeedStatsResult struct {
 	Total FeedStats   `json:"total"`
 }
 
+// FeedScoreStats holds AI scoring breakdown for a single feed.
+// Security buckets: Pass (>=7), Borderline (>=4,<7), Fail (<4).
+// Interest buckets count only security-passed articles: High (>=8), Medium (>=5,<8), Low (<5).
+type FeedScoreStats struct {
+	FeedID        int64
+	FeedTitle     string
+	TotalScored   int
+	SecPass       int
+	SecBorderline int
+	SecFail       int
+	IntHigh       int
+	IntMedium     int
+	IntLow        int
+}
+
+func (f FeedScoreStats) SecTotal() int { return f.SecPass + f.SecBorderline + f.SecFail }
+func (f FeedScoreStats) IntTotal() int { return f.IntHigh + f.IntMedium + f.IntLow }
+func (f FeedScoreStats) SecPassPct() float64 {
+	if f.SecTotal() == 0 {
+		return 0
+	}
+	return float64(f.SecPass) / float64(f.SecTotal()) * 100
+}
+func (f FeedScoreStats) SecBorderlinePct() float64 {
+	if f.SecTotal() == 0 {
+		return 0
+	}
+	return float64(f.SecBorderline) / float64(f.SecTotal()) * 100
+}
+func (f FeedScoreStats) SecFailPct() float64 {
+	if f.SecTotal() == 0 {
+		return 0
+	}
+	return float64(f.SecFail) / float64(f.SecTotal()) * 100
+}
+func (f FeedScoreStats) IntHighPct() float64 {
+	if f.IntTotal() == 0 {
+		return 0
+	}
+	return float64(f.IntHigh) / float64(f.IntTotal()) * 100
+}
+func (f FeedScoreStats) IntMediumPct() float64 {
+	if f.IntTotal() == 0 {
+		return 0
+	}
+	return float64(f.IntMedium) / float64(f.IntTotal()) * 100
+}
+func (f FeedScoreStats) IntLowPct() float64 {
+	if f.IntTotal() == 0 {
+		return 0
+	}
+	return float64(f.IntLow) / float64(f.IntTotal()) * 100
+}
+
+// ScoreStatsResult holds aggregate and per-feed AI scoring stats.
+type ScoreStatsResult struct {
+	Feeds []FeedScoreStats
+	Total FeedScoreStats
+}
+
 // UserPreferences holds all user-configurable preference values.
 type UserPreferences struct {
 	Keywords          []string `json:"keywords"`

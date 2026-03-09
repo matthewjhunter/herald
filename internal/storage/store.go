@@ -2,6 +2,25 @@ package storage
 
 import "time"
 
+// FeedScoreStats holds AI scoring breakdown for a single feed (storage-internal type).
+type FeedScoreStats struct {
+	FeedID        int64
+	FeedTitle     string
+	TotalScored   int
+	SecPass       int
+	SecBorderline int
+	SecFail       int
+	IntHigh       int
+	IntMedium     int
+	IntLow        int
+}
+
+// ScoreStatsResult holds aggregate and per-feed AI scoring stats (storage-internal type).
+type ScoreStatsResult struct {
+	Feeds []FeedScoreStats
+	Total FeedScoreStats
+}
+
 // Store defines the storage interface for herald's data layer.
 type Store interface {
 	Close() error
@@ -32,6 +51,7 @@ type Store interface {
 	UpdateStarred(userID, articleID int64, starred bool) error
 	UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64, securityReason *string) error
 	ResetScores(userID int64, securityOnly bool, belowScore float64) (int64, error)
+	GetScoreStats(userID int64) (*ScoreStatsResult, error)
 
 	// Feeds
 	AddFeed(url, title, description string) (int64, error)

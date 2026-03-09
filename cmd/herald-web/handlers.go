@@ -125,6 +125,15 @@ func (h *handlers) init() {
 		"buildVersion": func() string { return version },
 		"buildTime":    func() string { return buildTime },
 		"cleanTitle":   cleanTitle,
+		"printf":       fmt.Sprintf,
+		"secDonut": func(fs herald.FeedScoreStats) donutData {
+			return makeDonut(fs.SecPass, fs.SecBorderline, fs.SecFail,
+				fmt.Sprintf("%d%%", int(fs.SecPassPct())))
+		},
+		"intDonut": func(fs herald.FeedScoreStats) donutData {
+			return makeDonut(fs.IntHigh, fs.IntMedium, fs.IntLow,
+				fmt.Sprintf("%d%%", int(fs.IntHighPct())))
+		},
 		"dict": func(pairs ...any) (map[string]any, error) {
 			if len(pairs)%2 != 0 {
 				return nil, fmt.Errorf("dict requires an even number of arguments")
@@ -147,7 +156,7 @@ func (h *handlers) init() {
 	shared := []string{"base.html", "nav.html", "settings_subnav.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "error.html"}
 
 	// Pages that get their own template tree.
-	pages := []string{"home.html", "feeds_manage.html", "groups.html", "group_detail.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_stats.html"}
+	pages := []string{"home.html", "feeds_manage.html", "groups.html", "group_detail.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_stats.html", "stats.html"}
 
 	h.pages = make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
@@ -1144,6 +1153,63 @@ func (h *handlers) handleUserPromptReset(w http.ResponseWriter, r *http.Request)
 }
 
 // adminStatsData is the template data for the admin stats page.
+// donutData holds pre-computed SVG stroke values for a 3-segment donut chart.
+type donutData struct {
+	GreenPct     float64
+	YellowPct    float64
+	RedPct       float64
+	YellowOffset float64 // stroke-dashoffset for yellow segment
+	RedOffset    float64 // stroke-dashoffset for red segment
+	Label        string
+	HasData      bool
+}
+
+func makeDonut(green, yellow, red int, label string) donutData {
+	total := green + yellow + red
+	if total == 0 {
+		return donutData{Label: label}
+	}
+	g := float64(green) / float64(total) * 100
+	y := float64(yellow) / float64(total) * 100
+	r := float64(red) / float64(total) * 100
+	return donutData{
+		GreenPct:     g,
+		YellowPct:    y,
+		RedPct:       r,
+		YellowOffset: -g,
+		RedOffset:    -(g + y),
+		Label:        label,
+		HasData:      true,
+	}
+}
+
+type statsData struct {
+	Total    herald.FeedScoreStats
+	Feeds    []herald.FeedScoreStats
+	SecDonut donutData
+	IntDonut donutData
+}
+
+func (h *handlers) handleStats(w http.ResponseWriter, r *http.Request) {
+	h.init()
+	uid := userFromContext(r.Context()).ID
+
+	raw, err := h.engine.GetScoreStats(uid)
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Failed to load score stats")
+		return
+	}
+
+	t := raw.Total
+	data := statsData{
+		Total:    t,
+		Feeds:    raw.Feeds,
+		SecDonut: makeDonut(t.SecPass, t.SecBorderline, t.SecFail, fmt.Sprintf("%d%%", int(t.SecPassPct()))),
+		IntDonut: makeDonut(t.IntHigh, t.IntMedium, t.IntLow, fmt.Sprintf("%d%%", int(t.IntHighPct()))),
+	}
+	h.renderPage(w, r, "stats.html", data)
+}
+
 type adminStatsData struct {
 	TotalArticles int
 	TotalFeeds    int

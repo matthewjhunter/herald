@@ -406,6 +406,52 @@ func (s *PostgresStore) UpdateReadState(userID, articleID int64, read bool, inte
 	return nil
 }
 
+// GetScoreStats returns AI scoring breakdown per feed for a user.
+func (s *PostgresStore) GetScoreStats(userID int64) (*ScoreStatsResult, error) {
+	rows, err := s.db.Query(`
+		SELECT
+			f.id,
+			COALESCE(uf.user_title, f.title),
+			COUNT(*) FILTER (WHERE rs.ai_scored IS TRUE),
+			COUNT(*) FILTER (WHERE rs.security_score >= 7.0),
+			COUNT(*) FILTER (WHERE rs.security_score >= 4.0 AND rs.security_score < 7.0),
+			COUNT(*) FILTER (WHERE rs.security_score IS NOT NULL AND rs.security_score < 4.0),
+			COUNT(*) FILTER (WHERE rs.security_score >= 7.0 AND rs.interest_score >= 8.0),
+			COUNT(*) FILTER (WHERE rs.security_score >= 7.0 AND rs.interest_score >= 5.0 AND rs.interest_score < 8.0),
+			COUNT(*) FILTER (WHERE rs.security_score >= 7.0 AND rs.interest_score IS NOT NULL AND rs.interest_score < 5.0)
+		FROM feeds f
+		JOIN user_feeds uf ON uf.feed_id = f.id AND uf.user_id = ?
+		JOIN articles a ON a.feed_id = f.id
+		LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = ?
+		GROUP BY f.id, uf.user_title, f.title
+		ORDER BY COALESCE(uf.user_title, f.title)`,
+		userID, userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get score stats: %w", err)
+	}
+	defer rows.Close()
+
+	result := &ScoreStatsResult{}
+	for rows.Next() {
+		var fs FeedScoreStats
+		if err := rows.Scan(&fs.FeedID, &fs.FeedTitle, &fs.TotalScored,
+			&fs.SecPass, &fs.SecBorderline, &fs.SecFail,
+			&fs.IntHigh, &fs.IntMedium, &fs.IntLow); err != nil {
+			return nil, fmt.Errorf("scan score stats: %w", err)
+		}
+		result.Total.TotalScored += fs.TotalScored
+		result.Total.SecPass += fs.SecPass
+		result.Total.SecBorderline += fs.SecBorderline
+		result.Total.SecFail += fs.SecFail
+		result.Total.IntHigh += fs.IntHigh
+		result.Total.IntMedium += fs.IntMedium
+		result.Total.IntLow += fs.IntLow
+		result.Feeds = append(result.Feeds, fs)
+	}
+	return result, rows.Err()
+}
+
 // ResetScores clears AI scores so articles are reprocessed by the pipeline.
 func (s *PostgresStore) ResetScores(userID int64, securityOnly bool, belowScore float64) (int64, error) {
 	var result sql.Result

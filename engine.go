@@ -575,6 +575,40 @@ func (e *Engine) GetFeedStats(userID int64) (*FeedStatsResult, error) {
 	return result, nil
 }
 
+// GetScoreStats returns AI scoring breakdown per feed for a user.
+func (e *Engine) GetScoreStats(userID int64) (*ScoreStatsResult, error) {
+	internal, err := e.store.GetScoreStats(userID)
+	if err != nil {
+		return nil, err
+	}
+	result := &ScoreStatsResult{
+		Feeds: make([]FeedScoreStats, len(internal.Feeds)),
+	}
+	for i, fs := range internal.Feeds {
+		result.Feeds[i] = FeedScoreStats{
+			FeedID:        fs.FeedID,
+			FeedTitle:     fs.FeedTitle,
+			TotalScored:   fs.TotalScored,
+			SecPass:       fs.SecPass,
+			SecBorderline: fs.SecBorderline,
+			SecFail:       fs.SecFail,
+			IntHigh:       fs.IntHigh,
+			IntMedium:     fs.IntMedium,
+			IntLow:        fs.IntLow,
+		}
+	}
+	result.Total = FeedScoreStats{
+		TotalScored:   internal.Total.TotalScored,
+		SecPass:       internal.Total.SecPass,
+		SecBorderline: internal.Total.SecBorderline,
+		SecFail:       internal.Total.SecFail,
+		IntHigh:       internal.Total.IntHigh,
+		IntMedium:     internal.Total.IntMedium,
+		IntLow:        internal.Total.IntLow,
+	}
+	return result, nil
+}
+
 // PendingCounts returns the number of articles awaiting AI processing.
 func (e *Engine) PendingCounts(userID int64) (unsummarized, unscored int, err error) {
 	unsummarized, err = e.store.GetUnsummarizedArticleCount(userID)

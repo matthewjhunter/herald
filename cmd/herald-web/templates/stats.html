@@ -1,0 +1,107 @@
+{{define "title"}}Herald - Score Statistics{{end}}
+{{define "nav"}}{{template "shared-nav" "stats"}}{{end}}
+
+{{define "donut"}}
+{{- $d := . -}}
+<svg viewBox="0 0 42 42" width="80" height="80" style="display:block;">
+  <circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--pico-muted-border-color)" stroke-width="4"/>
+  {{if $d.HasData}}
+  {{if gt $d.GreenPct 0.5}}
+  <circle cx="21" cy="21" r="15.9" fill="none" stroke="#4caf50" stroke-width="4"
+    stroke-dasharray="{{printf "%.2f" $d.GreenPct}} 100"
+    stroke-dashoffset="25" transform="rotate(-90 21 21)"/>
+  {{end}}
+  {{if gt $d.YellowPct 0.5}}
+  <circle cx="21" cy="21" r="15.9" fill="none" stroke="#ff9800" stroke-width="4"
+    stroke-dasharray="{{printf "%.2f" $d.YellowPct}} 100"
+    stroke-dashoffset="{{printf "%.2f" $d.YellowOffset}}" transform="rotate(-90 21 21)"/>
+  {{end}}
+  {{if gt $d.RedPct 0.5}}
+  <circle cx="21" cy="21" r="15.9" fill="none" stroke="#f44336" stroke-width="4"
+    stroke-dasharray="{{printf "%.2f" $d.RedPct}} 100"
+    stroke-dashoffset="{{printf "%.2f" $d.RedOffset}}" transform="rotate(-90 21 21)"/>
+  {{end}}
+  {{end}}
+  <text x="21" y="21" text-anchor="middle" dominant-baseline="central"
+    font-size="7" font-weight="bold" fill="var(--pico-color)">{{$d.Label}}</text>
+</svg>
+{{end}}
+
+{{define "content"}}
+<main class="container" style="max-width:1100px;">
+  <h2>AI Score Statistics</h2>
+
+  <div style="display:flex;gap:3rem;margin-bottom:2rem;flex-wrap:wrap;align-items:flex-start;">
+
+    {{/* --- Security Overview --- */}}
+    <div style="text-align:center;">
+      <h3 style="margin-bottom:0.5rem;">Security</h3>
+      {{template "donut" .SecDonut}}
+      <div style="margin-top:0.75rem;font-size:0.85em;line-height:1.8;">
+        <div><span style="color:#4caf50;">&#9632;</span> Pass (&ge;7.0) &nbsp;<strong>{{.Total.SecPass}}</strong></div>
+        <div><span style="color:#ff9800;">&#9632;</span> Borderline (4-7) &nbsp;<strong>{{.Total.SecBorderline}}</strong></div>
+        <div><span style="color:#f44336;">&#9632;</span> Fail (&lt;4.0) &nbsp;<strong>{{.Total.SecFail}}</strong></div>
+        <div style="margin-top:0.25rem;" class="secondary">{{.Total.SecTotal}} scored total</div>
+      </div>
+    </div>
+
+    {{/* --- Interest Overview --- */}}
+    <div style="text-align:center;">
+      <h3 style="margin-bottom:0.5rem;">Interest</h3>
+      {{template "donut" .IntDonut}}
+      <div style="margin-top:0.75rem;font-size:0.85em;line-height:1.8;">
+        <div><span style="color:#4caf50;">&#9632;</span> High (&ge;8.0) &nbsp;<strong>{{.Total.IntHigh}}</strong></div>
+        <div><span style="color:#ff9800;">&#9632;</span> Medium (5-8) &nbsp;<strong>{{.Total.IntMedium}}</strong></div>
+        <div><span style="color:#f44336;">&#9632;</span> Low (&lt;5.0) &nbsp;<strong>{{.Total.IntLow}}</strong></div>
+        <div style="margin-top:0.25rem;" class="secondary">{{.Total.IntTotal}} security-passed</div>
+      </div>
+    </div>
+
+    {{/* --- Legend --- */}}
+    <div style="font-size:0.8em;color:var(--pico-muted-color);max-width:280px;align-self:center;margin-top:1rem;">
+      <p><strong>Security buckets:</strong> Pass = score &ge;7.0 (technically safe). Borderline = 4-7 (review). Fail = &lt;4.0 (threat detected).</p>
+      <p><strong>Interest buckets:</strong> High = &ge;8.0 (surfaced to you). Medium = 5-8 (filtered). Low = &lt;5.0 (low relevance). Only counts security-passed articles.</p>
+    </div>
+  </div>
+
+  <h3>Per-Feed Breakdown</h3>
+  <div style="overflow-x:auto;">
+  <table>
+    <thead>
+      <tr>
+        <th>Feed</th>
+        <th style="text-align:center;">Security</th>
+        <th style="text-align:right;white-space:nowrap;">Pass / Border / Fail</th>
+        <th style="text-align:center;">Interest</th>
+        <th style="text-align:right;white-space:nowrap;">High / Med / Low</th>
+        <th style="text-align:right;">Scored</th>
+      </tr>
+    </thead>
+    <tbody>
+    {{range .Feeds}}
+    {{$sec := secDonut .}}
+    {{$int := intDonut .}}
+    <tr>
+      <td>{{.FeedTitle}}</td>
+      <td style="text-align:center;padding:0.25rem 0.5rem;">{{template "donut" $sec}}</td>
+      <td style="text-align:right;white-space:nowrap;font-size:0.85em;">
+        <span style="color:#4caf50;">{{.SecPass}}</span> /
+        <span style="color:#ff9800;">{{.SecBorderline}}</span> /
+        <span style="color:#f44336;">{{.SecFail}}</span>
+      </td>
+      <td style="text-align:center;padding:0.25rem 0.5rem;">{{template "donut" $int}}</td>
+      <td style="text-align:right;white-space:nowrap;font-size:0.85em;">
+        <span style="color:#4caf50;">{{.IntHigh}}</span> /
+        <span style="color:#ff9800;">{{.IntMedium}}</span> /
+        <span style="color:#f44336;">{{.IntLow}}</span>
+      </td>
+      <td style="text-align:right;" class="secondary">{{.TotalScored}}</td>
+    </tr>
+    {{else}}
+      <tr><td colspan="6" class="secondary">No scoring data yet.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+</main>
+{{end}}
