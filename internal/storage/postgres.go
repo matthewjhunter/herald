@@ -1075,7 +1075,7 @@ func (s *PostgresStore) GetArticleSummary(userID, articleID int64) (*ArticleSumm
 
 func (s *PostgresStore) GetFeedStats(userID int64) ([]FeedStats, error) {
 	rows, err := s.db.Query(`
-		SELECT f.id, f.title,
+		SELECT f.id, COALESCE(uf.user_title, f.title),
 			COUNT(a.id),
 			COUNT(a.id) - COALESCE(SUM(CASE WHEN rs.read IS TRUE THEN 1 ELSE 0 END), 0),
 			COUNT(a.id) - COUNT(asumm.article_id),
@@ -1085,8 +1085,8 @@ func (s *PostgresStore) GetFeedStats(userID int64) ([]FeedStats, error) {
 		JOIN articles a ON a.feed_id = f.id
 		LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = ?
 		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id AND asumm.user_id = ?
-		GROUP BY f.id, f.title
-		ORDER BY f.title`,
+		GROUP BY f.id, uf.user_title
+		ORDER BY COALESCE(uf.user_title, f.title)`,
 		userID, userID, userID,
 	)
 	if err != nil {
