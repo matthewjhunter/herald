@@ -351,6 +351,67 @@ func TestFetchFullTextForArticles_LinkPost(t *testing.T) {
 	}
 }
 
+func TestSkipFullTextRe(t *testing.T) {
+	match := []string{
+		"https://www.youtube.com/shorts/piM5i-4M2eo",
+		"https://youtube.com/shorts/abc123",
+		"https://youtu.be/dQw4w9WgXcQ",
+	}
+	noMatch := []string{
+		"https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+		"https://www.youtube.com/channel/UC123",
+		"https://arstechnica.com/article",
+		"",
+	}
+	for _, u := range match {
+		if !skipFullTextRe.MatchString(u) {
+			t.Errorf("expected %q to be suppressed", u)
+		}
+	}
+	for _, u := range noMatch {
+		if skipFullTextRe.MatchString(u) {
+			t.Errorf("expected %q NOT to be suppressed", u)
+		}
+	}
+}
+
+func TestFetchFullTextForArticles_SkipsSuppressedURL(t *testing.T) {
+	called := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	store := newFullTextTestStore(t)
+	feedID, _ := store.AddFeed(srv.URL, "YouTube Feed", "")
+
+	pub := time.Now()
+	_, err := store.AddArticle(&storage.Article{
+		FeedID:        feedID,
+		GUID:          "yt-shorts-1",
+		Title:         "Some Short",
+		URL:           "https://www.youtube.com/shorts/piM5i-4M2eo",
+		Content:       "short",
+		PublishedDate: &pub,
+	})
+	if err != nil {
+		t.Fatalf("AddArticle: %v", err)
+	}
+
+	fetcher := NewFetcher(store)
+	n, err := fetcher.FetchFullTextForArticles(context.Background())
+	if err != nil {
+		t.Fatalf("FetchFullTextForArticles: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 articles updated, got %d", n)
+	}
+	if called != 0 {
+		t.Errorf("suppressed URL should not have been fetched, got %d calls", called)
+	}
+}
+
 // helpers
 
 func newFullTextTestStore(t *testing.T) *storage.SQLiteStore {

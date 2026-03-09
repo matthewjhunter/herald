@@ -7,10 +7,18 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	readability "codeberg.org/readeck/go-readability/v2"
+)
+
+// skipFullTextRe matches URLs that readability cannot usefully process.
+// Articles and linked posts matching this pattern are silently skipped
+// rather than logged as failures.
+var skipFullTextRe = regexp.MustCompile(
+	`(?i)(youtube\.com/shorts/|youtu\.be/)`,
 )
 
 // minTextChars is the minimum number of non-whitespace, non-tag characters in
@@ -51,6 +59,10 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 		// linked headline. Fetch readability from the linked article, not the
 		// blog post page (which yields only boilerplate like affiliate notices).
 		if linkedURL := extractLinkPostURL(article.Content, article.URL); linkedURL != "" {
+			if skipFullTextRe.MatchString(linkedURL) {
+				markDone()
+				continue
+			}
 			full, err := fetchReadableContent(ctx, f.client, linkedURL)
 			markDone()
 			if err != nil {
@@ -67,6 +79,10 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 			continue
 		}
 
+		if skipFullTextRe.MatchString(article.URL) {
+			markDone()
+			continue
+		}
 		full, err := fetchReadableContent(ctx, f.client, article.URL)
 		markDone()
 		if err != nil {
