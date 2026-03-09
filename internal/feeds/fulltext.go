@@ -21,6 +21,14 @@ var skipFullTextRe = regexp.MustCompile(
 	`(?i)(youtube\.com/shorts/|youtu\.be/)`,
 )
 
+// emailRe matches both standard email addresses and the obfuscated "user at
+// domain dot com" style commonly used in blog contact sidebars to deter scrapers.
+var emailRe = regexp.MustCompile(
+	`(?i)\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b` +
+		`|\b\S+\s+at\s+\S+\s+dot\s+\S+\b` +
+		`|\b\S+\s+at\s+[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b`,
+)
+
 // minTextChars is the minimum number of non-whitespace, non-tag characters in
 // feed content before we consider it complete. Content shorter than this is
 // treated as a truncated excerpt.
@@ -69,7 +77,7 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 				log.Printf("herald: linked-article fetch failed for article %d (%s): %v", article.ID, linkedURL, err)
 				continue
 			}
-			if textLength(full) >= 300 {
+			if textLength(full) >= 300 && !looksLikeContactPage(full) {
 				if err := f.store.UpdateArticleLinkedContent(article.ID, linkedURL, sanitizeText(full)); err != nil {
 					log.Printf("herald: failed to store linked content for article %d: %v", article.ID, err)
 				} else {
@@ -91,9 +99,9 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 		}
 
 		// Only replace content if we got substantially more text than the feed
-		// provided — at least 300 chars more. This prevents boilerplate text
-		// (sidebars, disclaimers) from displacing real RSS content.
-		if textLength(full) >= textLength(article.Content)+300 {
+		// provided — at least 300 chars more — and it doesn't look like a
+		// contact/sidebar page that readability mistook for the article body.
+		if textLength(full) >= textLength(article.Content)+300 && !looksLikeContactPage(full) {
 			if err := f.store.UpdateArticleContent(article.ID, sanitizeText(full)); err != nil {
 				log.Printf("herald: failed to store full text for article %d: %v", article.ID, err)
 			} else {
@@ -128,6 +136,16 @@ func isTruncated(content string) bool {
 		return true
 	}
 	return false
+}
+
+// looksLikeContactPage returns true when readability-extracted content appears
+// to be a sidebar or contact page rather than article prose. The signal is
+// email address density: real articles rarely contain three or more email
+// addresses, but contact/staff sidebars (like Ace of Spades HQ) typically do.
+// Also catches obfuscated addresses like "user at domain.com".
+func looksLikeContactPage(content string) bool {
+	plain := stripTags(content)
+	return len(emailRe.FindAllString(plain, 3)) >= 3
 }
 
 // endsWithCompleteSentence reports whether s ends with terminal punctuation

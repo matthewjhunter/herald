@@ -368,6 +368,33 @@ func TestFetchFullTextForArticles_LinkPost(t *testing.T) {
 	}
 }
 
+func TestLooksLikeContactPage(t *testing.T) {
+	// Ace of Spades-style contact sidebar with obfuscated emails.
+	sidebar := `Support Contact
+Ace: aceofspadeshq at gee mail.com
+CBD: cbd at cutjibnewsletter.com
+Buck: buck.throckmorton at protonmail.com
+joe mannix: mannix2024 at proton.me`
+	if !looksLikeContactPage(sidebar) {
+		t.Error("expected contact sidebar to be detected as boilerplate")
+	}
+
+	// Real article prose with no email addresses.
+	article := `<p>The conflict continues as President Trump stated bombing will stop
+	if Iran finds new leadership. Iran's response has been defiant, with Mojtaba
+	reportedly positioned as the next Supreme Leader.</p>`
+	if looksLikeContactPage(article) {
+		t.Error("expected article prose not to be flagged as boilerplate")
+	}
+
+	// Article with one email address — should not be flagged.
+	oneEmail := `<p>Contact the author at author@example.com for corrections.` +
+		` The rest of this is a long article body with real prose content.</p>`
+	if looksLikeContactPage(oneEmail) {
+		t.Error("expected single-email article not to be flagged as boilerplate")
+	}
+}
+
 func TestSkipFullTextRe(t *testing.T) {
 	match := []string{
 		"https://www.youtube.com/shorts/piM5i-4M2eo",
