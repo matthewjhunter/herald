@@ -85,6 +85,12 @@ func (h *handlers) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, err := h.validator.ValidateCookie(r)
 		if err != nil {
+			// For HTMX partial requests, the fragment URL (e.g. /sidebar) is not a
+			// meaningful post-login destination — redirect to the home page instead.
+			returnTo := r.URL.RequestURI()
+			if r.Header.Get("HX-Request") == "true" {
+				returnTo = "/"
+			}
 			var loginURL string
 			if h.validator.OIDCConfigured() {
 				verifier, err := generateVerifier()
@@ -101,10 +107,10 @@ func (h *handlers) requireAuth(next http.Handler) http.Handler {
 				secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 				setOAuthCookie(w, "oauth_verifier", verifier, 300, secure)
 				setOAuthCookie(w, "oauth_state", state, 300, secure)
-				setOAuthCookie(w, "oauth_redirect", r.URL.RequestURI(), 300, secure)
+				setOAuthCookie(w, "oauth_redirect", returnTo, 300, secure)
 				loginURL = h.validator.AuthorizeURL(state, challenge)
 			} else {
-				loginURL = h.validator.WebauthLoginURL(r.URL.RequestURI())
+				loginURL = h.validator.WebauthLoginURL(returnTo)
 			}
 			// For HTMX partial requests, use HX-Redirect so the browser
 			// performs a full page navigation rather than swapping auth HTML
