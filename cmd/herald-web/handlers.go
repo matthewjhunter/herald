@@ -913,6 +913,53 @@ func (h *handlers) handleFeedUnsubscribe(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("HX-Redirect", "/feeds")
 }
 
+// handleFeedTitleDisplay returns the static display fragment for a feed title cell.
+func (h *handlers) handleFeedTitleDisplay(w http.ResponseWriter, r *http.Request) {
+	feedID, err := strconv.ParseInt(r.PathValue("feedID"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid feed ID", http.StatusBadRequest)
+		return
+	}
+	title := r.URL.Query().Get("title")
+	h.renderFragment(w, "feed_title_display", map[string]any{
+		"FeedID": feedID,
+		"Title":  title,
+	})
+}
+
+// handleFeedEditTitle returns an inline edit form for the feed title cell.
+func (h *handlers) handleFeedEditTitle(w http.ResponseWriter, r *http.Request) {
+	feedID, err := strconv.ParseInt(r.PathValue("feedID"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid feed ID", http.StatusBadRequest)
+		return
+	}
+	title := r.URL.Query().Get("title")
+	h.renderFragment(w, "feed_title_edit", map[string]any{
+		"FeedID": feedID,
+		"Title":  title,
+	})
+}
+
+// handleFeedRename updates the per-user display title for a feed subscription.
+func (h *handlers) handleFeedRename(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	feedID, err := strconv.ParseInt(r.PathValue("feedID"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid feed ID", http.StatusBadRequest)
+		return
+	}
+	title := strings.TrimSpace(r.FormValue("title"))
+	if err := h.engine.RenameUserFeed(uid, feedID, title); err != nil {
+		http.Error(w, "Failed to rename feed", http.StatusInternalServerError)
+		return
+	}
+	h.renderFragment(w, "feed_title_display", map[string]any{
+		"FeedID": feedID,
+		"Title":  title,
+	})
+}
+
 // handleArticleImage serves a cached article image by its ID.
 func (h *handlers) handleArticleImage(w http.ResponseWriter, r *http.Request) {
 	imageID, err := strconv.ParseInt(r.PathValue("imageID"), 10, 64)

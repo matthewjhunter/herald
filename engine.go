@@ -443,6 +443,11 @@ func (e *Engine) RenameFeed(feedID int64, title string) error {
 	return e.store.RenameFeed(feedID, title)
 }
 
+// RenameUserFeed sets a per-user display title for a feed subscription.
+func (e *Engine) RenameUserFeed(userID, feedID int64, title string) error {
+	return e.store.RenameUserFeed(userID, feedID, title)
+}
+
 // GetUserGroups returns all article groups for a user.
 func (e *Engine) GetUserGroups(userID int64) ([]ArticleGroup, error) {
 	groups, err := e.store.GetUserGroups(userID)

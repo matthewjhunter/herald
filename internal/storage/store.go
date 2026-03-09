@@ -41,6 +41,7 @@ type Store interface {
 	UpdateFeedCacheHeaders(feedID int64, etag, lastModified string) error
 	UpdateFeedLastFetched(feedID int64) error
 	RenameFeed(feedID int64, title string) error
+	RenameUserFeed(userID, feedID int64, title string) error
 
 	// Articles
 	AddArticle(article *Article) (int64, error)

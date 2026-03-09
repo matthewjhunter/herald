@@ -184,6 +184,8 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		// and the readability content fetched from that URL.
 		"ALTER TABLE articles ADD COLUMN linked_url TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE articles ADD COLUMN linked_content TEXT NOT NULL DEFAULT ''",
+		// Per-user custom feed display name.
+		"ALTER TABLE user_feeds ADD COLUMN user_title TEXT",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -1171,13 +1173,13 @@ func (s *SQLiteStore) SubscribeUserToFeed(userID, feedID int64) error {
 // GetUserFeeds returns all feeds a user is subscribed to.
 func (s *SQLiteStore) GetUserFeeds(userID int64) ([]Feed, error) {
 	rows, err := s.db.Query(`
-		SELECT f.id, f.url, f.title, f.description, f.last_fetched, f.last_error, f.etag,
+		SELECT f.id, f.url, COALESCE(uf.user_title, f.title), f.description, f.last_fetched, f.last_error, f.etag,
 		       f.last_modified, f.enabled, f.created_at,
 		       f.consecutive_errors, f.next_fetch_at, f.status
 		FROM feeds f
 		JOIN user_feeds uf ON f.id = uf.feed_id
 		WHERE uf.user_id = ? AND f.enabled = 1
-		ORDER BY f.title`, userID)
+		ORDER BY COALESCE(uf.user_title, f.title)`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user feeds: %w", err)
 	}
@@ -1308,6 +1310,21 @@ func (s *SQLiteStore) RenameFeed(feedID int64, title string) error {
 	_, err := s.db.Exec("UPDATE feeds SET title = ? WHERE id = ?", title, feedID)
 	if err != nil {
 		return fmt.Errorf("failed to rename feed: %w", err)
+	}
+	return nil
+}
+
+// RenameUserFeed sets a per-user display title for a feed subscription.
+// Passing an empty title clears the override, reverting to the feed's original title.
+func (s *SQLiteStore) RenameUserFeed(userID, feedID int64, title string) error {
+	var err error
+	if title == "" {
+		_, err = s.db.Exec("UPDATE user_feeds SET user_title = NULL WHERE user_id = ? AND feed_id = ?", userID, feedID)
+	} else {
+		_, err = s.db.Exec("UPDATE user_feeds SET user_title = ? WHERE user_id = ? AND feed_id = ?", title, userID, feedID)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to rename user feed: %w", err)
 	}
 	return nil
 }

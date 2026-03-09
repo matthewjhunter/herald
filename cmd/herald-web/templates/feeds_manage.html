@@ -1,3 +1,26 @@
+{{define "feed_title_display"}}
+<span>{{if .Title}}{{.Title}}{{else}}(untitled){{end}}</span>
+<button class="outline secondary" style="padding:0.1rem 0.35rem;font-size:0.75rem;margin-left:0.4rem;vertical-align:middle;"
+        hx-get="/feeds/{{.FeedID}}/edit-title?title={{.Title}}"
+        hx-target="#feed-title-cell-{{.FeedID}}"
+        hx-swap="innerHTML">✎</button>
+{{end}}
+
+{{define "feed_title_edit"}}
+<form style="display:flex;align-items:center;gap:0.4rem;margin:0;"
+      hx-patch="/feeds/{{.FeedID}}"
+      hx-target="#feed-title-cell-{{.FeedID}}"
+      hx-swap="innerHTML">
+    <input type="text" name="title" value="{{.Title}}" style="margin:0;padding:0.2rem 0.4rem;font-size:0.9rem;width:16rem;" autofocus>
+    <button type="submit" style="margin:0;padding:0.2rem 0.5rem;font-size:0.8rem;">Save</button>
+    <button type="button" style="margin:0;padding:0.2rem 0.5rem;font-size:0.8rem;"
+            hx-get="/feeds/{{.FeedID}}/title?title={{.Title}}"
+            hx-target="#feed-title-cell-{{.FeedID}}"
+            hx-swap="innerHTML"
+            class="outline secondary">✕</button>
+</form>
+{{end}}
+
 {{define "feed_discover_results"}}
 {{if .Error}}
 <p style="color:var(--pico-del-color);margin-top:0.5rem;">{{.Error}}</p>
@@ -73,7 +96,7 @@
                 {{range .Feeds}}
                 <tr>
                     <td>
-                        <strong>{{.Title}}</strong><br>
+                        <strong id="feed-title-cell-{{.FeedID}}">{{template "feed_title_display" .}}</strong><br>
                         <small class="secondary">{{.URL}}</small>
                         {{if .LastError}}<br><small style="color:var(--pico-del-color);">Error: {{.LastError}}</small>{{end}}
                     </td>
