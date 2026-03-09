@@ -108,13 +108,36 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 // isTruncated returns true when content looks like a feed summary/excerpt
 // rather than a complete article body.
 func isTruncated(content string) bool {
-	if textLength(content) < minTextChars {
-		return true
-	}
-	// Readability-style ellipsis endings are a strong signal of truncation.
 	plain := strings.TrimRight(stripTags(content), " \t\n\r")
+
+	// Explicit truncation markers are a definitive signal regardless of length.
 	for _, suffix := range []string{"...", "…", "[…]", "[ ... ]", "[read more]", "[continue reading]"} {
 		if strings.HasSuffix(strings.ToLower(plain), suffix) {
+			return true
+		}
+	}
+
+	if textLength(content) < minTextChars {
+		// Short content that ends with sentence-final punctuation is likely an
+		// intentional short post (quip, aside), not a truncated excerpt.
+		// Fetching the page URL for such posts risks replacing real content with
+		// readability-extracted boilerplate (sidebars, footers, etc.).
+		if endsWithCompleteSentence(plain) {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+// endsWithCompleteSentence reports whether s ends with terminal punctuation
+// that suggests a complete rather than truncated sentence.
+func endsWithCompleteSentence(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, suffix := range []string{".", "!", "?", `"`, "'", "\u2019", "\u201d"} {
+		if strings.HasSuffix(s, suffix) {
 			return true
 		}
 	}

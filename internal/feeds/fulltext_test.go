@@ -15,8 +15,25 @@ import (
 // --- isTruncated tests ---
 
 func TestIsTruncated_ShortContent(t *testing.T) {
-	if !isTruncated("Short summary.") {
-		t.Error("expected short content to be truncated")
+	// Short content that ends mid-sentence (no terminal punctuation) is truncated.
+	if !isTruncated("Short summary with no ending") {
+		t.Error("expected short content without terminal punctuation to be truncated")
+	}
+}
+
+func TestIsTruncated_ShortCompletePost(t *testing.T) {
+	// Short posts that end with terminal punctuation are intentional, not truncated.
+	cases := []string{
+		"Dammit. 'Hey, I can fix that fast'",
+		"Well, that's unfortunate.",
+		"This is fine!",
+		"Really?",
+		`He said "goodbye."`,
+	}
+	for _, c := range cases {
+		if isTruncated(c) {
+			t.Errorf("expected short complete post %q not to be truncated", c)
+		}
 	}
 }
 
@@ -45,10 +62,10 @@ func TestIsTruncated_FullContent(t *testing.T) {
 }
 
 func TestIsTruncated_HTMLContent(t *testing.T) {
-	// HTML tags should not count toward text length.
-	htmlShort := "<p><strong>Summary:</strong> Just a little bit of text.</p>"
+	// Short HTML content that ends mid-sentence (no terminal punctuation) is truncated.
+	htmlShort := "<p><strong>Summary:</strong> Just a little bit of text that keeps going</p>"
 	if !isTruncated(htmlShort) {
-		t.Error("expected short HTML content to be truncated")
+		t.Error("expected short HTML content without terminal punctuation to be truncated")
 	}
 }
 
