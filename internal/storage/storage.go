@@ -873,6 +873,36 @@ func (s *SQLiteStore) UpdateReadState(userID, articleID int64, read bool, intere
 	return nil
 }
 
+// ResetScores clears AI scores so articles are reprocessed by the pipeline.
+// If securityOnly is true, only articles that failed the security check are reset.
+// belowScore filters to articles with security_score < belowScore (use 10.0 to reset all).
+// Returns the number of rows affected.
+func (s *SQLiteStore) ResetScores(userID int64, securityOnly bool, belowScore float64) (int64, error) {
+	var result sql.Result
+	var err error
+	if securityOnly {
+		result, err = s.db.Exec(
+			`UPDATE read_state SET ai_scored = 0, interest_score = NULL, security_score = NULL, security_reason = NULL
+			 WHERE user_id = ? AND security_score IS NOT NULL AND security_score < ?`,
+			userID, belowScore,
+		)
+	} else {
+		result, err = s.db.Exec(
+			`UPDATE read_state SET ai_scored = 0, interest_score = NULL, security_score = NULL, security_reason = NULL
+			 WHERE user_id = ?`,
+			userID,
+		)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("reset scores: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // GetArticlesByInterestScore returns unread articles with interest scores above
 // threshold, ordered by a time-decayed effective score. The decay formula is:
 //

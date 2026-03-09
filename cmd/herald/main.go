@@ -259,6 +259,7 @@ func main() {
 	rootCmd.AddCommand(readCmd())
 	rootCmd.AddCommand(initConfigCmd())
 	rootCmd.AddCommand(migrateDBCmd())
+	rootCmd.AddCommand(resetScoresCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -830,5 +831,53 @@ Example — PostgreSQL to SQLite:
 	}
 	cmd.Flags().StringVar(&srcDSN, "src", "", "source DSN: SQLite file path or postgres:// URL")
 	cmd.Flags().StringVar(&dstDSN, "dst", "", "destination DSN: SQLite file path or postgres:// URL")
+	return cmd
+}
+
+func resetScoresCmd() *cobra.Command {
+	var userID int64
+	var securityOnly bool
+	var belowScore float64
+	cmd := &cobra.Command{
+		Use:   "reset-scores",
+		Short: "Clear AI scores so articles are reprocessed by the pipeline",
+		Long: `Resets AI scoring state so articles will be picked up on the next
+process or fetch run. Useful after tuning prompts or thresholds.
+
+By default resets all scored articles. Use --security-only to target only
+articles that failed the security check. Use --below to further narrow to
+articles with a security score below a given value.
+
+Examples:
+  # Reset all security failures (score < 7.0, the default threshold):
+  herald reset-scores --security-only --below 7.0
+
+  # Reset everything and rescore from scratch:
+  herald reset-scores
+
+  # Reset only the worst security failures:
+  herald reset-scores --security-only --below 4.0`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			store, err := storage.NewStore(cfg.Database.Path)
+			if err != nil {
+				return fmt.Errorf("failed to open store: %w", err)
+			}
+			defer store.Close()
+
+			n, err := store.ResetScores(userID, securityOnly, belowScore)
+			if err != nil {
+				return fmt.Errorf("reset-scores failed: %w", err)
+			}
+			if securityOnly {
+				fmt.Printf("Reset %d articles with security score < %.1f (will be rescored on next run)\n", n, belowScore)
+			} else {
+				fmt.Printf("Reset %d articles (will be rescored on next run)\n", n)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().Int64Var(&userID, "user", 1, "user ID")
+	cmd.Flags().BoolVar(&securityOnly, "security-only", false, "reset only articles that failed the security check")
+	cmd.Flags().Float64Var(&belowScore, "below", 7.0, "reset security failures below this score (implies --security-only if used alone)")
 	return cmd
 }
