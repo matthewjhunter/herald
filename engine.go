@@ -141,6 +141,9 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 		if content == "" {
 			content = article.Summary
 		}
+		if article.LinkedContent != "" {
+			content = content + "\n\n" + article.LinkedContent
+		}
 
 		// Summarize (cached per-user)
 		existing, _ := e.store.GetArticleSummary(userID, article.ID)
