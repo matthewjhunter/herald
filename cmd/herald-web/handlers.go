@@ -1161,6 +1161,8 @@ type donutData struct {
 	RedOffset    float64 // stroke-dashoffset for red segment
 	Label        string
 	HasData      bool
+	AllGreen     bool // true when green is 100% — render as solid ring, no dasharray
+	AllRed       bool // true when red is 100%
 }
 
 func makeDonut(green, yellow, red int, label string) donutData {
@@ -1179,6 +1181,8 @@ func makeDonut(green, yellow, red int, label string) donutData {
 		RedOffset:    25 - g - y,
 		Label:        label,
 		HasData:      true,
+		AllGreen:     green == total,
+		AllRed:       red == total,
 	}
 }
 

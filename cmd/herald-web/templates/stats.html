@@ -6,6 +6,11 @@
 <svg viewBox="0 0 42 42" width="80" height="80" style="display:block;">
   <circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--pico-muted-border-color)" stroke-width="4"/>
   {{if $d.HasData}}
+  {{if $d.AllGreen}}
+  <circle cx="21" cy="21" r="15.9" fill="none" stroke="#4caf50" stroke-width="4"/>
+  {{else if $d.AllRed}}
+  <circle cx="21" cy="21" r="15.9" fill="none" stroke="#f44336" stroke-width="4"/>
+  {{else}}
   {{if gt $d.GreenPct 0.5}}
   <circle cx="21" cy="21" r="15.9" fill="none" stroke="#4caf50" stroke-width="4"
     stroke-dasharray="{{printf "%.2f" $d.GreenPct}} 100"
@@ -20,6 +25,7 @@
   <circle cx="21" cy="21" r="15.9" fill="none" stroke="#f44336" stroke-width="4"
     stroke-dasharray="{{printf "%.2f" $d.RedPct}} 100"
     stroke-dashoffset="{{printf "%.2f" $d.RedOffset}}" transform="rotate(-90 21 21)"/>
+  {{end}}
   {{end}}
   {{end}}
   <text x="21" y="21" text-anchor="middle" dominant-baseline="central"
