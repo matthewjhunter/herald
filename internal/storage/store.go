@@ -30,7 +30,7 @@ type Store interface {
 
 	// Read state
 	UpdateStarred(userID, articleID int64, starred bool) error
-	UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64) error
+	UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64, securityReason *string) error
 
 	// Feeds
 	AddFeed(url, title, description string) (int64, error)

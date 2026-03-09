@@ -35,6 +35,7 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 	}
 	pgMigrations := []string{
 		"ALTER TABLE user_feeds ADD COLUMN IF NOT EXISTS user_title TEXT",
+		"ALTER TABLE read_state ADD COLUMN IF NOT EXISTS security_reason TEXT",
 	}
 	for _, m := range pgMigrations {
 		if _, err := db.Exec(m); err != nil {
@@ -376,17 +377,18 @@ func (s *PostgresStore) UpdateStarred(userID, articleID int64, starred bool) err
 	return nil
 }
 
-func (s *PostgresStore) UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64) error {
+func (s *PostgresStore) UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64, securityReason *string) error {
 	var err error
 	if interestScore != nil {
 		_, err = s.db.Exec(
-			`INSERT INTO read_state (user_id, article_id, read, interest_score, security_score, ai_scored)
-			 VALUES (?, ?, FALSE, ?, ?, TRUE)
+			`INSERT INTO read_state (user_id, article_id, read, interest_score, security_score, security_reason, ai_scored)
+			 VALUES (?, ?, FALSE, ?, ?, ?, TRUE)
 			 ON CONFLICT(user_id, article_id) DO UPDATE SET
 			   interest_score = excluded.interest_score,
 			   security_score = excluded.security_score,
+			   security_reason = excluded.security_reason,
 			   ai_scored = TRUE`,
-			userID, articleID, interestScore, securityScore,
+			userID, articleID, interestScore, securityScore, securityReason,
 		)
 	} else {
 		_, err = s.db.Exec(

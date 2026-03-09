@@ -186,6 +186,8 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		"ALTER TABLE articles ADD COLUMN linked_content TEXT NOT NULL DEFAULT ''",
 		// Per-user custom feed display name.
 		"ALTER TABLE user_feeds ADD COLUMN user_title TEXT",
+		// Security check reasoning for audit/debugging.
+		"ALTER TABLE read_state ADD COLUMN security_reason TEXT",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -840,18 +842,19 @@ func (s *SQLiteStore) MarkArticleFullTextFetched(articleID int64) error {
 // and marks the article as AI-scored without touching the user's read flag.
 // When interestScore is nil this is a user read/unread action: it updates
 // only the read flag and read_date without touching scores or ai_scored.
-func (s *SQLiteStore) UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64) error {
+func (s *SQLiteStore) UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64, securityReason *string) error {
 	var err error
 	if interestScore != nil {
 		// AI pipeline: record scores, mark ai_scored=1, do not overwrite user's read flag.
 		_, err = s.db.Exec(
-			`INSERT INTO read_state (user_id, article_id, read, interest_score, security_score, ai_scored)
-			 VALUES (?, ?, 0, ?, ?, 1)
+			`INSERT INTO read_state (user_id, article_id, read, interest_score, security_score, security_reason, ai_scored)
+			 VALUES (?, ?, 0, ?, ?, ?, 1)
 			 ON CONFLICT(user_id, article_id) DO UPDATE SET
 			   interest_score = excluded.interest_score,
 			   security_score = excluded.security_score,
+			   security_reason = excluded.security_reason,
 			   ai_scored = 1`,
-			userID, articleID, interestScore, securityScore,
+			userID, articleID, interestScore, securityScore, securityReason,
 		)
 	} else {
 		// User action: update only read flag, do not touch scores or ai_scored.

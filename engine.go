@@ -166,7 +166,7 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 		if !secResult.Safe || secResult.Score < e.config.Thresholds.SecurityScore {
 			secScore := secResult.Score
 			zero := 0.0
-			e.store.UpdateReadState(userID, article.ID, false, &zero, &secScore)
+			e.store.UpdateReadState(userID, article.ID, false, &zero, &secScore, &secResult.Reasoning)
 			continue
 		}
 
@@ -179,7 +179,7 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 
 		secScore := secResult.Score
 		interestScore := curResult.InterestScore
-		e.store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore)
+		e.store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning)
 
 		// Group management
 		userGroups, _ := e.store.GetUserGroups(userID)
@@ -268,13 +268,13 @@ func (e *Engine) GetHighInterestArticles(userID int64, threshold float64, limit,
 
 // MarkArticleRead marks an article as read.
 func (e *Engine) MarkArticleRead(userID, articleID int64) error {
-	return e.store.UpdateReadState(userID, articleID, true, nil, nil)
+	return e.store.UpdateReadState(userID, articleID, true, nil, nil, nil)
 }
 
 // MarkArticlesRead marks a list of articles as read.
 func (e *Engine) MarkArticlesRead(userID int64, articleIDs []int64) error {
 	for _, id := range articleIDs {
-		if err := e.store.UpdateReadState(userID, id, true, nil, nil); err != nil {
+		if err := e.store.UpdateReadState(userID, id, true, nil, nil, nil); err != nil {
 			return err
 		}
 	}

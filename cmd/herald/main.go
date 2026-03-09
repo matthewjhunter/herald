@@ -85,7 +85,7 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 		if !secResult.Safe || secResult.Score < appCfg.Thresholds.SecurityScore {
 			secScore := secResult.Score
 			interestScore := 0.0
-			store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore)
+			store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning)
 			formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, false)
 			continue
 		}
@@ -99,7 +99,7 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 
 		secScore := secResult.Score
 		interestScore := curResult.InterestScore
-		store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore)
+		store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning)
 		formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, true)
 
 		// 4. Vector-based group matching (replaces LLM-based FindRelatedGroups)
@@ -723,7 +723,7 @@ func readCmd() *cobra.Command {
 			}
 			defer store.Close()
 
-			if err := store.UpdateReadState(userID, articleID, true, nil, nil); err != nil {
+			if err := store.UpdateReadState(userID, articleID, true, nil, nil, nil); err != nil {
 				return fmt.Errorf("failed to mark article as read: %w", err)
 			}
 

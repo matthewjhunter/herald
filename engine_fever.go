@@ -97,5 +97,5 @@ func (e *Engine) GetFeedFavicon(feedID int64) (*storage.FeedFavicon, error) {
 
 // MarkArticleUnread marks a single article as unread.
 func (e *Engine) MarkArticleUnread(userID, articleID int64) error {
-	return e.store.UpdateReadState(userID, articleID, false, nil, nil)
+	return e.store.UpdateReadState(userID, articleID, false, nil, nil, nil)
 }

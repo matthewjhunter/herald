@@ -350,7 +350,7 @@ func TestGetFeedStats(t *testing.T) {
 	})
 
 	// Mark one article read in feed 1
-	engine.store.UpdateReadState(1, id1, true, nil, nil)
+	engine.store.UpdateReadState(1, id1, true, nil, nil, nil)
 
 	// Summarize one article in feed 2
 	engine.store.UpdateArticleAISummary(1, id4, "Summary of article 4")
