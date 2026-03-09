@@ -13,6 +13,7 @@ type EngineConfig struct {
 	Keywords          []string // user interest keywords for curation scoring
 	UserID            int64    // primary user ID; DB preferences override CLI flags
 	ReadOnly          bool     // when true, skip AI processor and fetcher creation
+	MaxParallel       int      // max concurrent AI pipeline workers; 0 or 1 = serial
 }
 
 // User represents a registered household member.

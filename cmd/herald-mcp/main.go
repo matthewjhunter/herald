@@ -35,6 +35,7 @@ func main() {
 	curationModel := flag.String("curation-model", "llama3", "Ollama model for interest scoring")
 	securityThreshold := flag.Float64("security-threshold", 7.0, "security score threshold")
 	keywords := flag.String("keywords", "", "comma-separated interest keywords")
+	maxParallel := flag.Int("max-parallel", 1, "max concurrent AI pipeline workers")
 	flag.Parse()
 
 	var kwList []string
@@ -55,6 +56,7 @@ func main() {
 		SecurityThreshold: *securityThreshold,
 		Keywords:          kwList,
 		UserID:            *userID,
+		MaxParallel:       *maxParallel,
 	}
 
 	engine, err := herald.NewEngine(engineCfg)

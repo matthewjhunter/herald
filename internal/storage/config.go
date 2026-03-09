@@ -16,6 +16,7 @@ type Config struct {
 		CurationModel  string        `yaml:"curation_model"`
 		EmbeddingModel string        `yaml:"embedding_model"`
 		Timeout        time.Duration `yaml:"timeout"`
+		MaxParallel    int           `yaml:"max_parallel"`
 	} `yaml:"ollama"`
 
 	Thresholds struct {
