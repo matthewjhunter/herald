@@ -1152,7 +1152,6 @@ func (h *handlers) handleUserPromptReset(w http.ResponseWriter, r *http.Request)
 	http.Redirect(w, r, "/settings", http.StatusSeeOther)
 }
 
-// adminStatsData is the template data for the admin stats page.
 // donutData holds pre-computed SVG stroke values for a 3-segment donut chart.
 type donutData struct {
 	GreenPct     float64
@@ -1176,8 +1175,8 @@ func makeDonut(green, yellow, red int, label string) donutData {
 		GreenPct:     g,
 		YellowPct:    y,
 		RedPct:       r,
-		YellowOffset: -g,
-		RedOffset:    -(g + y),
+		YellowOffset: 25 - g,
+		RedOffset:    25 - g - y,
 		Label:        label,
 		HasData:      true,
 	}
@@ -1210,6 +1209,7 @@ func (h *handlers) handleStats(w http.ResponseWriter, r *http.Request) {
 	h.renderPage(w, r, "stats.html", data)
 }
 
+// adminStatsData is the template data for the admin stats page.
 type adminStatsData struct {
 	TotalArticles int
 	TotalFeeds    int
