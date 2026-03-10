@@ -2,12 +2,13 @@
 <nav>
     <a href="#" hx-get="/articles" hx-target="#article-list" hx-swap="innerHTML"
        hx-on:click="heraldClearReadingPane()"
-       class="{{if not .ActiveFeed}}active{{end}}">
+       class="{{if and (not .ActiveFeed) (not .ActiveStarred)}}active{{end}}">
         All Articles
         {{if .TotalUnread}}<span class="unread-count">{{.TotalUnread}}</span>{{end}}
     </a>
     <a href="#" hx-get="/articles?starred=1" hx-target="#article-list" hx-swap="innerHTML"
-       hx-on:click="heraldClearReadingPane()">
+       hx-on:click="heraldClearReadingPane()"
+       class="{{if .ActiveStarred}}active{{end}}">
         Starred
     </a>
     <hr>
@@ -24,4 +25,8 @@
     <button id="hide-empty-feeds-btn" class="sidebar-toggle-btn"></button>
     <a href="/feeds">+ Manage Feeds</a>
 </nav>
+{{end}}
+
+{{define "feed_sidebar_oob"}}
+<aside id="sidebar" hx-swap-oob="innerHTML">{{template "feed_sidebar_content" .}}</aside>
 {{end}}

@@ -171,10 +171,11 @@ func (h *handlers) init() {
 // --- Template data types ---
 
 type homeData struct {
-	UserName    string
-	Feeds       []herald.FeedStats
-	TotalUnread int
-	ActiveFeed  int64
+	UserName      string
+	Feeds         []herald.FeedStats
+	TotalUnread   int
+	ActiveFeed    int64
+	ActiveStarred bool
 }
 
 type articleListData struct {
@@ -656,6 +657,15 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.renderFragment(w, "article_list", data)
+
+	// Append OOB sidebar so HTMX refreshes it with the correct active state
+	// in the same round-trip, without a separate /sidebar request.
+	sidebarData := homeData{ActiveFeed: feedID, ActiveStarred: starred}
+	if stats, err := h.engine.GetFeedStats(uid); err == nil && stats != nil {
+		sidebarData.Feeds = stats.Feeds
+		sidebarData.TotalUnread = stats.Total.UnreadArticles
+	}
+	h.renderFragment(w, "feed_sidebar_oob", sidebarData)
 }
 
 func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
@@ -737,7 +747,10 @@ func (h *handlers) handleSidebar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := homeData{}
+	data := homeData{
+		ActiveFeed:    parseInt64Param(r, "feed_id"),
+		ActiveStarred: r.URL.Query().Get("starred") == "1",
+	}
 	if stats != nil {
 		data.Feeds = stats.Feeds
 		data.TotalUnread = stats.Total.UnreadArticles

@@ -129,17 +129,6 @@
         });
     })();
 
-    // Sidebar active state — track which feed/section is selected in JS since
-    // the sidebar is not re-rendered on HTMX article-list swaps.
-    document.addEventListener('click', function(e) {
-        var link = e.target.closest('#sidebar nav a');
-        if (!link) return;
-        document.querySelectorAll('#sidebar nav a').forEach(function(a) {
-            a.classList.remove('active');
-        });
-        link.classList.add('active');
-    });
-
     // Unsubscribe feed button — show when a specific feed is selected
     document.addEventListener('click', function(e) {
         var link = e.target.closest('a[data-feed-id]');
