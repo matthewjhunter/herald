@@ -86,6 +86,11 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 				}
 				if content == "" {
 					formatter.Warning("skipping article %d %q: no content", article.ID, article.Title)
+					// Mark as scored so it doesn't block the queue forever.
+					zeroInterest := 0.0
+					zeroSec := 0.0
+					reason := "no content"
+					store.UpdateReadState(userID, article.ID, false, &zeroInterest, &zeroSec, &reason) //nolint:errcheck
 					return
 				}
 				if article.LinkedContent != "" {
