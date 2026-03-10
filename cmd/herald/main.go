@@ -36,15 +36,11 @@ var (
 // Up to appCfg.Ollama.MaxParallel articles are processed concurrently.
 // Within each article, summarization and security check run in parallel
 // since they are independent; curation and group matching run after.
-// Group summary updates are deferred until all articles complete.
+// Articles are processed in batches of 100 until the queue is empty.
+// Group summary updates are deferred until all batches complete.
 func processArticlesForUser(ctx context.Context, store storage.Store, processor *ai.AIProcessor, formatter *output.Formatter, appCfg *storage.Config, userID int64) (int, error) {
 	embedder := embedding.NewOpenAIEmbedder(appCfg.Ollama.BaseURL, appCfg.Ollama.APIKey, appCfg.Ollama.EmbeddingModel)
 	groupMatcher := ai.NewGroupMatcher(embedder, store, appCfg.Grouping.SimilarityThreshold)
-
-	unscoredArticles, err := store.GetUnscoredArticlesForUser(userID, 100)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get unscored articles for user %d: %w", userID, err)
-	}
 
 	maxParallel := appCfg.Ollama.MaxParallel
 	if maxParallel < 1 {
@@ -60,138 +56,152 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 	sem := make(chan struct{}, maxParallel)
 	var wg sync.WaitGroup
 
-	for _, article := range unscoredArticles {
+	for {
 		if ctx.Err() != nil {
 			break
 		}
 
-		sem <- struct{}{}
-		wg.Add(1)
+		unscoredArticles, err := store.GetUnscoredArticlesForUser(userID, 100)
+		if err != nil {
+			return processed, fmt.Errorf("failed to get unscored articles for user %d: %w", userID, err)
+		}
+		if len(unscoredArticles) == 0 {
+			break
+		}
 
-		go func(article storage.Article) {
-			defer func() { <-sem; wg.Done() }()
-
-			content := article.Content
-			if content == "" {
-				content = article.Summary
-			}
-			if content == "" {
-				formatter.Warning("skipping article %d %q: no content", article.ID, article.Title)
-				return
-			}
-			if article.LinkedContent != "" {
-				content = content + "\n\n" + article.LinkedContent
+		for _, article := range unscoredArticles {
+			if ctx.Err() != nil {
+				break
 			}
 
-			// 1+2. Summarize and security check concurrently — they are independent.
-			var (
-				aiSummary string
-				secResult *ai.SecurityResult
-				secErr    error
-			)
-			g, gctx := errgroup.WithContext(ctx)
+			sem <- struct{}{}
+			wg.Add(1)
 
-			g.Go(func() error {
-				existing, err := store.GetArticleSummary(userID, article.ID)
-				if err != nil {
-					formatter.Warning("failed to check article summary for %d: %v", article.ID, err)
-					return nil // non-fatal
+			go func(article storage.Article) {
+				defer func() { <-sem; wg.Done() }()
+
+				content := article.Content
+				if content == "" {
+					content = article.Summary
 				}
-				if existing != nil {
-					aiSummary = existing.AISummary
+				if content == "" {
+					formatter.Warning("skipping article %d %q: no content", article.ID, article.Title)
+					return
+				}
+				if article.LinkedContent != "" {
+					content = content + "\n\n" + article.LinkedContent
+				}
+
+				// 1+2. Summarize and security check concurrently — they are independent.
+				var (
+					aiSummary string
+					secResult *ai.SecurityResult
+					secErr    error
+				)
+				g, gctx := errgroup.WithContext(ctx)
+
+				g.Go(func() error {
+					existing, err := store.GetArticleSummary(userID, article.ID)
+					if err != nil {
+						formatter.Warning("failed to check article summary for %d: %v", article.ID, err)
+						return nil // non-fatal
+					}
+					if existing != nil {
+						aiSummary = existing.AISummary
+						return nil
+					}
+					aiSummary, err = processor.SummarizeArticle(gctx, userID, article.Title, content)
+					if err != nil {
+						formatter.Warning("summarization failed for article %d: %v", article.ID, err)
+						return nil // non-fatal: scoring can proceed without summary
+					}
+					if err := store.UpdateArticleAISummary(userID, article.ID, aiSummary); err != nil {
+						formatter.Warning("failed to cache AI summary for %d: %v", article.ID, err)
+					}
 					return nil
+				})
+
+				g.Go(func() error {
+					secResult, secErr = processor.SecurityCheck(gctx, userID, article.Title, content)
+					return nil
+				})
+
+				g.Wait() //nolint:errcheck
+
+				if secErr != nil {
+					formatter.Warning("security check failed for article %d: %v", article.ID, secErr)
+					return
 				}
-				aiSummary, err = processor.SummarizeArticle(gctx, userID, article.Title, content)
+
+				if !secResult.Safe || secResult.Score < appCfg.Thresholds.SecurityScore {
+					secScore := secResult.Score
+					interestScore := 0.0
+					store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning) //nolint:errcheck
+					formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, false)
+					return
+				}
+
+				// 3. Interest scoring
+				curResult, err := processor.CurateArticle(ctx, userID, article.Title, content, appCfg.Preferences.Keywords)
 				if err != nil {
-					formatter.Warning("summarization failed for article %d: %v", article.ID, err)
-					return nil // non-fatal: scoring can proceed without summary
+					formatter.Warning("curation failed for article %d: %v", article.ID, err)
+					return
 				}
-				if err := store.UpdateArticleAISummary(userID, article.ID, aiSummary); err != nil {
-					formatter.Warning("failed to cache AI summary for %d: %v", article.ID, err)
-				}
-				return nil
-			})
 
-			g.Go(func() error {
-				secResult, secErr = processor.SecurityCheck(gctx, userID, article.Title, content)
-				return nil
-			})
-
-			g.Wait() //nolint:errcheck
-
-			if secErr != nil {
-				formatter.Warning("security check failed for article %d: %v", article.ID, secErr)
-				return
-			}
-
-			if !secResult.Safe || secResult.Score < appCfg.Thresholds.SecurityScore {
 				secScore := secResult.Score
-				interestScore := 0.0
+				interestScore := curResult.InterestScore
 				store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning) //nolint:errcheck
-				formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, false)
-				return
-			}
+				formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, true)
 
-			// 3. Interest scoring
-			curResult, err := processor.CurateArticle(ctx, userID, article.Title, content, appCfg.Preferences.Keywords)
-			if err != nil {
-				formatter.Warning("curation failed for article %d: %v", article.ID, err)
-				return
-			}
+				// 4. Vector-based group matching
+				matchedGroupID, articleEmb, err := groupMatcher.MatchArticleToGroup(ctx, userID, article.Title, aiSummary)
+				if err != nil {
+					formatter.Warning("vector group match failed: %v", err)
+				}
 
-			secScore := secResult.Score
-			interestScore := curResult.InterestScore
-			store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning) //nolint:errcheck
-			formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, true)
+				mu.Lock()
+				defer mu.Unlock()
 
-			// 4. Vector-based group matching
-			matchedGroupID, articleEmb, err := groupMatcher.MatchArticleToGroup(ctx, userID, article.Title, aiSummary)
-			if err != nil {
-				formatter.Warning("vector group match failed: %v", err)
-			}
-
-			mu.Lock()
-			defer mu.Unlock()
-
-			processed++
-			if matchedGroupID != nil {
-				if err := store.AddArticleToGroup(*matchedGroupID, article.ID); err != nil {
-					formatter.Warning("failed to add article to group: %v", err)
+				processed++
+				if matchedGroupID != nil {
+					if err := store.AddArticleToGroup(*matchedGroupID, article.ID); err != nil {
+						formatter.Warning("failed to add article to group: %v", err)
+					} else {
+						updatedGroups[*matchedGroupID] = true
+						if articleEmb != nil {
+							if err := groupMatcher.UpdateGroupCentroid(ctx, *matchedGroupID, articleEmb); err != nil {
+								formatter.Warning("failed to update group centroid: %v", err)
+							}
+						}
+					}
 				} else {
-					updatedGroups[*matchedGroupID] = true
+					topic := article.Title
+					if len(topic) > 100 {
+						topic = topic[:100]
+					}
+					newGroupID, err := store.CreateArticleGroup(userID, topic)
+					if err != nil {
+						formatter.Warning("failed to create group: %v", err)
+						return
+					}
+					if err := store.AddArticleToGroup(newGroupID, article.ID); err != nil {
+						formatter.Warning("failed to add article to new group: %v", err)
+					} else {
+						updatedGroups[newGroupID] = true
+					}
 					if articleEmb != nil {
-						if err := groupMatcher.UpdateGroupCentroid(ctx, *matchedGroupID, articleEmb); err != nil {
-							formatter.Warning("failed to update group centroid: %v", err)
+						if err := store.UpdateGroupEmbedding(newGroupID, embedding.EncodeFloat32s(articleEmb)); err != nil {
+							formatter.Warning("failed to set initial group centroid: %v", err)
 						}
 					}
 				}
-			} else {
-				topic := article.Title
-				if len(topic) > 100 {
-					topic = topic[:100]
-				}
-				newGroupID, err := store.CreateArticleGroup(userID, topic)
-				if err != nil {
-					formatter.Warning("failed to create group: %v", err)
-					return
-				}
-				if err := store.AddArticleToGroup(newGroupID, article.ID); err != nil {
-					formatter.Warning("failed to add article to new group: %v", err)
-				} else {
-					updatedGroups[newGroupID] = true
-				}
-				if articleEmb != nil {
-					if err := store.UpdateGroupEmbedding(newGroupID, embedding.EncodeFloat32s(articleEmb)); err != nil {
-						formatter.Warning("failed to set initial group centroid: %v", err)
-					}
-				}
-			}
-		}(article)
+			}(article)
+		}
+
+		wg.Wait()
 	}
 
-	wg.Wait()
-
-	// 5. Update group summaries for changed groups — sequential, after all articles.
+	// 5. Update group summaries for changed groups — sequential, after all batches.
 	for groupID := range updatedGroups {
 		if err := updateGroupSummary(ctx, store, processor, groupID, userID); err != nil {
 			formatter.Warning("failed to update group summary for group %d: %v", groupID, err)

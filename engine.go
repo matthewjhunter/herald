@@ -142,10 +142,6 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 	if e.ai == nil {
 		return nil, nil
 	}
-	articles, err := e.store.GetUnscoredArticlesForUser(userID, 100)
-	if err != nil {
-		return nil, fmt.Errorf("get unscored articles: %w", err)
-	}
 
 	var (
 		mu     sync.Mutex
@@ -156,104 +152,118 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 	sem := make(chan struct{}, e.maxParallel)
 	var wg sync.WaitGroup
 
-	for _, article := range articles {
+	for {
 		if ctx.Err() != nil {
 			break
 		}
+		articles, err := e.store.GetUnscoredArticlesForUser(userID, 100)
+		if err != nil {
+			return scored, fmt.Errorf("get unscored articles: %w", err)
+		}
+		if len(articles) == 0 {
+			break
+		}
 
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(article storage.Article) {
-			defer func() { <-sem; wg.Done() }()
-
-			content := article.Content
-			if content == "" {
-				content = article.Summary
+		for _, article := range articles {
+			if ctx.Err() != nil {
+				break
 			}
-			if article.LinkedContent != "" {
-				content = content + "\n\n" + article.LinkedContent
-			}
 
-			// Run summarization and security check concurrently — they are independent.
-			var (
-				secResult *ai.SecurityResult
-				secErr    error
-			)
-			g, gctx := errgroup.WithContext(ctx)
+			sem <- struct{}{}
+			wg.Add(1)
+			go func(article storage.Article) {
+				defer func() { <-sem; wg.Done() }()
 
-			// Summarize (cached per-user; skip if already exists)
-			g.Go(func() error {
-				existing, _ := e.store.GetArticleSummary(userID, article.ID)
-				if existing != nil {
+				content := article.Content
+				if content == "" {
+					content = article.Summary
+				}
+				if article.LinkedContent != "" {
+					content = content + "\n\n" + article.LinkedContent
+				}
+
+				// Run summarization and security check concurrently — they are independent.
+				var (
+					secResult *ai.SecurityResult
+					secErr    error
+				)
+				g, gctx := errgroup.WithContext(ctx)
+
+				// Summarize (cached per-user; skip if already exists)
+				g.Go(func() error {
+					existing, _ := e.store.GetArticleSummary(userID, article.ID)
+					if existing != nil {
+						return nil
+					}
+					summary, err := e.ai.SummarizeArticle(gctx, userID, article.Title, content)
+					if err != nil {
+						log.Printf("herald: summarization failed for article %d: %v", article.ID, err)
+						return nil // non-fatal: scoring can proceed without summary
+					}
+					e.store.UpdateArticleAISummary(userID, article.ID, summary) //nolint:errcheck
 					return nil
+				})
+
+				// Security check
+				g.Go(func() error {
+					secResult, secErr = e.ai.SecurityCheck(gctx, userID, article.Title, content)
+					return nil // errors surfaced via secErr, not errgroup
+				})
+
+				g.Wait() //nolint:errcheck // neither goroutine returns non-nil errors
+
+				if secErr != nil {
+					log.Printf("herald: security check failed for article %d: %v", article.ID, secErr)
+					return
 				}
-				summary, err := e.ai.SummarizeArticle(gctx, userID, article.Title, content)
+
+				if !secResult.Safe || secResult.Score < e.config.Thresholds.SecurityScore {
+					secScore := secResult.Score
+					zero := 0.0
+					e.store.UpdateReadState(userID, article.ID, false, &zero, &secScore, &secResult.Reasoning) //nolint:errcheck
+					return
+				}
+
+				// Interest scoring (requires security to pass — stays sequential)
+				curResult, err := e.ai.CurateArticle(ctx, userID, article.Title, content, e.config.Preferences.Keywords)
 				if err != nil {
-					log.Printf("herald: summarization failed for article %d: %v", article.ID, err)
-					return nil // non-fatal: scoring can proceed without summary
+					log.Printf("herald: curation failed for article %d: %v", article.ID, err)
+					return
 				}
-				e.store.UpdateArticleAISummary(userID, article.ID, summary) //nolint:errcheck
-				return nil
-			})
 
-			// Security check
-			g.Go(func() error {
-				secResult, secErr = e.ai.SecurityCheck(gctx, userID, article.Title, content)
-				return nil // errors surfaced via secErr, not errgroup
-			})
-
-			g.Wait() //nolint:errcheck // neither goroutine returns non-nil errors
-
-			if secErr != nil {
-				log.Printf("herald: security check failed for article %d: %v", article.ID, secErr)
-				return
-			}
-
-			if !secResult.Safe || secResult.Score < e.config.Thresholds.SecurityScore {
 				secScore := secResult.Score
-				zero := 0.0
-				e.store.UpdateReadState(userID, article.ID, false, &zero, &secScore, &secResult.Reasoning) //nolint:errcheck
-				return
-			}
+				interestScore := curResult.InterestScore
+				e.store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning) //nolint:errcheck
 
-			// Interest scoring (requires security to pass — stays sequential)
-			curResult, err := e.ai.CurateArticle(ctx, userID, article.Title, content, e.config.Preferences.Keywords)
-			if err != nil {
-				log.Printf("herald: curation failed for article %d: %v", article.ID, err)
-				return
-			}
-
-			secScore := secResult.Score
-			interestScore := curResult.InterestScore
-			e.store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning) //nolint:errcheck
-
-			// Group management
-			userGroups, _ := e.store.GetUserGroups(userID)
-			relatedGroupIDs, _ := e.ai.FindRelatedGroups(ctx, userID, article, userGroups, e.store)
-			if len(relatedGroupIDs) > 0 {
-				e.store.AddArticleToGroup(relatedGroupIDs[0], article.ID) //nolint:errcheck
-			} else {
-				topic := article.Title
-				if len(topic) > 100 {
-					topic = topic[:100]
+				// Group management
+				userGroups, _ := e.store.GetUserGroups(userID)
+				relatedGroupIDs, _ := e.ai.FindRelatedGroups(ctx, userID, article, userGroups, e.store)
+				if len(relatedGroupIDs) > 0 {
+					e.store.AddArticleToGroup(relatedGroupIDs[0], article.ID) //nolint:errcheck
+				} else {
+					topic := article.Title
+					if len(topic) > 100 {
+						topic = topic[:100]
+					}
+					if newGroupID, err := e.store.CreateArticleGroup(userID, topic); err == nil {
+						e.store.AddArticleToGroup(newGroupID, article.ID) //nolint:errcheck
+					}
 				}
-				if newGroupID, err := e.store.CreateArticleGroup(userID, topic); err == nil {
-					e.store.AddArticleToGroup(newGroupID, article.ID) //nolint:errcheck
-				}
-			}
 
-			mu.Lock()
-			scored = append(scored, ScoredArticle{
-				Article:       articleFromInternal(article),
-				InterestScore: interestScore,
-				SecurityScore: secScore,
-				Safe:          true,
-			})
-			mu.Unlock()
-		}(article)
+				mu.Lock()
+				scored = append(scored, ScoredArticle{
+					Article:       articleFromInternal(article),
+					InterestScore: interestScore,
+					SecurityScore: secScore,
+					Safe:          true,
+				})
+				mu.Unlock()
+			}(article)
+		}
+
+		wg.Wait()
 	}
 
-	wg.Wait()
 	return scored, nil
 }
 
