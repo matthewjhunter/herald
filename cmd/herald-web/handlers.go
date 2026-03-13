@@ -16,15 +16,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/infodancer/oidclient"
 	herald "github.com/matthewjhunter/herald"
-	"github.com/matthewjhunter/herald/internal/auth"
 	"github.com/microcosm-cc/bluemonday"
 )
 
 // handlers holds dependencies for all HTTP handler methods.
 type handlers struct {
 	engine     *herald.Engine
-	validator  *auth.Validator
+	validator  *oidclient.Client
 	pages      map[string]*template.Template // per-page template sets
 	policy     *bluemonday.Policy
 	adminRole  string   // JWT role value that grants admin access (default: "admin")
@@ -383,7 +383,7 @@ func parseInt64Param(r *http.Request, name string) int64 {
 
 // handleLogout redirects to the webauth logout endpoint.
 func (h *handlers) handleLogout(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, h.validator.WebauthLogoutURL(), http.StatusFound)
+	http.Redirect(w, r, h.validator.LogoutURL(), http.StatusFound)
 }
 
 // handleCallback completes the OIDC authorization code flow.
@@ -405,48 +405,37 @@ func (h *handlers) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate state nonce to prevent CSRF.
-	stateCookie, err := r.Cookie("oauth_state")
-	if err != nil || stateCookie.Value != stateParam {
+	storedState := oidclient.FlowCookieValue(r, oidclient.CookieState)
+	if storedState == "" || storedState != stateParam {
 		http.Error(w, "invalid state parameter", http.StatusBadRequest)
 		return
 	}
 
 	// Retrieve the PKCE verifier.
-	verifierCookie, err := r.Cookie("oauth_verifier")
-	if err != nil || verifierCookie.Value == "" {
+	verifier := oidclient.FlowCookieValue(r, oidclient.CookieVerifier)
+	if verifier == "" {
 		http.Error(w, "missing PKCE verifier", http.StatusBadRequest)
 		return
 	}
 
 	// Determine where to send the user after login (defaults to root).
-	redirectTo := "/"
-	if rc, err := r.Cookie("oauth_redirect"); err == nil && rc.Value != "" {
-		redirectTo = rc.Value
+	redirectTo := oidclient.FlowCookieValue(r, oidclient.CookieRedirect)
+	if redirectTo == "" {
+		redirectTo = "/"
 	}
 
 	// Exchange the authorization code for an access token.
-	accessToken, err := h.validator.ExchangeCode(r.Context(), code, verifierCookie.Value)
+	accessToken, _, err := h.validator.ExchangeCode(r.Context(), code, verifier)
 	if err != nil {
 		log.Printf("herald-web: callback token exchange: %v", err)
 		http.Error(w, "Authentication failed", http.StatusBadGateway)
 		return
 	}
 
-	// Set the JWT as an HttpOnly session cookie.
-	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
-	http.SetCookie(w, &http.Cookie{
-		Name:     h.validator.CookieName(),
-		Value:    accessToken,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   secure,
-		SameSite: http.SameSiteLaxMode,
-	})
-
-	// Clear the PKCE and state cookies.
-	for _, name := range []string{"oauth_verifier", "oauth_state", "oauth_redirect"} {
-		http.SetCookie(w, &http.Cookie{Name: name, Path: "/", MaxAge: -1})
-	}
+	// Set the JWT as an HttpOnly session cookie and clear flow cookies.
+	secure := oidclient.IsSecure(r)
+	oidclient.SetSessionCookie(w, h.validator.CookieName(), accessToken, secure)
+	oidclient.ClearFlowCookies(w)
 
 	http.Redirect(w, r, redirectTo, http.StatusFound)
 }

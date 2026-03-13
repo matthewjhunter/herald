@@ -1,15 +1,15 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -17,13 +17,15 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/infodancer/oidclient"
 	herald "github.com/matthewjhunter/herald"
-	"github.com/matthewjhunter/herald/internal/auth"
 	"github.com/matthewjhunter/herald/internal/storage"
 )
 
 // testKey is generated once per test binary run.
 var testKey *rsa.PrivateKey
+
+const testKID = "herald-test-kid"
 
 func init() {
 	var err error
@@ -33,49 +35,156 @@ func init() {
 	}
 }
 
-// signTestToken creates a signed JWT for testing with the test RSA key.
-func signTestToken(sub, email, name string) string {
-	claims := jwt.MapClaims{
-		"sub":   sub,
-		"email": email,
-		"name":  name,
-		"exp":   time.Now().Add(time.Hour).Unix(),
+// fakeOIDCProvider starts an httptest.Server that serves OIDC discovery, JWKS,
+// and optionally a token endpoint. Returns the server and an issueToken function.
+// If tokenHandler is non-nil it is registered at /token; otherwise no token
+// endpoint is served (sufficient for validation-only tests).
+func fakeOIDCProvider(t *testing.T, tokenHandler http.HandlerFunc) (srv *httptest.Server, issueToken func(sub, email, name string) string) {
+	t.Helper()
+	pub := &testKey.PublicKey
+
+	var baseURL string
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		doc := map[string]any{
+			"issuer":                                baseURL,
+			"authorization_endpoint":                baseURL + "/authorize",
+			"token_endpoint":                        baseURL + "/token",
+			"jwks_uri":                              baseURL + "/jwks",
+			"response_types_supported":              []string{"code"},
+			"subject_types_supported":               []string{"public"},
+			"id_token_signing_alg_values_supported": []string{"RS256"},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(doc) //nolint:errcheck
+	})
+
+	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
+		doc := map[string]any{
+			"keys": []map[string]any{{
+				"kty": "RSA",
+				"kid": testKID,
+				"n":   base64.RawURLEncoding.EncodeToString(pub.N.Bytes()),
+				"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(pub.E)).Bytes()),
+				"alg": "RS256",
+				"use": "sig",
+			}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(doc) //nolint:errcheck
+	})
+
+	if tokenHandler != nil {
+		mux.HandleFunc("/token", tokenHandler)
 	}
-	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	signed, err := tok.SignedString(testKey)
-	if err != nil {
-		panic("sign test token: " + err.Error())
+
+	srv = httptest.NewServer(mux)
+	baseURL = srv.URL
+	t.Cleanup(srv.Close)
+
+	issueToken = func(sub, email, name string) string {
+		now := time.Now()
+		claims := jwt.MapClaims{
+			"iss":   baseURL,
+			"sub":   sub,
+			"email": email,
+			"name":  name,
+			"iat":   now.Unix(),
+			"exp":   now.Add(time.Hour).Unix(),
+		}
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		tok.Header["kid"] = testKID
+		signed, err := tok.SignedString(testKey)
+		if err != nil {
+			t.Fatalf("sign test token: %v", err)
+		}
+		return signed
 	}
-	return signed
+
+	return srv, issueToken
 }
 
-// newTestValidator creates a Validator backed by the test RSA key via a temp PEM file.
-func newTestValidator(t *testing.T) (*auth.Validator, string) {
+// defaultTokenHandler returns a token endpoint handler that issues valid access
+// and ID tokens signed with testKey. The issuerURL pointer must point to a string
+// that is populated with the server URL before any requests are served.
+func defaultTokenHandler(issuerURL *string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		now := time.Now()
+
+		accessClaims := jwt.MapClaims{
+			"iss": *issuerURL, "sub": "test-sub-1",
+			"email": "tester@example.com", "name": "Tester",
+			"iat": now.Unix(), "exp": now.Add(time.Hour).Unix(),
+		}
+		accessTok := jwt.NewWithClaims(jwt.SigningMethodRS256, accessClaims)
+		accessTok.Header["kid"] = testKID
+		accessSigned, _ := accessTok.SignedString(testKey)
+
+		idClaims := jwt.MapClaims{
+			"iss": *issuerURL, "sub": "test-sub-1", "aud": "test-client",
+			"email": "tester@example.com", "name": "Tester",
+			"iat": now.Unix(), "exp": now.Add(time.Hour).Unix(),
+		}
+		idTok := jwt.NewWithClaims(jwt.SigningMethodRS256, idClaims)
+		idTok.Header["kid"] = testKID
+		idSigned, _ := idTok.SignedString(testKey)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+			"access_token": accessSigned,
+			"id_token":     idSigned,
+			"token_type":   "Bearer",
+			"expires_in":   3600,
+		})
+	}
+}
+
+// newTestValidator creates an oidclient.Client backed by a fake OIDC provider
+// (no token endpoint). Returns the client and a valid JWT for the test user.
+func newTestValidator(t *testing.T) (*oidclient.Client, string) {
 	t.Helper()
+	srv, issueToken := fakeOIDCProvider(t, nil)
 
-	// Write public key as PKIX PEM.
-	pubDER, err := x509.MarshalPKIXPublicKey(&testKey.PublicKey)
-	if err != nil {
-		t.Fatalf("marshal public key: %v", err)
-	}
-	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
-	pemPath := filepath.Join(t.TempDir(), "pub.pem")
-	if err := os.WriteFile(pemPath, pubPEM, 0600); err != nil {
-		t.Fatalf("write pem: %v", err)
-	}
-
-	v, err := auth.NewValidator(auth.ValidatorConfig{
+	client, err := oidclient.New(context.Background(), oidclient.Config{
+		IssuerURL:  srv.URL,
 		CookieName: "test_jwt",
-		WebauthURL: "https://auth.example.com",
-		PEMKeyPath: pemPath,
 	})
 	if err != nil {
-		t.Fatalf("NewValidator: %v", err)
+		t.Fatalf("oidclient.New: %v", err)
 	}
 
-	// Return a valid token for the canonical test user.
-	token := signTestToken("test-sub-1", "tester@example.com", "Tester")
-	return v, token
+	token := issueToken("test-sub-1", "tester@example.com", "Tester")
+	return client, token
+}
+
+// newTestValidatorWithOIDC creates an oidclient.Client with OIDC flow configured
+// and a custom token endpoint handler. If tokenHandler is nil, a default handler
+// that issues valid tokens is used.
+func newTestValidatorWithOIDC(t *testing.T, tokenHandler http.HandlerFunc) *oidclient.Client {
+	t.Helper()
+
+	// The token handler needs the issuer URL, which is only known after the
+	// server starts. Use a pointer that fakeOIDCProvider populates.
+	var issuerURL string
+	handler := tokenHandler
+	if handler == nil {
+		handler = defaultTokenHandler(&issuerURL)
+	}
+
+	srv, _ := fakeOIDCProvider(t, handler)
+	issuerURL = srv.URL
+
+	client, err := oidclient.New(context.Background(), oidclient.Config{
+		IssuerURL:   srv.URL,
+		CookieName:  "test_jwt",
+		ClientID:    "test-client",
+		CallbackURL: "https://herald.example.com/auth/callback",
+	})
+	if err != nil {
+		t.Fatalf("oidclient.New: %v", err)
+	}
+	return client
 }
 
 // testFixtures holds all resources for a handler integration test.
@@ -154,7 +263,7 @@ func newTestFixtures(t *testing.T) *testFixtures {
 	}
 }
 
-// request makes a test HTTP request. Adds the JWT cookie if tf is non-nil.
+// request makes a test HTTP request.
 func request(t *testing.T, handler http.Handler, method, path string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, nil)
@@ -201,8 +310,8 @@ func TestHandleRoot_UnauthenticatedRedirectsToWebauth(t *testing.T) {
 		t.Errorf("status: got %d, want %d", rr.Code, http.StatusFound)
 	}
 	loc := rr.Header().Get("Location")
-	if !strings.Contains(loc, "auth.example.com") {
-		t.Errorf("redirect location %q should point to webauth", loc)
+	if loc == "" {
+		t.Error("expected Location header for unauthenticated redirect")
 	}
 }
 
@@ -215,8 +324,8 @@ func TestRequireAuth_HTMXUnauthenticatedUsesHXRedirect(t *testing.T) {
 		t.Errorf("status: got %d, want %d", rr.Code, http.StatusUnauthorized)
 	}
 	hxRedirect := rr.Header().Get("HX-Redirect")
-	if !strings.Contains(hxRedirect, "auth.example.com") {
-		t.Errorf("HX-Redirect %q should point to webauth", hxRedirect)
+	if hxRedirect == "" {
+		t.Error("expected HX-Redirect header for HTMX unauthenticated request")
 	}
 	if loc := rr.Header().Get("Location"); loc != "" {
 		t.Errorf("Location header should be empty for HTMX requests, got %q", loc)
@@ -226,7 +335,6 @@ func TestRequireAuth_HTMXUnauthenticatedUsesHXRedirect(t *testing.T) {
 func TestHandleRoot_AuthenticatedServesHome(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	// Authenticated GET / should render the home page directly (no redirect).
 	rr := authedRequest(t, tf, "GET", "/", nil)
 	if rr.Code != http.StatusOK {
 		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
@@ -244,8 +352,8 @@ func TestHandleLogout(t *testing.T) {
 		t.Errorf("status: got %d, want %d", rr.Code, http.StatusFound)
 	}
 	loc := rr.Header().Get("Location")
-	if !strings.Contains(loc, "auth.example.com/logout") {
-		t.Errorf("redirect %q should point to webauth logout", loc)
+	if !strings.Contains(loc, "/logout") {
+		t.Errorf("redirect %q should point to logout endpoint", loc)
 	}
 }
 
@@ -270,9 +378,6 @@ func TestHandleHome_Unauthenticated(t *testing.T) {
 	rr := request(t, tf.router, "GET", "/", nil)
 	if rr.Code != http.StatusFound {
 		t.Errorf("status: got %d, want %d", rr.Code, http.StatusFound)
-	}
-	if !strings.Contains(rr.Header().Get("Location"), "auth.example.com") {
-		t.Error("unauthenticated home should redirect to webauth")
 	}
 }
 
@@ -561,64 +666,20 @@ func itoa(n int64) string {
 	return url.PathEscape(strings.TrimSpace(strconv.FormatInt(n, 10)))
 }
 
-// newTestValidatorWithOIDC creates a Validator with OIDC config pointing at baseURL.
-func newTestValidatorWithOIDC(t *testing.T, baseURL string) *auth.Validator {
-	t.Helper()
-
-	pubDER, err := x509.MarshalPKIXPublicKey(&testKey.PublicKey)
-	if err != nil {
-		t.Fatalf("marshal public key: %v", err)
-	}
-	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
-	pemPath := filepath.Join(t.TempDir(), "pub.pem")
-	if err := os.WriteFile(pemPath, pubPEM, 0600); err != nil {
-		t.Fatalf("write pem: %v", err)
-	}
-
-	v, err := auth.NewValidator(auth.ValidatorConfig{
-		CookieName:  "test_jwt",
-		WebauthURL:  baseURL,
-		PEMKeyPath:  pemPath,
-		TenantID:    "test-tenant",
-		ClientID:    "test-client",
-		CallbackURL: "https://herald.example.com/auth/callback",
-	})
-	if err != nil {
-		t.Fatalf("NewValidator with OIDC: %v", err)
-	}
-	return v
-}
-
 // --- Callback handler tests ---
 
 func TestHandleCallback_SetsJWTCookie(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	// Mock webauth token endpoint: returns a valid signed access token.
-	accessToken := signTestToken("test-sub-1", "tester@example.com", "Tester")
-	mockWebauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
-			"access_token": accessToken,
-			"token_type":   "Bearer",
-			"expires_in":   3600,
-		})
-	}))
-	defer mockWebauth.Close()
-
-	validator := newTestValidatorWithOIDC(t, mockWebauth.URL)
+	validator := newTestValidatorWithOIDC(t, nil)
 	router := newRouter(tf.engine, validator, "", nil)
 
 	state := "test-state-nonce"
 	verifier := "test-pkce-verifier"
 	req := httptest.NewRequest("GET", "/auth/callback?code=test-code&state="+state, nil)
-	req.AddCookie(&http.Cookie{Name: "oauth_state", Value: state})
-	req.AddCookie(&http.Cookie{Name: "oauth_verifier", Value: verifier})
-	req.AddCookie(&http.Cookie{Name: "oauth_redirect", Value: "/u/1"})
+	req.AddCookie(&http.Cookie{Name: oidclient.CookieState, Value: state})
+	req.AddCookie(&http.Cookie{Name: oidclient.CookieVerifier, Value: verifier})
+	req.AddCookie(&http.Cookie{Name: oidclient.CookieRedirect, Value: "/u/1"})
 
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -647,20 +708,13 @@ func TestHandleCallback_SetsJWTCookie(t *testing.T) {
 func TestHandleCallback_DefaultRedirect(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	accessToken := signTestToken("test-sub-1", "tester@example.com", "Tester")
-	mockWebauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"access_token": accessToken}) //nolint:errcheck
-	}))
-	defer mockWebauth.Close()
-
-	validator := newTestValidatorWithOIDC(t, mockWebauth.URL)
+	validator := newTestValidatorWithOIDC(t, nil)
 	router := newRouter(tf.engine, validator, "", nil)
 
 	state := "test-state"
 	req := httptest.NewRequest("GET", "/auth/callback?code=test-code&state="+state, nil)
-	req.AddCookie(&http.Cookie{Name: "oauth_state", Value: state})
-	req.AddCookie(&http.Cookie{Name: "oauth_verifier", Value: "verifier"})
+	req.AddCookie(&http.Cookie{Name: oidclient.CookieState, Value: state})
+	req.AddCookie(&http.Cookie{Name: oidclient.CookieVerifier, Value: "verifier"})
 	// No oauth_redirect cookie — should default to "/".
 
 	rr := httptest.NewRecorder()
@@ -677,12 +731,12 @@ func TestHandleCallback_DefaultRedirect(t *testing.T) {
 func TestHandleCallback_InvalidState(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	validator := newTestValidatorWithOIDC(t, "https://auth.example.com")
+	validator := newTestValidatorWithOIDC(t, nil)
 	router := newRouter(tf.engine, validator, "", nil)
 
 	req := httptest.NewRequest("GET", "/auth/callback?code=test-code&state=WRONG", nil)
-	req.AddCookie(&http.Cookie{Name: "oauth_state", Value: "correct-state"})
-	req.AddCookie(&http.Cookie{Name: "oauth_verifier", Value: "verifier"})
+	req.AddCookie(&http.Cookie{Name: oidclient.CookieState, Value: "correct-state"})
+	req.AddCookie(&http.Cookie{Name: oidclient.CookieVerifier, Value: "verifier"})
 
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -695,12 +749,12 @@ func TestHandleCallback_InvalidState(t *testing.T) {
 func TestHandleCallback_MissingVerifier(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	validator := newTestValidatorWithOIDC(t, "https://auth.example.com")
+	validator := newTestValidatorWithOIDC(t, nil)
 	router := newRouter(tf.engine, validator, "", nil)
 
 	state := "test-state"
 	req := httptest.NewRequest("GET", "/auth/callback?code=test-code&state="+state, nil)
-	req.AddCookie(&http.Cookie{Name: "oauth_state", Value: state})
+	req.AddCookie(&http.Cookie{Name: oidclient.CookieState, Value: state})
 	// oauth_verifier cookie omitted.
 
 	rr := httptest.NewRecorder()
@@ -714,19 +768,16 @@ func TestHandleCallback_MissingVerifier(t *testing.T) {
 func TestHandleCallback_TokenExchangeError(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	// Mock that returns a 401 from the token endpoint.
-	mockWebauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Token endpoint returns 401.
+	validator := newTestValidatorWithOIDC(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid_grant", http.StatusUnauthorized)
-	}))
-	defer mockWebauth.Close()
-
-	validator := newTestValidatorWithOIDC(t, mockWebauth.URL)
+	})
 	router := newRouter(tf.engine, validator, "", nil)
 
 	state := "test-state"
 	req := httptest.NewRequest("GET", "/auth/callback?code=bad-code&state="+state, nil)
-	req.AddCookie(&http.Cookie{Name: "oauth_state", Value: state})
-	req.AddCookie(&http.Cookie{Name: "oauth_verifier", Value: "verifier"})
+	req.AddCookie(&http.Cookie{Name: oidclient.CookieState, Value: state})
+	req.AddCookie(&http.Cookie{Name: oidclient.CookieVerifier, Value: "verifier"})
 
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -739,7 +790,7 @@ func TestHandleCallback_TokenExchangeError(t *testing.T) {
 func TestHandleCallback_UpstreamAuthError(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	validator := newTestValidatorWithOIDC(t, "https://auth.example.com")
+	validator := newTestValidatorWithOIDC(t, nil)
 	router := newRouter(tf.engine, validator, "", nil)
 
 	// Webauth redirects with ?error=access_denied when the user denies.

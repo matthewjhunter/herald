@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/infodancer/oidclient"
 	herald "github.com/matthewjhunter/herald"
-	"github.com/matthewjhunter/herald/internal/auth"
 )
 
 // version and buildTime are optionally injected at build time via ldflags.
@@ -59,10 +59,6 @@ func main() {
 	webauthIssuer := flag.String("webauth-issuer", "", "OIDC issuer URL, e.g. https://auth.infodancer.net/t/infodancer (enables autodiscovery)")
 	webauthURL := flag.String("webauth-url", "", "base URL of webauth server; derived from -webauth-issuer when omitted")
 	jwtCookie := flag.String("jwt-cookie", "", "name of the JWT cookie set by webauth (default infodancer_jwt)")
-	jwksURL := flag.String("jwks-url", "", "JWKS endpoint URL; overrides autodiscovery when set")
-	pemKeyPath := flag.String("jwt-public-key", "", "path to RSA public key PEM file (dev fallback when JWKS not yet live)")
-	jwtIssuer := flag.String("jwt-issuer", "", "expected JWT issuer claim (empty = skip validation)")
-	webauthTenant := flag.String("webauth-tenant", "", "webauth tenant ID for manual OIDC endpoint construction (not needed with -webauth-issuer)")
 	webauthClientID := flag.String("webauth-client-id", "", "Herald's registered OIDC client ID")
 	webauthCallbackURL := flag.String("webauth-callback-url", "", "Herald's registered OIDC callback URL (e.g. https://herald.infodancer.net/auth/callback)")
 
@@ -81,32 +77,21 @@ func main() {
 	issuerURL := mergeString(*webauthIssuer, cfg.Webauth.IssuerURL)
 	webauthBaseURL := mergeString(*webauthURL, cfg.Webauth.WebauthURL)
 	cookie := mergeString(*jwtCookie, mergeString(cfg.Webauth.Cookie, "infodancer_jwt"))
-	jwks := mergeString(*jwksURL, cfg.Webauth.JWKSUrl)
-	pem := mergeString(*pemKeyPath, cfg.Webauth.PEMKeyPath)
-	jwtIss := mergeString(*jwtIssuer, cfg.Webauth.JWTIssuer)
-	tenantID := mergeString(*webauthTenant, cfg.Webauth.TenantID)
 	clientID := mergeString(*webauthClientID, cfg.Webauth.ClientID)
 	callbackURL := mergeString(*webauthCallbackURL, cfg.Webauth.CallbackURL)
 
-	if issuerURL == "" && webauthBaseURL == "" {
-		fmt.Fprintln(os.Stderr, "herald-web: auth.issuer_url (or -webauth-issuer) is required")
-		os.Exit(1)
-	}
-	if issuerURL == "" && jwks == "" && pem == "" {
-		fmt.Fprintln(os.Stderr, "herald-web: auth.jwks_url or auth.pem_key_path required when issuer_url is not set")
+	if issuerURL == "" {
+		fmt.Fprintln(os.Stderr, "herald-web: webauth.issuer_url (or -webauth-issuer) is required")
 		os.Exit(1)
 	}
 
-	validator, err := auth.NewValidator(auth.ValidatorConfig{
-		Issuer:       jwtIss,
-		CookieName:   cookie,
-		IssuerURL:    issuerURL,
-		WebauthURL:   webauthBaseURL,
-		JWKSEndpoint: jwks,
-		PEMKeyPath:   pem,
-		TenantID:     tenantID,
-		ClientID:     clientID,
-		CallbackURL:  callbackURL,
+	ctx := context.Background()
+	validator, err := oidclient.New(ctx, oidclient.Config{
+		IssuerURL:   issuerURL,
+		CookieName:  cookie,
+		WebauthURL:  webauthBaseURL,
+		ClientID:    clientID,
+		CallbackURL: callbackURL,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "herald-web: %v\n", err)
@@ -147,10 +132,10 @@ func main() {
 	<-done
 	log.Println("herald-web: shutting down...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("herald-web: shutdown error: %v", err)
 	}
 	log.Println("herald-web: stopped")

@@ -2,15 +2,12 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"log"
 	"net/http"
 	"time"
 
+	"github.com/infodancer/oidclient"
 	herald "github.com/matthewjhunter/herald"
-	"github.com/matthewjhunter/herald/internal/auth"
 )
 
 // contextKey is an unexported type for context values set by this package.
@@ -32,51 +29,14 @@ func userFromContext(ctx context.Context) *herald.User {
 }
 
 // withClaims stores the validated JWT claims in the request context.
-func withClaims(ctx context.Context, c *auth.Claims) context.Context {
+func withClaims(ctx context.Context, c *oidclient.Claims) context.Context {
 	return context.WithValue(ctx, claimsContextKey{}, c)
 }
 
 // claimsFromContext retrieves the JWT claims from the context.
-func claimsFromContext(ctx context.Context) *auth.Claims {
-	c, _ := ctx.Value(claimsContextKey{}).(*auth.Claims)
+func claimsFromContext(ctx context.Context) *oidclient.Claims {
+	c, _ := ctx.Value(claimsContextKey{}).(*oidclient.Claims)
 	return c
-}
-
-// generateVerifier returns a random base64url-encoded PKCE code verifier.
-func generateVerifier() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
-}
-
-// pkceChallenge returns the S256 code challenge for the given verifier.
-func pkceChallenge(verifier string) string {
-	h := sha256.Sum256([]byte(verifier))
-	return base64.RawURLEncoding.EncodeToString(h[:])
-}
-
-// generateNonce returns a random base64url-encoded state nonce.
-func generateNonce() (string, error) {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
-}
-
-// setOAuthCookie sets a short-lived HttpOnly cookie for the OIDC flow.
-func setOAuthCookie(w http.ResponseWriter, name, value string, maxAge int, secure bool) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     name,
-		Value:    value,
-		Path:     "/",
-		MaxAge:   maxAge,
-		HttpOnly: true,
-		Secure:   secure,
-		SameSite: http.SameSiteLaxMode,
-	})
 }
 
 // requireAuth validates the JWT cookie, provisions the Herald user if needed,
@@ -92,25 +52,20 @@ func (h *handlers) requireAuth(next http.Handler) http.Handler {
 				returnTo = "/"
 			}
 			var loginURL string
-			if h.validator.OIDCConfigured() {
-				verifier, err := generateVerifier()
+			if h.validator.FlowConfigured() {
+				verifier := oidclient.GenerateVerifier()
+				state, err := oidclient.GenerateNonce()
 				if err != nil {
 					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 					return
 				}
-				state, err := generateNonce()
-				if err != nil {
-					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-					return
-				}
-				challenge := pkceChallenge(verifier)
-				secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
-				setOAuthCookie(w, "oauth_verifier", verifier, 300, secure)
-				setOAuthCookie(w, "oauth_state", state, 300, secure)
-				setOAuthCookie(w, "oauth_redirect", returnTo, 300, secure)
-				loginURL = h.validator.AuthorizeURL(state, challenge)
+				secure := oidclient.IsSecure(r)
+				oidclient.SetFlowCookie(w, oidclient.CookieVerifier, verifier, secure)
+				oidclient.SetFlowCookie(w, oidclient.CookieState, state, secure)
+				oidclient.SetFlowCookie(w, oidclient.CookieRedirect, returnTo, secure)
+				loginURL = h.validator.AuthorizeURL(state, verifier)
 			} else {
-				loginURL = h.validator.WebauthLoginURL(returnTo)
+				loginURL = h.validator.LoginURL(returnTo)
 			}
 			// For HTMX partial requests, use HX-Redirect so the browser
 			// performs a full page navigation rather than swapping auth HTML

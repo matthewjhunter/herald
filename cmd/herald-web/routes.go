@@ -5,15 +5,15 @@ import (
 	"io/fs"
 	"net/http"
 
+	"github.com/infodancer/oidclient"
 	herald "github.com/matthewjhunter/herald"
-	"github.com/matthewjhunter/herald/internal/auth"
 )
 
 //go:embed templates static
 var embedded embed.FS
 
 // newRouter sets up all routes using Go 1.22+ enhanced routing.
-func newRouter(engine *herald.Engine, validator *auth.Validator, adminRole string, adminUsers []string) http.Handler {
+func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole string, adminUsers []string) http.Handler {
 	mux := http.NewServeMux()
 
 	// Static files — no auth required.

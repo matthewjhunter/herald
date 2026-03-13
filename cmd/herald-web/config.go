@@ -24,24 +24,16 @@ type Config struct {
 	Admin   AdminConfig   `toml:"admin"`
 }
 
-// WebauthConfig holds webauth OIDC and JWT settings.
+// WebauthConfig holds webauth OIDC settings.
 type WebauthConfig struct {
-	// IssuerURL enables OIDC autodiscovery. When set, WebauthURL, TenantID,
-	// and JWKSUrl may be omitted.
+	// IssuerURL is the OIDC issuer URL (e.g. "https://auth.infodancer.net/t/infodancer").
+	// Required; used for OIDC discovery and token verification.
 	IssuerURL string `toml:"issuer_url"`
 	// WebauthURL is the webauth base URL for login/logout redirects.
 	// Derived from IssuerURL scheme+host when omitted.
 	WebauthURL string `toml:"webauth_url"`
 	// Cookie is the name of the JWT session cookie.
 	Cookie string `toml:"cookie"`
-	// JWKSUrl overrides the JWKS endpoint from autodiscovery.
-	JWKSUrl string `toml:"jwks_url"`
-	// PEMKeyPath is the path to an RSA public key PEM file (dev fallback).
-	PEMKeyPath string `toml:"pem_key_path"`
-	// JWTIssuer is the expected iss claim. Empty disables the check.
-	JWTIssuer string `toml:"jwt_issuer"`
-	// TenantID is used for manual OIDC endpoint construction without autodiscovery.
-	TenantID string `toml:"tenant_id"`
 	// ClientID is Herald's registered OIDC client ID.
 	ClientID string `toml:"client_id"`
 	// CallbackURL is Herald's registered OIDC redirect URI.
