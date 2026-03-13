@@ -152,10 +152,7 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 	sem := make(chan struct{}, e.maxParallel)
 	var wg sync.WaitGroup
 
-	for {
-		if ctx.Err() != nil {
-			break
-		}
+	for ctx.Err() == nil {
 		articles, err := e.store.GetUnscoredArticlesForUser(userID, 100)
 		if err != nil {
 			return scored, fmt.Errorf("get unscored articles: %w", err)
