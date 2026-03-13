@@ -60,6 +60,12 @@ func processNode(n *html.Node, seen map[string]bool) {
 		stripImageAttrs(n)
 	}
 
+	// Always open links in a new tab; only the user (ctrl-click etc.) can override
+	if n.Type == html.ElementNode && n.DataAtom == atom.A {
+		setAttr(n, "target", "_blank")
+		ensureRel(n, "noopener")
+	}
+
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		processNode(c, seen)
 	}
@@ -100,6 +106,30 @@ var floatRe = regexp.MustCompile(`(?i)\bfloat\s*:\s*[^;]+;?\s*`)
 func stripFloatFromStyle(style string) string {
 	cleaned := floatRe.ReplaceAllString(style, "")
 	return strings.TrimSpace(cleaned)
+}
+
+// setAttr sets an attribute on n, overwriting any existing value.
+func setAttr(n *html.Node, key, val string) {
+	for i, a := range n.Attr {
+		if a.Key == key {
+			n.Attr[i].Val = val
+			return
+		}
+	}
+	n.Attr = append(n.Attr, html.Attribute{Key: key, Val: val})
+}
+
+// ensureRel adds a token to the rel attribute, or creates it if absent.
+func ensureRel(n *html.Node, token string) {
+	for i, a := range n.Attr {
+		if a.Key == "rel" {
+			if !strings.Contains(" "+a.Val+" ", " "+token+" ") {
+				n.Attr[i].Val = a.Val + " " + token
+			}
+			return
+		}
+	}
+	n.Attr = append(n.Attr, html.Attribute{Key: "rel", Val: token})
 }
 
 func getAttr(n *html.Node, key string) string {

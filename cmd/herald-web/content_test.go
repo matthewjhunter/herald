@@ -81,6 +81,28 @@ func TestNormalizeContent_DataURINotDeduped(t *testing.T) {
 	}
 }
 
+func TestNormalizeContent_AddsTargetBlankToLinks(t *testing.T) {
+	input := `<p><a href="https://example.com">link</a></p>`
+	got := normalizeContent(input)
+	if !strings.Contains(got, `target="_blank"`) {
+		t.Errorf("links should get target=_blank: %s", got)
+	}
+	if !strings.Contains(got, `rel="noopener"`) {
+		t.Errorf("links should get rel=noopener: %s", got)
+	}
+}
+
+func TestNormalizeContent_OverridesFeedTarget(t *testing.T) {
+	input := `<p><a href="https://example.com" target="_self">link</a></p>`
+	got := normalizeContent(input)
+	if !strings.Contains(got, `target="_blank"`) {
+		t.Errorf("feed-set target should be overridden to _blank: %s", got)
+	}
+	if strings.Contains(got, `target="_self"`) {
+		t.Errorf("original target should not survive: %s", got)
+	}
+}
+
 func TestRewriteImageURLs_ReplacesKnownURL(t *testing.T) {
 	imageMap := map[string]int64{"https://example.com/photo.jpg": 42}
 	input := `<p>Text</p><img src="https://example.com/photo.jpg"/>`
