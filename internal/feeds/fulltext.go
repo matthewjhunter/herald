@@ -21,6 +21,12 @@ var skipFullTextRe = regexp.MustCompile(
 	`(?i)(youtube\.com/shorts/|youtu\.be/)`,
 )
 
+// imageURLRe matches URLs ending in common image file extensions.
+// These are never useful targets for readability extraction.
+var imageURLRe = regexp.MustCompile(
+	`(?i)\.(jpe?g|png|gif|webp|svg|bmp|ico|avif|tiff?)(\?[^"]*)?$`,
+)
+
 // emailRe matches both standard email addresses and the obfuscated "user at
 // domain dot com" style commonly used in blog contact sidebars to deter scrapers.
 var emailRe = regexp.MustCompile(
@@ -195,6 +201,9 @@ func extractLinkPostURL(content, articleURL string) string {
 		href := rest[:end]
 		lower = rest[end:]
 		if strings.HasPrefix(href, "http") {
+			if imageURLRe.MatchString(href) {
+				continue
+			}
 			if u, err := url.Parse(href); err == nil && u.Host != articleHost {
 				return href
 			}
@@ -267,6 +276,13 @@ func fetchReadableContent(ctx context.Context, client *http.Client, articleURL s
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("HTTP %d fetching %s", resp.StatusCode, articleURL)
+	}
+
+	// Reject non-HTML responses (images, PDFs, etc.) that readability
+	// cannot parse and would produce garbled output.
+	ct := resp.Header.Get("Content-Type")
+	if ct != "" && !strings.HasPrefix(ct, "text/html") && !strings.HasPrefix(ct, "application/xhtml") {
+		return "", fmt.Errorf("non-HTML content-type %q for %s", ct, articleURL)
 	}
 
 	article, err := readability.FromReader(resp.Body, parsedURL)

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -109,6 +110,52 @@ func TestIsLinkPost_NoLinks(t *testing.T) {
 	}
 }
 
+func TestIsLinkPost_ImageURL(t *testing.T) {
+	// A link to an image should not be treated as a link post.
+	cases := []string{
+		`<a href="https://cdn.example.com/photo.jpeg">image</a>`,
+		`<a href="https://cdn.example.com/photo.jpg?w=800">image</a>`,
+		`<a href="https://cdn.example.com/photo.png">image</a>`,
+		`<a href="https://cdn.example.com/photo.webp">image</a>`,
+		`<a href="https://cdn.example.com/photo.gif">image</a>`,
+	}
+	for _, c := range cases {
+		if isLinkPost(c, "https://blog.example.com/post") {
+			t.Errorf("image URL link should not be a link post: %s", c)
+		}
+	}
+}
+
+func TestImageURLRe(t *testing.T) {
+	match := []string{
+		"https://cdn.example.com/photo.jpeg",
+		"https://cdn.example.com/photo.jpg",
+		"https://cdn.example.com/photo.png",
+		"https://cdn.example.com/photo.gif",
+		"https://cdn.example.com/photo.webp",
+		"https://cdn.example.com/photo.svg",
+		"https://cdn.example.com/photo.avif",
+		"https://cdn.example.com/photo.JPG",
+		"https://cdn.example.com/photo.jpg?w=800&q=auto",
+	}
+	noMatch := []string{
+		"https://example.com/article",
+		"https://example.com/page.html",
+		"https://example.com/image-gallery",
+		"",
+	}
+	for _, u := range match {
+		if !imageURLRe.MatchString(u) {
+			t.Errorf("expected %q to match image URL pattern", u)
+		}
+	}
+	for _, u := range noMatch {
+		if imageURLRe.MatchString(u) {
+			t.Errorf("expected %q NOT to match image URL pattern", u)
+		}
+	}
+}
+
 // --- textLength tests ---
 
 func TestTextLength_PlainText(t *testing.T) {
@@ -174,6 +221,23 @@ func TestFetchReadableContent_HTTPError(t *testing.T) {
 	_, err := fetchReadableContent(context.Background(), client, srv.URL)
 	if err == nil {
 		t.Fatal("expected error for HTTP 403")
+	}
+}
+
+func TestFetchReadableContent_RejectsNonHTML(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Write([]byte("\xff\xd8\xff\xe0")) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	_, err := fetchReadableContent(context.Background(), client, srv.URL)
+	if err == nil {
+		t.Fatal("expected error for non-HTML content-type")
+	}
+	if !strings.Contains(err.Error(), "non-HTML") {
+		t.Errorf("expected non-HTML error, got: %v", err)
 	}
 }
 
