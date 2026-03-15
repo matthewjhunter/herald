@@ -198,11 +198,21 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 				// Summarization and curation run after security passes.
 				existing, _ := e.store.GetArticleSummary(userID, article.ID)
 				if existing == nil {
-					summary, err := e.ai.SummarizeArticle(ctx, userID, article.Title, content)
-					if err != nil {
-						log.Printf("herald: summarization failed for article %d: %v", article.ID, err)
+					minLen := e.config.Summarization.MinArticleLength
+					if minLen > 0 && len(content) < minLen {
+						log.Printf("herald: skipping summarization for article %d: content too short (%d < %d)", article.ID, len(content), minLen)
 					} else {
-						e.store.UpdateArticleAISummary(userID, article.ID, summary) //nolint:errcheck
+						maxLen := e.config.Summarization.MaxSummaryLength
+						summary, err := e.ai.SummarizeArticle(ctx, userID, article.Title, content, maxLen)
+						if err != nil {
+							log.Printf("herald: summarization failed for article %d: %v", article.ID, err)
+						} else if len(summary) > len(content) {
+							log.Printf("herald: discarding summary for article %d: summary longer than content (%d > %d)", article.ID, len(summary), len(content))
+						} else if maxLen > 0 && len(summary) > maxLen+maxLen*15/100 {
+							log.Printf("herald: discarding summary for article %d: exceeds max length by >15%% (%d > %d)", article.ID, len(summary), maxLen)
+						} else {
+							e.store.UpdateArticleAISummary(userID, article.ID, summary) //nolint:errcheck
+						}
 					}
 				}
 

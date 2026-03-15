@@ -10,15 +10,17 @@ import (
 )
 
 // SummarizeArticle generates an AI summary for a single article.
-func (p *AIProcessor) SummarizeArticle(ctx context.Context, userID int64, title, content string) (string, error) {
+// maxSummaryLength is communicated to the model in the prompt; pass 0 to omit.
+func (p *AIProcessor) SummarizeArticle(ctx context.Context, userID int64, title, content string, maxSummaryLength int) (string, error) {
 	promptTemplate, err := p.promptLoader.GetPrompt(userID, PromptTypeSummarization)
 	if err != nil {
 		return "", fmt.Errorf("failed to load summarization prompt: %w", err)
 	}
 
 	data := map[string]interface{}{
-		"Title":   title,
-		"Content": truncateText(content, 3000),
+		"Title":            title,
+		"Content":          truncateText(content, 3000),
+		"MaxSummaryLength": maxSummaryLength,
 	}
 	prompt, err := ExecutePrompt(promptTemplate, data)
 	if err != nil {

@@ -37,6 +37,11 @@ type Config struct {
 		RelatedGroups string `yaml:"related_groups,omitempty"`
 	} `yaml:"prompts,omitempty"`
 
+	Summarization struct {
+		MinArticleLength int `yaml:"min_article_length"`
+		MaxSummaryLength int `yaml:"max_summary_length"`
+	} `yaml:"summarization"`
+
 	Grouping struct {
 		SimilarityThreshold float64 `yaml:"similarity_threshold"`
 	} `yaml:"grouping"`
@@ -60,6 +65,8 @@ func DefaultConfig() *Config {
 	cfg.Ollama.CurationModel = "llama3"
 	cfg.Ollama.EmbeddingModel = "embeddinggemma"
 	cfg.Ollama.Timeout = 2 * time.Minute
+	cfg.Summarization.MinArticleLength = 200
+	cfg.Summarization.MaxSummaryLength = 500
 	cfg.Grouping.SimilarityThreshold = 0.75
 	cfg.Thresholds.InterestScore = 8.0
 	cfg.Thresholds.SecurityScore = 7.0
