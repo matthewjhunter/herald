@@ -107,12 +107,21 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 		// Only replace content if we got substantially more text than the feed
 		// provided — at least 300 chars more — and it doesn't look like a
 		// contact/sidebar page that readability mistook for the article body.
-		if textLength(full) >= textLength(article.Content)+300 && !looksLikeContactPage(full) {
-			if err := f.store.UpdateArticleContent(article.ID, sanitizeText(full)); err != nil {
-				log.Printf("herald: failed to store full text for article %d: %v", article.ID, err)
-			} else {
-				updated++
-			}
+		if textLength(full) < textLength(article.Content)+300 {
+			continue
+		}
+		if looksLikeContactPage(full) {
+			log.Printf("herald: rejecting full text for article %d (%s): looks like contact page", article.ID, article.URL)
+			continue
+		}
+		if !feedContentOverlaps(article.Content, full) {
+			log.Printf("herald: rejecting full text for article %d (%s): no phrase overlap with feed content (likely sidebar)", article.ID, article.URL)
+			continue
+		}
+		if err := f.store.UpdateArticleContent(article.ID, sanitizeText(full)); err != nil {
+			log.Printf("herald: failed to store full text for article %d: %v", article.ID, err)
+		} else {
+			updated++
 		}
 	}
 
@@ -210,6 +219,31 @@ func extractLinkPostURL(content, articleURL string) string {
 		}
 	}
 	return ""
+}
+
+// feedContentOverlaps checks whether readability-extracted text is about the
+// same subject as the original feed content. It extracts 3-word sequences from
+// the feed content and checks whether at least one appears in the extracted
+// text. When there is zero overlap, the extraction likely captured a sidebar
+// or other unrelated page region rather than the article body.
+//
+// Returns true (allows replacement) when feed content is too short to judge.
+func feedContentOverlaps(feedContent, extracted string) bool {
+	feedPlain := strings.ToLower(stripTags(feedContent))
+	words := strings.Fields(feedPlain)
+	if len(words) < 3 {
+		return true // Not enough feed content to judge
+	}
+
+	extractedPlain := strings.ToLower(stripTags(extracted))
+
+	for i := 0; i <= len(words)-3; i++ {
+		phrase := words[i] + " " + words[i+1] + " " + words[i+2]
+		if strings.Contains(extractedPlain, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 // textLength counts non-whitespace characters outside of HTML tags.

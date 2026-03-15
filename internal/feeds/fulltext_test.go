@@ -432,6 +432,69 @@ func TestFetchFullTextForArticles_LinkPost(t *testing.T) {
 	}
 }
 
+func TestFetchFullTextForArticles_RejectsSidebarContent(t *testing.T) {
+	// Simulate a blog where readability extracts sidebar text (quotes, contact
+	// info) instead of the actual short article body. The extracted content has
+	// no phrase overlap with the feed content, so it should be rejected.
+	sidebarHTML := `<!DOCTYPE html>
+<html><head><title>Blog</title></head>
+<body>
+  <div id="sidebar">
+    <h2>E-mail me</h2>
+    <p>at elmtreeforge at att point net</p>
+    <blockquote>Of all tyrannies, a tyranny exercised for the good of its victims
+    may be the most oppressive. It may be better to live under robber barons than
+    under omnipotent moral busybodies. The robber baron cruelty may sometimes sleep,
+    his cupidity may at some point be satiated; but those who torment us for our own
+    good will torment us without end, for they do so with the approval of their
+    consciences. - C.S. Lewis</blockquote>
+    <blockquote>So now I am asking more of you than I have before. Maybe all.
+    Sure as I know anything, I know this - they will try again. No more running.
+    I aim to misbehave. - Capt. Mal</blockquote>
+  </div>
+</body></html>`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, sidebarHTML)
+	}))
+	defer srv.Close()
+
+	store := newFullTextTestStore(t)
+	feedID, _ := store.AddFeed(srv.URL, "Sidebar Blog", "")
+
+	pub := time.Now()
+	articleID, err := store.AddArticle(&storage.Article{
+		FeedID:        feedID,
+		GUID:          "sidebar-test-1",
+		Title:         "Yes, time for some clearing, including",
+		URL:           srv.URL,
+		Content:       `<p>this top one, which reminded me of a discussion.</p>`,
+		PublishedDate: &pub,
+	})
+	if err != nil {
+		t.Fatalf("AddArticle: %v", err)
+	}
+
+	fetcher := NewFetcher(store)
+	n, err := fetcher.FetchFullTextForArticles(context.Background())
+	if err != nil {
+		t.Fatalf("FetchFullTextForArticles: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 articles updated (sidebar rejected), got %d", n)
+	}
+
+	// Original feed content should be preserved.
+	updated, err := store.GetArticle(articleID)
+	if err != nil {
+		t.Fatalf("GetArticle: %v", err)
+	}
+	if !strings.Contains(updated.Content, "reminded me of a discussion") {
+		t.Error("expected original feed content to be preserved")
+	}
+}
+
 func TestLooksLikeContactPage(t *testing.T) {
 	// Ace of Spades-style contact sidebar with obfuscated emails.
 	sidebar := `Support Contact
@@ -456,6 +519,51 @@ joe mannix: mannix2024 at proton.me`
 		` The rest of this is a long article body with real prose content.</p>`
 	if looksLikeContactPage(oneEmail) {
 		t.Error("expected single-email article not to be flagged as boilerplate")
+	}
+}
+
+func TestFeedContentOverlaps_Match(t *testing.T) {
+	// Readability output contains phrases from the feed content.
+	feed := "Hispanic guy said oh yeah it is true and worth it"
+	extracted := `<p>Hispanic guy said oh yeah it is true and worth it.
+		Other guy: "But that ass!"</p>`
+	if !feedContentOverlaps(feed, extracted) {
+		t.Error("expected overlap to be detected when feed phrases appear in extracted text")
+	}
+}
+
+func TestFeedContentOverlaps_NoMatch(t *testing.T) {
+	// Readability extracted a sidebar (C.S. Lewis quotes) instead of the article body.
+	feed := `<p>this top one, which reminded me of a discussion.
+		Hispanic guy: "Oh yeah, it's true, and it's worth it."</p>`
+	extracted := `<p>Of all tyrannies, a tyranny exercised for the good of its victims
+		may be the most oppressive. It may be better to live under robber barons than
+		under omnipotent moral busybodies. - C.S. Lewis</p>
+		<p>E-mail me at elmtreeforge at att point net</p>`
+	if feedContentOverlaps(feed, extracted) {
+		t.Error("expected no overlap between article feed content and sidebar text")
+	}
+}
+
+func TestFeedContentOverlaps_ShortFeedContent(t *testing.T) {
+	// Feed content too short to form a 3-word phrase — allow replacement.
+	if !feedContentOverlaps("Short excerpt", "completely different text here") {
+		t.Error("expected short feed content to allow replacement (not enough to judge)")
+	}
+}
+
+func TestFeedContentOverlaps_EmptyFeed(t *testing.T) {
+	if !feedContentOverlaps("", "any extracted content here") {
+		t.Error("expected empty feed content to allow replacement")
+	}
+}
+
+func TestFeedContentOverlaps_HTMLTags(t *testing.T) {
+	// HTML tags should be stripped before comparison.
+	feed := `<p><strong>Breaking news:</strong> the president signed the bill today</p>`
+	extracted := `<div>The president signed the bill today in a ceremony at the White House.</div>`
+	if !feedContentOverlaps(feed, extracted) {
+		t.Error("expected overlap after stripping HTML tags")
 	}
 }
 
