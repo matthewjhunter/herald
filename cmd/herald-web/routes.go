@@ -74,6 +74,11 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.Handle("GET /feeds/metadata", auth(http.HandlerFunc(h.handleFeedMetadataByQuery)))
 	mux.Handle("GET /filters/values", auth(http.HandlerFunc(h.handleFilterValues)))
 
+	// Group virtual feed actions.
+	mux.Handle("POST /groups/{groupID}/mute", auth(http.HandlerFunc(h.handleGroupMute)))
+	mux.Handle("DELETE /groups/{groupID}", auth(http.HandlerFunc(h.handleGroupDisband)))
+	mux.Handle("POST /groups/{groupID}/mark-read", auth(http.HandlerFunc(h.handleGroupMarkRead)))
+
 	// Ollama model list (used by prompt settings pages).
 	mux.Handle("GET /api/ollama/models", auth(http.HandlerFunc(h.handleOllamaModels)))
 
