@@ -151,7 +151,7 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 	sem := make(chan struct{}, e.maxParallel)
 	var wg sync.WaitGroup
 
-	for ctx.Err() == nil {
+	for ctx.Err() == nil { //nolint:staticcheck // QF1006: batch-fetch-then-check pattern is intentional
 		articles, err := e.store.GetUnscoredArticlesForUser(userID, 100)
 		if err != nil {
 			return scored, fmt.Errorf("get unscored articles: %w", err)

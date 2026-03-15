@@ -56,7 +56,7 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 	sem := make(chan struct{}, maxParallel)
 	var wg sync.WaitGroup
 
-	for ctx.Err() == nil {
+	for ctx.Err() == nil { //nolint:staticcheck // QF1006: batch-fetch-then-check pattern is intentional
 		unscoredArticles, err := store.GetUnscoredArticlesForUser(userID, 100)
 		if err != nil {
 			return processed, fmt.Errorf("failed to get unscored articles for user %d: %w", userID, err)
