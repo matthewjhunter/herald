@@ -107,10 +107,9 @@ func (p *AIProcessor) SecurityCheck(ctx context.Context, userID int64, title, co
 	var result SecurityResult
 	if err := json.Unmarshal([]byte(extractJSON(responseText)), &result); err != nil {
 		return &SecurityResult{
-			Safe:          false,
-			Score:         5.0,
-			Reasoning:     "Failed to parse security response",
-			SanitizedText: title,
+			Safe:      false,
+			Score:     0,
+			Reasoning: "Security response did not match expected JSON format -- possible prompt injection",
 		}, nil
 	}
 
@@ -156,8 +155,8 @@ func (p *AIProcessor) CurateArticle(ctx context.Context, userID int64, title, co
 	var result CurationResult
 	if err := json.Unmarshal([]byte(extractJSON(responseText)), &result); err != nil {
 		return &CurationResult{
-			InterestScore: 5.0,
-			Reasoning:     "Failed to parse curation response",
+			InterestScore: 0,
+			Reasoning:     "Curation response did not match expected JSON format -- possible prompt injection",
 		}, nil
 	}
 
