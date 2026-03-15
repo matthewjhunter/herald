@@ -117,13 +117,15 @@ Summary:
 type RelatedArticlesResult struct {
 	IsRelated      bool    `json:"is_related"`
 	ExistingGroups []int64 `json:"existing_groups"`
+	DisplayName    string  `json:"display_name"`
 	Reasoning      string  `json:"reasoning"`
 }
 
 // FindRelatedGroups determines if a new article relates to existing groups.
-func (p *AIProcessor) FindRelatedGroups(ctx context.Context, userID int64, newArticle storage.Article, existingGroups []storage.ArticleGroup, store storage.Store) ([]int64, error) {
+// Returns the full result struct so callers can access display_name for new groups.
+func (p *AIProcessor) FindRelatedGroups(ctx context.Context, userID int64, newArticle storage.Article, existingGroups []storage.ArticleGroup, store storage.Store) (*RelatedArticlesResult, error) {
 	if len(existingGroups) == 0 {
-		return nil, nil
+		return &RelatedArticlesResult{}, nil
 	}
 
 	var groupDescs []string
@@ -174,12 +176,8 @@ func (p *AIProcessor) FindRelatedGroups(ctx context.Context, userID int64, newAr
 
 	var result RelatedArticlesResult
 	if err := json.Unmarshal([]byte(extractJSON(responseText)), &result); err != nil {
-		return nil, nil
+		return &RelatedArticlesResult{}, nil
 	}
 
-	if result.IsRelated && len(result.ExistingGroups) > 0 {
-		return result.ExistingGroups, nil
-	}
-
-	return nil, nil
+	return &result, nil
 }

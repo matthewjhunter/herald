@@ -228,16 +228,28 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 
 				// Group management
 				userGroups, _ := e.store.GetUserGroups(userID)
-				relatedGroupIDs, _ := e.ai.FindRelatedGroups(ctx, userID, article, userGroups, e.store)
-				if len(relatedGroupIDs) > 0 {
-					e.store.AddArticleToGroup(relatedGroupIDs[0], article.ID) //nolint:errcheck
+				groupResult, _ := e.ai.FindRelatedGroups(ctx, userID, article, userGroups, e.store)
+				if groupResult != nil && groupResult.IsRelated && len(groupResult.ExistingGroups) > 0 {
+					gID := groupResult.ExistingGroups[0]
+					e.store.AddArticleToGroup(gID, article.ID) //nolint:errcheck
+					// If the group is muted, immediately mark the article as read
+					if muted, err := e.store.IsGroupMuted(gID); err == nil && muted {
+						e.store.UpdateReadState(userID, article.ID, true, nil, nil, nil) //nolint:errcheck
+					}
 				} else {
 					topic := article.Title
 					if len(topic) > 100 {
 						topic = topic[:100]
 					}
+					displayName := ""
+					if groupResult != nil && groupResult.DisplayName != "" {
+						displayName = groupResult.DisplayName
+					}
 					if newGroupID, err := e.store.CreateArticleGroup(userID, topic); err == nil {
 						e.store.AddArticleToGroup(newGroupID, article.ID) //nolint:errcheck
+						if displayName != "" {
+							e.store.UpdateGroupDisplayName(newGroupID, displayName) //nolint:errcheck
+						}
 					}
 				}
 

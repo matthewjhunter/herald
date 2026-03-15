@@ -12,9 +12,18 @@ Determine if the new article covers the same event/story as any existing group. 
 - The same ongoing story (e.g., same conflict, same investigation)
 - The same breaking news developing over time
 
+IMPORTANT: Only match an article to a group when the group's topic is the article's PRIMARY SUBJECT. Do NOT match articles where the topic is:
+- A minor mention or passing reference
+- One of several topics covered in the article
+- Background context rather than the main story
+- A daily summary or roundup that briefly touches the topic
+
+If is_related is false and this article represents a new topic worth tracking, include a display_name field — a 1-6 word label suitable for a sidebar (short, descriptive, no articles like "the").
+
 Respond ONLY with valid JSON:
 {
   "is_related": true/false,
   "existing_groups": [<array of group IDs the article relates to>],
+  "display_name": "<1-6 word sidebar label for new group, omit if is_related is true>",
   "reasoning": "<brief explanation>"
 }
