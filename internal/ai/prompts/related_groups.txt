@@ -18,12 +18,12 @@ IMPORTANT: Only match an article to a group when the group's topic is the articl
 - Background context rather than the main story
 - A daily summary or roundup that briefly touches the topic
 
-If is_related is false and this article represents a new topic worth tracking, include a display_name field — a 1-6 word label suitable for a sidebar (short, descriptive, no articles like "the").
+If is_related is false and this article represents a new topic worth tracking, include a display_name field -- a 1-3 word label suitable for a sidebar. Keep it very short: "Home Security", "Trade War", "AI Ethics". No quotes, no articles (a/an/the), no punctuation.
 
 Respond ONLY with valid JSON:
 {
   "is_related": true/false,
   "existing_groups": [<array of group IDs the article relates to>],
-  "display_name": "<1-6 word sidebar label for new group, omit if is_related is true>",
+  "display_name": "<1-3 word sidebar label for new group, omit if is_related is true>",
   "reasoning": "<brief explanation>"
 }
