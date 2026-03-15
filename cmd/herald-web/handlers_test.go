@@ -802,3 +802,89 @@ func TestHandleCallback_UpstreamAuthError(t *testing.T) {
 		t.Errorf("status: got %d, want %d (upstream error param should be 401)", rr.Code, http.StatusUnauthorized)
 	}
 }
+
+func TestHandleArticleList_ByGroup(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// Create a group and add the test article to it
+	groupID, err := tf.store.CreateArticleGroup(tf.userID, "Test Group Topic")
+	if err != nil {
+		t.Fatalf("CreateArticleGroup: %v", err)
+	}
+	tf.store.UpdateGroupDisplayName(groupID, "Test Group")
+	tf.store.AddArticleToGroup(groupID, tf.articleID)
+
+	// Add a second article to the group (need 2 for it to show)
+	pub := time.Now().Add(-30 * time.Minute)
+	art2, _ := tf.store.AddArticle(&storage.Article{
+		FeedID: tf.feedID, GUID: "guid-grp-2", Title: "Group Article 2",
+		URL: "https://example.com/grp2", PublishedDate: &pub,
+	})
+	tf.store.AddArticleToGroup(groupID, art2)
+
+	// Verify group articles are returned
+	path := "/articles?group_id=" + itoa(groupID)
+	rr := authedRequest(t, tf, "GET", path, map[string]string{"HX-Request": "true"})
+	if rr.Code != http.StatusOK {
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Test Article") {
+		t.Error("group article list should contain article title")
+	}
+	if !strings.Contains(body, "Group Article 2") {
+		t.Error("group article list should contain second article")
+	}
+
+	// Verify grouped articles are excluded from default article list
+	rr = authedRequest(t, tf, "GET", "/articles", map[string]string{"HX-Request": "true"})
+	if strings.Contains(rr.Body.String(), "Test Article") {
+		t.Error("default article list should not contain grouped articles")
+	}
+}
+
+func TestHandleGroupMute(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	groupID, _ := tf.store.CreateArticleGroup(tf.userID, "Mute Test")
+	tf.store.AddArticleToGroup(groupID, tf.articleID)
+
+	// Add a second article
+	pub := time.Now().Add(-30 * time.Minute)
+	art2, _ := tf.store.AddArticle(&storage.Article{
+		FeedID: tf.feedID, GUID: "guid-mute-2", Title: "Mute Article 2",
+		URL: "https://example.com/mute2", PublishedDate: &pub,
+	})
+	tf.store.AddArticleToGroup(groupID, art2)
+
+	path := "/groups/" + itoa(groupID) + "/mute"
+	rr := authedRequest(t, tf, "POST", path, nil)
+	if rr.Code != http.StatusNoContent {
+		t.Errorf("mute status: got %d, want %d", rr.Code, http.StatusNoContent)
+	}
+
+	// Verify group is muted
+	muted, _ := tf.store.IsGroupMuted(groupID)
+	if !muted {
+		t.Error("group should be muted after POST /groups/{id}/mute")
+	}
+}
+
+func TestHandleGroupDisband(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	groupID, _ := tf.store.CreateArticleGroup(tf.userID, "Disband Test")
+	tf.store.AddArticleToGroup(groupID, tf.articleID)
+
+	path := "/groups/" + itoa(groupID)
+	rr := authedRequest(t, tf, "DELETE", path, nil)
+	if rr.Code != http.StatusNoContent {
+		t.Errorf("disband status: got %d, want %d", rr.Code, http.StatusNoContent)
+	}
+
+	// Group should be gone
+	group, _ := tf.store.GetGroup(groupID)
+	if group != nil {
+		t.Error("group should be deleted after DELETE /groups/{id}")
+	}
+}

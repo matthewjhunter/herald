@@ -123,6 +123,14 @@ type Store interface {
 	GetGroup(groupID int64) (*ArticleGroup, error)
 	FindArticleGroup(articleID, userID int64) (*int64, error)
 
+	// Group virtual feed operations
+	GetUnreadGroupArticles(userID, groupID int64, limit, offset int, filterThreshold *int) ([]Article, error)
+	GetGroupStats(userID int64) ([]GroupStats, error)
+	SetGroupMuted(groupID int64, muted bool) error
+	IsGroupMuted(groupID int64) (bool, error)
+	DisbandGroup(groupID int64) error
+	UpdateGroupDisplayName(groupID int64, displayName string) error
+
 	// Embedding-based group operations
 	UpdateGroupEmbedding(groupID int64, embedding []byte) error
 	GetGroupsWithEmbeddings(userID int64) ([]ArticleGroupWithEmbedding, error)

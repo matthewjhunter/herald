@@ -228,16 +228,28 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 
 				// Group management
 				userGroups, _ := e.store.GetUserGroups(userID)
-				relatedGroupIDs, _ := e.ai.FindRelatedGroups(ctx, userID, article, userGroups, e.store)
-				if len(relatedGroupIDs) > 0 {
-					e.store.AddArticleToGroup(relatedGroupIDs[0], article.ID) //nolint:errcheck
+				groupResult, _ := e.ai.FindRelatedGroups(ctx, userID, article, userGroups, e.store)
+				if groupResult != nil && groupResult.IsRelated && len(groupResult.ExistingGroups) > 0 {
+					gID := groupResult.ExistingGroups[0]
+					e.store.AddArticleToGroup(gID, article.ID) //nolint:errcheck
+					// If the group is muted, immediately mark the article as read
+					if muted, err := e.store.IsGroupMuted(gID); err == nil && muted {
+						e.store.UpdateReadState(userID, article.ID, true, nil, nil, nil) //nolint:errcheck
+					}
 				} else {
 					topic := article.Title
 					if len(topic) > 100 {
 						topic = topic[:100]
 					}
+					displayName := ""
+					if groupResult != nil && groupResult.DisplayName != "" {
+						displayName = groupResult.DisplayName
+					}
 					if newGroupID, err := e.store.CreateArticleGroup(userID, topic); err == nil {
 						e.store.AddArticleToGroup(newGroupID, article.ID) //nolint:errcheck
+						if displayName != "" {
+							e.store.UpdateGroupDisplayName(newGroupID, displayName) //nolint:errcheck
+						}
 					}
 				}
 
@@ -511,11 +523,13 @@ func (e *Engine) GetUserGroups(userID int64) ([]ArticleGroup, error) {
 	var result []ArticleGroup
 	for _, g := range groups {
 		ag := ArticleGroup{
-			ID:        g.ID,
-			UserID:    g.UserID,
-			Topic:     g.Topic,
-			CreatedAt: g.CreatedAt,
-			UpdatedAt: g.UpdatedAt,
+			ID:          g.ID,
+			UserID:      g.UserID,
+			Topic:       g.Topic,
+			DisplayName: g.DisplayName,
+			Muted:       g.Muted,
+			CreatedAt:   g.CreatedAt,
+			UpdatedAt:   g.UpdatedAt,
 		}
 		// Attach summary if available
 		if gs, err := e.store.GetGroupSummary(g.ID); err == nil && gs != nil {
@@ -551,6 +565,8 @@ func (e *Engine) GetGroupArticles(groupID int64) (*ArticleGroup, error) {
 		ag.ID = group.ID
 		ag.UserID = group.UserID
 		ag.Topic = group.Topic
+		ag.DisplayName = group.DisplayName
+		ag.Muted = group.Muted
 		ag.CreatedAt = group.CreatedAt
 		ag.UpdatedAt = group.UpdatedAt
 	}
@@ -564,6 +580,58 @@ func (e *Engine) GetGroupArticles(groupID int64) (*ArticleGroup, error) {
 	}
 
 	return ag, nil
+}
+
+// GetUnreadGroupArticles returns unread articles belonging to a group.
+func (e *Engine) GetUnreadGroupArticles(userID, groupID int64, limit, offset int) ([]Article, error) {
+	articles, err := e.store.GetUnreadGroupArticles(userID, groupID, limit, offset, e.resolveFilterThreshold(userID))
+	if err != nil {
+		return nil, err
+	}
+	return articlesFromInternal(articles), nil
+}
+
+// GetGroupStats returns sidebar stats for non-muted groups with unread articles.
+func (e *Engine) GetGroupStats(userID int64) ([]GroupStats, error) {
+	internal, err := e.store.GetGroupStats(userID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]GroupStats, len(internal))
+	for i, gs := range internal {
+		result[i] = GroupStats{
+			GroupID:        gs.GroupID,
+			DisplayName:    gs.DisplayName,
+			UnreadArticles: gs.UnreadArticles,
+		}
+	}
+	return result, nil
+}
+
+// MarkGroupRead marks all articles in a group as read.
+func (e *Engine) MarkGroupRead(userID, groupID int64, before int64) error {
+	return e.store.MarkGroupArticlesRead(userID, groupID, before)
+}
+
+// MuteGroup mutes a group (hides from sidebar) and marks all its articles as read.
+func (e *Engine) MuteGroup(userID, groupID int64) error {
+	if err := e.store.SetGroupMuted(groupID, true); err != nil {
+		return err
+	}
+	return e.store.MarkGroupArticlesRead(userID, groupID, 0)
+}
+
+// DisbandGroup deletes a group; its articles return to their feeds.
+func (e *Engine) DisbandGroup(userID, groupID int64) error {
+	// Verify the group belongs to this user
+	group, err := e.store.GetGroup(groupID)
+	if err != nil {
+		return fmt.Errorf("get group: %w", err)
+	}
+	if group == nil || group.UserID != userID {
+		return fmt.Errorf("group not found or not owned by user")
+	}
+	return e.store.DisbandGroup(groupID)
 }
 
 // GenerateBriefing creates a text briefing from high-interest unread articles.

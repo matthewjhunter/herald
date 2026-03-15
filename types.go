@@ -62,16 +62,25 @@ type ScoredArticle struct {
 
 // ArticleGroup represents a cluster of articles covering the same topic/event.
 type ArticleGroup struct {
-	ID        int64     `json:"id"`
-	UserID    int64     `json:"user_id"`
-	Topic     string    `json:"topic"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Summary   string    `json:"summary,omitempty"`
-	Articles  []Article `json:"articles,omitempty"`
-	Scores    []float64 `json:"scores,omitempty"`
-	MaxScore  float64   `json:"max_score,omitempty"`
-	Count     int       `json:"count"`
+	ID          int64     `json:"id"`
+	UserID      int64     `json:"user_id"`
+	Topic       string    `json:"topic"`
+	DisplayName string    `json:"display_name,omitempty"`
+	Muted       bool      `json:"muted"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Summary     string    `json:"summary,omitempty"`
+	Articles    []Article `json:"articles,omitempty"`
+	Scores      []float64 `json:"scores,omitempty"`
+	MaxScore    float64   `json:"max_score,omitempty"`
+	Count       int       `json:"count"`
+}
+
+// GroupStats holds sidebar display data for an article group.
+type GroupStats struct {
+	GroupID        int64  `json:"group_id"`
+	DisplayName    string `json:"display_name"`
+	UnreadArticles int    `json:"unread_articles"`
 }
 
 // FeedStats holds article counts for a single feed.

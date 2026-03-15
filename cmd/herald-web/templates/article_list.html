@@ -1,11 +1,14 @@
 {{define "article_list"}}
+{{if .GroupSummary}}
+<div class="group-summary-banner">{{.GroupSummary}}</div>
+{{end}}
 {{if .Articles}}
 {{range .Articles}}
 {{template "article_row" .}}
 {{end}}
 {{if .HasMore}}
 <div class="scroll-sentinel"
-     hx-get="/articles?offset={{.NextOffset}}{{if $.FeedID}}&feed_id={{$.FeedID}}{{end}}{{if $.Starred}}&starred=1{{end}}"
+     hx-get="/articles?offset={{.NextOffset}}{{if $.FeedID}}&feed_id={{$.FeedID}}{{end}}{{if $.GroupID}}&group_id={{$.GroupID}}{{end}}{{if $.Starred}}&starred=1{{end}}"
      hx-trigger="intersect root:#article-list"
      hx-swap="outerHTML">
     Loading more...

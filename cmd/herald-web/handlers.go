@@ -173,17 +173,21 @@ func (h *handlers) init() {
 type homeData struct {
 	UserName      string
 	Feeds         []herald.FeedStats
+	Groups        []herald.GroupStats
 	TotalUnread   int
 	ActiveFeed    int64
+	ActiveGroup   int64
 	ActiveStarred bool
 }
 
 type articleListData struct {
-	Articles   []articleRow
-	HasMore    bool
-	NextOffset int
-	FeedID     int64
-	Starred    bool
+	Articles     []articleRow
+	HasMore      bool
+	NextOffset   int
+	FeedID       int64
+	GroupID      int64
+	GroupSummary string
+	Starred      bool
 }
 
 type articleRow struct {
@@ -458,6 +462,9 @@ func (h *handlers) handleHome(w http.ResponseWriter, r *http.Request) {
 		data.Feeds = stats.Feeds
 		data.TotalUnread = stats.Total.UnreadArticles
 	}
+	if groups, err := h.engine.GetGroupStats(uid); err == nil {
+		data.Groups = groups
+	}
 
 	h.renderPage(w, r, "home.html", data)
 }
@@ -598,6 +605,7 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 	limit := parseIntParam(r, "limit", 30)
 	offset := parseIntParam(r, "offset", 0)
 	feedID := parseInt64Param(r, "feed_id")
+	groupID := parseInt64Param(r, "group_id")
 	starred := r.URL.Query().Get("starred") == "1"
 
 	var articles []herald.Article
@@ -606,6 +614,8 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case starred:
 		articles, err = h.engine.GetStarredArticles(uid, limit+1, offset)
+	case groupID > 0:
+		articles, err = h.engine.GetUnreadGroupArticles(uid, groupID, limit+1, offset)
 	case feedID > 0:
 		articles, err = h.engine.GetUnreadArticlesByFeed(uid, feedID, limit+1, offset)
 	default:
@@ -635,8 +645,17 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 		HasMore:    hasMore,
 		NextOffset: offset + limit,
 		FeedID:     feedID,
+		GroupID:    groupID,
 		Starred:    starred,
 	}
+
+	// Load group summary banner when viewing a group
+	if groupID > 0 {
+		if group, err := h.engine.GetGroupArticles(groupID); err == nil && group != nil {
+			data.GroupSummary = group.Summary
+		}
+	}
+
 	for _, a := range articles {
 		data.Articles = append(data.Articles, articleRow{
 			ID:               a.ID,
@@ -651,10 +670,13 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 
 	// Append OOB sidebar so HTMX refreshes it with the correct active state
 	// in the same round-trip, without a separate /sidebar request.
-	sidebarData := homeData{ActiveFeed: feedID, ActiveStarred: starred}
+	sidebarData := homeData{ActiveFeed: feedID, ActiveGroup: groupID, ActiveStarred: starred}
 	if stats, err := h.engine.GetFeedStats(uid); err == nil && stats != nil {
 		sidebarData.Feeds = stats.Feeds
 		sidebarData.TotalUnread = stats.Total.UnreadArticles
+	}
+	if groups, err := h.engine.GetGroupStats(uid); err == nil {
+		sidebarData.Groups = groups
 	}
 	h.renderFragment(w, "feed_sidebar_oob", sidebarData)
 }
@@ -740,11 +762,15 @@ func (h *handlers) handleSidebar(w http.ResponseWriter, r *http.Request) {
 
 	data := homeData{
 		ActiveFeed:    parseInt64Param(r, "feed_id"),
+		ActiveGroup:   parseInt64Param(r, "group_id"),
 		ActiveStarred: r.URL.Query().Get("starred") == "1",
 	}
 	if stats != nil {
 		data.Feeds = stats.Feeds
 		data.TotalUnread = stats.Total.UnreadArticles
+	}
+	if groups, err := h.engine.GetGroupStats(uid); err == nil {
+		data.Groups = groups
 	}
 
 	h.renderFragment(w, "feed_sidebar_content", data)
@@ -780,6 +806,51 @@ func (h *handlers) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("HX-Trigger", "articles-marked-read")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *handlers) handleGroupMute(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	groupID, err := strconv.ParseInt(r.PathValue("groupID"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid group ID", http.StatusBadRequest)
+		return
+	}
+	if err := h.engine.MuteGroup(uid, groupID); err != nil {
+		http.Error(w, "failed to mute group", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("HX-Redirect", "/")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *handlers) handleGroupDisband(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	groupID, err := strconv.ParseInt(r.PathValue("groupID"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid group ID", http.StatusBadRequest)
+		return
+	}
+	if err := h.engine.DisbandGroup(uid, groupID); err != nil {
+		http.Error(w, "failed to disband group", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("HX-Redirect", "/")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *handlers) handleGroupMarkRead(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	groupID, err := strconv.ParseInt(r.PathValue("groupID"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid group ID", http.StatusBadRequest)
+		return
+	}
+	if err := h.engine.MarkGroupRead(uid, groupID, 0); err != nil {
+		http.Error(w, "failed to mark group read", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("HX-Trigger", "feeds-changed")
 	w.WriteHeader(http.StatusNoContent)
 }
 

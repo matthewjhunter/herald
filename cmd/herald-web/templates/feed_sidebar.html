@@ -2,7 +2,7 @@
 <nav>
     <a href="#" hx-get="/articles" hx-target="#article-list" hx-swap="innerHTML"
        hx-on:click="heraldClearReadingPane()"
-       class="{{if and (not .ActiveFeed) (not .ActiveStarred)}}active{{end}}">
+       class="{{if and (not .ActiveFeed) (not .ActiveStarred) (not .ActiveGroup)}}active{{end}}">
         All Articles
         {{if .TotalUnread}}<span class="unread-count">{{.TotalUnread}}</span>{{end}}
     </a>
@@ -11,6 +11,18 @@
        class="{{if .ActiveStarred}}active{{end}}">
         Starred
     </a>
+    {{if .Groups}}
+    <hr>
+    {{range .Groups}}
+    <a href="#" hx-get="/articles?group_id={{.GroupID}}" hx-target="#article-list" hx-swap="innerHTML"
+       hx-on:click="heraldClearReadingPane()"
+       class="{{if eq $.ActiveGroup .GroupID}}active{{end}}"
+       data-group-id="{{.GroupID}}" data-group-title="{{.DisplayName}}">
+        {{.DisplayName}}
+        {{if .UnreadArticles}}<span class="unread-count">{{.UnreadArticles}}</span>{{end}}
+    </a>
+    {{end}}
+    {{end}}
     <hr>
     {{range .Feeds}}
     <a href="#" hx-get="/articles?feed_id={{.FeedID}}" hx-target="#article-list" hx-swap="innerHTML"

@@ -129,22 +129,45 @@
         });
     })();
 
-    // Unsubscribe feed button — show when a specific feed is selected
+    // Context-sensitive footer buttons — show/hide based on sidebar selection
     document.addEventListener('click', function(e) {
-        var link = e.target.closest('a[data-feed-id]');
-        var btn = document.getElementById('unsubscribe-feed-btn');
-        if (!btn) return;
-        if (link) {
-            btn.dataset.feedId = link.dataset.feedId;
-            btn.title = 'Unsubscribe from ' + link.dataset.feedTitle;
-            btn.style.display = '';
-        } else if (e.target.closest('#sidebar a:not([data-feed-id])')) {
-            // "All Articles" or "Starred" — hide button
-            btn.style.display = 'none';
-            btn.dataset.feedId = '';
+        var feedLink = e.target.closest('a[data-feed-id]');
+        var groupLink = e.target.closest('a[data-group-id]');
+        var unsubBtn = document.getElementById('unsubscribe-feed-btn');
+        var muteBtn = document.getElementById('mute-group-btn');
+        var ungroupBtn = document.getElementById('ungroup-btn');
+
+        if (feedLink) {
+            // Feed selected — show unsubscribe, hide group buttons
+            if (unsubBtn) {
+                unsubBtn.dataset.feedId = feedLink.dataset.feedId;
+                unsubBtn.title = 'Unsubscribe from ' + feedLink.dataset.feedTitle;
+                unsubBtn.style.display = '';
+            }
+            if (muteBtn) muteBtn.style.display = 'none';
+            if (ungroupBtn) ungroupBtn.style.display = 'none';
+        } else if (groupLink) {
+            // Group selected — show mute and ungroup, hide unsubscribe
+            if (unsubBtn) { unsubBtn.style.display = 'none'; unsubBtn.dataset.feedId = ''; }
+            if (muteBtn) {
+                muteBtn.dataset.groupId = groupLink.dataset.groupId;
+                muteBtn.title = 'Mute ' + groupLink.dataset.groupTitle;
+                muteBtn.style.display = '';
+            }
+            if (ungroupBtn) {
+                ungroupBtn.dataset.groupId = groupLink.dataset.groupId;
+                ungroupBtn.title = 'Ungroup ' + groupLink.dataset.groupTitle;
+                ungroupBtn.style.display = '';
+            }
+        } else if (e.target.closest('#sidebar a:not([data-feed-id]):not([data-group-id])')) {
+            // "All Articles" or "Starred" — hide all action buttons
+            if (unsubBtn) { unsubBtn.style.display = 'none'; unsubBtn.dataset.feedId = ''; }
+            if (muteBtn) { muteBtn.style.display = 'none'; }
+            if (ungroupBtn) { ungroupBtn.style.display = 'none'; }
         }
     });
 
+    // Unsubscribe feed handler
     document.addEventListener('click', function(e) {
         var btn = e.target.closest('#unsubscribe-feed-btn');
         if (!btn || !btn.dataset.feedId) return;
@@ -153,6 +176,31 @@
         fetch('/feeds/' + feedID, {method: 'DELETE'})
             .then(function(res) {
                 if (res.ok) {
+                    window.location.href = '/';
+                }
+            });
+    });
+
+    // Mute group handler
+    document.addEventListener('click', function(e) {
+        var btn = e.target.closest('#mute-group-btn');
+        if (!btn || !btn.dataset.groupId) return;
+        fetch('/groups/' + btn.dataset.groupId + '/mute', {method: 'POST'})
+            .then(function(res) {
+                if (res.ok || res.status === 204) {
+                    window.location.href = '/';
+                }
+            });
+    });
+
+    // Ungroup handler
+    document.addEventListener('click', function(e) {
+        var btn = e.target.closest('#ungroup-btn');
+        if (!btn || !btn.dataset.groupId) return;
+        if (!confirm('Ungroup these articles? They will return to their feeds.')) return;
+        fetch('/groups/' + btn.dataset.groupId, {method: 'DELETE'})
+            .then(function(res) {
+                if (res.ok || res.status === 204) {
                     window.location.href = '/';
                 }
             });

@@ -1490,3 +1490,103 @@ func TestMigrationFromPreOIDCSchema(t *testing.T) {
 		t.Errorf("expected nil OIDCSub for legacy user, got %v", users[0].OIDCSub)
 	}
 }
+
+func TestGroupVirtualFeed(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test Feed", "")
+	store.SubscribeUserToFeed(1, feedID)
+	now := time.Now()
+
+	// Create 3 articles
+	art1, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "vf1", Title: "Article 1", URL: "https://example.com/1", PublishedDate: &now})
+	art2, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "vf2", Title: "Article 2", URL: "https://example.com/2", PublishedDate: &now})
+	art3, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "vf3", Title: "Article 3", URL: "https://example.com/3", PublishedDate: &now})
+
+	// Create a group with 2 articles
+	groupID, _ := store.CreateArticleGroup(1, "Test Topic")
+	store.UpdateGroupDisplayName(groupID, "Test Group")
+	store.AddArticleToGroup(groupID, art1)
+	store.AddArticleToGroup(groupID, art2)
+
+	// Verify grouped articles are excluded from feed queries
+	unread, err := store.GetUnreadArticlesForUser(1, 100, 0, nil)
+	if err != nil {
+		t.Fatalf("GetUnreadArticlesForUser: %v", err)
+	}
+	if len(unread) != 1 {
+		t.Errorf("expected 1 unread article (ungrouped), got %d", len(unread))
+	}
+	if len(unread) > 0 && unread[0].ID != art3 {
+		t.Errorf("expected ungrouped article %d, got %d", art3, unread[0].ID)
+	}
+
+	// Verify grouped articles excluded from feed-specific queries too
+	feedArticles, err := store.GetUnreadArticlesByFeed(1, feedID, 100, 0, nil)
+	if err != nil {
+		t.Fatalf("GetUnreadArticlesByFeed: %v", err)
+	}
+	if len(feedArticles) != 1 {
+		t.Errorf("expected 1 feed article (ungrouped), got %d", len(feedArticles))
+	}
+
+	// Verify group articles are returned by GetUnreadGroupArticles
+	groupArticles, err := store.GetUnreadGroupArticles(1, groupID, 100, 0, nil)
+	if err != nil {
+		t.Fatalf("GetUnreadGroupArticles: %v", err)
+	}
+	if len(groupArticles) != 2 {
+		t.Errorf("expected 2 group articles, got %d", len(groupArticles))
+	}
+
+	// Verify GetGroupStats returns the group
+	stats, err := store.GetGroupStats(1)
+	if err != nil {
+		t.Fatalf("GetGroupStats: %v", err)
+	}
+	if len(stats) != 1 {
+		t.Fatalf("expected 1 group stat, got %d", len(stats))
+	}
+	if stats[0].DisplayName != "Test Group" {
+		t.Errorf("display name = %q, want %q", stats[0].DisplayName, "Test Group")
+	}
+	if stats[0].UnreadArticles != 2 {
+		t.Errorf("unread = %d, want 2", stats[0].UnreadArticles)
+	}
+
+	// Verify feed stats subtract grouped articles
+	feedStats, err := store.GetFeedStats(1)
+	if err != nil {
+		t.Fatalf("GetFeedStats: %v", err)
+	}
+	if len(feedStats) != 1 {
+		t.Fatalf("expected 1 feed stat, got %d", len(feedStats))
+	}
+	if feedStats[0].UnreadArticles != 1 {
+		t.Errorf("feed unread = %d, want 1 (grouped articles excluded)", feedStats[0].UnreadArticles)
+	}
+
+	// Mute group — should disappear from stats
+	if err := store.SetGroupMuted(groupID, true); err != nil {
+		t.Fatalf("SetGroupMuted: %v", err)
+	}
+	muted, _ := store.IsGroupMuted(groupID)
+	if !muted {
+		t.Error("expected group to be muted")
+	}
+	stats, _ = store.GetGroupStats(1)
+	if len(stats) != 0 {
+		t.Errorf("expected 0 group stats after mute, got %d", len(stats))
+	}
+
+	// Unmute and disband — articles should return to feeds
+	store.SetGroupMuted(groupID, false)
+	if err := store.DisbandGroup(groupID); err != nil {
+		t.Fatalf("DisbandGroup: %v", err)
+	}
+	unread, _ = store.GetUnreadArticlesForUser(1, 100, 0, nil)
+	if len(unread) != 3 {
+		t.Errorf("expected 3 articles after disband, got %d", len(unread))
+	}
+}

@@ -36,6 +36,8 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 	pgMigrations := []string{
 		"ALTER TABLE user_feeds ADD COLUMN IF NOT EXISTS user_title TEXT",
 		"ALTER TABLE read_state ADD COLUMN IF NOT EXISTS security_reason TEXT",
+		"ALTER TABLE article_groups ADD COLUMN IF NOT EXISTS display_name TEXT",
+		"ALTER TABLE article_groups ADD COLUMN IF NOT EXISTS muted BOOLEAN NOT NULL DEFAULT FALSE",
 	}
 	for _, m := range pgMigrations {
 		if _, err := db.Exec(m); err != nil {
@@ -709,10 +711,15 @@ func (s *PostgresStore) GetUnreadArticlesForUser(userID int64, limit, offset int
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
 		WHERE uf.user_id = ? AND (rs.article_id IS NULL OR rs.read = FALSE)
+		AND NOT EXISTS (
+			SELECT 1 FROM article_group_members agm
+			JOIN article_groups ag ON agm.group_id = ag.id
+			WHERE agm.article_id = a.id AND ag.user_id = ?
+		)
 		` + filterSQL + `
 		ORDER BY a.published_date DESC
 		LIMIT ? OFFSET ?`
-	args := []interface{}{userID, userID}
+	args := []interface{}{userID, userID, userID}
 	args = append(args, filterArgs...)
 	args = append(args, limit, offset)
 	rows, err := s.db.Query(query, args...)
@@ -732,10 +739,15 @@ func (s *PostgresStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, off
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
 		WHERE uf.user_id = ? AND a.feed_id = ? AND (rs.article_id IS NULL OR rs.read = FALSE)
+		AND NOT EXISTS (
+			SELECT 1 FROM article_group_members agm
+			JOIN article_groups ag ON agm.group_id = ag.id
+			WHERE agm.article_id = a.id AND ag.user_id = ?
+		)
 		` + filterSQL + `
 		ORDER BY a.published_date DESC
 		LIMIT ? OFFSET ?`
-	args := []interface{}{userID, userID, feedID}
+	args := []interface{}{userID, userID, feedID, userID}
 	args = append(args, filterArgs...)
 	args = append(args, limit, offset)
 	rows, err := s.db.Query(query, args...)
@@ -1152,7 +1164,12 @@ func (s *PostgresStore) GetFeedStats(userID int64) ([]FeedStats, error) {
 	rows, err := s.db.Query(`
 		SELECT f.id, COALESCE(uf.user_title, f.title),
 			COUNT(a.id),
-			COUNT(a.id) - COALESCE(SUM(CASE WHEN rs.read IS TRUE THEN 1 ELSE 0 END), 0),
+			SUM(CASE WHEN (rs.read IS NULL OR rs.read = FALSE)
+			         AND NOT EXISTS (
+			           SELECT 1 FROM article_group_members agm
+			           JOIN article_groups ag ON agm.group_id = ag.id
+			           WHERE agm.article_id = a.id AND ag.user_id = uf.user_id
+			         ) THEN 1 ELSE 0 END),
 			COUNT(a.id) - COUNT(asumm.article_id),
 			MAX(a.published_date)
 		FROM feeds f
@@ -1252,7 +1269,7 @@ func (s *PostgresStore) GetGroupSummary(groupID int64) (*GroupSummary, error) {
 
 func (s *PostgresStore) GetUserGroups(userID int64) ([]ArticleGroup, error) {
 	rows, err := s.db.Query(`
-		SELECT ag.id, ag.user_id, ag.topic, ag.created_at, ag.updated_at
+		SELECT ag.id, ag.user_id, ag.topic, ag.display_name, ag.muted, ag.created_at, ag.updated_at
 		FROM article_groups ag
 		WHERE ag.user_id = ?
 		  AND (SELECT COUNT(*) FROM article_group_members WHERE group_id = ag.id) >= 2
@@ -1265,8 +1282,12 @@ func (s *PostgresStore) GetUserGroups(userID int64) ([]ArticleGroup, error) {
 	var groups []ArticleGroup
 	for rows.Next() {
 		var g ArticleGroup
-		if err := rows.Scan(&g.ID, &g.UserID, &g.Topic, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		var displayName *string
+		if err := rows.Scan(&g.ID, &g.UserID, &g.Topic, &displayName, &g.Muted, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan group: %w", err)
+		}
+		if displayName != nil {
+			g.DisplayName = *displayName
 		}
 		groups = append(groups, g)
 	}
@@ -1275,14 +1296,18 @@ func (s *PostgresStore) GetUserGroups(userID int64) ([]ArticleGroup, error) {
 
 func (s *PostgresStore) GetGroup(groupID int64) (*ArticleGroup, error) {
 	var g ArticleGroup
+	var displayName *string
 	err := s.db.QueryRow(
-		"SELECT id, user_id, topic, created_at, updated_at FROM article_groups WHERE id = ?", groupID,
-	).Scan(&g.ID, &g.UserID, &g.Topic, &g.CreatedAt, &g.UpdatedAt)
+		"SELECT id, user_id, topic, display_name, muted, created_at, updated_at FROM article_groups WHERE id = ?", groupID,
+	).Scan(&g.ID, &g.UserID, &g.Topic, &displayName, &g.Muted, &g.CreatedAt, &g.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get group: %w", err)
+	}
+	if displayName != nil {
+		g.DisplayName = *displayName
 	}
 	return &g, nil
 }
@@ -1304,6 +1329,94 @@ func (s *PostgresStore) FindArticleGroup(articleID, userID int64) (*int64, error
 	return &groupID, nil
 }
 
+func (s *PostgresStore) GetUnreadGroupArticles(userID, groupID int64, limit, offset int, filterThreshold *int) ([]Article, error) {
+	filterSQL, filterArgs := filterScoreClausePG(userID, filterThreshold)
+	query := `
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date
+		FROM articles a
+		JOIN article_group_members agm ON a.id = agm.article_id
+		JOIN article_groups ag ON agm.group_id = ag.id
+		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
+		WHERE agm.group_id = ? AND ag.user_id = ? AND (rs.article_id IS NULL OR rs.read = FALSE)
+		` + filterSQL + `
+		ORDER BY a.published_date DESC
+		LIMIT ? OFFSET ?`
+	args := []interface{}{userID, groupID, userID}
+	args = append(args, filterArgs...)
+	args = append(args, limit, offset)
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get unread group articles: %w", err)
+	}
+	defer rows.Close()
+	return scanArticles(rows)
+}
+
+func (s *PostgresStore) GetGroupStats(userID int64) ([]GroupStats, error) {
+	rows, err := s.db.Query(`
+		SELECT ag.id,
+		       COALESCE(ag.display_name, ag.topic),
+		       SUM(CASE WHEN rs.read IS NULL OR rs.read = FALSE THEN 1 ELSE 0 END)
+		FROM article_groups ag
+		JOIN article_group_members agm ON agm.group_id = ag.id
+		LEFT JOIN read_state rs ON rs.article_id = agm.article_id AND rs.user_id = ?
+		WHERE ag.user_id = ? AND ag.muted = FALSE
+		GROUP BY ag.id
+		HAVING COUNT(agm.article_id) >= 2
+		   AND SUM(CASE WHEN rs.read IS NULL OR rs.read = FALSE THEN 1 ELSE 0 END) > 0
+		ORDER BY COALESCE(ag.display_name, ag.topic)`,
+		userID, userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get group stats: %w", err)
+	}
+	defer rows.Close()
+
+	var stats []GroupStats
+	for rows.Next() {
+		var gs GroupStats
+		if err := rows.Scan(&gs.GroupID, &gs.DisplayName, &gs.UnreadArticles); err != nil {
+			return nil, fmt.Errorf("scan group stats: %w", err)
+		}
+		stats = append(stats, gs)
+	}
+	return stats, rows.Err()
+}
+
+func (s *PostgresStore) SetGroupMuted(groupID int64, muted bool) error {
+	_, err := s.db.Exec("UPDATE article_groups SET muted = ? WHERE id = ?", muted, groupID)
+	if err != nil {
+		return fmt.Errorf("set group muted: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) IsGroupMuted(groupID int64) (bool, error) {
+	var muted bool
+	err := s.db.QueryRow("SELECT muted FROM article_groups WHERE id = ?", groupID).Scan(&muted)
+	if err != nil {
+		return false, fmt.Errorf("is group muted: %w", err)
+	}
+	return muted, nil
+}
+
+func (s *PostgresStore) DisbandGroup(groupID int64) error {
+	_, err := s.db.Exec("DELETE FROM article_groups WHERE id = ?", groupID)
+	if err != nil {
+		return fmt.Errorf("disband group: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) UpdateGroupDisplayName(groupID int64, displayName string) error {
+	_, err := s.db.Exec("UPDATE article_groups SET display_name = ? WHERE id = ?", displayName, groupID)
+	if err != nil {
+		return fmt.Errorf("update group display name: %w", err)
+	}
+	return nil
+}
+
 func (s *PostgresStore) UpdateGroupEmbedding(groupID int64, embedding []byte) error {
 	_, err := s.db.Exec("UPDATE article_groups SET embedding = ? WHERE id = ?", embedding, groupID)
 	if err != nil {
@@ -1314,7 +1427,7 @@ func (s *PostgresStore) UpdateGroupEmbedding(groupID int64, embedding []byte) er
 
 func (s *PostgresStore) GetGroupsWithEmbeddings(userID int64) ([]ArticleGroupWithEmbedding, error) {
 	rows, err := s.db.Query(
-		`SELECT id, user_id, topic, embedding, created_at, updated_at
+		`SELECT id, user_id, topic, display_name, muted, embedding, created_at, updated_at
 		 FROM article_groups
 		 WHERE user_id = ? AND embedding IS NOT NULL`, userID,
 	)
@@ -1326,8 +1439,12 @@ func (s *PostgresStore) GetGroupsWithEmbeddings(userID int64) ([]ArticleGroupWit
 	var groups []ArticleGroupWithEmbedding
 	for rows.Next() {
 		var g ArticleGroupWithEmbedding
-		if err := rows.Scan(&g.ID, &g.UserID, &g.Topic, &g.Embedding, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		var displayName *string
+		if err := rows.Scan(&g.ID, &g.UserID, &g.Topic, &displayName, &g.Muted, &g.Embedding, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan group with embedding: %w", err)
+		}
+		if displayName != nil {
+			g.DisplayName = *displayName
 		}
 		groups = append(groups, g)
 	}
