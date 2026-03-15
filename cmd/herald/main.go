@@ -111,7 +111,7 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 						aiSummary = existing.AISummary
 						return nil
 					}
-					aiSummary, err = processor.SummarizeArticle(gctx, userID, article.Title, content)
+					aiSummary, err = processor.SummarizeArticle(gctx, userID, article.Title, content, cfg.Summarization.MaxSummaryLength)
 					if err != nil {
 						formatter.Warning("summarization failed for article %d: %v", article.ID, err)
 						return nil // non-fatal: scoring can proceed without summary

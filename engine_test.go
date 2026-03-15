@@ -573,3 +573,13 @@ func TestFilterThresholdPreference(t *testing.T) {
 		t.Fatal("expected error for non-integer filter_threshold")
 	}
 }
+
+func TestSummarizationConfigDefaults(t *testing.T) {
+	cfg := storage.DefaultConfig()
+	if cfg.Summarization.MinArticleLength != 200 {
+		t.Errorf("MinArticleLength: got %d, want 200", cfg.Summarization.MinArticleLength)
+	}
+	if cfg.Summarization.MaxSummaryLength != 500 {
+		t.Errorf("MaxSummaryLength: got %d, want 500", cfg.Summarization.MaxSummaryLength)
+	}
+}
