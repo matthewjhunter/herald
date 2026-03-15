@@ -91,7 +91,7 @@ func findIconLinkInPage(ctx context.Context, client *http.Client, pageURL string
 	if err != nil {
 		return ""
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Herald/1.0)")
+	req.Header.Set("User-Agent", PageUserAgent)
 	req.Header.Set("Accept", "text/html,*/*;q=0.8")
 
 	resp, err := client.Do(req)
@@ -161,7 +161,7 @@ func fetchAndNormalize(ctx context.Context, client *http.Client, iconURL string)
 	if err != nil {
 		return nil, "", err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Herald/1.0)")
+	req.Header.Set("User-Agent", PageUserAgent)
 
 	resp, err := client.Do(req)
 	if err != nil {

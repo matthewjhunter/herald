@@ -50,7 +50,7 @@ type OPMLOutline struct {
 // NewFetcher creates a new feed fetcher
 func NewFetcher(store storage.Store) *Fetcher {
 	parser := gofeed.NewParser()
-	parser.UserAgent = "FeedReader/1.0"
+	parser.UserAgent = FeedUserAgent
 	return &Fetcher{
 		parser: parser,
 		client: &http.Client{},
@@ -75,7 +75,7 @@ func (f *Fetcher) FetchFeed(ctx context.Context, feed storage.Feed) (*FetchResul
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request for %s: %w", feed.URL, err)
 	}
-	req.Header.Set("User-Agent", "FeedReader/1.0")
+	req.Header.Set("User-Agent", FeedUserAgent)
 	if feed.ETag != "" {
 		req.Header.Set("If-None-Match", feed.ETag)
 	}

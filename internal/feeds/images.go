@@ -103,7 +103,7 @@ func resolveToImageURL(ctx context.Context, client *http.Client, picURL string) 
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Herald/1.0)")
+	req.Header.Set("User-Agent", PageUserAgent)
 
 	httpClient := client
 	if httpClient == nil {
@@ -252,7 +252,7 @@ func fetchAndNormalizeImage(ctx context.Context, client *http.Client, imgURL str
 	if err != nil {
 		return nil, "", 0, 0, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Herald/1.0)")
+	req.Header.Set("User-Agent", PageUserAgent)
 
 	resp, err := client.Do(req)
 	if err != nil {

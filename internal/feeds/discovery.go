@@ -58,7 +58,7 @@ func (f *Fetcher) DiscoverFeeds(ctx context.Context, pageURL string) ([]Discover
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 FeedReader/1.0")
+	req.Header.Set("User-Agent", PageUserAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 
 	resp, err := f.client.Do(req)

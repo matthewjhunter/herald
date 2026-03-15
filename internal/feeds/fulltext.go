@@ -294,8 +294,7 @@ func fetchReadableContent(ctx context.Context, client *http.Client, articleURL s
 	if err != nil {
 		return "", err
 	}
-	// Identify as a browser to avoid bot-detection rejections.
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Herald/1.0; +https://github.com/matthewjhunter/herald)")
+	req.Header.Set("User-Agent", PageUserAgent)
 
 	httpClient := client
 	if httpClient == nil {
