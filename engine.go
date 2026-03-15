@@ -16,7 +16,6 @@ import (
 	"github.com/matthewjhunter/herald/internal/ai"
 	"github.com/matthewjhunter/herald/internal/feeds"
 	"github.com/matthewjhunter/herald/internal/storage"
-	"golang.org/x/sync/errgroup"
 )
 
 // Engine is the public API for herald's content processing pipeline.
@@ -180,34 +179,9 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 				}
 
 				// Run summarization and security check concurrently — they are independent.
-				var (
-					secResult *ai.SecurityResult
-					secErr    error
-				)
-				g, gctx := errgroup.WithContext(ctx)
-
-				// Summarize (cached per-user; skip if already exists)
-				g.Go(func() error {
-					existing, _ := e.store.GetArticleSummary(userID, article.ID)
-					if existing != nil {
-						return nil
-					}
-					summary, err := e.ai.SummarizeArticle(gctx, userID, article.Title, content)
-					if err != nil {
-						log.Printf("herald: summarization failed for article %d: %v", article.ID, err)
-						return nil // non-fatal: scoring can proceed without summary
-					}
-					e.store.UpdateArticleAISummary(userID, article.ID, summary) //nolint:errcheck
-					return nil
-				})
-
-				// Security check
-				g.Go(func() error {
-					secResult, secErr = e.ai.SecurityCheck(gctx, userID, article.Title, content)
-					return nil // errors surfaced via secErr, not errgroup
-				})
-
-				g.Wait() //nolint:errcheck // neither goroutine returns non-nil errors
+				// Security check runs first — blocks summarization and curation
+				// of content that may contain prompt injection or adversarial text.
+				secResult, secErr := e.ai.SecurityCheck(ctx, userID, article.Title, content)
 
 				if secErr != nil {
 					log.Printf("herald: security check failed for article %d: %v", article.ID, secErr)
@@ -221,7 +195,17 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 					return
 				}
 
-				// Interest scoring (requires security to pass — stays sequential)
+				// Summarization and curation run after security passes.
+				existing, _ := e.store.GetArticleSummary(userID, article.ID)
+				if existing == nil {
+					summary, err := e.ai.SummarizeArticle(ctx, userID, article.Title, content)
+					if err != nil {
+						log.Printf("herald: summarization failed for article %d: %v", article.ID, err)
+					} else {
+						e.store.UpdateArticleAISummary(userID, article.ID, summary) //nolint:errcheck
+					}
+				}
+
 				curResult, err := e.ai.CurateArticle(ctx, userID, article.Title, content, e.config.Preferences.Keywords)
 				if err != nil {
 					log.Printf("herald: curation failed for article %d: %v", article.ID, err)
