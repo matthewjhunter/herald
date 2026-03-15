@@ -39,8 +39,6 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	// Full-page routes.
 	mux.Handle("GET /{$}", auth(http.HandlerFunc(h.handleHome)))
 	mux.Handle("GET /feeds", auth(http.HandlerFunc(h.handleFeedsManage)))
-	mux.Handle("GET /groups", auth(http.HandlerFunc(h.handleGroups)))
-	mux.Handle("GET /groups/{groupID}", auth(http.HandlerFunc(h.handleGroupDetail)))
 	mux.Handle("GET /settings", auth(http.HandlerFunc(h.handleSettings)))
 	mux.Handle("GET /settings/sync", auth(http.HandlerFunc(h.handleSettingsSync)))
 	mux.Handle("GET /settings/prompts", auth(http.HandlerFunc(h.handleSettingsPrompts)))

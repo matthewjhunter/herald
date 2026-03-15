@@ -243,7 +243,7 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 					}
 					displayName := ""
 					if groupResult != nil && groupResult.DisplayName != "" {
-						displayName = groupResult.DisplayName
+						displayName = strings.Trim(groupResult.DisplayName, "\"'")
 					}
 					if newGroupID, err := e.store.CreateArticleGroup(userID, topic); err == nil {
 						e.store.AddArticleToGroup(newGroupID, article.ID) //nolint:errcheck
