@@ -36,6 +36,8 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 	pgMigrations := []string{
 		"ALTER TABLE user_feeds ADD COLUMN IF NOT EXISTS user_title TEXT",
 		"ALTER TABLE read_state ADD COLUMN IF NOT EXISTS security_reason TEXT",
+		"ALTER TABLE article_groups ADD COLUMN IF NOT EXISTS display_name TEXT",
+		"ALTER TABLE article_groups ADD COLUMN IF NOT EXISTS muted BOOLEAN NOT NULL DEFAULT FALSE",
 	}
 	for _, m := range pgMigrations {
 		if _, err := db.Exec(m); err != nil {
@@ -1252,7 +1254,7 @@ func (s *PostgresStore) GetGroupSummary(groupID int64) (*GroupSummary, error) {
 
 func (s *PostgresStore) GetUserGroups(userID int64) ([]ArticleGroup, error) {
 	rows, err := s.db.Query(`
-		SELECT ag.id, ag.user_id, ag.topic, ag.created_at, ag.updated_at
+		SELECT ag.id, ag.user_id, ag.topic, ag.display_name, ag.muted, ag.created_at, ag.updated_at
 		FROM article_groups ag
 		WHERE ag.user_id = ?
 		  AND (SELECT COUNT(*) FROM article_group_members WHERE group_id = ag.id) >= 2
@@ -1265,8 +1267,12 @@ func (s *PostgresStore) GetUserGroups(userID int64) ([]ArticleGroup, error) {
 	var groups []ArticleGroup
 	for rows.Next() {
 		var g ArticleGroup
-		if err := rows.Scan(&g.ID, &g.UserID, &g.Topic, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		var displayName *string
+		if err := rows.Scan(&g.ID, &g.UserID, &g.Topic, &displayName, &g.Muted, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan group: %w", err)
+		}
+		if displayName != nil {
+			g.DisplayName = *displayName
 		}
 		groups = append(groups, g)
 	}
@@ -1275,14 +1281,18 @@ func (s *PostgresStore) GetUserGroups(userID int64) ([]ArticleGroup, error) {
 
 func (s *PostgresStore) GetGroup(groupID int64) (*ArticleGroup, error) {
 	var g ArticleGroup
+	var displayName *string
 	err := s.db.QueryRow(
-		"SELECT id, user_id, topic, created_at, updated_at FROM article_groups WHERE id = ?", groupID,
-	).Scan(&g.ID, &g.UserID, &g.Topic, &g.CreatedAt, &g.UpdatedAt)
+		"SELECT id, user_id, topic, display_name, muted, created_at, updated_at FROM article_groups WHERE id = ?", groupID,
+	).Scan(&g.ID, &g.UserID, &g.Topic, &displayName, &g.Muted, &g.CreatedAt, &g.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get group: %w", err)
+	}
+	if displayName != nil {
+		g.DisplayName = *displayName
 	}
 	return &g, nil
 }
@@ -1314,7 +1324,7 @@ func (s *PostgresStore) UpdateGroupEmbedding(groupID int64, embedding []byte) er
 
 func (s *PostgresStore) GetGroupsWithEmbeddings(userID int64) ([]ArticleGroupWithEmbedding, error) {
 	rows, err := s.db.Query(
-		`SELECT id, user_id, topic, embedding, created_at, updated_at
+		`SELECT id, user_id, topic, display_name, muted, embedding, created_at, updated_at
 		 FROM article_groups
 		 WHERE user_id = ? AND embedding IS NOT NULL`, userID,
 	)
@@ -1326,8 +1336,12 @@ func (s *PostgresStore) GetGroupsWithEmbeddings(userID int64) ([]ArticleGroupWit
 	var groups []ArticleGroupWithEmbedding
 	for rows.Next() {
 		var g ArticleGroupWithEmbedding
-		if err := rows.Scan(&g.ID, &g.UserID, &g.Topic, &g.Embedding, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		var displayName *string
+		if err := rows.Scan(&g.ID, &g.UserID, &g.Topic, &displayName, &g.Muted, &g.Embedding, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan group with embedding: %w", err)
+		}
+		if displayName != nil {
+			g.DisplayName = *displayName
 		}
 		groups = append(groups, g)
 	}

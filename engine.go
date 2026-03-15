@@ -511,11 +511,13 @@ func (e *Engine) GetUserGroups(userID int64) ([]ArticleGroup, error) {
 	var result []ArticleGroup
 	for _, g := range groups {
 		ag := ArticleGroup{
-			ID:        g.ID,
-			UserID:    g.UserID,
-			Topic:     g.Topic,
-			CreatedAt: g.CreatedAt,
-			UpdatedAt: g.UpdatedAt,
+			ID:          g.ID,
+			UserID:      g.UserID,
+			Topic:       g.Topic,
+			DisplayName: g.DisplayName,
+			Muted:       g.Muted,
+			CreatedAt:   g.CreatedAt,
+			UpdatedAt:   g.UpdatedAt,
 		}
 		// Attach summary if available
 		if gs, err := e.store.GetGroupSummary(g.ID); err == nil && gs != nil {
@@ -551,6 +553,8 @@ func (e *Engine) GetGroupArticles(groupID int64) (*ArticleGroup, error) {
 		ag.ID = group.ID
 		ag.UserID = group.UserID
 		ag.Topic = group.Topic
+		ag.DisplayName = group.DisplayName
+		ag.Muted = group.Muted
 		ag.CreatedAt = group.CreatedAt
 		ag.UpdatedAt = group.UpdatedAt
 	}

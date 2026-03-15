@@ -66,11 +66,13 @@ type ReadState struct {
 }
 
 type ArticleGroup struct {
-	ID        int64
-	UserID    int64
-	Topic     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID          int64
+	UserID      int64
+	Topic       string
+	DisplayName string
+	Muted       bool
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // ArticleGroupWithEmbedding extends ArticleGroup with the raw centroid vector blob.
@@ -188,6 +190,9 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		"ALTER TABLE user_feeds ADD COLUMN user_title TEXT",
 		// Security check reasoning for audit/debugging.
 		"ALTER TABLE read_state ADD COLUMN security_reason TEXT",
+		// Article groups as virtual feeds: display name and mute support.
+		"ALTER TABLE article_groups ADD COLUMN display_name TEXT",
+		"ALTER TABLE article_groups ADD COLUMN muted BOOLEAN NOT NULL DEFAULT 0",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -1181,7 +1186,7 @@ func (s *SQLiteStore) GetGroupSummary(groupID int64) (*GroupSummary, error) {
 // Single-article groups are excluded as they represent ungrouped articles rather
 // than genuine topic clusters.
 func (s *SQLiteStore) GetUserGroups(userID int64) ([]ArticleGroup, error) {
-	query := `SELECT ag.id, ag.user_id, ag.topic, ag.created_at, ag.updated_at
+	query := `SELECT ag.id, ag.user_id, ag.topic, ag.display_name, ag.muted, ag.created_at, ag.updated_at
 		FROM article_groups ag
 		WHERE ag.user_id = ?
 		  AND (SELECT COUNT(*) FROM article_group_members WHERE group_id = ag.id) >= 2
@@ -1195,8 +1200,12 @@ func (s *SQLiteStore) GetUserGroups(userID int64) ([]ArticleGroup, error) {
 	var groups []ArticleGroup
 	for rows.Next() {
 		var g ArticleGroup
-		if err := rows.Scan(&g.ID, &g.UserID, &g.Topic, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		var displayName *string
+		if err := rows.Scan(&g.ID, &g.UserID, &g.Topic, &displayName, &g.Muted, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan group: %w", err)
+		}
+		if displayName != nil {
+			g.DisplayName = *displayName
 		}
 		groups = append(groups, g)
 	}
@@ -1206,15 +1215,19 @@ func (s *SQLiteStore) GetUserGroups(userID int64) ([]ArticleGroup, error) {
 // GetGroup returns a single article group by ID, regardless of user or member count.
 func (s *SQLiteStore) GetGroup(groupID int64) (*ArticleGroup, error) {
 	var g ArticleGroup
+	var displayName *string
 	err := s.db.QueryRow(
-		"SELECT id, user_id, topic, created_at, updated_at FROM article_groups WHERE id = ?",
+		"SELECT id, user_id, topic, display_name, muted, created_at, updated_at FROM article_groups WHERE id = ?",
 		groupID,
-	).Scan(&g.ID, &g.UserID, &g.Topic, &g.CreatedAt, &g.UpdatedAt)
+	).Scan(&g.ID, &g.UserID, &g.Topic, &displayName, &g.Muted, &g.CreatedAt, &g.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get group: %w", err)
+	}
+	if displayName != nil {
+		g.DisplayName = *displayName
 	}
 	return &g, nil
 }
@@ -1604,7 +1617,7 @@ func (s *SQLiteStore) UpdateGroupEmbedding(groupID int64, embedding []byte) erro
 // GetGroupsWithEmbeddings returns all groups for a user that have a centroid embedding.
 func (s *SQLiteStore) GetGroupsWithEmbeddings(userID int64) ([]ArticleGroupWithEmbedding, error) {
 	rows, err := s.db.Query(
-		`SELECT id, user_id, topic, embedding, created_at, updated_at
+		`SELECT id, user_id, topic, display_name, muted, embedding, created_at, updated_at
 		 FROM article_groups
 		 WHERE user_id = ? AND embedding IS NOT NULL`,
 		userID,
@@ -1617,8 +1630,12 @@ func (s *SQLiteStore) GetGroupsWithEmbeddings(userID int64) ([]ArticleGroupWithE
 	var groups []ArticleGroupWithEmbedding
 	for rows.Next() {
 		var g ArticleGroupWithEmbedding
-		if err := rows.Scan(&g.ID, &g.UserID, &g.Topic, &g.Embedding, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		var displayName *string
+		if err := rows.Scan(&g.ID, &g.UserID, &g.Topic, &displayName, &g.Muted, &g.Embedding, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan group with embedding: %w", err)
+		}
+		if displayName != nil {
+			g.DisplayName = *displayName
 		}
 		groups = append(groups, g)
 	}

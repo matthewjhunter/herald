@@ -97,12 +97,14 @@ CREATE TABLE IF NOT EXISTS article_summaries (
 CREATE INDEX IF NOT EXISTS idx_article_summaries_article ON article_summaries(article_id);
 
 CREATE TABLE IF NOT EXISTS article_groups (
-    id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    user_id    BIGINT NOT NULL DEFAULT 1,
-    topic      TEXT NOT NULL,
-    embedding  BYTEA,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id      BIGINT NOT NULL DEFAULT 1,
+    topic        TEXT NOT NULL,
+    embedding    BYTEA,
+    display_name TEXT,
+    muted        BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_article_groups_user ON article_groups(user_id);
