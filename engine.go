@@ -582,6 +582,58 @@ func (e *Engine) GetGroupArticles(groupID int64) (*ArticleGroup, error) {
 	return ag, nil
 }
 
+// GetUnreadGroupArticles returns unread articles belonging to a group.
+func (e *Engine) GetUnreadGroupArticles(userID, groupID int64, limit, offset int) ([]Article, error) {
+	articles, err := e.store.GetUnreadGroupArticles(userID, groupID, limit, offset, e.resolveFilterThreshold(userID))
+	if err != nil {
+		return nil, err
+	}
+	return articlesFromInternal(articles), nil
+}
+
+// GetGroupStats returns sidebar stats for non-muted groups with unread articles.
+func (e *Engine) GetGroupStats(userID int64) ([]GroupStats, error) {
+	internal, err := e.store.GetGroupStats(userID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]GroupStats, len(internal))
+	for i, gs := range internal {
+		result[i] = GroupStats{
+			GroupID:        gs.GroupID,
+			DisplayName:    gs.DisplayName,
+			UnreadArticles: gs.UnreadArticles,
+		}
+	}
+	return result, nil
+}
+
+// MarkGroupRead marks all articles in a group as read.
+func (e *Engine) MarkGroupRead(userID, groupID int64, before int64) error {
+	return e.store.MarkGroupArticlesRead(userID, groupID, before)
+}
+
+// MuteGroup mutes a group (hides from sidebar) and marks all its articles as read.
+func (e *Engine) MuteGroup(userID, groupID int64) error {
+	if err := e.store.SetGroupMuted(groupID, true); err != nil {
+		return err
+	}
+	return e.store.MarkGroupArticlesRead(userID, groupID, 0)
+}
+
+// DisbandGroup deletes a group; its articles return to their feeds.
+func (e *Engine) DisbandGroup(userID, groupID int64) error {
+	// Verify the group belongs to this user
+	group, err := e.store.GetGroup(groupID)
+	if err != nil {
+		return fmt.Errorf("get group: %w", err)
+	}
+	if group == nil || group.UserID != userID {
+		return fmt.Errorf("group not found or not owned by user")
+	}
+	return e.store.DisbandGroup(groupID)
+}
+
 // GenerateBriefing creates a text briefing from high-interest unread articles.
 func (e *Engine) GenerateBriefing(userID int64) (string, error) {
 	if e.ai == nil {
