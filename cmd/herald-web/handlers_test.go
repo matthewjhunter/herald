@@ -530,15 +530,6 @@ func TestHandleFeedsManage(t *testing.T) {
 	}
 }
 
-func TestHandleGroups(t *testing.T) {
-	tf := newTestFixtures(t)
-
-	rr := authedRequest(t, tf, "GET", "/groups", nil)
-	if rr.Code != http.StatusOK {
-		t.Errorf("status: got %d, want %d", rr.Code, http.StatusOK)
-	}
-}
-
 func TestHandleSettings(t *testing.T) {
 	tf := newTestFixtures(t)
 

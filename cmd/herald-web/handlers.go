@@ -156,7 +156,7 @@ func (h *handlers) init() {
 	shared := []string{"base.html", "nav.html", "settings_subnav.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "error.html"}
 
 	// Pages that get their own template tree.
-	pages := []string{"home.html", "feeds_manage.html", "groups.html", "group_detail.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_stats.html", "stats.html"}
+	pages := []string{"home.html", "feeds_manage.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_stats.html", "stats.html"}
 
 	h.pages = make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
@@ -229,14 +229,6 @@ type feedRow struct {
 	LastError            string
 	LastFetchedFmt       string
 	LastPostDateFmt      string
-}
-
-type groupsData struct {
-	Groups []herald.ArticleGroup
-}
-
-type groupDetailData struct {
-	Group *herald.ArticleGroup
 }
 
 type settingsData struct {
@@ -511,34 +503,6 @@ func (h *handlers) handleFeedsManage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.renderPage(w, r, "feeds_manage.html", data)
-}
-
-func (h *handlers) handleGroups(w http.ResponseWriter, r *http.Request) {
-	uid := userFromContext(r.Context()).ID
-
-	groups, err := h.engine.GetUserGroups(uid)
-	if err != nil {
-		h.renderError(w, http.StatusInternalServerError, "Failed to load groups")
-		return
-	}
-
-	h.renderPage(w, r, "groups.html", groupsData{Groups: groups})
-}
-
-func (h *handlers) handleGroupDetail(w http.ResponseWriter, r *http.Request) {
-	groupID, err := strconv.ParseInt(r.PathValue("groupID"), 10, 64)
-	if err != nil {
-		h.renderError(w, http.StatusBadRequest, "Invalid group ID")
-		return
-	}
-
-	group, err := h.engine.GetGroupArticles(groupID)
-	if err != nil {
-		h.renderError(w, http.StatusInternalServerError, "Failed to load group")
-		return
-	}
-
-	h.renderPage(w, r, "group_detail.html", groupDetailData{Group: group})
 }
 
 func (h *handlers) handleSettings(w http.ResponseWriter, r *http.Request) {
