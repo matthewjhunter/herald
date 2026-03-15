@@ -216,14 +216,15 @@ type feedManageData struct {
 }
 
 type feedRow struct {
-	FeedID          int64
-	Title           string
-	URL             string
-	TotalArticles   int
-	UnreadArticles  int
-	LastError       string
-	LastFetchedFmt  string
-	LastPostDateFmt string
+	FeedID               int64
+	Title                string
+	URL                  string
+	TotalArticles        int
+	UnreadArticles       int
+	UnsummarizedArticles int
+	LastError            string
+	LastFetchedFmt       string
+	LastPostDateFmt      string
 }
 
 type groupsData struct {
@@ -494,6 +495,7 @@ func (h *handlers) handleFeedsManage(w http.ResponseWriter, r *http.Request) {
 		if s, ok := statsMap[f.ID]; ok {
 			row.TotalArticles = s.TotalArticles
 			row.UnreadArticles = s.UnreadArticles
+			row.UnsummarizedArticles = s.UnsummarizedArticles
 			if s.LastPostDate != nil {
 				row.LastPostDateFmt = formatDate(s.LastPostDate)
 			}

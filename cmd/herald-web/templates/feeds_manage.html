@@ -87,8 +87,9 @@
                     <th data-col="0" class="sortable">Feed</th>
                     <th data-col="1" class="sortable" style="text-align:right;">Articles</th>
                     <th data-col="2" class="sortable" style="text-align:right;">Unread</th>
-                    <th data-col="3" class="sortable">Last Post</th>
-                    <th data-col="4" class="sortable">Last Fetched</th>
+                    <th data-col="3" class="sortable" style="text-align:right;">Unscored</th>
+                    <th data-col="4" class="sortable">Last Post</th>
+                    <th data-col="5" class="sortable">Last Fetched</th>
                     <th></th>
                 </tr>
             </thead>
@@ -102,6 +103,7 @@
                     </td>
                     <td style="text-align:right;">{{.TotalArticles}}</td>
                     <td style="text-align:right;">{{.UnreadArticles}}</td>
+                    <td style="text-align:right;">{{if .UnsummarizedArticles}}{{.UnsummarizedArticles}}{{else}}0{{end}}</td>
                     <td>{{.LastPostDateFmt}}</td>
                     <td>{{.LastFetchedFmt}}</td>
                     <td>
