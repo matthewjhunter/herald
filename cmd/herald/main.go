@@ -9,6 +9,7 @@ import (
 	"time"
 
 	embedding "github.com/matthewjhunter/go-embedding"
+	herald "github.com/matthewjhunter/herald"
 	"github.com/matthewjhunter/herald/internal/ai"
 	"github.com/matthewjhunter/herald/internal/feeds"
 	"github.com/matthewjhunter/herald/internal/output"
@@ -93,6 +94,13 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 					content = content + "\n\n" + article.LinkedContent
 				}
 
+				// Skip entire AI pipeline for articles too short to process meaningfully.
+				minLen := cfg.Summarization.MinArticleLength
+				if minLen > 0 && len(content) < minLen {
+					formatter.Warning("skipping article %d: content too short (%d < %d)", article.ID, len(content), minLen)
+					return
+				}
+
 				// 1+2. Summarize and security check concurrently — they are independent.
 				var (
 					aiSummary string
@@ -116,7 +124,10 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 						formatter.Warning("summarization failed for article %d: %v", article.ID, err)
 						return nil // non-fatal: scoring can proceed without summary
 					}
-					if err := store.UpdateArticleAISummary(userID, article.ID, aiSummary); err != nil {
+					if herald.LooksLikeGarbage(aiSummary) {
+						formatter.Warning("discarding garbled summary for article %d", article.ID)
+						aiSummary = ""
+					} else if err := store.UpdateArticleAISummary(userID, article.ID, aiSummary); err != nil {
 						formatter.Warning("failed to cache AI summary for %d: %v", article.ID, err)
 					}
 					return nil

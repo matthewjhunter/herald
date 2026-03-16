@@ -187,7 +187,13 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 					content = content + "\n\n" + article.LinkedContent
 				}
 
-				// Run summarization and security check concurrently — they are independent.
+				// Skip entire AI pipeline for articles too short to process meaningfully.
+				minLen := e.config.Summarization.MinArticleLength
+				if minLen > 0 && len(content) < minLen {
+					log.Printf("herald: skipping AI pipeline for article %d: content too short (%d < %d)", article.ID, len(content), minLen)
+					return
+				}
+
 				// Security check runs first — blocks summarization and curation
 				// of content that may contain prompt injection or adversarial text.
 				secResult, secErr := e.ai.SecurityCheck(ctx, userID, article.Title, content)
@@ -207,21 +213,18 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 				// Summarization and curation run after security passes.
 				existing, _ := e.store.GetArticleSummary(userID, article.ID)
 				if existing == nil {
-					minLen := e.config.Summarization.MinArticleLength
-					if minLen > 0 && len(content) < minLen {
-						log.Printf("herald: skipping summarization for article %d: content too short (%d < %d)", article.ID, len(content), minLen)
+					maxLen := e.config.Summarization.MaxSummaryLength
+					summary, err := e.ai.SummarizeArticle(ctx, userID, article.Title, content, maxLen)
+					if err != nil {
+						log.Printf("herald: summarization failed for article %d: %v", article.ID, err)
+					} else if LooksLikeGarbage(summary) {
+						log.Printf("herald: discarding garbled summary for article %d", article.ID)
+					} else if len(summary) > len(content) {
+						log.Printf("herald: discarding summary for article %d: summary longer than content (%d > %d)", article.ID, len(summary), len(content))
+					} else if maxLen > 0 && len(summary) > maxLen+maxLen*15/100 {
+						log.Printf("herald: discarding summary for article %d: exceeds max length by >15%% (%d > %d)", article.ID, len(summary), maxLen)
 					} else {
-						maxLen := e.config.Summarization.MaxSummaryLength
-						summary, err := e.ai.SummarizeArticle(ctx, userID, article.Title, content, maxLen)
-						if err != nil {
-							log.Printf("herald: summarization failed for article %d: %v", article.ID, err)
-						} else if len(summary) > len(content) {
-							log.Printf("herald: discarding summary for article %d: summary longer than content (%d > %d)", article.ID, len(summary), len(content))
-						} else if maxLen > 0 && len(summary) > maxLen+maxLen*15/100 {
-							log.Printf("herald: discarding summary for article %d: exceeds max length by >15%% (%d > %d)", article.ID, len(summary), maxLen)
-						} else {
-							e.store.UpdateArticleAISummary(userID, article.ID, summary) //nolint:errcheck
-						}
+						e.store.UpdateArticleAISummary(userID, article.ID, summary) //nolint:errcheck
 					}
 				}
 
@@ -1220,6 +1223,29 @@ func (e *Engine) GetArticleImageMap(articleID int64) (map[string]int64, error) {
 // GetArticleImage returns a cached image by its ID.
 func (e *Engine) GetArticleImage(imageID int64) (*storage.ArticleImage, error) {
 	return e.store.GetArticleImage(imageID)
+}
+
+// LooksLikeGarbage detects model output that contains training-data artifacts
+// or prompt injection patterns rather than a real summary. Small models under
+// load sometimes produce this kind of garbled output.
+func LooksLikeGarbage(summary string) bool {
+	lower := strings.ToLower(summary)
+	for _, pattern := range []string{
+		"### user:",
+		"### assistant:",
+		"### instruction:",
+		"### promotee",
+		"rgb-gpt",
+		"beating_json",
+		"followeddit.com",
+		"your assistant to solve",
+		"write an extensive researcher",
+	} {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 func feedFromInternal(f storage.Feed) Feed {
