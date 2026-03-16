@@ -83,7 +83,7 @@ func (p *AIProcessor) SecurityCheck(ctx context.Context, userID int64, title, co
 
 	data := map[string]interface{}{
 		"Title":   title,
-		"Content": truncateText(content, 2000),
+		"Content": truncateText(content, 3000),
 	}
 	prompt, err := ExecutePrompt(promptTemplate, data)
 	if err != nil {
