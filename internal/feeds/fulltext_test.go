@@ -13,6 +13,10 @@ import (
 	"github.com/matthewjhunter/herald/internal/storage"
 )
 
+func init() {
+	fullTextFetchDelay = 0 // disable random delays in tests
+}
+
 // --- isTruncated tests ---
 
 func TestIsTruncated_ShortContent(t *testing.T) {

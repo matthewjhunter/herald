@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -40,6 +41,10 @@ var emailRe = regexp.MustCompile(
 // treated as a truncated excerpt.
 const minTextChars = 500
 
+// fullTextFetchDelay controls the random delay range before each full-text
+// fetch. Set to 0 in tests to avoid unnecessary waits.
+var fullTextFetchDelay = 4000 // max additional milliseconds (base is 1s)
+
 // FetchFullTextForArticles fetches the full article body for any recently
 // ingested articles whose feed content appears truncated. Each article is
 // marked as processed (full_text_fetched = 1) exactly once regardless of
@@ -69,6 +74,18 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 			markDone()
 			continue
 		}
+		// Random delay (1-5s) before each fetch to avoid hammering sites
+		// immediately after loading the feed.
+		if fullTextFetchDelay > 0 {
+			delay := time.Duration(1000+rand.IntN(fullTextFetchDelay)) * time.Millisecond
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				markDone()
+				continue
+			}
+		}
+
 		// Link-blog posts (e.g. Instapundit) are intentionally short: just a
 		// linked headline. Fetch readability from the linked article, not the
 		// blog post page (which yields only boilerplate like affiliate notices).
