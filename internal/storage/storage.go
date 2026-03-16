@@ -23,6 +23,7 @@ type Feed struct {
 	URL               string
 	Title             string
 	Description       string
+	SiteURL           string // blog homepage URL, populated from feed metadata
 	LastFetched       *time.Time
 	LastError         *string
 	ETag              string
@@ -200,6 +201,8 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		// Article groups as virtual feeds: display name and mute support.
 		"ALTER TABLE article_groups ADD COLUMN display_name TEXT",
 		"ALTER TABLE article_groups ADD COLUMN muted BOOLEAN NOT NULL DEFAULT 0",
+		// Blog homepage URL, populated from feed metadata on each fetch.
+		"ALTER TABLE feeds ADD COLUMN site_url TEXT NOT NULL DEFAULT ''",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -261,15 +264,16 @@ func needsReadStateMigration(db *sql.DB) bool {
 }
 
 // scanFeeds scans a *sql.Rows result set into a []Feed slice.
-// Each row must select: id, url, title, description, last_fetched, last_error,
-// etag, last_modified, enabled, created_at, consecutive_errors, next_fetch_at, status.
+// Each row must select: id, url, title, description, site_url, last_fetched,
+// last_error, etag, last_modified, enabled, created_at, consecutive_errors,
+// next_fetch_at, status.
 func scanFeeds(rows *sql.Rows) ([]Feed, error) {
 	var feeds []Feed
 	for rows.Next() {
 		var f Feed
 		var etag, lastMod sql.NullString
 		if err := rows.Scan(
-			&f.ID, &f.URL, &f.Title, &f.Description, &f.LastFetched, &f.LastError,
+			&f.ID, &f.URL, &f.Title, &f.Description, &f.SiteURL, &f.LastFetched, &f.LastError,
 			&etag, &lastMod, &f.Enabled, &f.CreatedAt,
 			&f.ConsecutiveErrors, &f.NextFetchAt, &f.Status,
 		); err != nil {
@@ -657,7 +661,7 @@ func (s *SQLiteStore) AddFeed(url, title, description string) (int64, error) {
 // GetAllFeeds returns all active enabled feeds that are due for fetching.
 func (s *SQLiteStore) GetAllFeeds() ([]Feed, error) {
 	rows, err := s.db.Query(`
-		SELECT id, url, title, description, last_fetched, last_error, etag, last_modified,
+		SELECT id, url, title, description, site_url, last_fetched, last_error, etag, last_modified,
 		       enabled, created_at, consecutive_errors, next_fetch_at, status
 		FROM feeds
 		WHERE enabled = 1 AND status = 'active'
@@ -1382,7 +1386,7 @@ func (s *SQLiteStore) SubscribeUserToFeed(userID, feedID int64) error {
 // GetUserFeeds returns all feeds a user is subscribed to.
 func (s *SQLiteStore) GetUserFeeds(userID int64) ([]Feed, error) {
 	rows, err := s.db.Query(`
-		SELECT f.id, f.url, COALESCE(uf.user_title, f.title), f.description, f.last_fetched, f.last_error, f.etag,
+		SELECT f.id, f.url, COALESCE(uf.user_title, f.title), f.description, f.site_url, f.last_fetched, f.last_error, f.etag,
 		       f.last_modified, f.enabled, f.created_at,
 		       f.consecutive_errors, f.next_fetch_at, f.status
 		FROM feeds f
@@ -1400,7 +1404,7 @@ func (s *SQLiteStore) GetUserFeeds(userID int64) ([]Feed, error) {
 // to and that are due for fetching.
 func (s *SQLiteStore) GetAllSubscribedFeeds() ([]Feed, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT f.id, f.url, f.title, f.description, f.last_fetched, f.last_error,
+		SELECT DISTINCT f.id, f.url, f.title, f.description, f.site_url, f.last_fetched, f.last_error,
 		       f.etag, f.last_modified, f.enabled, f.created_at,
 		       f.consecutive_errors, f.next_fetch_at, f.status
 		FROM feeds f
@@ -1419,7 +1423,7 @@ func (s *SQLiteStore) GetAllSubscribedFeeds() ([]Feed, error) {
 // without any scheduling filter. Intended for export operations.
 func (s *SQLiteStore) GetAllActiveSubscribedFeeds() ([]Feed, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT f.id, f.url, f.title, f.description, f.last_fetched, f.last_error,
+		SELECT DISTINCT f.id, f.url, f.title, f.description, f.site_url, f.last_fetched, f.last_error,
 		       f.etag, f.last_modified, f.enabled, f.created_at,
 		       f.consecutive_errors, f.next_fetch_at, f.status
 		FROM feeds f
@@ -1534,6 +1538,15 @@ func (s *SQLiteStore) RenameUserFeed(userID, feedID int64, title string) error {
 	}
 	if err != nil {
 		return fmt.Errorf("failed to rename user feed: %w", err)
+	}
+	return nil
+}
+
+// UpdateFeedSiteURL stores the blog homepage URL for a feed.
+func (s *SQLiteStore) UpdateFeedSiteURL(feedID int64, siteURL string) error {
+	_, err := s.db.Exec("UPDATE feeds SET site_url = ? WHERE id = ?", siteURL, feedID)
+	if err != nil {
+		return fmt.Errorf("update feed site url: %w", err)
 	}
 	return nil
 }
@@ -2137,7 +2150,7 @@ func (s *SQLiteStore) GetAllFeedFavicons() ([]FeedFavicon, error) {
 // cached favicon, ordered by ID. Used to drive background favicon fetching.
 func (s *SQLiteStore) GetSubscribedFeedsWithoutFavicons() ([]Feed, error) {
 	const query = `
-		SELECT DISTINCT f.id, f.url, f.title, f.description,
+		SELECT DISTINCT f.id, f.url, f.title, f.description, f.site_url,
 		       f.last_fetched, f.last_error, f.etag, f.last_modified,
 		       f.enabled, f.created_at, f.consecutive_errors, f.next_fetch_at, f.status
 		FROM feeds f

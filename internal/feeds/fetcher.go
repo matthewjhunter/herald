@@ -368,6 +368,11 @@ func (f *Fetcher) FetchAllFeeds(ctx context.Context) (*FetchStats, error) {
 			f.store.UpdateFeedCacheHeaders(feed.ID, result.ETag, result.LastModified)
 		}
 
+		// Store blog homepage URL from feed metadata
+		if result.Feed.Link != "" && result.Feed.Link != feed.SiteURL {
+			f.store.UpdateFeedSiteURL(feed.ID, result.Feed.Link)
+		}
+
 		// Clear any previous error and update last_fetched
 		if err := f.store.ClearFeedError(feed.ID); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to update last_fetched for %s: %v\n", feed.URL, err)

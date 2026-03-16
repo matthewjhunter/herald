@@ -390,6 +390,11 @@ func (e *Engine) SubscribeFeed(userID int64, url, title string) error {
 		return fmt.Errorf("add feed: %w", err)
 	}
 
+	// Store blog homepage URL from feed metadata
+	if result.Feed.Link != "" {
+		e.store.UpdateFeedSiteURL(feedID, result.Feed.Link)
+	}
+
 	// Store the initial articles we already fetched
 	if stored, err := e.fetcher.StoreArticles(feedID, result.Feed); err == nil && stored > 0 {
 		log.Printf("herald: stored %d initial articles from %s", stored, url)
@@ -1190,6 +1195,7 @@ func feedFromInternal(f storage.Feed) Feed {
 		URL:         f.URL,
 		Title:       f.Title,
 		Description: f.Description,
+		SiteURL:     f.SiteURL,
 		LastFetched: f.LastFetched,
 		LastError:   f.LastError,
 		Enabled:     f.Enabled,

@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS feeds (
     url                TEXT NOT NULL UNIQUE,
     title              TEXT NOT NULL,
     description        TEXT,
+    site_url           TEXT NOT NULL DEFAULT '',
     last_fetched       TIMESTAMPTZ,
     last_error         TEXT,
     etag               TEXT,

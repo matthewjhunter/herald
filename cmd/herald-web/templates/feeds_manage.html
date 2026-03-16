@@ -1,5 +1,5 @@
 {{define "feed_title_display"}}
-<span>{{if .Title}}{{.Title}}{{else}}(untitled){{end}}</span>
+{{if .SiteURL}}<a href="{{.SiteURL}}" target="_blank" rel="noopener">{{if .Title}}{{.Title}}{{else}}(untitled){{end}}</a>{{else}}<span>{{if .Title}}{{.Title}}{{else}}(untitled){{end}}</span>{{end}}
 <button class="outline secondary" style="padding:0.1rem 0.35rem;font-size:0.75rem;margin-left:0.4rem;vertical-align:middle;"
         hx-get="/feeds/{{.FeedID}}/edit-title?title={{.Title}}"
         hx-target="#feed-title-cell-{{.FeedID}}"
