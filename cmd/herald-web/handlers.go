@@ -223,6 +223,7 @@ type feedRow struct {
 	FeedID               int64
 	Title                string
 	URL                  string
+	SiteURL              string
 	TotalArticles        int
 	UnreadArticles       int
 	UnsummarizedArticles int
@@ -481,9 +482,10 @@ func (h *handlers) handleFeedsManage(w http.ResponseWriter, r *http.Request) {
 	data := feedManageData{}
 	for _, f := range feeds {
 		row := feedRow{
-			FeedID: f.ID,
-			Title:  f.Title,
-			URL:    f.URL,
+			FeedID:  f.ID,
+			Title:   f.Title,
+			URL:     f.URL,
+			SiteURL: f.SiteURL,
 		}
 		if f.LastError != nil {
 			row.LastError = *f.LastError

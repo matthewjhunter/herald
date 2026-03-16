@@ -46,6 +46,7 @@ type Feed struct {
 	URL         string     `json:"url"`
 	Title       string     `json:"title"`
 	Description string     `json:"description"`
+	SiteURL     string     `json:"site_url,omitempty"`
 	LastFetched *time.Time `json:"last_fetched,omitempty"`
 	LastError   *string    `json:"last_error,omitempty"`
 	Enabled     bool       `json:"enabled"`

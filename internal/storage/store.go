@@ -63,6 +63,7 @@ type Store interface {
 	UpdateFeedLastFetched(feedID int64) error
 	RenameFeed(feedID int64, title string) error
 	RenameUserFeed(userID, feedID int64, title string) error
+	UpdateFeedSiteURL(feedID int64, siteURL string) error
 
 	// Articles
 	AddArticle(article *Article) (int64, error)

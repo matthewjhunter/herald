@@ -38,6 +38,7 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 		"ALTER TABLE read_state ADD COLUMN IF NOT EXISTS security_reason TEXT",
 		"ALTER TABLE article_groups ADD COLUMN IF NOT EXISTS display_name TEXT",
 		"ALTER TABLE article_groups ADD COLUMN IF NOT EXISTS muted BOOLEAN NOT NULL DEFAULT FALSE",
+		"ALTER TABLE feeds ADD COLUMN IF NOT EXISTS site_url TEXT NOT NULL DEFAULT ''",
 	}
 	for _, m := range pgMigrations {
 		if _, err := db.Exec(m); err != nil {
@@ -497,7 +498,7 @@ func (s *PostgresStore) AddFeed(url, title, description string) (int64, error) {
 
 func (s *PostgresStore) GetAllFeeds() ([]Feed, error) {
 	rows, err := s.db.Query(`
-		SELECT id, url, title, description, last_fetched, last_error, etag, last_modified,
+		SELECT id, url, title, description, site_url, last_fetched, last_error, etag, last_modified,
 		       enabled, created_at, consecutive_errors, next_fetch_at, status
 		FROM feeds
 		WHERE enabled = TRUE AND status = 'active'
@@ -594,6 +595,14 @@ func (s *PostgresStore) RenameUserFeed(userID, feedID int64, title string) error
 	}
 	if err != nil {
 		return fmt.Errorf("failed to rename user feed: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) UpdateFeedSiteURL(feedID int64, siteURL string) error {
+	_, err := s.db.Exec("UPDATE feeds SET site_url = ? WHERE id = ?", siteURL, feedID)
+	if err != nil {
+		return fmt.Errorf("update feed site url: %w", err)
 	}
 	return nil
 }
@@ -1528,7 +1537,7 @@ func (s *PostgresStore) GetAllFeedFavicons() ([]FeedFavicon, error) {
 
 func (s *PostgresStore) GetSubscribedFeedsWithoutFavicons() ([]Feed, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT f.id, f.url, f.title, f.description,
+		SELECT DISTINCT f.id, f.url, f.title, f.description, f.site_url,
 		       f.last_fetched, f.last_error, f.etag, f.last_modified,
 		       f.enabled, f.created_at, f.consecutive_errors, f.next_fetch_at, f.status
 		FROM feeds f
@@ -1558,7 +1567,7 @@ func (s *PostgresStore) SubscribeUserToFeed(userID, feedID int64) error {
 
 func (s *PostgresStore) GetUserFeeds(userID int64) ([]Feed, error) {
 	rows, err := s.db.Query(`
-		SELECT f.id, f.url, COALESCE(uf.user_title, f.title), f.description, f.last_fetched, f.last_error, f.etag,
+		SELECT f.id, f.url, COALESCE(uf.user_title, f.title), f.description, f.site_url, f.last_fetched, f.last_error, f.etag,
 		       f.last_modified, f.enabled, f.created_at,
 		       f.consecutive_errors, f.next_fetch_at, f.status
 		FROM feeds f
@@ -1574,7 +1583,7 @@ func (s *PostgresStore) GetUserFeeds(userID int64) ([]Feed, error) {
 
 func (s *PostgresStore) GetAllSubscribedFeeds() ([]Feed, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT f.id, f.url, f.title, f.description, f.last_fetched, f.last_error,
+		SELECT DISTINCT f.id, f.url, f.title, f.description, f.site_url, f.last_fetched, f.last_error,
 		       f.etag, f.last_modified, f.enabled, f.created_at,
 		       f.consecutive_errors, f.next_fetch_at, f.status
 		FROM feeds f
@@ -1591,7 +1600,7 @@ func (s *PostgresStore) GetAllSubscribedFeeds() ([]Feed, error) {
 
 func (s *PostgresStore) GetAllActiveSubscribedFeeds() ([]Feed, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT f.id, f.url, f.title, f.description, f.last_fetched, f.last_error,
+		SELECT DISTINCT f.id, f.url, f.title, f.description, f.site_url, f.last_fetched, f.last_error,
 		       f.etag, f.last_modified, f.enabled, f.created_at,
 		       f.consecutive_errors, f.next_fetch_at, f.status
 		FROM feeds f
