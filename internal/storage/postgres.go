@@ -40,6 +40,7 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 		"ALTER TABLE article_groups ADD COLUMN IF NOT EXISTS muted BOOLEAN NOT NULL DEFAULT FALSE",
 		"ALTER TABLE feeds ADD COLUMN IF NOT EXISTS site_url TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE group_summaries ADD COLUMN IF NOT EXISTS headline TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE article_groups ADD COLUMN IF NOT EXISTS embedding_model TEXT NOT NULL DEFAULT ''",
 	}
 	for _, m := range pgMigrations {
 		if _, err := db.Exec(m); err != nil {
@@ -1428,19 +1429,19 @@ func (s *PostgresStore) UpdateGroupDisplayName(groupID int64, displayName string
 	return nil
 }
 
-func (s *PostgresStore) UpdateGroupEmbedding(groupID int64, embedding []byte) error {
-	_, err := s.db.Exec("UPDATE article_groups SET embedding = ? WHERE id = ?", embedding, groupID)
+func (s *PostgresStore) UpdateGroupEmbedding(groupID int64, embedding []byte, model string) error {
+	_, err := s.db.Exec("UPDATE article_groups SET embedding = ?, embedding_model = ? WHERE id = ?", embedding, model, groupID)
 	if err != nil {
 		return fmt.Errorf("update group embedding: %w", err)
 	}
 	return nil
 }
 
-func (s *PostgresStore) GetGroupsWithEmbeddings(userID int64) ([]ArticleGroupWithEmbedding, error) {
+func (s *PostgresStore) GetGroupsWithEmbeddings(userID int64, model string) ([]ArticleGroupWithEmbedding, error) {
 	rows, err := s.db.Query(
 		`SELECT id, user_id, topic, display_name, muted, embedding, created_at, updated_at
 		 FROM article_groups
-		 WHERE user_id = ? AND embedding IS NOT NULL`, userID,
+		 WHERE user_id = ? AND embedding IS NOT NULL AND embedding_model = ?`, userID, model,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get groups with embeddings: %w", err)

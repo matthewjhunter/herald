@@ -133,8 +133,8 @@ type Store interface {
 	UpdateGroupDisplayName(groupID int64, displayName string) error
 
 	// Embedding-based group operations
-	UpdateGroupEmbedding(groupID int64, embedding []byte) error
-	GetGroupsWithEmbeddings(userID int64) ([]ArticleGroupWithEmbedding, error)
+	UpdateGroupEmbedding(groupID int64, embedding []byte, model string) error
+	GetGroupsWithEmbeddings(userID int64, model string) ([]ArticleGroupWithEmbedding, error)
 	GetGroupEmbedding(groupID int64) ([]byte, error)
 	GetGroupArticleCount(groupID int64) (int, error)
 	UpdateGroupTopic(groupID int64, topic string) error

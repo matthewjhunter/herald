@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS article_groups (
     user_id INTEGER NOT NULL DEFAULT 1,
     topic TEXT NOT NULL,
     embedding BLOB,
+    embedding_model TEXT NOT NULL DEFAULT '',
     display_name TEXT,
     muted BOOLEAN NOT NULL DEFAULT 0,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

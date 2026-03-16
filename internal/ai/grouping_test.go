@@ -47,7 +47,7 @@ func newMockStore() *mockStore {
 	}
 }
 
-func (s *mockStore) GetGroupsWithEmbeddings(_ int64) ([]storage.ArticleGroupWithEmbedding, error) {
+func (s *mockStore) GetGroupsWithEmbeddings(_ int64, _ string) ([]storage.ArticleGroupWithEmbedding, error) {
 	return s.groups, nil
 }
 
@@ -55,7 +55,7 @@ func (s *mockStore) GetGroupEmbedding(groupID int64) ([]byte, error) {
 	return s.embeddings[groupID], nil
 }
 
-func (s *mockStore) UpdateGroupEmbedding(groupID int64, emb []byte) error {
+func (s *mockStore) UpdateGroupEmbedding(groupID int64, emb []byte, _ string) error {
 	s.embeddings[groupID] = emb
 	return nil
 }
@@ -89,7 +89,7 @@ func TestMatchArticleToGroup_AboveThreshold(t *testing.T) {
 		},
 	}
 
-	matcher := NewGroupMatcher(embedder, store, 0.75)
+	matcher := NewGroupMatcher(embedder, store, "test", 0.75)
 	matchedID, artEmb, err := matcher.MatchArticleToGroup(context.Background(), 1, "Test Article", "Test summary")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -125,7 +125,7 @@ func TestMatchArticleToGroup_BelowThreshold(t *testing.T) {
 		},
 	}
 
-	matcher := NewGroupMatcher(embedder, store, 0.75)
+	matcher := NewGroupMatcher(embedder, store, "test", 0.75)
 	matchedID, artEmb, err := matcher.MatchArticleToGroup(context.Background(), 1, "Unrelated Article", "Different topic")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -149,7 +149,7 @@ func TestMatchArticleToGroup_NoGroups(t *testing.T) {
 	store := newMockStore()
 	// No groups
 
-	matcher := NewGroupMatcher(embedder, store, 0.75)
+	matcher := NewGroupMatcher(embedder, store, "test", 0.75)
 	matchedID, artEmb, err := matcher.MatchArticleToGroup(context.Background(), 1, "Article", "Summary")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -187,7 +187,7 @@ func TestMatchArticleToGroup_BestMatch(t *testing.T) {
 		},
 	}
 
-	matcher := NewGroupMatcher(embedder, store, 0.75)
+	matcher := NewGroupMatcher(embedder, store, "test", 0.75)
 	matchedID, _, err := matcher.MatchArticleToGroup(context.Background(), 1, "Article", "Summary")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -205,7 +205,7 @@ func TestUpdateGroupCentroid_FirstArticle(t *testing.T) {
 	store.articleCounts[1] = 1 // just added the first article
 
 	embedder := &mockEmbedder{model: "test"}
-	matcher := NewGroupMatcher(embedder, store, 0.75)
+	matcher := NewGroupMatcher(embedder, store, "test", 0.75)
 
 	vec := []float32{1, 2, 3}
 	if err := matcher.UpdateGroupCentroid(context.Background(), 1, vec); err != nil {
@@ -230,7 +230,7 @@ func TestUpdateGroupCentroid_Incremental(t *testing.T) {
 	store.articleCounts[1] = 3 // 2 old + 1 newly added
 
 	embedder := &mockEmbedder{model: "test"}
-	matcher := NewGroupMatcher(embedder, store, 0.75)
+	matcher := NewGroupMatcher(embedder, store, "test", 0.75)
 
 	// New article embedding
 	newVec := []float32{0, 1, 0}

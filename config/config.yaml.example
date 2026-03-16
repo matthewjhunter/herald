@@ -15,6 +15,13 @@ ollama:
   # Curation model - use Llama 3.2 for neutral interest scoring
   curation_model: llama3.2
 
+  # Embedding model for article grouping similarity.
+  # IMPORTANT: Changing this model invalidates all existing group centroids.
+  # Stale centroids from the previous model are automatically ignored and
+  # will rebuild as new articles are processed. If you need to force a full
+  # rebuild, clear the embedding column: UPDATE article_groups SET embedding = NULL;
+  embedding_model: nomic-embed-text
+
 majordomo:
   # Enable formatted notification output (for future Majordomo integration)
   enabled: true

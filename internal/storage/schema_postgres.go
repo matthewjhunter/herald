@@ -101,8 +101,9 @@ CREATE TABLE IF NOT EXISTS article_groups (
     id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     user_id      BIGINT NOT NULL DEFAULT 1,
     topic        TEXT NOT NULL,
-    embedding    BYTEA,
-    display_name TEXT,
+    embedding       BYTEA,
+    embedding_model TEXT NOT NULL DEFAULT '',
+    display_name    TEXT,
     muted        BOOLEAN NOT NULL DEFAULT FALSE,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()

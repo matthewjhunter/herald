@@ -206,6 +206,8 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		"ALTER TABLE feeds ADD COLUMN site_url TEXT NOT NULL DEFAULT ''",
 		// Group summary headline for display above narrative.
 		"ALTER TABLE group_summaries ADD COLUMN headline TEXT NOT NULL DEFAULT ''",
+		// Track which embedding model produced each group centroid.
+		"ALTER TABLE article_groups ADD COLUMN embedding_model TEXT NOT NULL DEFAULT ''",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -1750,21 +1752,22 @@ func (s *SQLiteStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, offse
 }
 
 // UpdateGroupEmbedding stores or updates the centroid embedding for a group.
-func (s *SQLiteStore) UpdateGroupEmbedding(groupID int64, embedding []byte) error {
-	_, err := s.db.Exec("UPDATE article_groups SET embedding = ? WHERE id = ?", embedding, groupID)
+func (s *SQLiteStore) UpdateGroupEmbedding(groupID int64, embedding []byte, model string) error {
+	_, err := s.db.Exec("UPDATE article_groups SET embedding = ?, embedding_model = ? WHERE id = ?", embedding, model, groupID)
 	if err != nil {
 		return fmt.Errorf("update group embedding: %w", err)
 	}
 	return nil
 }
 
-// GetGroupsWithEmbeddings returns all groups for a user that have a centroid embedding.
-func (s *SQLiteStore) GetGroupsWithEmbeddings(userID int64) ([]ArticleGroupWithEmbedding, error) {
+// GetGroupsWithEmbeddings returns groups for a user that have a centroid embedding
+// produced by the specified model. Embeddings from other models are ignored.
+func (s *SQLiteStore) GetGroupsWithEmbeddings(userID int64, model string) ([]ArticleGroupWithEmbedding, error) {
 	rows, err := s.db.Query(
 		`SELECT id, user_id, topic, display_name, muted, embedding, created_at, updated_at
 		 FROM article_groups
-		 WHERE user_id = ? AND embedding IS NOT NULL`,
-		userID,
+		 WHERE user_id = ? AND embedding IS NOT NULL AND embedding_model = ?`,
+		userID, model,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get groups with embeddings: %w", err)

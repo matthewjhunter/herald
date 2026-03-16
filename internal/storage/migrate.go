@@ -636,23 +636,24 @@ func migrateArticleSummaries(ctx context.Context, src *tracedDB, dst Store, user
 
 func migrateArticleGroups(ctx context.Context, src *tracedDB, dst Store, userMap, articleMap, groupMap map[int64]int64, stats *MigrateStats) error {
 	rows, err := src.QueryContext(ctx,
-		"SELECT id, user_id, topic, embedding FROM article_groups ORDER BY id")
+		"SELECT id, user_id, topic, embedding, COALESCE(embedding_model, '') FROM article_groups ORDER BY id")
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 
 	type groupRow struct {
-		srcID     int64
-		srcUserID int64
-		topic     string
-		embedding []byte
+		srcID          int64
+		srcUserID      int64
+		topic          string
+		embedding      []byte
+		embeddingModel string
 	}
 
 	var groups []groupRow
 	for rows.Next() {
 		var g groupRow
-		if err := rows.Scan(&g.srcID, &g.srcUserID, &g.topic, &g.embedding); err != nil {
+		if err := rows.Scan(&g.srcID, &g.srcUserID, &g.topic, &g.embedding, &g.embeddingModel); err != nil {
 			return err
 		}
 		groups = append(groups, g)
@@ -674,7 +675,7 @@ func migrateArticleGroups(ctx context.Context, src *tracedDB, dst Store, userMap
 		groupMap[g.srcID] = dstGroupID
 
 		if len(g.embedding) > 0 {
-			if err := dst.UpdateGroupEmbedding(dstGroupID, g.embedding); err != nil {
+			if err := dst.UpdateGroupEmbedding(dstGroupID, g.embedding, g.embeddingModel); err != nil {
 				return fmt.Errorf("UpdateGroupEmbedding %d: %w", dstGroupID, err)
 			}
 		}

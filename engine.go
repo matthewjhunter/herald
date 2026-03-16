@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	embedding "github.com/matthewjhunter/go-embedding"
 	"github.com/matthewjhunter/herald/internal/ai"
 	"github.com/matthewjhunter/herald/internal/feeds"
 	"github.com/matthewjhunter/herald/internal/storage"
@@ -21,12 +22,13 @@ import (
 // Engine is the public API for herald's content processing pipeline.
 // It wraps the internal storage, feed fetcher, and AI processor.
 type Engine struct {
-	store       storage.Store
-	fetcher     *feeds.Fetcher
-	ai          *ai.AIProcessor
-	config      *storage.Config
-	maxParallel int          // max concurrent AI pipeline workers (1 = serial)
-	mu          sync.RWMutex // protects config fields modified at runtime
+	store        storage.Store
+	fetcher      *feeds.Fetcher
+	ai           *ai.AIProcessor
+	groupMatcher *ai.GroupMatcher
+	config       *storage.Config
+	maxParallel  int          // max concurrent AI pipeline workers (1 = serial)
+	mu           sync.RWMutex // protects config fields modified at runtime
 }
 
 // NewEngine creates a herald content engine backed by the given SQLite database.
@@ -84,12 +86,19 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		maxParallel = 1
 	}
 
+	var groupMatcher *ai.GroupMatcher
+	if !cfg.ReadOnly && cfg.OllamaBaseURL != "" {
+		embedder := embedding.NewOpenAIEmbedder(cfg.OllamaBaseURL, "", storeCfg.Ollama.EmbeddingModel)
+		groupMatcher = ai.NewGroupMatcher(embedder, store, storeCfg.Ollama.EmbeddingModel, storeCfg.Grouping.SimilarityThreshold)
+	}
+
 	e := &Engine{
-		store:       store,
-		fetcher:     fetcher,
-		ai:          processor,
-		config:      storeCfg,
-		maxParallel: maxParallel,
+		store:        store,
+		fetcher:      fetcher,
+		ai:           processor,
+		groupMatcher: groupMatcher,
+		config:       storeCfg,
+		maxParallel:  maxParallel,
 	}
 
 	// Overlay DB-stored preferences onto config (DB takes precedence over CLI flags).
@@ -226,26 +235,52 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 				interestScore := curResult.InterestScore
 				e.store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning) //nolint:errcheck
 
-				// Group management
-				userGroups, _ := e.store.GetUserGroups(userID)
-				groupResult, _ := e.ai.FindRelatedGroups(ctx, userID, article, userGroups, e.store)
-				if groupResult != nil && groupResult.IsRelated && len(groupResult.ExistingGroups) > 0 {
-					gID := groupResult.ExistingGroups[0]
-					e.store.AddArticleToGroup(gID, article.ID) //nolint:errcheck
-					// If the group is muted, immediately mark the article as read
-					if muted, err := e.store.IsGroupMuted(gID); err == nil && muted {
-						e.store.UpdateReadState(userID, article.ID, true, nil, nil, nil) //nolint:errcheck
+				// Group management: embed article, use similarity as pre-filter,
+				// then call LLM only when embedding suggests a possible match.
+				var articleEmb []float32
+				if e.groupMatcher != nil {
+					articleEmb, _ = e.groupMatcher.EmbedArticle(ctx, article.Title, content)
+				}
+
+				// Pre-filter: skip LLM grouping call if no existing group is
+				// even remotely similar. This prevents nonsensical matches.
+				skipLLM := false
+				if articleEmb != nil && e.groupMatcher != nil {
+					bestSim, _ := e.groupMatcher.BestGroupSimilarity(userID, articleEmb)
+					if bestSim < e.config.Grouping.PreFilterThreshold {
+						skipLLM = true
 					}
-				} else if groupResult != nil && groupResult.CreateGroup {
-					topic := article.Title
-					if len(topic) > 100 {
-						topic = topic[:100]
-					}
-					displayName := strings.Trim(groupResult.DisplayName, "\"'")
-					if newGroupID, err := e.store.CreateArticleGroup(userID, topic); err == nil {
-						e.store.AddArticleToGroup(newGroupID, article.ID) //nolint:errcheck
-						if displayName != "" {
-							e.store.UpdateGroupDisplayName(newGroupID, displayName) //nolint:errcheck
+				}
+
+				if !skipLLM {
+					userGroups, _ := e.store.GetUserGroups(userID)
+					groupResult, _ := e.ai.FindRelatedGroups(ctx, userID, article, userGroups, e.store)
+					if groupResult != nil && groupResult.IsRelated && len(groupResult.ExistingGroups) > 0 {
+						gID := groupResult.ExistingGroups[0]
+						e.store.AddArticleToGroup(gID, article.ID) //nolint:errcheck
+						// Update group centroid with this article's embedding
+						if articleEmb != nil && e.groupMatcher != nil {
+							e.groupMatcher.UpdateGroupCentroid(ctx, gID, articleEmb) //nolint:errcheck
+						}
+						// If the group is muted, immediately mark the article as read
+						if muted, err := e.store.IsGroupMuted(gID); err == nil && muted {
+							e.store.UpdateReadState(userID, article.ID, true, nil, nil, nil) //nolint:errcheck
+						}
+					} else if groupResult != nil && groupResult.CreateGroup {
+						topic := article.Title
+						if len(topic) > 100 {
+							topic = topic[:100]
+						}
+						displayName := strings.Trim(groupResult.DisplayName, "\"'")
+						if newGroupID, err := e.store.CreateArticleGroup(userID, topic); err == nil {
+							e.store.AddArticleToGroup(newGroupID, article.ID) //nolint:errcheck
+							if displayName != "" {
+								e.store.UpdateGroupDisplayName(newGroupID, displayName) //nolint:errcheck
+							}
+							// Set initial centroid for the new group
+							if articleEmb != nil {
+								e.store.UpdateGroupEmbedding(newGroupID, embedding.EncodeFloat32s(articleEmb), e.groupMatcher.Model()) //nolint:errcheck
+							}
 						}
 					}
 				}

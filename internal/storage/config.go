@@ -44,6 +44,7 @@ type Config struct {
 
 	Grouping struct {
 		SimilarityThreshold float64 `yaml:"similarity_threshold"`
+		PreFilterThreshold  float64 `yaml:"pre_filter_threshold"`
 	} `yaml:"grouping"`
 
 	Temperatures struct {
@@ -63,11 +64,12 @@ func DefaultConfig() *Config {
 	cfg.Ollama.BaseURL = "http://localhost:11434"
 	cfg.Ollama.SecurityModel = "gemma3:4b"
 	cfg.Ollama.CurationModel = "llama3"
-	cfg.Ollama.EmbeddingModel = "embeddinggemma"
+	cfg.Ollama.EmbeddingModel = "nomic-embed-text"
 	cfg.Ollama.Timeout = 2 * time.Minute
 	cfg.Summarization.MinArticleLength = 200
 	cfg.Summarization.MaxSummaryLength = 500
 	cfg.Grouping.SimilarityThreshold = 0.75
+	cfg.Grouping.PreFilterThreshold = 0.3
 	cfg.Thresholds.InterestScore = 8.0
 	cfg.Thresholds.SecurityScore = 7.0
 	// Default temperatures (can be overridden in config)

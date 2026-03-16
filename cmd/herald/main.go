@@ -40,7 +40,7 @@ var (
 // Group summary updates are deferred until all batches complete.
 func processArticlesForUser(ctx context.Context, store storage.Store, processor *ai.AIProcessor, formatter *output.Formatter, appCfg *storage.Config, userID int64) (int, error) {
 	embedder := embedding.NewOpenAIEmbedder(appCfg.Ollama.BaseURL, appCfg.Ollama.APIKey, appCfg.Ollama.EmbeddingModel)
-	groupMatcher := ai.NewGroupMatcher(embedder, store, appCfg.Grouping.SimilarityThreshold)
+	groupMatcher := ai.NewGroupMatcher(embedder, store, appCfg.Ollama.EmbeddingModel, appCfg.Grouping.SimilarityThreshold)
 
 	maxParallel := appCfg.Ollama.MaxParallel
 	if maxParallel < 1 {
@@ -175,27 +175,10 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 							}
 						}
 					}
-				} else {
-					topic := article.Title
-					if len(topic) > 100 {
-						topic = topic[:100]
-					}
-					newGroupID, err := store.CreateArticleGroup(userID, topic)
-					if err != nil {
-						formatter.Warning("failed to create group: %v", err)
-						return
-					}
-					if err := store.AddArticleToGroup(newGroupID, article.ID); err != nil {
-						formatter.Warning("failed to add article to new group: %v", err)
-					} else {
-						updatedGroups[newGroupID] = true
-					}
-					if articleEmb != nil {
-						if err := store.UpdateGroupEmbedding(newGroupID, embedding.EncodeFloat32s(articleEmb)); err != nil {
-							formatter.Warning("failed to set initial group centroid: %v", err)
-						}
-					}
 				}
+				// No group matched — article remains ungrouped.
+				// Groups are only created when the LLM (engine pipeline)
+				// explicitly identifies a significant developing story.
 			}(article)
 		}
 
