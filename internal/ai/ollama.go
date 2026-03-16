@@ -83,7 +83,7 @@ func (p *AIProcessor) SecurityCheck(ctx context.Context, userID int64, title, co
 
 	data := map[string]interface{}{
 		"Title":   title,
-		"Content": truncateText(content, 3000),
+		"Content": truncateText(content, maxPromptContentLen),
 	}
 	prompt, err := ExecutePrompt(promptTemplate, data)
 	if err != nil {
@@ -130,7 +130,7 @@ func (p *AIProcessor) CurateArticle(ctx context.Context, userID int64, title, co
 
 	data := map[string]interface{}{
 		"Title":    title,
-		"Content":  truncateText(content, 2000),
+		"Content":  truncateText(content, maxPromptContentLen),
 		"Keywords": keywordStr,
 	}
 	prompt, err := ExecutePrompt(promptTemplate, data)
@@ -169,6 +169,12 @@ func (p *AIProcessor) ListModels(ctx context.Context) ([]string, error) {
 }
 
 // truncateText truncates text to maxLen characters.
+// maxPromptContentLen is the maximum number of characters of article content
+// sent to any AI model. All prompt stages (security, summarization, curation)
+// must use the same limit so the security check screens everything downstream
+// models will see.
+const maxPromptContentLen = 3000
+
 func truncateText(text string, maxLen int) string {
 	if len(text) <= maxLen {
 		return text

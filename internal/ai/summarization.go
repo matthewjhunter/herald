@@ -19,7 +19,7 @@ func (p *AIProcessor) SummarizeArticle(ctx context.Context, userID int64, title,
 
 	data := map[string]interface{}{
 		"Title":            title,
-		"Content":          truncateText(content, 3000),
+		"Content":          truncateText(content, maxPromptContentLen),
 		"MaxSummaryLength": maxSummaryLength,
 	}
 	prompt, err := ExecutePrompt(promptTemplate, data)
