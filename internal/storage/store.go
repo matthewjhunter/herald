@@ -118,7 +118,7 @@ type Store interface {
 	CreateArticleGroup(userID int64, topic string) (int64, error)
 	AddArticleToGroup(groupID, articleID int64) error
 	GetGroupArticles(groupID int64) ([]Article, error)
-	UpdateGroupSummary(groupID int64, summary string, articleCount int, maxInterestScore *float64) error
+	UpdateGroupSummary(groupID int64, headline, summary string, articleCount int, maxInterestScore *float64) error
 	GetGroupSummary(groupID int64) (*GroupSummary, error)
 	GetUserGroups(userID int64) ([]ArticleGroup, error)
 	GetGroup(groupID int64) (*ArticleGroup, error)

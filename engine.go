@@ -578,6 +578,7 @@ func (e *Engine) GetGroupArticles(groupID int64) (*ArticleGroup, error) {
 
 	// Attach summary
 	if gs, err := e.store.GetGroupSummary(groupID); err == nil && gs != nil {
+		ag.Headline = gs.Headline
 		ag.Summary = gs.Summary
 		if gs.MaxInterestScore != nil {
 			ag.MaxScore = *gs.MaxInterestScore

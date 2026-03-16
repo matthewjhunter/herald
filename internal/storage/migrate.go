@@ -707,19 +707,20 @@ func migrateArticleGroups(ctx context.Context, src *tracedDB, dst Store, userMap
 		}
 
 		// Group summary
+		var headline string
 		var summary string
 		var articleCount int
 		var maxScore sql.NullFloat64
 		err = src.QueryRowContext(ctx,
-			"SELECT summary, article_count, max_interest_score FROM group_summaries WHERE group_id = ?",
+			"SELECT COALESCE(headline, ''), summary, article_count, max_interest_score FROM group_summaries WHERE group_id = ?",
 			g.srcID,
-		).Scan(&summary, &articleCount, &maxScore)
+		).Scan(&headline, &summary, &articleCount, &maxScore)
 		if err == nil {
 			var maxScorePtr *float64
 			if maxScore.Valid {
 				maxScorePtr = &maxScore.Float64
 			}
-			if err := dst.UpdateGroupSummary(dstGroupID, summary, articleCount, maxScorePtr); err != nil {
+			if err := dst.UpdateGroupSummary(dstGroupID, headline, summary, articleCount, maxScorePtr); err != nil {
 				return fmt.Errorf("UpdateGroupSummary %d: %w", dstGroupID, err)
 			}
 		}

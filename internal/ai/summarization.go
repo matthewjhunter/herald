@@ -47,14 +47,20 @@ type GroupSummaryInput struct {
 	Score     float64
 }
 
-// GenerateGroupSummary creates a coherent narrative from multiple related articles.
-func (p *AIProcessor) GenerateGroupSummary(ctx context.Context, userID int64, topic string, articles []GroupSummaryInput) (string, error) {
+// GroupSummaryResult holds the headline and narrative from group summarization.
+type GroupSummaryResult struct {
+	Headline string `json:"headline"`
+	Summary  string `json:"summary"`
+}
+
+// GenerateGroupSummary creates a headline and coherent narrative from multiple related articles.
+func (p *AIProcessor) GenerateGroupSummary(ctx context.Context, userID int64, topic string, articles []GroupSummaryInput) (*GroupSummaryResult, error) {
 	if len(articles) == 0 {
-		return "", fmt.Errorf("no articles to summarize")
+		return nil, fmt.Errorf("no articles to summarize")
 	}
 
 	if len(articles) == 1 {
-		return articles[0].AISummary, nil
+		return &GroupSummaryResult{Summary: articles[0].AISummary}, nil
 	}
 
 	var articleList []string
@@ -65,16 +71,16 @@ func (p *AIProcessor) GenerateGroupSummary(ctx context.Context, userID int64, to
 
 	promptTemplate, err := p.promptLoader.GetPrompt(userID, PromptTypeGroupSummary)
 	if err != nil {
-		return "", fmt.Errorf("failed to load group summary prompt: %w", err)
+		return nil, fmt.Errorf("failed to load group summary prompt: %w", err)
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Topic":    topic,
 		"Articles": strings.Join(articleList, "\n\n"),
 	}
 	prompt, err := ExecutePrompt(promptTemplate, data)
 	if err != nil {
-		return "", fmt.Errorf("failed to render group summary prompt: %w", err)
+		return nil, fmt.Errorf("failed to render group summary prompt: %w", err)
 	}
 
 	temperature := p.promptLoader.GetTemperature(userID, PromptTypeGroupSummary)
@@ -84,10 +90,19 @@ func (p *AIProcessor) GenerateGroupSummary(ctx context.Context, userID int64, to
 
 	result, err := p.client.generate(callCtx, p.curationModel, prompt, temperature)
 	if err != nil {
-		return "", fmt.Errorf("group summarization failed: %w", err)
+		return nil, fmt.Errorf("group summarization failed: %w", err)
 	}
 
-	return strings.TrimSpace(result), nil
+	result = strings.TrimSpace(result)
+
+	// Parse JSON response
+	var gsr GroupSummaryResult
+	if err := json.Unmarshal([]byte(result), &gsr); err != nil {
+		// Fallback: treat entire response as plain summary (legacy prompt or parse failure)
+		return &GroupSummaryResult{Summary: result}, nil
+	}
+
+	return &gsr, nil
 }
 
 // RefineGroupTopic generates a concise topic label from a group summary.

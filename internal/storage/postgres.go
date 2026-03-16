@@ -39,6 +39,7 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 		"ALTER TABLE article_groups ADD COLUMN IF NOT EXISTS display_name TEXT",
 		"ALTER TABLE article_groups ADD COLUMN IF NOT EXISTS muted BOOLEAN NOT NULL DEFAULT FALSE",
 		"ALTER TABLE feeds ADD COLUMN IF NOT EXISTS site_url TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE group_summaries ADD COLUMN IF NOT EXISTS headline TEXT NOT NULL DEFAULT ''",
 	}
 	for _, m := range pgMigrations {
 		if _, err := db.Exec(m); err != nil {
@@ -1247,16 +1248,17 @@ func (s *PostgresStore) GetGroupArticles(groupID int64) ([]Article, error) {
 	return scanArticles(rows)
 }
 
-func (s *PostgresStore) UpdateGroupSummary(groupID int64, summary string, articleCount int, maxInterestScore *float64) error {
+func (s *PostgresStore) UpdateGroupSummary(groupID int64, headline, summary string, articleCount int, maxInterestScore *float64) error {
 	_, err := s.db.Exec(
-		`INSERT INTO group_summaries (group_id, summary, article_count, max_interest_score, generated_at)
-		 VALUES (?, ?, ?, ?, NOW())
+		`INSERT INTO group_summaries (group_id, headline, summary, article_count, max_interest_score, generated_at)
+		 VALUES (?, ?, ?, ?, ?, NOW())
 		 ON CONFLICT(group_id) DO UPDATE SET
+		   headline = excluded.headline,
 		   summary = excluded.summary,
 		   article_count = excluded.article_count,
 		   max_interest_score = excluded.max_interest_score,
 		   generated_at = NOW()`,
-		groupID, summary, articleCount, maxInterestScore,
+		groupID, headline, summary, articleCount, maxInterestScore,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update group summary: %w", err)
@@ -1267,9 +1269,9 @@ func (s *PostgresStore) UpdateGroupSummary(groupID int64, summary string, articl
 func (s *PostgresStore) GetGroupSummary(groupID int64) (*GroupSummary, error) {
 	var gs GroupSummary
 	err := s.db.QueryRow(
-		"SELECT group_id, summary, article_count, max_interest_score, generated_at FROM group_summaries WHERE group_id = ?",
+		"SELECT group_id, headline, summary, article_count, max_interest_score, generated_at FROM group_summaries WHERE group_id = ?",
 		groupID,
-	).Scan(&gs.GroupID, &gs.Summary, &gs.ArticleCount, &gs.MaxInterestScore, &gs.GeneratedAt)
+	).Scan(&gs.GroupID, &gs.Headline, &gs.Summary, &gs.ArticleCount, &gs.MaxInterestScore, &gs.GeneratedAt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get group summary: %w", err)
 	}

@@ -70,6 +70,7 @@ type ArticleGroup struct {
 	Muted       bool      `json:"muted"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	Headline    string    `json:"headline,omitempty"`
 	Summary     string    `json:"summary,omitempty"`
 	Articles    []Article `json:"articles,omitempty"`
 	Scores      []float64 `json:"scores,omitempty"`

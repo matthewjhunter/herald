@@ -270,21 +270,21 @@ func updateGroupSummary(ctx context.Context, store storage.Store, processor *ai.
 	}
 
 	// Generate group summary
-	groupSummary, err := processor.GenerateGroupSummary(ctx, userID, topic, summaryInputs)
+	groupResult, err := processor.GenerateGroupSummary(ctx, userID, topic, summaryInputs)
 	if err != nil {
 		return fmt.Errorf("failed to generate group summary: %w", err)
 	}
 
 	// Store group summary
 	maxScorePtr := &maxScore
-	if err := store.UpdateGroupSummary(groupID, groupSummary, len(articles), maxScorePtr); err != nil {
+	if err := store.UpdateGroupSummary(groupID, groupResult.Headline, groupResult.Summary, len(articles), maxScorePtr); err != nil {
 		return err
 	}
 
 	// Phase 6: Refine topic label when group has 3+ articles.
 	// Use the LLM to generate a concise topic from the group summary.
 	if len(articles) >= 3 {
-		refinedTopic, err := processor.RefineGroupTopic(ctx, userID, groupSummary)
+		refinedTopic, err := processor.RefineGroupTopic(ctx, userID, groupResult.Summary)
 		if err == nil && refinedTopic != "" {
 			store.UpdateGroupTopic(groupID, refinedTopic)
 		}

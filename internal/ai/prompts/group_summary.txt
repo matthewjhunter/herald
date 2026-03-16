@@ -3,10 +3,11 @@ You are analyzing multiple news articles covering the same event or topic: "{{.T
 Articles:
 {{.Articles}}
 
-Create a single coherent narrative (3-5 sentences) that:
-1. Synthesizes the information from all articles
-2. Highlights the most important facts
-3. Notes different perspectives if present
-4. Provides a complete picture of the story
+Respond with a JSON object containing:
+1. "headline": A descriptive headline (6-15 words) that captures the core story. Write it like a newspaper headline — informative, specific, not clickbait.
+2. "summary": A coherent narrative (3-5 sentences) that synthesizes the information from all articles, highlights the most important facts, notes different perspectives if present, and provides a complete picture of the story.
 
-Respond ONLY with the narrative summary, no preamble.
+Respond ONLY with valid JSON, no markdown fencing or preamble.
+
+Example format:
+{"headline": "Federal Reserve Holds Rates Steady Amid Mixed Economic Signals", "summary": "The Federal Reserve..."}

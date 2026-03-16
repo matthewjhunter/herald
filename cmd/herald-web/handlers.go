@@ -181,13 +181,14 @@ type homeData struct {
 }
 
 type articleListData struct {
-	Articles     []articleRow
-	HasMore      bool
-	NextOffset   int
-	FeedID       int64
-	GroupID      int64
-	GroupSummary string
-	Starred      bool
+	Articles      []articleRow
+	HasMore       bool
+	NextOffset    int
+	FeedID        int64
+	GroupID       int64
+	GroupHeadline string
+	GroupSummary  string
+	Starred       bool
 }
 
 type articleRow struct {
@@ -618,6 +619,7 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 	// Load group summary banner when viewing a group
 	if groupID > 0 {
 		if group, err := h.engine.GetGroupArticles(groupID); err == nil && group != nil {
+			data.GroupHeadline = group.Headline
 			data.GroupSummary = group.Summary
 		}
 	}

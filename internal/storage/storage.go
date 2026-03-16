@@ -91,6 +91,7 @@ type GroupStats struct {
 
 type GroupSummary struct {
 	GroupID          int64
+	Headline         string
 	Summary          string
 	ArticleCount     int
 	MaxInterestScore *float64
@@ -203,6 +204,8 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		"ALTER TABLE article_groups ADD COLUMN muted BOOLEAN NOT NULL DEFAULT 0",
 		// Blog homepage URL, populated from feed metadata on each fetch.
 		"ALTER TABLE feeds ADD COLUMN site_url TEXT NOT NULL DEFAULT ''",
+		// Group summary headline for display above narrative.
+		"ALTER TABLE group_summaries ADD COLUMN headline TEXT NOT NULL DEFAULT ''",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -1168,16 +1171,17 @@ func (s *SQLiteStore) GetGroupArticles(groupID int64) ([]Article, error) {
 }
 
 // UpdateGroupSummary stores or updates the summary for a group
-func (s *SQLiteStore) UpdateGroupSummary(groupID int64, summary string, articleCount int, maxInterestScore *float64) error {
+func (s *SQLiteStore) UpdateGroupSummary(groupID int64, headline, summary string, articleCount int, maxInterestScore *float64) error {
 	_, err := s.db.Exec(
-		`INSERT INTO group_summaries (group_id, summary, article_count, max_interest_score, generated_at)
-		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+		`INSERT INTO group_summaries (group_id, headline, summary, article_count, max_interest_score, generated_at)
+		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		 ON CONFLICT(group_id) DO UPDATE SET
+		   headline = excluded.headline,
 		   summary = excluded.summary,
 		   article_count = excluded.article_count,
 		   max_interest_score = excluded.max_interest_score,
 		   generated_at = CURRENT_TIMESTAMP`,
-		groupID, summary, articleCount, maxInterestScore,
+		groupID, headline, summary, articleCount, maxInterestScore,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update group summary: %w", err)
@@ -1189,9 +1193,9 @@ func (s *SQLiteStore) UpdateGroupSummary(groupID int64, summary string, articleC
 func (s *SQLiteStore) GetGroupSummary(groupID int64) (*GroupSummary, error) {
 	var gs GroupSummary
 	err := s.db.QueryRow(
-		"SELECT group_id, summary, article_count, max_interest_score, generated_at FROM group_summaries WHERE group_id = ?",
+		"SELECT group_id, headline, summary, article_count, max_interest_score, generated_at FROM group_summaries WHERE group_id = ?",
 		groupID,
-	).Scan(&gs.GroupID, &gs.Summary, &gs.ArticleCount, &gs.MaxInterestScore, &gs.GeneratedAt)
+	).Scan(&gs.GroupID, &gs.Headline, &gs.Summary, &gs.ArticleCount, &gs.MaxInterestScore, &gs.GeneratedAt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get group summary: %w", err)
 	}

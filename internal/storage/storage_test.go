@@ -621,13 +621,16 @@ func TestGroupSummary(t *testing.T) {
 	groupID, _ := store.CreateArticleGroup(1, "Test Topic")
 
 	maxScore := 9.5
-	if err := store.UpdateGroupSummary(groupID, "Summary of the group", 3, &maxScore); err != nil {
+	if err := store.UpdateGroupSummary(groupID, "Test Headline for Group", "Summary of the group", 3, &maxScore); err != nil {
 		t.Fatalf("UpdateGroupSummary failed: %v", err)
 	}
 
 	gs, err := store.GetGroupSummary(groupID)
 	if err != nil {
 		t.Fatalf("GetGroupSummary failed: %v", err)
+	}
+	if gs.Headline != "Test Headline for Group" {
+		t.Errorf("headline = %q, want %q", gs.Headline, "Test Headline for Group")
 	}
 	if gs.Summary != "Summary of the group" {
 		t.Errorf("summary = %q, want %q", gs.Summary, "Summary of the group")

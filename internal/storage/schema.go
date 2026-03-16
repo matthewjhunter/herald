@@ -118,6 +118,7 @@ CREATE INDEX IF NOT EXISTS idx_group_members_article ON article_group_members(ar
 
 CREATE TABLE IF NOT EXISTS group_summaries (
     group_id INTEGER PRIMARY KEY,
+    headline TEXT NOT NULL DEFAULT '',
     summary TEXT NOT NULL,
     article_count INTEGER NOT NULL,
     max_interest_score REAL,

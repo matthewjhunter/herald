@@ -1,6 +1,9 @@
 {{define "article_list"}}
 {{if .GroupSummary}}
-<div class="group-summary-banner">{{.GroupSummary}}</div>
+<div class="group-summary-banner">
+    {{if .GroupHeadline}}<h3 class="group-summary-title">{{.GroupHeadline}}</h3>{{end}}
+    <p class="group-summary-text">{{.GroupSummary}}</p>
+</div>
 {{end}}
 {{if .Articles}}
 {{range .Articles}}
