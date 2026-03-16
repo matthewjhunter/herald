@@ -24,12 +24,25 @@ Do NOT match articles when:
 
 When in doubt, do NOT match. False negatives (missing a grouping) are far less harmful than false positives (grouping unrelated articles together).
 
-If is_related is false and this article represents a new real-world topic worth tracking, include a display_name field -- a 1-3 word label suitable for a sidebar. Keep it very short: "Home Security", "Trade War", "AI Ethics". No quotes, no articles (a/an/the), no punctuation. Only suggest a display_name for news events, not for blog posts, reviews, or opinion pieces.
+If is_related is false, decide whether this article represents a SIGNIFICANT, ONGOING real-world news event that is likely to have multiple articles published about it over the coming days. Set create_group to true ONLY for:
+- Major breaking news events (disasters, political crises, major policy changes)
+- Ongoing stories that will develop over time (trials, investigations, conflicts)
+- Significant announcements with expected follow-up coverage
+
+Set create_group to false for:
+- Blog posts, tutorials, opinion pieces, reviews, or commentary
+- One-off news items unlikely to have follow-up articles
+- Daily roundups, link collections, or aggregation posts
+- Niche or personal interest articles
+- Anything that is not hard news about a specific developing event
+
+If create_group is true, include a display_name -- a 1-3 word sidebar label. Keep it very short: "Trade War", "AI Ethics", "Boeing Strike". No quotes, no articles (a/an/the), no punctuation.
 
 Respond ONLY with valid JSON:
 {
   "is_related": true/false,
-  "existing_groups": [<array of group IDs the article relates to>],
-  "display_name": "<1-3 word sidebar label for new group, omit if is_related is true>",
+  "existing_groups": [<array of group IDs if is_related is true, empty array otherwise>],
+  "create_group": true/false,
+  "display_name": "<1-3 word sidebar label, only if create_group is true>",
   "reasoning": "<brief explanation>"
 }

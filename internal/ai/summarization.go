@@ -132,6 +132,7 @@ Summary:
 type RelatedArticlesResult struct {
 	IsRelated      bool    `json:"is_related"`
 	ExistingGroups []int64 `json:"existing_groups"`
+	CreateGroup    bool    `json:"create_group"`
 	DisplayName    string  `json:"display_name"`
 	Reasoning      string  `json:"reasoning"`
 }
@@ -139,10 +140,6 @@ type RelatedArticlesResult struct {
 // FindRelatedGroups determines if a new article relates to existing groups.
 // Returns the full result struct so callers can access display_name for new groups.
 func (p *AIProcessor) FindRelatedGroups(ctx context.Context, userID int64, newArticle storage.Article, existingGroups []storage.ArticleGroup, store storage.Store) (*RelatedArticlesResult, error) {
-	if len(existingGroups) == 0 {
-		return &RelatedArticlesResult{}, nil
-	}
-
 	var groupDescs []string
 	for _, group := range existingGroups {
 		articles, err := store.GetGroupArticles(group.ID)
@@ -176,10 +173,14 @@ func (p *AIProcessor) FindRelatedGroups(ctx context.Context, userID int64, newAr
 		return nil, fmt.Errorf("failed to load related groups prompt: %w", err)
 	}
 
-	data := map[string]interface{}{
+	groupsText := "(none)"
+	if len(groupDescs) > 0 {
+		groupsText = strings.Join(groupDescs, "\n\n")
+	}
+	data := map[string]any{
 		"Title":   newArticle.Title,
 		"Summary": truncateText(newArticle.Summary, 500),
-		"Groups":  strings.Join(groupDescs, "\n\n"),
+		"Groups":  groupsText,
 	}
 	prompt, err := ExecutePrompt(promptTemplate, data)
 	if err != nil {

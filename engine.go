@@ -236,15 +236,12 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 					if muted, err := e.store.IsGroupMuted(gID); err == nil && muted {
 						e.store.UpdateReadState(userID, article.ID, true, nil, nil, nil) //nolint:errcheck
 					}
-				} else {
+				} else if groupResult != nil && groupResult.CreateGroup {
 					topic := article.Title
 					if len(topic) > 100 {
 						topic = topic[:100]
 					}
-					displayName := ""
-					if groupResult != nil && groupResult.DisplayName != "" {
-						displayName = strings.Trim(groupResult.DisplayName, "\"'")
-					}
+					displayName := strings.Trim(groupResult.DisplayName, "\"'")
 					if newGroupID, err := e.store.CreateArticleGroup(userID, topic); err == nil {
 						e.store.AddArticleToGroup(newGroupID, article.ID) //nolint:errcheck
 						if displayName != "" {
