@@ -6,9 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"os"
 	"strings"
 )
+
+// debugAI enables verbose logging of all model calls when HERALD_DEBUG_AI=1.
+var debugAI = os.Getenv("HERALD_DEBUG_AI") == "1"
 
 // openAIClient is a minimal OpenAI-compatible HTTP client for LLM inference.
 // It speaks POST /v1/chat/completions, which is supported by LiteLLM, OpenAI,
@@ -101,7 +106,22 @@ func (c *openAIClient) generate(ctx context.Context, model, prompt string, tempe
 		return "", fmt.Errorf("empty response from model")
 	}
 
-	return chatResp.Choices[0].Message.Content, nil
+	result := chatResp.Choices[0].Message.Content
+
+	if debugAI {
+		promptPreview := prompt
+		if len(promptPreview) > 500 {
+			promptPreview = promptPreview[:500] + "...[truncated]"
+		}
+		resultPreview := result
+		if len(resultPreview) > 500 {
+			resultPreview = resultPreview[:500] + "...[truncated]"
+		}
+		log.Printf("[DEBUG-AI] model=%s temp=%.1f prompt_len=%d\n--- PROMPT ---\n%s\n--- RESPONSE ---\n%s\n--- END ---",
+			model, temperature, len(prompt), promptPreview, resultPreview)
+	}
+
+	return result, nil
 }
 
 // listModels returns model IDs available at the endpoint via GET /v1/models.
