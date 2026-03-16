@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"strings"
+	"sync"
 	"text/template"
 
 	"github.com/matthewjhunter/herald/internal/storage"
@@ -41,6 +42,7 @@ const (
 type PromptLoader struct {
 	store  interface{}       // storage.Store
 	config interface{}       // *storage.Config
+	mu     sync.RWMutex      // protects cache
 	cache  map[string]string // cache of loaded prompts per user
 }
 
@@ -77,16 +79,21 @@ func (pl *PromptLoader) GetPrompt(userID int64, promptType PromptType) (string, 
 	cacheKey := fmt.Sprintf("%d:%s", userID, promptType)
 
 	// Check cache first
+	pl.mu.RLock()
 	if cached, ok := pl.cache[cacheKey]; ok {
+		pl.mu.RUnlock()
 		return cached, nil
 	}
+	pl.mu.RUnlock()
 
 	// Tier 4: Check user-specific database entry (highest priority)
 	if pl.store != nil {
 		if store, ok := pl.store.(*storage.SQLiteStore); ok {
 			userPrompt, err := store.GetUserPrompt(userID, string(promptType))
 			if err == nil && userPrompt != "" {
+				pl.mu.Lock()
 				pl.cache[cacheKey] = userPrompt
+				pl.mu.Unlock()
 				return userPrompt, nil
 			}
 
@@ -94,7 +101,9 @@ func (pl *PromptLoader) GetPrompt(userID int64, promptType PromptType) (string, 
 			if userID != 0 {
 				globalPrompt, err := store.GetUserPrompt(0, string(promptType))
 				if err == nil && globalPrompt != "" {
+					pl.mu.Lock()
 					pl.cache[cacheKey] = globalPrompt
+					pl.mu.Unlock()
 					return globalPrompt, nil
 				}
 			}
@@ -119,7 +128,9 @@ func (pl *PromptLoader) GetPrompt(userID int64, promptType PromptType) (string, 
 			}
 
 			if configPrompt != "" {
+				pl.mu.Lock()
 				pl.cache[cacheKey] = configPrompt
+				pl.mu.Unlock()
 				return configPrompt, nil
 			}
 		}
@@ -142,7 +153,9 @@ func (pl *PromptLoader) GetPrompt(userID int64, promptType PromptType) (string, 
 		return "", fmt.Errorf("unknown prompt type: %s", promptType)
 	}
 
+	pl.mu.Lock()
 	pl.cache[cacheKey] = defaultPrompt
+	pl.mu.Unlock()
 	return defaultPrompt, nil
 }
 
