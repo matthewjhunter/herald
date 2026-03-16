@@ -7,18 +7,24 @@ Summary: {{.Summary}}
 Existing Groups:
 {{.Groups}}
 
-Determine if the new article covers the same event/story as any existing group. Articles are related if they discuss:
-- The same specific event (e.g., same product launch, same political decision)
-- The same ongoing story (e.g., same conflict, same investigation)
-- The same breaking news developing over time
+Determine if the new article covers the SAME specific real-world event or story as any existing group.
 
-IMPORTANT: Only match an article to a group when the group's topic is the article's PRIMARY SUBJECT. Do NOT match articles where the topic is:
-- A minor mention or passing reference
-- One of several topics covered in the article
-- Background context rather than the main story
-- A daily summary or roundup that briefly touches the topic
+Articles are related ONLY if they discuss:
+- The SAME specific event (e.g., same product launch, same political decision, same incident)
+- The SAME ongoing real-world story (e.g., same conflict, same investigation, same trial)
+- The SAME breaking news developing over time
 
-If is_related is false and this article represents a new topic worth tracking, include a display_name field -- a 1-3 word label suitable for a sidebar. Keep it very short: "Home Security", "Trade War", "AI Ethics". No quotes, no articles (a/an/the), no punctuation.
+Do NOT match articles when:
+- They share a broad theme but cover DIFFERENT events (e.g., two unrelated technology articles)
+- The group topic is a minor mention, passing reference, or background context
+- The article is a daily summary or roundup that briefly touches the topic
+- The article is fiction, opinion, commentary, or a review that happens to mention similar themes
+- The connection is only thematic or categorical (e.g., "both about trade" or "both about conflict")
+- The article and group are about different subjects that happen to share keywords
+
+When in doubt, do NOT match. False negatives (missing a grouping) are far less harmful than false positives (grouping unrelated articles together).
+
+If is_related is false and this article represents a new real-world topic worth tracking, include a display_name field -- a 1-3 word label suitable for a sidebar. Keep it very short: "Home Security", "Trade War", "AI Ethics". No quotes, no articles (a/an/the), no punctuation. Only suggest a display_name for news events, not for blog posts, reviews, or opinion pieces.
 
 Respond ONLY with valid JSON:
 {

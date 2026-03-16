@@ -160,8 +160,15 @@ func (p *AIProcessor) FindRelatedGroups(ctx context.Context, userID int64, newAr
 			sampleTitles = append(sampleTitles, articles[i].Title)
 		}
 
-		groupDescs = append(groupDescs, fmt.Sprintf("Group %d - %s:\n  - %s",
-			group.ID, group.Topic, strings.Join(sampleTitles, "\n  - ")))
+		desc := fmt.Sprintf("Group %d - %s:\n  Articles:\n  - %s",
+			group.ID, group.Topic, strings.Join(sampleTitles, "\n  - "))
+
+		// Include group summary for better matching context
+		if gs, err := store.GetGroupSummary(group.ID); err == nil && gs != nil && gs.Summary != "" {
+			desc += fmt.Sprintf("\n  Summary: %s", truncateText(gs.Summary, 300))
+		}
+
+		groupDescs = append(groupDescs, desc)
 	}
 
 	promptTemplate, err := p.promptLoader.GetPrompt(userID, PromptTypeRelatedGroups)
