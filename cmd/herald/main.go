@@ -95,9 +95,14 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 				}
 
 				// Skip entire AI pipeline for articles too short to process meaningfully.
+				// Mark as scored so they don't block the queue forever.
 				minLen := cfg.Summarization.MinArticleLength
 				if minLen > 0 && len(content) < minLen {
 					formatter.Warning("skipping article %d: content too short (%d < %d)", article.ID, len(content), minLen)
+					zeroInterest := 0.0
+					zeroSec := 0.0
+					reason := fmt.Sprintf("content too short (%d < %d)", len(content), minLen)
+					store.UpdateReadState(userID, article.ID, false, &zeroInterest, &zeroSec, &reason) //nolint:errcheck
 					return
 				}
 

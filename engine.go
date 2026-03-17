@@ -188,9 +188,13 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 				}
 
 				// Skip entire AI pipeline for articles too short to process meaningfully.
+				// Mark as scored so they don't block the queue forever.
 				minLen := e.config.Summarization.MinArticleLength
 				if minLen > 0 && len(content) < minLen {
 					log.Printf("herald: skipping AI pipeline for article %d: content too short (%d < %d)", article.ID, len(content), minLen)
+					zero := 0.0
+					reason := fmt.Sprintf("content too short (%d < %d)", len(content), minLen)
+					e.store.UpdateReadState(userID, article.ID, false, &zero, &zero, &reason) //nolint:errcheck
 					return
 				}
 
