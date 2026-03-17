@@ -8,6 +8,28 @@
         if (pane) pane.innerHTML = '<div class="empty-state">Select an article to read</div>';
     };
 
+    // Track the current sidebar selection so that feeds-changed refreshes
+    // preserve the active highlight instead of resetting to "All Articles".
+    window._heraldSidebarQuery = '';
+
+    function heraldUpdateSidebarRefreshURL() {
+        var sidebar = document.getElementById('sidebar');
+        if (sidebar) {
+            sidebar.setAttribute('hx-get', '/sidebar' + window._heraldSidebarQuery);
+            htmx.process(sidebar); // re-scan so htmx picks up the new hx-get
+        }
+    }
+
+    // Intercept sidebar link clicks to capture the current selection
+    document.addEventListener('click', function(e) {
+        var link = e.target.closest('#sidebar nav a[hx-get]');
+        if (!link) return;
+        var url = link.getAttribute('hx-get');
+        var qIdx = url.indexOf('?');
+        window._heraldSidebarQuery = qIdx >= 0 ? url.substring(qIdx) : '';
+        heraldUpdateSidebarRefreshURL();
+    });
+
     // Theme toggle
     (function() {
         var btn = document.getElementById('theme-toggle');
