@@ -8,7 +8,7 @@ require (
 	codeberg.org/readeck/go-readability/v2 v2.1.1
 	github.com/BurntSushi/toml v1.6.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/infodancer/oidclient v0.0.0-20260314201621-b29019bedfa3
+	github.com/infodancer/oidclient v0.0.0-20260322032919-e22e14ec6f09
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/matthewjhunter/go-embedding v0.2.0
 	github.com/microcosm-cc/bluemonday v1.0.27
