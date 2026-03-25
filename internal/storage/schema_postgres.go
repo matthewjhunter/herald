@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS read_state (
     security_score DOUBLE PRECISION,
     read_date      TIMESTAMPTZ,
     ai_scored      BOOLEAN NOT NULL DEFAULT FALSE,
+    ai_retries     INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (user_id, article_id),
     FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
 );

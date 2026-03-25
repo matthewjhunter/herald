@@ -41,6 +41,7 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 		"ALTER TABLE feeds ADD COLUMN IF NOT EXISTS site_url TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE group_summaries ADD COLUMN IF NOT EXISTS headline TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE article_groups ADD COLUMN IF NOT EXISTS embedding_model TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE read_state ADD COLUMN IF NOT EXISTS ai_retries INTEGER NOT NULL DEFAULT 0",
 	}
 	for _, m := range pgMigrations {
 		if _, err := db.Exec(m); err != nil {
@@ -457,19 +458,35 @@ func (s *PostgresStore) GetScoreStats(userID int64) (*ScoreStatsResult, error) {
 	return result, rows.Err()
 }
 
+// IncrementAIRetries bumps the retry counter for an article that failed AI processing.
+// Creates a read_state row if one doesn't exist yet.
+func (s *PostgresStore) IncrementAIRetries(userID, articleID int64) error {
+	_, err := s.db.Exec(
+		`INSERT INTO read_state (user_id, article_id, ai_retries)
+		 VALUES (?, ?, 1)
+		 ON CONFLICT(user_id, article_id) DO UPDATE SET
+		   ai_retries = read_state.ai_retries + 1`,
+		userID, articleID,
+	)
+	if err != nil {
+		return fmt.Errorf("increment ai retries: %w", err)
+	}
+	return nil
+}
+
 // ResetScores clears AI scores so articles are reprocessed by the pipeline.
 func (s *PostgresStore) ResetScores(userID int64, securityOnly bool, belowScore float64) (int64, error) {
 	var result sql.Result
 	var err error
 	if securityOnly {
 		result, err = s.db.Exec(
-			`UPDATE read_state SET ai_scored = FALSE, interest_score = NULL, security_score = NULL, security_reason = NULL
+			`UPDATE read_state SET ai_scored = FALSE, ai_retries = 0, interest_score = NULL, security_score = NULL, security_reason = NULL
 			 WHERE user_id = ? AND security_score IS NOT NULL AND security_score < ?`,
 			userID, belowScore,
 		)
 	} else {
 		result, err = s.db.Exec(
-			`UPDATE read_state SET ai_scored = FALSE, interest_score = NULL, security_score = NULL, security_reason = NULL
+			`UPDATE read_state SET ai_scored = FALSE, ai_retries = 0, interest_score = NULL, security_score = NULL, security_reason = NULL
 			 WHERE user_id = ?`,
 			userID,
 		)
@@ -777,6 +794,7 @@ func (s *PostgresStore) GetUnscoredArticlesForUser(userID int64, limit int) ([]A
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
 		WHERE uf.user_id = ? AND (rs.article_id IS NULL OR rs.ai_scored = FALSE)
+		  AND COALESCE(rs.ai_retries, 0) < 3
 		ORDER BY a.published_date DESC
 		LIMIT ?`, userID, userID, limit)
 	if err != nil {
@@ -793,7 +811,8 @@ func (s *PostgresStore) GetUnscoredArticleCount(userID int64) (int, error) {
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
-		WHERE uf.user_id = ? AND (rs.article_id IS NULL OR rs.ai_scored = FALSE)`,
+		WHERE uf.user_id = ? AND (rs.article_id IS NULL OR rs.ai_scored = FALSE)
+		  AND COALESCE(rs.ai_retries, 0) < 3`,
 		userID, userID,
 	).Scan(&count)
 	if err != nil {

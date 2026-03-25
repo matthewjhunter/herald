@@ -50,6 +50,7 @@ type Store interface {
 	// Read state
 	UpdateStarred(userID, articleID int64, starred bool) error
 	UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64, securityReason *string) error
+	IncrementAIRetries(userID, articleID int64) error
 	ResetScores(userID int64, securityOnly bool, belowScore float64) (int64, error)
 	GetScoreStats(userID int64) (*ScoreStatsResult, error)
 

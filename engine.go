@@ -204,6 +204,7 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 
 				if secErr != nil {
 					log.Printf("herald: security check failed for article %d: %v", article.ID, secErr)
+					e.store.IncrementAIRetries(userID, article.ID) //nolint:errcheck
 					return
 				}
 
@@ -235,6 +236,7 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 				curResult, err := e.ai.CurateArticle(ctx, userID, article.Title, content, e.config.Preferences.Keywords)
 				if err != nil {
 					log.Printf("herald: curation failed for article %d: %v", article.ID, err)
+					e.store.IncrementAIRetries(userID, article.ID) //nolint:errcheck
 					return
 				}
 

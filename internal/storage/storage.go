@@ -208,6 +208,8 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		"ALTER TABLE group_summaries ADD COLUMN headline TEXT NOT NULL DEFAULT ''",
 		// Track which embedding model produced each group centroid.
 		"ALTER TABLE article_groups ADD COLUMN embedding_model TEXT NOT NULL DEFAULT ''",
+		// Retry counter for AI pipeline failures (prevents infinite retry loops).
+		"ALTER TABLE read_state ADD COLUMN ai_retries INTEGER NOT NULL DEFAULT 0",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -940,6 +942,22 @@ func (s *SQLiteStore) GetScoreStats(userID int64) (*ScoreStatsResult, error) {
 	return result, rows.Err()
 }
 
+// IncrementAIRetries bumps the retry counter for an article that failed AI processing.
+// Creates a read_state row if one doesn't exist yet.
+func (s *SQLiteStore) IncrementAIRetries(userID, articleID int64) error {
+	_, err := s.db.Exec(
+		`INSERT INTO read_state (user_id, article_id, ai_retries)
+		 VALUES (?, ?, 1)
+		 ON CONFLICT(user_id, article_id) DO UPDATE SET
+		   ai_retries = read_state.ai_retries + 1`,
+		userID, articleID,
+	)
+	if err != nil {
+		return fmt.Errorf("increment ai retries: %w", err)
+	}
+	return nil
+}
+
 // ResetScores clears AI scores so articles are reprocessed by the pipeline.
 // If securityOnly is true, only articles that failed the security check are reset.
 // belowScore filters to articles with security_score < belowScore (use 10.0 to reset all).
@@ -949,13 +967,13 @@ func (s *SQLiteStore) ResetScores(userID int64, securityOnly bool, belowScore fl
 	var err error
 	if securityOnly {
 		result, err = s.db.Exec(
-			`UPDATE read_state SET ai_scored = 0, interest_score = NULL, security_score = NULL, security_reason = NULL
+			`UPDATE read_state SET ai_scored = 0, ai_retries = 0, interest_score = NULL, security_score = NULL, security_reason = NULL
 			 WHERE user_id = ? AND security_score IS NOT NULL AND security_score < ?`,
 			userID, belowScore,
 		)
 	} else {
 		result, err = s.db.Exec(
-			`UPDATE read_state SET ai_scored = 0, interest_score = NULL, security_score = NULL, security_reason = NULL
+			`UPDATE read_state SET ai_scored = 0, ai_retries = 0, interest_score = NULL, security_score = NULL, security_reason = NULL
 			 WHERE user_id = ?`,
 			userID,
 		)
@@ -1613,7 +1631,8 @@ func (s *SQLiteStore) GetUnscoredArticleCount(userID int64) (int, error) {
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
-		WHERE uf.user_id = ? AND (rs.article_id IS NULL OR rs.ai_scored = 0)`,
+		WHERE uf.user_id = ? AND (rs.article_id IS NULL OR rs.ai_scored = 0)
+		  AND COALESCE(rs.ai_retries, 0) < 3`,
 		userID, userID,
 	).Scan(&count)
 	if err != nil {
@@ -1650,6 +1669,7 @@ func (s *SQLiteStore) GetUnscoredArticlesForUser(userID int64, limit int) ([]Art
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
 		WHERE uf.user_id = ? AND (rs.article_id IS NULL OR rs.ai_scored = 0)
+		  AND COALESCE(rs.ai_retries, 0) < 3
 		ORDER BY a.published_date DESC
 		LIMIT ?
 	`

@@ -412,7 +412,8 @@ func migrateUserFeeds(ctx context.Context, src *tracedDB, dst Store, userMap, fe
 func migrateReadStates(ctx context.Context, src, dst *tracedDB, userMap, articleMap map[int64]int64, stats *MigrateStats) error {
 	rows, err := src.QueryContext(ctx, `
 		SELECT user_id, article_id, read, starred,
-		       interest_score, security_score, read_date, ai_scored
+		       interest_score, security_score, read_date, ai_scored,
+		       COALESCE(ai_retries, 0)
 		FROM read_state ORDER BY user_id, article_id`)
 	if err != nil {
 		return err
@@ -424,12 +425,13 @@ func migrateReadStates(ctx context.Context, src, dst *tracedDB, userMap, article
 		var read, starred, aiScored bool
 		var interestScore, securityScore sql.NullFloat64
 		var readDate sql.NullTime
+		var aiRetries int
 
 		if err := rows.Scan(
 			&srcUserID, &srcArticleID,
 			&read, &starred,
 			&interestScore, &securityScore,
-			&readDate, &aiScored,
+			&readDate, &aiScored, &aiRetries,
 		); err != nil {
 			return fmt.Errorf("scan read_state: %w", err)
 		}
@@ -455,11 +457,11 @@ func migrateReadStates(ctx context.Context, src, dst *tracedDB, userMap, article
 		// tracedDB.prepare() rewrites ? → $N for PostgreSQL.
 		if _, err := dst.ExecContext(ctx, `
 			INSERT INTO read_state
-			  (user_id, article_id, read, starred, interest_score, security_score, read_date, ai_scored)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			  (user_id, article_id, read, starred, interest_score, security_score, read_date, ai_scored, ai_retries)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(user_id, article_id) DO NOTHING`,
 			dstUserID, dstArticleID, read, starred, iScore, sScore,
-			nullableTime(readDate), aiScored,
+			nullableTime(readDate), aiScored, aiRetries,
 		); err != nil {
 			return fmt.Errorf("insert read_state: %w", err)
 		}

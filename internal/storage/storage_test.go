@@ -1593,3 +1593,66 @@ func TestGroupVirtualFeed(t *testing.T) {
 		t.Errorf("expected 3 articles after disband, got %d", len(unread))
 	}
 }
+
+func TestAIRetryLimit(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test Feed", "")
+	store.SubscribeUserToFeed(1, feedID)
+	now := time.Now()
+	articleID, _ := store.AddArticle(&Article{
+		FeedID: feedID, GUID: "retry-test", Title: "Retry Test",
+		URL: "https://example.com/retry", PublishedDate: &now,
+	})
+
+	// Article should initially appear as unscored.
+	unscored, err := store.GetUnscoredArticlesForUser(1, 100)
+	if err != nil {
+		t.Fatalf("GetUnscoredArticlesForUser: %v", err)
+	}
+	if len(unscored) != 1 {
+		t.Fatalf("expected 1 unscored article, got %d", len(unscored))
+	}
+
+	// Increment retries up to the limit (3).
+	for i := 0; i < 3; i++ {
+		if err := store.IncrementAIRetries(1, articleID); err != nil {
+			t.Fatalf("IncrementAIRetries call %d: %v", i+1, err)
+		}
+	}
+
+	// After 3 retries, article should no longer appear as unscored.
+	unscored, err = store.GetUnscoredArticlesForUser(1, 100)
+	if err != nil {
+		t.Fatalf("GetUnscoredArticlesForUser after retries: %v", err)
+	}
+	if len(unscored) != 0 {
+		t.Errorf("expected 0 unscored articles after 3 retries, got %d", len(unscored))
+	}
+
+	// Count should also reflect the exhausted article.
+	count, err := store.GetUnscoredArticleCount(1)
+	if err != nil {
+		t.Fatalf("GetUnscoredArticleCount: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected unscored count 0 after 3 retries, got %d", count)
+	}
+
+	// ResetScores should clear retries and make the article reappear.
+	n, err := store.ResetScores(1, false, 10.0)
+	if err != nil {
+		t.Fatalf("ResetScores: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 row reset, got %d", n)
+	}
+	unscored, err = store.GetUnscoredArticlesForUser(1, 100)
+	if err != nil {
+		t.Fatalf("GetUnscoredArticlesForUser after reset: %v", err)
+	}
+	if len(unscored) != 1 {
+		t.Errorf("expected 1 unscored article after reset, got %d", len(unscored))
+	}
+}
