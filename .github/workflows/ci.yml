@@ -36,8 +36,8 @@ jobs:
           go-version-file: go.mod
       - run: go test -race -count=1 ./...
 
-  vet:
-    name: Vet
+  checks:
+    name: Vet, Format & Vulnerability Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,22 +45,17 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go vet ./...
-
-  fmt:
-    name: Format
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - run: |
+      - name: Check formatting
+        run: |
           unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
             echo "Unformatted files:"
             echo "$unformatted"
             exit 1
           fi
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: govulncheck ./...
+        continue-on-error: true
 
   lint:
     name: Lint
@@ -73,15 +68,3 @@ jobs:
       - uses: golangci/golangci-lint-action@v7
         with:
           version: v2.10.1
-
-  govulncheck:
-    name: Vulnerability Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
-      - run: govulncheck ./...
-        continue-on-error: true

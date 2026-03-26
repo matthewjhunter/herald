@@ -55,4 +55,4 @@ jobs:
             GIT_SHA=${{ github.sha }}
             BUILD_TIME=${{ steps.ts.outputs.value }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=min
