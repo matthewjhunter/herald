@@ -421,6 +421,9 @@ func (e *Engine) Search(ctx context.Context, userID int64, query string, limit, 
 				}
 				candidates := make([]scored, 0, len(rows))
 				for _, r := range rows {
+					if len(r.Embedding) < 4 {
+						continue // skip sentinel placeholders
+					}
 					vec := embedding.DecodeFloat32s(r.Embedding)
 					sim := embedding.CosineSimilarity(queryEmb, vec)
 					if sim > 0.3 { // minimum similarity threshold
@@ -481,6 +484,12 @@ func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, er
 	if err != nil {
 		return 0, err
 	}
+	// Sentinel stored for articles that cannot be embedded (too short, too long,
+	// or embedding error). Prevents infinite retry loops. The single zero byte
+	// is ignored by semantic search because DecodeFloat32s produces an empty
+	// vector, which gets cosine similarity 0.
+	sentinel := []byte{0}
+
 	count := 0
 	for _, a := range articles {
 		content := a.Content
@@ -490,10 +499,13 @@ func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, er
 		emb, err := e.groupMatcher.EmbedArticle(ctx, a.Title, content)
 		if err != nil {
 			log.Printf("backfill embed article %d: %v", a.ID, err)
+			e.store.StoreArticleEmbedding(a.ID, sentinel, e.groupMatcher.Model()) //nolint:errcheck
 			continue
 		}
 		if emb == nil {
-			continue // content too short
+			// Content too short to embed meaningfully.
+			e.store.StoreArticleEmbedding(a.ID, sentinel, e.groupMatcher.Model()) //nolint:errcheck
+			continue
 		}
 		if err := e.store.StoreArticleEmbedding(a.ID, embedding.EncodeFloat32s(emb), e.groupMatcher.Model()); err != nil {
 			log.Printf("backfill store embedding %d: %v", a.ID, err)
