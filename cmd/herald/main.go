@@ -315,6 +315,7 @@ func main() {
 	rootCmd.AddCommand(initConfigCmd())
 	rootCmd.AddCommand(migrateDBCmd())
 	rootCmd.AddCommand(resetScoresCmd())
+	rootCmd.AddCommand(backfillEmbeddingsCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -934,5 +935,49 @@ Examples:
 	cmd.Flags().Int64Var(&userID, "user", 1, "user ID")
 	cmd.Flags().BoolVar(&securityOnly, "security-only", false, "reset only articles that failed the security check")
 	cmd.Flags().Float64Var(&belowScore, "below", 7.0, "reset security failures below this score (implies --security-only if used alone)")
+	return cmd
+}
+
+func backfillEmbeddingsCmd() *cobra.Command {
+	var batchSize int
+	cmd := &cobra.Command{
+		Use:   "backfill-embeddings",
+		Short: "Generate embeddings for articles that don't have them (for semantic search)",
+		Long: `Generates embedding vectors for all articles missing them, using the
+configured Ollama embedding model. Processes articles in batches until all
+articles have embeddings. Required for semantic search to return results.
+
+Existing embeddings are not regenerated unless the embedding model has changed.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+
+			engine, err := herald.NewEngine(herald.EngineConfig{
+				DBPath:        cfg.Database.Path,
+				OllamaBaseURL: cfg.Ollama.BaseURL,
+				UserID:        cfg.DefaultUserID,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to create engine: %w", err)
+			}
+			defer engine.Close()
+
+			total := 0
+			for {
+				n, err := engine.BackfillEmbeddings(ctx, batchSize)
+				if err != nil {
+					return fmt.Errorf("backfill failed: %w", err)
+				}
+				if n == 0 {
+					break
+				}
+				total += n
+				fmt.Printf("Embedded %d articles (%d total so far)\n", n, total)
+			}
+
+			fmt.Printf("Backfill complete: %d articles embedded\n", total)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&batchSize, "batch", 50, "number of articles to process per batch")
 	return cmd
 }
