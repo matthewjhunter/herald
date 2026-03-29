@@ -164,7 +164,7 @@ func TestToolsList(t *testing.T) {
 		"briefing", "article_star",
 		"user_register", "user_list",
 		"filter_rules_list", "filter_rule_add", "filter_rule_update",
-		"filter_rule_delete", "feed_metadata",
+		"filter_rule_delete", "feed_metadata", "search",
 	}
 	if len(result.Tools) != len(expected) {
 		t.Fatalf("got %d tools, want %d", len(result.Tools), len(expected))

@@ -539,4 +539,28 @@ func registerTools(s *mcp.Server, hs *heraldServer) {
 		log.Printf("user_list: %d users", len(users))
 		return jsonResult(users)
 	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "search",
+		Description: "Search articles by keyword (full-text) and meaning (semantic similarity). Returns articles ranked by relevance with match type indicators.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input searchInput) (*mcp.CallToolResult, any, error) {
+		if input.Query == "" {
+			return errResult("query parameter is required")
+		}
+		userID := hs.resolveUser(ptrStr(input.Speaker))
+		limit := 20
+		if input.Limit != nil && *input.Limit > 0 {
+			limit = *input.Limit
+		}
+		offset := 0
+		if input.Offset != nil {
+			offset = *input.Offset
+		}
+		results, err := hs.engine.Search(ctx, userID, input.Query, limit, offset)
+		if err != nil {
+			return errResult("%v", err)
+		}
+		log.Printf("search: q=%q results=%d", input.Query, len(results))
+		return jsonResult(results)
+	})
 }

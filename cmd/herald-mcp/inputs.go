@@ -97,4 +97,11 @@ type feedMetadataInput struct {
 	Speaker *string `json:"speaker,omitempty"   jsonschema:"Speaker name for multi-user resolution. If omitted uses the default user."`
 }
 
+type searchInput struct {
+	Query   string  `json:"query"              jsonschema:"Search query text,required"`
+	Limit   *int    `json:"limit,omitempty"    jsonschema:"Maximum results to return (default 20)"`
+	Offset  *int    `json:"offset,omitempty"   jsonschema:"Number of results to skip for pagination (default 0)"`
+	Speaker *string `json:"speaker,omitempty"  jsonschema:"Speaker name for multi-user resolution. If omitted uses the default user."`
+}
+
 type emptyInput struct{}
