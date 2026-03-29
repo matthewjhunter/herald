@@ -359,3 +359,21 @@
         flex: 0 0 calc(var(--article-list-height, 50%) - 36px);
     }
 }
+
+/* Search */
+.nav-search {
+    flex: 0 1 16rem;
+    margin: 0;
+}
+.nav-search input[type="search"] {
+    margin: 0;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.85rem;
+    height: auto;
+}
+.search-banner {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+    color: var(--pico-muted-color);
+    border-bottom: 1px solid var(--pico-muted-border-color);
+}

@@ -153,7 +153,7 @@ func (h *handlers) init() {
 	tmplFS, _ := fs.Sub(embedded, "templates")
 
 	// Shared partials included in every page template.
-	shared := []string{"base.html", "nav.html", "settings_subnav.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "error.html"}
+	shared := []string{"base.html", "nav.html", "settings_subnav.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "search_results.html", "error.html"}
 
 	// Pages that get their own template tree.
 	pages := []string{"home.html", "feeds_manage.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_stats.html", "stats.html"}
@@ -199,6 +199,13 @@ type articleRow struct {
 	PublishedDateFmt string
 	Read             bool
 	Starred          bool
+}
+
+type searchResultsData struct {
+	Query      string
+	Articles   []articleRow
+	HasMore    bool
+	NextOffset int
 }
 
 type articleViewData struct {
@@ -647,6 +654,54 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 		sidebarData.Groups = groups
 	}
 	h.renderFragment(w, "feed_sidebar_oob", sidebarData)
+}
+
+func (h *handlers) handleSearch(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	query := r.URL.Query().Get("q")
+	limit := parseIntParam(r, "limit", 30)
+	offset := parseIntParam(r, "offset", 0)
+
+	if query == "" {
+		h.renderFragment(w, "search_results", searchResultsData{})
+		return
+	}
+
+	results, err := h.engine.Search(r.Context(), uid, query, limit+1, offset)
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Search failed")
+		return
+	}
+
+	hasMore := len(results) > limit
+	if hasMore {
+		results = results[:limit]
+	}
+
+	// Build feed title lookup.
+	feedTitles := make(map[int64]string)
+	if stats, err := h.engine.GetFeedStats(uid); err == nil && stats != nil {
+		for _, fs := range stats.Feeds {
+			feedTitles[fs.FeedID] = fs.FeedTitle
+		}
+	}
+
+	data := searchResultsData{
+		Query:      query,
+		HasMore:    hasMore,
+		NextOffset: offset + limit,
+	}
+	for _, r := range results {
+		data.Articles = append(data.Articles, articleRow{
+			ID:               r.ID,
+			Title:            r.Title,
+			Author:           r.Author,
+			FeedTitle:        feedTitles[r.FeedID],
+			PublishedDateFmt: formatDate(r.PublishedDate),
+		})
+	}
+
+	h.renderFragment(w, "search_results", data)
 }
 
 func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {

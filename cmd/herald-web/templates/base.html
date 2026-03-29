@@ -20,6 +20,12 @@
             <span style="font-size:0.6rem;opacity:0.4;line-height:1;margin-top:0.15rem;">{{buildVersion}} · {{buildTime}}</span>
         </div>
         {{block "nav" .}}{{end}}
+        <form class="nav-search" onsubmit="return false;">
+            <input type="search" name="q" placeholder="Search..."
+                   hx-get="/search" hx-target="#article-list" hx-swap="innerHTML"
+                   hx-trigger="input changed delay:300ms, search"
+                   autocomplete="off">
+        </form>
         <button id="theme-toggle" class="theme-toggle outline" aria-label="Toggle theme">☀</button>
     </header>
     {{block "content" .}}{{end}}

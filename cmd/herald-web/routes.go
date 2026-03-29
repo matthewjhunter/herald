@@ -46,6 +46,7 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.Handle("GET /stats", auth(http.HandlerFunc(h.handleStats)))
 
 	// htmx fragment routes.
+	mux.Handle("GET /search", auth(http.HandlerFunc(h.handleSearch)))
 	mux.Handle("GET /articles", auth(http.HandlerFunc(h.handleArticleList)))
 	mux.Handle("GET /articles/{articleID}", auth(http.HandlerFunc(h.handleArticleView)))
 	mux.Handle("GET /sidebar", auth(http.HandlerFunc(h.handleSidebar)))

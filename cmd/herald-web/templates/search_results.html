@@ -1,0 +1,18 @@
+{{define "search_results"}}
+{{if .Query}}<div class="search-banner">Results for "{{.Query}}"</div>{{end}}
+{{if .Articles}}
+{{range .Articles}}
+{{template "article_row" .}}
+{{end}}
+{{if .HasMore}}
+<div class="scroll-sentinel"
+     hx-get="/search?q={{.Query}}&offset={{.NextOffset}}"
+     hx-trigger="intersect root:#article-list"
+     hx-swap="outerHTML">
+    Loading more...
+</div>
+{{end}}
+{{else}}
+{{if .Query}}<div class="empty-state">No results found</div>{{end}}
+{{end}}
+{{end}}
