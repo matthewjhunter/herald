@@ -53,6 +53,13 @@ type Feed struct {
 	CreatedAt   time.Time  `json:"created_at"`
 }
 
+// SearchResult holds a single search hit with match metadata.
+type SearchResult struct {
+	Article
+	MatchType string  `json:"match_type"` // "fts", "semantic", or "both"
+	Score     float64 `json:"score"`      // normalized relevance score (0-1)
+}
+
 // ScoredArticle is an article with its AI-generated scores.
 type ScoredArticle struct {
 	Article

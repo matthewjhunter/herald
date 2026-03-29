@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -251,6 +252,11 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 					articleEmb, _ = e.groupMatcher.EmbedArticle(ctx, article.Title, content)
 				}
 
+				// Persist the article embedding for semantic search.
+				if articleEmb != nil && e.groupMatcher != nil {
+					e.store.StoreArticleEmbedding(article.ID, embedding.EncodeFloat32s(articleEmb), e.groupMatcher.Model()) //nolint:errcheck
+				}
+
 				// Pre-filter: skip LLM grouping call if no existing group is
 				// even remotely similar. This prevents nonsensical matches.
 				skipLLM := false
@@ -368,6 +374,134 @@ func (e *Engine) GetHighInterestArticles(userID int64, threshold float64, limit,
 		return nil, nil, err
 	}
 	return articlesFromInternal(articles), scores, nil
+}
+
+// Search runs full-text search and (when available) semantic embedding search,
+// merging and deduplicating results. FTS failures on malformed queries are
+// retried with the query double-quoted. If Ollama is unreachable, only FTS
+// results are returned (no error).
+func (e *Engine) Search(ctx context.Context, userID int64, query string, limit, offset int) ([]SearchResult, error) {
+	if query == "" {
+		return nil, nil
+	}
+
+	// --- FTS ---
+	ftsArticles, err := e.store.SearchArticlesFTS(userID, query, limit, offset)
+	if err != nil {
+		// Retry with quoted query in case of FTS syntax error.
+		quoted := `"` + strings.ReplaceAll(query, `"`, `""`) + `"`
+		ftsArticles, err = e.store.SearchArticlesFTS(userID, quoted, limit, offset)
+		if err != nil {
+			return nil, fmt.Errorf("fts search: %w", err)
+		}
+	}
+
+	// Build result map from FTS hits.
+	resultMap := make(map[int64]*SearchResult, len(ftsArticles))
+	for i, a := range ftsArticles {
+		art := articleFromInternal(a)
+		// Normalize FTS rank to 0-1 score (FTS5 rank is negative, closer to 0 is better).
+		score := 1.0
+		if len(ftsArticles) > 1 {
+			score = 1.0 - float64(i)/float64(len(ftsArticles))
+		}
+		resultMap[a.ID] = &SearchResult{Article: art, MatchType: "fts", Score: score}
+	}
+
+	// --- Semantic search ---
+	if e.groupMatcher != nil {
+		queryEmb, embErr := e.groupMatcher.EmbedText(ctx, query)
+		if embErr == nil && queryEmb != nil {
+			rows, embErr := e.store.GetArticleEmbeddings(userID, e.groupMatcher.Model())
+			if embErr == nil && len(rows) > 0 {
+				// Compute cosine similarity for all embeddings.
+				type scored struct {
+					articleID int64
+					sim       float64
+				}
+				candidates := make([]scored, 0, len(rows))
+				for _, r := range rows {
+					vec := embedding.DecodeFloat32s(r.Embedding)
+					sim := embedding.CosineSimilarity(queryEmb, vec)
+					if sim > 0.3 { // minimum similarity threshold
+						candidates = append(candidates, scored{r.ArticleID, sim})
+					}
+				}
+
+				// Sort by similarity descending.
+				sort.Slice(candidates, func(i, j int) bool {
+					return candidates[i].sim > candidates[j].sim
+				})
+
+				// Take top N and merge.
+				n := limit
+				if n > len(candidates) {
+					n = len(candidates)
+				}
+				// Fetch full articles for semantic hits not already in FTS results.
+				for _, c := range candidates[:n] {
+					if existing, ok := resultMap[c.articleID]; ok {
+						existing.MatchType = "both"
+						existing.Score = 0.6*existing.Score + 0.4*c.sim
+					} else {
+						a, fetchErr := e.store.GetArticle(c.articleID)
+						if fetchErr != nil {
+							continue
+						}
+						art := articleFromInternal(*a)
+						resultMap[c.articleID] = &SearchResult{Article: art, MatchType: "semantic", Score: c.sim}
+					}
+				}
+			}
+		}
+	}
+
+	// Collect and sort by score descending.
+	results := make([]SearchResult, 0, len(resultMap))
+	for _, r := range resultMap {
+		results = append(results, *r)
+	}
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	if len(results) > limit {
+		results = results[:limit]
+	}
+	return results, nil
+}
+
+// BackfillEmbeddings generates embeddings for articles that don't have them yet.
+// Processes up to batchSize articles per call. Returns the count processed.
+func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, error) {
+	if e.groupMatcher == nil {
+		return 0, fmt.Errorf("embedding not configured (no Ollama URL)")
+	}
+	articles, err := e.store.GetArticlesWithoutEmbeddings(e.groupMatcher.Model(), batchSize)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, a := range articles {
+		content := a.Content
+		if content == "" {
+			content = a.Summary
+		}
+		emb, err := e.groupMatcher.EmbedArticle(ctx, a.Title, content)
+		if err != nil {
+			log.Printf("backfill embed article %d: %v", a.ID, err)
+			continue
+		}
+		if emb == nil {
+			continue // content too short
+		}
+		if err := e.store.StoreArticleEmbedding(a.ID, embedding.EncodeFloat32s(emb), e.groupMatcher.Model()); err != nil {
+			log.Printf("backfill store embedding %d: %v", a.ID, err)
+			continue
+		}
+		count++
+	}
+	return count, nil
 }
 
 // MarkArticleRead marks an article as read.
