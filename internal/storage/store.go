@@ -133,6 +133,12 @@ type Store interface {
 	DisbandGroup(groupID int64) error
 	UpdateGroupDisplayName(groupID int64, displayName string) error
 
+	// Search
+	SearchArticlesFTS(userID int64, query string, limit, offset int) ([]Article, error)
+	StoreArticleEmbedding(articleID int64, embedding []byte, model string) error
+	GetArticleEmbeddings(userID int64, model string) ([]ArticleEmbeddingRow, error)
+	GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error)
+
 	// Embedding-based group operations
 	UpdateGroupEmbedding(groupID int64, embedding []byte, model string) error
 	GetGroupsWithEmbeddings(userID int64, model string) ([]ArticleGroupWithEmbedding, error)

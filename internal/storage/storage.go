@@ -76,6 +76,12 @@ type ArticleGroup struct {
 	UpdatedAt   time.Time
 }
 
+// ArticleEmbeddingRow holds a single article's embedding for cosine similarity search.
+type ArticleEmbeddingRow struct {
+	ArticleID int64
+	Embedding []byte // raw little-endian float32 blob, caller decodes
+}
+
 // ArticleGroupWithEmbedding extends ArticleGroup with the raw centroid vector blob.
 type ArticleGroupWithEmbedding struct {
 	ArticleGroup
@@ -210,6 +216,28 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		"ALTER TABLE article_groups ADD COLUMN embedding_model TEXT NOT NULL DEFAULT ''",
 		// Retry counter for AI pipeline failures (prevents infinite retry loops).
 		"ALTER TABLE read_state ADD COLUMN ai_retries INTEGER NOT NULL DEFAULT 0",
+		// FTS5 full-text search index (external-content, synced via triggers).
+		`CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
+			title, content, summary, linked_content,
+			content='articles', content_rowid='id',
+			tokenize='porter unicode61'
+		)`,
+		`CREATE TRIGGER IF NOT EXISTS articles_fts_insert AFTER INSERT ON articles BEGIN
+			INSERT INTO articles_fts(rowid, title, content, summary, linked_content)
+			VALUES (new.id, new.title, new.content, new.summary, new.linked_content);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS articles_fts_delete BEFORE DELETE ON articles BEGIN
+			INSERT INTO articles_fts(articles_fts, rowid, title, content, summary, linked_content)
+			VALUES ('delete', old.id, old.title, old.content, old.summary, old.linked_content);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS articles_fts_update AFTER UPDATE OF title, content, summary, linked_content ON articles BEGIN
+			INSERT INTO articles_fts(articles_fts, rowid, title, content, summary, linked_content)
+			VALUES ('delete', old.id, old.title, old.content, old.summary, old.linked_content);
+			INSERT INTO articles_fts(rowid, title, content, summary, linked_content)
+			VALUES (new.id, new.title, new.content, new.summary, new.linked_content);
+		END`,
+		// Rebuild FTS index to backfill existing articles.
+		"INSERT INTO articles_fts(articles_fts) VALUES('rebuild')",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -2309,6 +2337,79 @@ func (s *SQLiteStore) GetArticlesNeedingImageCache(limit int) ([]Article, error)
 func (s *SQLiteStore) MarkArticleImagesCached(articleID int64) error {
 	_, err := s.db.Exec(`UPDATE articles SET images_cached = 1 WHERE id = ?`, articleID)
 	return err
+}
+
+// --- Search methods ---
+
+// SearchArticlesFTS performs a full-text search using FTS5 MATCH, scoped to feeds
+// the user is subscribed to. Results are ordered by BM25 rank.
+func (s *SQLiteStore) SearchArticlesFTS(userID int64, query string, limit, offset int) ([]Article, error) {
+	rows, err := s.db.Query(`
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date
+		FROM articles a
+		JOIN articles_fts fts ON fts.rowid = a.id
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		WHERE uf.user_id = ? AND articles_fts MATCH ?
+		ORDER BY rank
+		LIMIT ? OFFSET ?`,
+		userID, query, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("fts search: %w", err)
+	}
+	defer rows.Close()
+	return scanArticles(rows)
+}
+
+// StoreArticleEmbedding upserts a per-article embedding vector.
+func (s *SQLiteStore) StoreArticleEmbedding(articleID int64, embedding []byte, model string) error {
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO article_embeddings (article_id, embedding, embedding_model)
+		VALUES (?, ?, ?)`, articleID, embedding, model)
+	return err
+}
+
+// GetArticleEmbeddings returns all article embeddings for a user's subscribed feeds,
+// filtered by the specified embedding model.
+func (s *SQLiteStore) GetArticleEmbeddings(userID int64, model string) ([]ArticleEmbeddingRow, error) {
+	rows, err := s.db.Query(`
+		SELECT ae.article_id, ae.embedding
+		FROM article_embeddings ae
+		JOIN articles a ON a.id = ae.article_id
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		WHERE uf.user_id = ? AND ae.embedding_model = ?`,
+		userID, model)
+	if err != nil {
+		return nil, fmt.Errorf("get article embeddings: %w", err)
+	}
+	defer rows.Close()
+	var result []ArticleEmbeddingRow
+	for rows.Next() {
+		var r ArticleEmbeddingRow
+		if err := rows.Scan(&r.ArticleID, &r.Embedding); err != nil {
+			return nil, err
+		}
+		result = append(result, r)
+	}
+	return result, rows.Err()
+}
+
+// GetArticlesWithoutEmbeddings returns articles that have no embedding for the
+// specified model. Used for backfill.
+func (s *SQLiteStore) GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error) {
+	rows, err := s.db.Query(`
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date
+		FROM articles a
+		LEFT JOIN article_embeddings ae ON a.id = ae.article_id AND ae.embedding_model = ?
+		WHERE ae.article_id IS NULL
+		ORDER BY a.published_date DESC
+		LIMIT ?`, model, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get articles without embeddings: %w", err)
+	}
+	defer rows.Close()
+	return scanArticles(rows)
 }
 
 // NewStore returns a Store backed by the appropriate database driver.

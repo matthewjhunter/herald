@@ -42,6 +42,32 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 		"ALTER TABLE group_summaries ADD COLUMN IF NOT EXISTS headline TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE article_groups ADD COLUMN IF NOT EXISTS embedding_model TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE read_state ADD COLUMN IF NOT EXISTS ai_retries INTEGER NOT NULL DEFAULT 0",
+		// Full-text search: tsvector column with GIN index.
+		"ALTER TABLE articles ADD COLUMN IF NOT EXISTS search_vector tsvector",
+		"CREATE INDEX IF NOT EXISTS idx_articles_search_vector ON articles USING gin(search_vector)",
+		// Trigger to auto-populate search_vector on insert/update.
+		`CREATE OR REPLACE FUNCTION articles_search_vector_update() RETURNS trigger AS $$
+		BEGIN
+			NEW.search_vector :=
+				setweight(to_tsvector('english', COALESCE(NEW.title, '')), 'A') ||
+				setweight(to_tsvector('english', COALESCE(NEW.summary, '')), 'B') ||
+				setweight(to_tsvector('english', COALESCE(NEW.content, '')), 'C') ||
+				setweight(to_tsvector('english', COALESCE(NEW.linked_content, '')), 'D');
+			RETURN NEW;
+		END $$ LANGUAGE plpgsql`,
+		`DO $$ BEGIN
+			CREATE TRIGGER articles_search_vector_trigger
+				BEFORE INSERT OR UPDATE OF title, content, summary, linked_content ON articles
+				FOR EACH ROW EXECUTE FUNCTION articles_search_vector_update();
+		EXCEPTION WHEN duplicate_object THEN NULL;
+		END $$`,
+		// Backfill search_vector for existing articles.
+		`UPDATE articles SET search_vector =
+			setweight(to_tsvector('english', COALESCE(title, '')), 'A') ||
+			setweight(to_tsvector('english', COALESCE(summary, '')), 'B') ||
+			setweight(to_tsvector('english', COALESCE(content, '')), 'C') ||
+			setweight(to_tsvector('english', COALESCE(linked_content, '')), 'D')
+		WHERE search_vector IS NULL`,
 	}
 	for _, m := range pgMigrations {
 		if _, err := db.Exec(m); err != nil {
@@ -2078,6 +2104,82 @@ func (s *PostgresStore) GetFeedGroupMemberships(userID int64) (map[int64][]int64
 		result[groupID] = append(result[groupID], feedID)
 	}
 	return result, rows.Err()
+}
+
+// --- Search methods ---
+
+// SearchArticlesFTS performs full-text search using PostgreSQL tsvector/tsquery,
+// scoped to feeds the user is subscribed to. Uses websearch_to_tsquery for
+// natural query syntax (quoted phrases, -exclusion).
+func (s *PostgresStore) SearchArticlesFTS(userID int64, query string, limit, offset int) ([]Article, error) {
+	rows, err := s.db.Query(s.db.prepare(`
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date
+		FROM articles a
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		WHERE uf.user_id = ? AND a.search_vector @@ websearch_to_tsquery('english', ?)
+		ORDER BY ts_rank_cd(a.search_vector, websearch_to_tsquery('english', ?)) DESC
+		LIMIT ? OFFSET ?`),
+		userID, query, query, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("fts search: %w", err)
+	}
+	defer rows.Close()
+	return scanArticles(rows)
+}
+
+// StoreArticleEmbedding upserts a per-article embedding vector.
+func (s *PostgresStore) StoreArticleEmbedding(articleID int64, embedding []byte, model string) error {
+	_, err := s.db.Exec(s.db.prepare(`
+		INSERT INTO article_embeddings (article_id, embedding, embedding_model)
+		VALUES (?, ?, ?)
+		ON CONFLICT (article_id) DO UPDATE
+		SET embedding = EXCLUDED.embedding, embedding_model = EXCLUDED.embedding_model, created_at = NOW()`),
+		articleID, embedding, model)
+	return err
+}
+
+// GetArticleEmbeddings returns all article embeddings for a user's subscribed feeds,
+// filtered by the specified embedding model.
+func (s *PostgresStore) GetArticleEmbeddings(userID int64, model string) ([]ArticleEmbeddingRow, error) {
+	rows, err := s.db.Query(s.db.prepare(`
+		SELECT ae.article_id, ae.embedding
+		FROM article_embeddings ae
+		JOIN articles a ON a.id = ae.article_id
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		WHERE uf.user_id = ? AND ae.embedding_model = ?`),
+		userID, model)
+	if err != nil {
+		return nil, fmt.Errorf("get article embeddings: %w", err)
+	}
+	defer rows.Close()
+	var result []ArticleEmbeddingRow
+	for rows.Next() {
+		var r ArticleEmbeddingRow
+		if err := rows.Scan(&r.ArticleID, &r.Embedding); err != nil {
+			return nil, err
+		}
+		result = append(result, r)
+	}
+	return result, rows.Err()
+}
+
+// GetArticlesWithoutEmbeddings returns articles that have no embedding for the
+// specified model. Used for backfill.
+func (s *PostgresStore) GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error) {
+	rows, err := s.db.Query(s.db.prepare(`
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date
+		FROM articles a
+		LEFT JOIN article_embeddings ae ON a.id = ae.article_id AND ae.embedding_model = ?
+		WHERE ae.article_id IS NULL
+		ORDER BY a.published_date DESC
+		LIMIT ?`), model, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get articles without embeddings: %w", err)
+	}
+	defer rows.Close()
+	return scanArticles(rows)
 }
 
 // --- Internal scan helpers ---

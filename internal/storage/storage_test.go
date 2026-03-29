@@ -1656,3 +1656,192 @@ func TestAIRetryLimit(t *testing.T) {
 		t.Errorf("expected 1 unscored article after reset, got %d", len(unscored))
 	}
 }
+
+func TestSearchArticlesFTS(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	userID := int64(1)
+	store.CreateUser("testuser")
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test Feed", "")
+	store.SubscribeUserToFeed(userID, feedID)
+
+	now := time.Now()
+	store.AddArticle(&Article{
+		FeedID: feedID, GUID: "a1", Title: "Go programming language",
+		URL: "https://example.com/1", Content: "Go is a statically typed language designed at Google.",
+		PublishedDate: &now,
+	})
+	store.AddArticle(&Article{
+		FeedID: feedID, GUID: "a2", Title: "Rust memory safety",
+		URL: "https://example.com/2", Content: "Rust prevents memory errors at compile time.",
+		PublishedDate: &now,
+	})
+	store.AddArticle(&Article{
+		FeedID: feedID, GUID: "a3", Title: "Python data science",
+		URL: "https://example.com/3", Content: "Python is popular for data analysis and machine learning.",
+		PublishedDate: &now,
+	})
+
+	// Search for "Go"
+	results, err := store.SearchArticlesFTS(userID, "Go", 10, 0)
+	if err != nil {
+		t.Fatalf("SearchArticlesFTS: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for 'Go', got %d", len(results))
+	}
+	if results[0].Title != "Go programming language" {
+		t.Errorf("expected 'Go programming language', got %q", results[0].Title)
+	}
+
+	// Search for "memory" — should match Rust article
+	results, err = store.SearchArticlesFTS(userID, "memory", 10, 0)
+	if err != nil {
+		t.Fatalf("SearchArticlesFTS: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for 'memory', got %d", len(results))
+	}
+
+	// Search for something not present
+	results, err = store.SearchArticlesFTS(userID, "kubernetes", 10, 0)
+	if err != nil {
+		t.Fatalf("SearchArticlesFTS: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for 'kubernetes', got %d", len(results))
+	}
+
+	// Articles from unsubscribed feeds should not appear
+	feedID2, _ := store.AddFeed("https://other.com/feed", "Other Feed", "")
+	store.AddArticle(&Article{
+		FeedID: feedID2, GUID: "o1", Title: "Go in other feed",
+		URL: "https://other.com/1", Content: "Go content in unsubscribed feed.",
+		PublishedDate: &now,
+	})
+	results, err = store.SearchArticlesFTS(userID, "Go", 10, 0)
+	if err != nil {
+		t.Fatalf("SearchArticlesFTS: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 result (only subscribed feed), got %d", len(results))
+	}
+}
+
+func TestStoreAndGetArticleEmbeddings(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	userID := int64(1)
+	store.CreateUser("testuser")
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test Feed", "")
+	store.SubscribeUserToFeed(userID, feedID)
+
+	now := time.Now()
+	artID1, _ := store.AddArticle(&Article{
+		FeedID: feedID, GUID: "a1", Title: "Article 1",
+		URL: "https://example.com/1", Content: "Content 1", PublishedDate: &now,
+	})
+	artID2, _ := store.AddArticle(&Article{
+		FeedID: feedID, GUID: "a2", Title: "Article 2",
+		URL: "https://example.com/2", Content: "Content 2", PublishedDate: &now,
+	})
+
+	// Initially no embeddings
+	embs, err := store.GetArticleEmbeddings(userID, "nomic-embed-text")
+	if err != nil {
+		t.Fatalf("GetArticleEmbeddings: %v", err)
+	}
+	if len(embs) != 0 {
+		t.Errorf("expected 0 embeddings initially, got %d", len(embs))
+	}
+
+	// Store embedding for article 1
+	fakeEmb := []byte{1, 2, 3, 4}
+	if err := store.StoreArticleEmbedding(artID1, fakeEmb, "nomic-embed-text"); err != nil {
+		t.Fatalf("StoreArticleEmbedding: %v", err)
+	}
+
+	// Should now have 1 embedding
+	embs, err = store.GetArticleEmbeddings(userID, "nomic-embed-text")
+	if err != nil {
+		t.Fatalf("GetArticleEmbeddings: %v", err)
+	}
+	if len(embs) != 1 {
+		t.Fatalf("expected 1 embedding, got %d", len(embs))
+	}
+	if embs[0].ArticleID != artID1 {
+		t.Errorf("expected article ID %d, got %d", artID1, embs[0].ArticleID)
+	}
+
+	// GetArticlesWithoutEmbeddings should return article 2
+	missing, err := store.GetArticlesWithoutEmbeddings("nomic-embed-text", 100)
+	if err != nil {
+		t.Fatalf("GetArticlesWithoutEmbeddings: %v", err)
+	}
+	if len(missing) != 1 {
+		t.Fatalf("expected 1 article without embedding, got %d", len(missing))
+	}
+	if missing[0].ID != artID2 {
+		t.Errorf("expected article %d without embedding, got %d", artID2, missing[0].ID)
+	}
+
+	// Different model should see both as missing
+	missing, err = store.GetArticlesWithoutEmbeddings("other-model", 100)
+	if err != nil {
+		t.Fatalf("GetArticlesWithoutEmbeddings other-model: %v", err)
+	}
+	if len(missing) != 2 {
+		t.Errorf("expected 2 articles without 'other-model' embedding, got %d", len(missing))
+	}
+
+	// Upsert: update article 1's embedding
+	newEmb := []byte{5, 6, 7, 8}
+	if err := store.StoreArticleEmbedding(artID1, newEmb, "nomic-embed-text"); err != nil {
+		t.Fatalf("StoreArticleEmbedding upsert: %v", err)
+	}
+	embs, err = store.GetArticleEmbeddings(userID, "nomic-embed-text")
+	if err != nil {
+		t.Fatalf("GetArticleEmbeddings after upsert: %v", err)
+	}
+	if len(embs) != 1 {
+		t.Fatalf("expected 1 embedding after upsert, got %d", len(embs))
+	}
+	if string(embs[0].Embedding) != string(newEmb) {
+		t.Errorf("embedding not updated after upsert")
+	}
+}
+
+func TestSearchArticlesFTS_PG(t *testing.T) {
+	store, cleanup := newPGTestStore(t)
+	defer cleanup()
+
+	userID := int64(1)
+	store.CreateUser("testuser")
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test Feed", "")
+	store.SubscribeUserToFeed(userID, feedID)
+
+	now := time.Now()
+	store.AddArticle(&Article{
+		FeedID: feedID, GUID: "a1", Title: "Go programming language",
+		URL: "https://example.com/1", Content: "Go is a statically typed language designed at Google.",
+		PublishedDate: &now,
+	})
+	store.AddArticle(&Article{
+		FeedID: feedID, GUID: "a2", Title: "Rust memory safety",
+		URL: "https://example.com/2", Content: "Rust prevents memory errors at compile time.",
+		PublishedDate: &now,
+	})
+
+	results, err := store.SearchArticlesFTS(userID, "Go programming", 10, 0)
+	if err != nil {
+		t.Fatalf("SearchArticlesFTS: %v", err)
+	}
+	if len(results) < 1 {
+		t.Errorf("expected at least 1 result for 'Go programming', got %d", len(results))
+	}
+}

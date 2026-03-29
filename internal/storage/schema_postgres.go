@@ -204,4 +204,12 @@ CREATE TABLE IF NOT EXISTS feed_favicons (
     fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS article_embeddings (
+    article_id BIGINT PRIMARY KEY,
+    embedding  BYTEA NOT NULL,
+    embedding_model TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
+);
 `
