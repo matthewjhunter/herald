@@ -21,7 +21,7 @@
         </div>
         {{block "nav" .}}{{end}}
         <form class="nav-search" onsubmit="return false;">
-            <input type="search" name="q" placeholder="Search..."
+            <input type="search" name="q" placeholder=""
                    hx-get="/search" hx-target="#article-list" hx-swap="innerHTML"
                    hx-trigger="input changed delay:300ms, search"
                    autocomplete="off">
