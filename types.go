@@ -68,6 +68,49 @@ type ScoredArticle struct {
 	Safe          bool    `json:"safe"`
 }
 
+// Newsletter represents a user-defined newsletter/digest configuration.
+type Newsletter struct {
+	ID              int64            `json:"id"`
+	UserID          int64            `json:"user_id"`
+	Name            string           `json:"name"`
+	Schedule        string           `json:"schedule"`
+	Config          NewsletterConfig `json:"config"`
+	PromptTemplate  string           `json:"prompt_template,omitempty"`
+	EmailRecipient  string           `json:"email_recipient,omitempty"`
+	Enabled         bool             `json:"enabled"`
+	LastGeneratedAt *time.Time       `json:"last_generated_at,omitempty"`
+}
+
+// NewsletterConfig holds the filtering criteria for a newsletter.
+type NewsletterConfig struct {
+	MinInterestScore  float64  `json:"min_interest_score"`
+	MinSecurityScore  float64  `json:"min_security_score"`
+	IncludeFeeds      []int64  `json:"include_feeds,omitempty"`
+	ExcludeFeeds      []int64  `json:"exclude_feeds,omitempty"`
+	IncludeCategories []string `json:"include_categories,omitempty"`
+	ExcludeCategories []string `json:"exclude_categories,omitempty"`
+	MaxArticles       int      `json:"max_articles"`
+}
+
+// NewsletterIssue represents a single generated newsletter edition.
+type NewsletterIssue struct {
+	ID           int64      `json:"id"`
+	NewsletterID int64      `json:"newsletter_id"`
+	Headline     string     `json:"headline"`
+	ContentHTML  string     `json:"content_html"`
+	ContentText  string     `json:"content_text,omitempty"`
+	ArticleIDs   []int64    `json:"article_ids"`
+	GeneratedAt  time.Time  `json:"generated_at"`
+	SentAt       *time.Time `json:"sent_at,omitempty"`
+}
+
+// NewsletterStats holds sidebar display data for a newsletter.
+type NewsletterStats struct {
+	NewsletterID int64  `json:"newsletter_id"`
+	Name         string `json:"name"`
+	IssueCount   int    `json:"issue_count"`
+}
+
 // ArticleGroup represents a cluster of articles covering the same topic/event.
 type ArticleGroup struct {
 	ID          int64     `json:"id"`

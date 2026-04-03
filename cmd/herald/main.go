@@ -692,6 +692,26 @@ func doFetch(ctx context.Context) error {
 	return nil
 }
 
+// processNewsletters creates a temporary Engine and processes due newsletters.
+func processNewsletters(ctx context.Context) error {
+	if cfg.Ollama.BaseURL == "" {
+		return nil // AI not configured, skip newsletters
+	}
+	engine, err := herald.NewEngine(herald.EngineConfig{
+		DBPath:        cfg.Database.Path,
+		OllamaBaseURL: cfg.Ollama.BaseURL,
+		SecurityModel: cfg.Ollama.SecurityModel,
+		CurationModel: cfg.Ollama.CurationModel,
+		UserID:        cfg.DefaultUserID,
+	})
+	if err != nil {
+		return fmt.Errorf("create engine for newsletters: %w", err)
+	}
+	defer engine.Close()
+
+	return engine.ProcessDueNewsletters(ctx)
+}
+
 func fetchCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "fetch",

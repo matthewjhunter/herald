@@ -1845,3 +1845,121 @@ func TestSearchArticlesFTS_PG(t *testing.T) {
 		t.Errorf("expected at least 1 result for 'Go programming', got %d", len(results))
 	}
 }
+
+func TestNewsletterCRUD(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	store.CreateUser("testuser")
+
+	// Create newsletter.
+	nl := &Newsletter{
+		UserID:   1,
+		Name:     "Daily Security",
+		Schedule: "daily",
+		Config: NewsletterConfig{
+			MinInterestScore: 7.0,
+			MaxArticles:      10,
+		},
+		Enabled: true,
+	}
+	id, err := store.CreateNewsletter(nl)
+	if err != nil {
+		t.Fatalf("CreateNewsletter: %v", err)
+	}
+	if id == 0 {
+		t.Fatal("expected non-zero newsletter ID")
+	}
+
+	// Get newsletter.
+	got, err := store.GetNewsletter(id)
+	if err != nil {
+		t.Fatalf("GetNewsletter: %v", err)
+	}
+	if got.Name != "Daily Security" {
+		t.Errorf("name = %q, want %q", got.Name, "Daily Security")
+	}
+	if got.Config.MinInterestScore != 7.0 {
+		t.Errorf("min_interest_score = %f, want 7.0", got.Config.MinInterestScore)
+	}
+
+	// Update newsletter.
+	got.Name = "Weekly Security"
+	got.Schedule = "manual"
+	if err := store.UpdateNewsletter(got); err != nil {
+		t.Fatalf("UpdateNewsletter: %v", err)
+	}
+	got2, _ := store.GetNewsletter(id)
+	if got2.Name != "Weekly Security" {
+		t.Errorf("updated name = %q, want %q", got2.Name, "Weekly Security")
+	}
+
+	// List newsletters.
+	list, err := store.GetUserNewsletters(1)
+	if err != nil {
+		t.Fatalf("GetUserNewsletters: %v", err)
+	}
+	if len(list) != 1 {
+		t.Errorf("expected 1 newsletter, got %d", len(list))
+	}
+
+	// Newsletter stats.
+	stats, err := store.GetNewsletterStats(1)
+	if err != nil {
+		t.Fatalf("GetNewsletterStats: %v", err)
+	}
+	if len(stats) != 1 {
+		t.Fatalf("expected 1 stat, got %d", len(stats))
+	}
+	if stats[0].IssueCount != 0 {
+		t.Errorf("expected 0 issues, got %d", stats[0].IssueCount)
+	}
+
+	// Create issue.
+	issue := &NewsletterIssue{
+		NewsletterID: id,
+		Headline:     "Top Security News",
+		ContentHTML:  "<h2>Breaking</h2><p>Test content</p>",
+		ArticleIDs:   []int64{1, 2, 3},
+	}
+	issueID, err := store.CreateNewsletterIssue(issue)
+	if err != nil {
+		t.Fatalf("CreateNewsletterIssue: %v", err)
+	}
+
+	// Get latest issue.
+	latest, err := store.GetLatestNewsletterIssue(id)
+	if err != nil {
+		t.Fatalf("GetLatestNewsletterIssue: %v", err)
+	}
+	if latest.Headline != "Top Security News" {
+		t.Errorf("headline = %q, want %q", latest.Headline, "Top Security News")
+	}
+	if len(latest.ArticleIDs) != 3 {
+		t.Errorf("expected 3 article IDs, got %d", len(latest.ArticleIDs))
+	}
+
+	// Mark sent.
+	if err := store.MarkNewsletterIssueSent(issueID); err != nil {
+		t.Fatalf("MarkNewsletterIssueSent: %v", err)
+	}
+	sent, _ := store.GetNewsletterIssue(issueID)
+	if sent.SentAt == nil {
+		t.Error("expected non-nil SentAt after marking sent")
+	}
+
+	// Stats should show 1 issue now.
+	stats, _ = store.GetNewsletterStats(1)
+	if stats[0].IssueCount != 1 {
+		t.Errorf("expected 1 issue in stats, got %d", stats[0].IssueCount)
+	}
+
+	// Delete newsletter (should cascade to issues).
+	if err := store.DeleteNewsletter(id); err != nil {
+		t.Fatalf("DeleteNewsletter: %v", err)
+	}
+	list, _ = store.GetUserNewsletters(1)
+	if len(list) != 0 {
+		t.Errorf("expected 0 newsletters after delete, got %d", len(list))
+	}
+}

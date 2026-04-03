@@ -128,6 +128,91 @@ Summary:
 	return topic, nil
 }
 
+// NewsletterInput represents an article for newsletter content generation.
+type NewsletterInput struct {
+	Title      string
+	AISummary  string
+	FeedTitle  string
+	URL        string
+	Score      float64
+	Categories []string
+}
+
+// NewsletterResult holds the headline and HTML body from newsletter generation.
+type NewsletterResult struct {
+	Headline string `json:"headline"`
+	Body     string `json:"body"`
+}
+
+// GenerateNewsletterContent creates a newsletter issue from a list of articles.
+// If customPrompt is non-empty, it is used instead of the system default.
+func (p *AIProcessor) GenerateNewsletterContent(ctx context.Context, userID int64, newsletterName, customPrompt string, articles []NewsletterInput) (*NewsletterResult, error) {
+	if len(articles) == 0 {
+		return nil, fmt.Errorf("no articles for newsletter")
+	}
+
+	var articleList []string
+	for i, art := range articles {
+		entry := fmt.Sprintf("%d. %s (%.1f/10)\n   Feed: %s\n   URL: %s",
+			i+1, art.Title, art.Score, art.FeedTitle, art.URL)
+		if art.AISummary != "" {
+			entry += fmt.Sprintf("\n   Summary: %s", art.AISummary)
+		}
+		if len(art.Categories) > 0 {
+			entry += fmt.Sprintf("\n   Categories: %s", strings.Join(art.Categories, ", "))
+		}
+		articleList = append(articleList, entry)
+	}
+
+	var prompt string
+	if customPrompt != "" {
+		data := map[string]any{
+			"NewsletterName":     newsletterName,
+			"CustomInstructions": "",
+			"Articles":           strings.Join(articleList, "\n\n"),
+		}
+		var err error
+		prompt, err = ExecutePrompt(customPrompt, data)
+		if err != nil {
+			return nil, fmt.Errorf("render custom newsletter prompt: %w", err)
+		}
+	} else {
+		promptTemplate, err := p.promptLoader.GetPrompt(userID, PromptTypeNewsletter)
+		if err != nil {
+			return nil, fmt.Errorf("load newsletter prompt: %w", err)
+		}
+		data := map[string]any{
+			"NewsletterName":     newsletterName,
+			"CustomInstructions": "",
+			"Articles":           strings.Join(articleList, "\n\n"),
+		}
+		prompt, err = ExecutePrompt(promptTemplate, data)
+		if err != nil {
+			return nil, fmt.Errorf("render newsletter prompt: %w", err)
+		}
+	}
+
+	temperature := p.promptLoader.GetTemperature(userID, PromptTypeNewsletter)
+
+	callCtx, cancel := p.withCallTimeout(ctx)
+	defer cancel()
+
+	result, err := p.client.generate(callCtx, p.curationModel, prompt, temperature)
+	if err != nil {
+		return nil, fmt.Errorf("newsletter generation failed: %w", err)
+	}
+
+	result = strings.TrimSpace(result)
+
+	var nr NewsletterResult
+	if err := json.Unmarshal([]byte(extractJSON(result)), &nr); err != nil {
+		// Fallback: treat entire response as body
+		return &NewsletterResult{Headline: newsletterName, Body: result}, nil
+	}
+
+	return &nr, nil
+}
+
 // RelatedArticlesResult represents the result of finding related articles.
 type RelatedArticlesResult struct {
 	IsRelated      bool    `json:"is_related"`

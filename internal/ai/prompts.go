@@ -27,6 +27,9 @@ var defaultGroupSummaryPrompt string
 //go:embed prompts/related_groups.txt
 var defaultRelatedGroupsPrompt string
 
+//go:embed prompts/newsletter.txt
+var defaultNewsletterPrompt string
+
 // PromptType represents the type of AI prompt
 type PromptType string
 
@@ -36,6 +39,7 @@ const (
 	PromptTypeSummarization PromptType = "summarization"
 	PromptTypeGroupSummary  PromptType = "group_summary"
 	PromptTypeRelatedGroups PromptType = "related_groups"
+	PromptTypeNewsletter    PromptType = "newsletter"
 )
 
 // PromptLoader handles 3-tier prompt loading: embedded -> config -> database
@@ -68,6 +72,8 @@ func DefaultPrompt(pt PromptType) (string, error) {
 		return defaultGroupSummaryPrompt, nil
 	case PromptTypeRelatedGroups:
 		return defaultRelatedGroupsPrompt, nil
+	case PromptTypeNewsletter:
+		return defaultNewsletterPrompt, nil
 	default:
 		return "", fmt.Errorf("unknown prompt type: %s", pt)
 	}
@@ -125,6 +131,8 @@ func (pl *PromptLoader) GetPrompt(userID int64, promptType PromptType) (string, 
 				configPrompt = config.Prompts.GroupSummary
 			case PromptTypeRelatedGroups:
 				configPrompt = config.Prompts.RelatedGroups
+			case PromptTypeNewsletter:
+				configPrompt = config.Prompts.Newsletter
 			}
 
 			if configPrompt != "" {
@@ -149,6 +157,8 @@ func (pl *PromptLoader) GetPrompt(userID int64, promptType PromptType) (string, 
 		defaultPrompt = defaultGroupSummaryPrompt
 	case PromptTypeRelatedGroups:
 		defaultPrompt = defaultRelatedGroupsPrompt
+	case PromptTypeNewsletter:
+		defaultPrompt = defaultNewsletterPrompt
 	default:
 		return "", fmt.Errorf("unknown prompt type: %s", promptType)
 	}
@@ -187,6 +197,8 @@ func (pl *PromptLoader) GetTemperature(userID int64, promptType PromptType) floa
 				configTemp = config.Temperatures.GroupSummary
 			case PromptTypeRelatedGroups:
 				configTemp = config.Temperatures.RelatedGroups
+			case PromptTypeNewsletter:
+				configTemp = config.Temperatures.Newsletter
 			}
 
 			if configTemp > 0 {
@@ -207,6 +219,8 @@ func (pl *PromptLoader) GetTemperature(userID int64, promptType PromptType) floa
 		return 0.5
 	case PromptTypeRelatedGroups:
 		return 0.3
+	case PromptTypeNewsletter:
+		return 0.6
 	default:
 		return 0.5 // balanced default
 	}

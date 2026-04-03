@@ -16,6 +16,7 @@ import (
 
 	embedding "github.com/matthewjhunter/go-embedding"
 	"github.com/matthewjhunter/herald/internal/ai"
+	emailpkg "github.com/matthewjhunter/herald/internal/email"
 	"github.com/matthewjhunter/herald/internal/feeds"
 	"github.com/matthewjhunter/herald/internal/storage"
 )
@@ -38,10 +39,10 @@ type Engine struct {
 // reading still work normally.
 func NewEngine(cfg EngineConfig) (*Engine, error) {
 	if cfg.SecurityModel == "" {
-		cfg.SecurityModel = "gemma3:4b"
+		cfg.SecurityModel = "gemma4"
 	}
 	if cfg.CurationModel == "" {
-		cfg.CurationModel = "llama3"
+		cfg.CurationModel = "gemma4"
 	}
 	if cfg.InterestThreshold == 0 {
 		cfg.InterestThreshold = 8.0
@@ -825,6 +826,252 @@ func (e *Engine) DisbandGroup(userID, groupID int64) error {
 		return fmt.Errorf("group not found or not owned by user")
 	}
 	return e.store.DisbandGroup(groupID)
+}
+
+// --- Newsletter methods ---
+
+// CreateNewsletter creates a new newsletter definition for a user.
+func (e *Engine) CreateNewsletter(userID int64, name, schedule, emailRecipient string, config storage.NewsletterConfig) (int64, error) {
+	if config.MaxArticles == 0 {
+		config.MaxArticles = 20
+	}
+	return e.store.CreateNewsletter(&storage.Newsletter{
+		UserID:         userID,
+		Name:           name,
+		Schedule:       schedule,
+		EmailRecipient: emailRecipient,
+		Config:         config,
+		Enabled:        true,
+	})
+}
+
+// UpdateNewsletter updates a newsletter definition.
+func (e *Engine) UpdateNewsletter(n *storage.Newsletter) error {
+	return e.store.UpdateNewsletter(n)
+}
+
+// DeleteNewsletter deletes a newsletter.
+func (e *Engine) DeleteNewsletter(userID, newsletterID int64) error {
+	nl, err := e.store.GetNewsletter(newsletterID)
+	if err != nil {
+		return err
+	}
+	if nl.UserID != userID {
+		return fmt.Errorf("newsletter not found or not owned by user")
+	}
+	return e.store.DeleteNewsletter(newsletterID)
+}
+
+// GetNewsletter returns a newsletter by ID.
+func (e *Engine) GetNewsletter(newsletterID int64) (*storage.Newsletter, error) {
+	return e.store.GetNewsletter(newsletterID)
+}
+
+// GetUserNewsletters returns all newsletters for a user.
+func (e *Engine) GetUserNewsletters(userID int64) ([]storage.Newsletter, error) {
+	return e.store.GetUserNewsletters(userID)
+}
+
+// GetNewsletterStats returns sidebar stats for newsletters.
+func (e *Engine) GetNewsletterStats(userID int64) ([]NewsletterStats, error) {
+	internal, err := e.store.GetNewsletterStats(userID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]NewsletterStats, len(internal))
+	for i, s := range internal {
+		result[i] = NewsletterStats{
+			NewsletterID: s.NewsletterID,
+			Name:         s.Name,
+			IssueCount:   s.IssueCount,
+		}
+	}
+	return result, nil
+}
+
+// GetNewsletterIssue returns a single newsletter issue by ID.
+func (e *Engine) GetNewsletterIssue(issueID int64) (*NewsletterIssue, error) {
+	si, err := e.store.GetNewsletterIssue(issueID)
+	if err != nil {
+		return nil, err
+	}
+	return &NewsletterIssue{
+		ID: si.ID, NewsletterID: si.NewsletterID, Headline: si.Headline,
+		ContentHTML: si.ContentHTML, ContentText: si.ContentText,
+		ArticleIDs: si.ArticleIDs, GeneratedAt: si.GeneratedAt, SentAt: si.SentAt,
+	}, nil
+}
+
+// GetLatestNewsletterIssue returns the most recent issue for a newsletter.
+func (e *Engine) GetLatestNewsletterIssue(newsletterID int64) (*NewsletterIssue, error) {
+	si, err := e.store.GetLatestNewsletterIssue(newsletterID)
+	if err != nil {
+		return nil, err
+	}
+	return &NewsletterIssue{
+		ID: si.ID, NewsletterID: si.NewsletterID, Headline: si.Headline,
+		ContentHTML: si.ContentHTML, ContentText: si.ContentText,
+		ArticleIDs: si.ArticleIDs, GeneratedAt: si.GeneratedAt, SentAt: si.SentAt,
+	}, nil
+}
+
+// GetNewsletterIssues returns paginated issues for a newsletter.
+func (e *Engine) GetNewsletterIssues(newsletterID int64, limit, offset int) ([]NewsletterIssue, error) {
+	internal, err := e.store.GetNewsletterIssues(newsletterID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]NewsletterIssue, len(internal))
+	for i, si := range internal {
+		result[i] = NewsletterIssue{
+			ID: si.ID, NewsletterID: si.NewsletterID, Headline: si.Headline,
+			ContentText: si.ContentText, GeneratedAt: si.GeneratedAt, SentAt: si.SentAt,
+		}
+	}
+	return result, nil
+}
+
+// GenerateNewsletterIssue generates a new newsletter issue using the AI pipeline.
+func (e *Engine) GenerateNewsletterIssue(ctx context.Context, userID, newsletterID int64) (*NewsletterIssue, error) {
+	if e.ai == nil {
+		return nil, fmt.Errorf("AI processing not configured")
+	}
+
+	nl, err := e.store.GetNewsletter(newsletterID)
+	if err != nil {
+		return nil, fmt.Errorf("get newsletter: %w", err)
+	}
+
+	limit := nl.Config.MaxArticles
+	if limit == 0 {
+		limit = 20
+	}
+
+	articles, scores, err := e.store.GetNewsletterArticles(userID, &nl.Config, nl.LastGeneratedAt, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get newsletter articles: %w", err)
+	}
+	if len(articles) == 0 {
+		return nil, fmt.Errorf("no articles match newsletter criteria")
+	}
+
+	// Build feed title lookup.
+	allFeeds, _ := e.store.GetAllFeeds()
+	feedTitles := make(map[int64]string)
+	for _, f := range allFeeds {
+		feedTitles[f.ID] = f.Title
+	}
+
+	// Build AI input.
+	var inputs []ai.NewsletterInput
+	var articleIDs []int64
+	for i, a := range articles {
+		score := 0.0
+		if i < len(scores) {
+			score = scores[i]
+		}
+		input := ai.NewsletterInput{
+			Title:     a.Title,
+			FeedTitle: feedTitles[a.FeedID],
+			URL:       a.URL,
+			Score:     score,
+		}
+		if summary, err := e.store.GetArticleSummary(userID, a.ID); err == nil && summary != nil {
+			input.AISummary = summary.AISummary
+		} else if a.Summary != "" {
+			input.AISummary = a.Summary
+		}
+		if cats, err := e.store.GetArticleCategories(a.ID); err == nil {
+			input.Categories = cats
+		}
+		inputs = append(inputs, input)
+		articleIDs = append(articleIDs, a.ID)
+	}
+
+	result, err := e.ai.GenerateNewsletterContent(ctx, userID, nl.Name, nl.PromptTemplate, inputs)
+	if err != nil {
+		return nil, fmt.Errorf("generate newsletter content: %w", err)
+	}
+
+	issueID, err := e.store.CreateNewsletterIssue(&storage.NewsletterIssue{
+		NewsletterID: newsletterID,
+		Headline:     result.Headline,
+		ContentHTML:  result.Body,
+		ArticleIDs:   articleIDs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("store newsletter issue: %w", err)
+	}
+
+	e.store.UpdateNewsletterLastGenerated(newsletterID) //nolint:errcheck
+
+	return &NewsletterIssue{
+		ID:           issueID,
+		NewsletterID: newsletterID,
+		Headline:     result.Headline,
+		ContentHTML:  result.Body,
+		ArticleIDs:   articleIDs,
+		GeneratedAt:  time.Now(),
+	}, nil
+}
+
+// SendNewsletterIssue sends an existing newsletter issue via email.
+func (e *Engine) SendNewsletterIssue(issueID int64) error {
+	issue, err := e.store.GetNewsletterIssue(issueID)
+	if err != nil {
+		return fmt.Errorf("get issue: %w", err)
+	}
+	nl, err := e.store.GetNewsletter(issue.NewsletterID)
+	if err != nil {
+		return fmt.Errorf("get newsletter: %w", err)
+	}
+	if nl.EmailRecipient == "" {
+		return fmt.Errorf("no email recipient configured")
+	}
+
+	sender := &emailpkg.Sender{
+		Host:     e.config.Email.SMTPHost,
+		Port:     e.config.Email.SMTPPort,
+		Username: e.config.Email.Username,
+		Password: e.config.Email.Password,
+		From:     e.config.Email.FromAddress,
+		FromName: e.config.Email.FromName,
+	}
+
+	subject := nl.Name + ": " + issue.Headline
+	if err := sender.Send(nl.EmailRecipient, subject, issue.ContentHTML, issue.ContentText); err != nil {
+		return fmt.Errorf("send email: %w", err)
+	}
+
+	return e.store.MarkNewsletterIssueSent(issueID)
+}
+
+// ProcessDueNewsletters generates issues for all newsletters that are due.
+func (e *Engine) ProcessDueNewsletters(ctx context.Context) error {
+	for _, schedule := range []string{"hourly", "daily"} {
+		newsletters, err := e.store.GetDueNewsletters(schedule)
+		if err != nil {
+			log.Printf("get due %s newsletters: %v", schedule, err)
+			continue
+		}
+		for _, nl := range newsletters {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			log.Printf("generating %s newsletter %q (id=%d)", schedule, nl.Name, nl.ID)
+			issue, err := e.GenerateNewsletterIssue(ctx, nl.UserID, nl.ID)
+			if err != nil {
+				log.Printf("newsletter %d generation failed: %v", nl.ID, err)
+				continue
+			}
+			if nl.EmailRecipient != "" && e.config.Email.SMTPHost != "" {
+				if err := e.SendNewsletterIssue(issue.ID); err != nil {
+					log.Printf("newsletter %d email failed: %v", nl.ID, err)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // GenerateBriefing creates a text briefing from high-interest unread articles.

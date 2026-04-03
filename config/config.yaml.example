@@ -9,11 +9,11 @@ ollama:
   # Ollama API base URL
   base_url: http://localhost:11434
 
-  # Security model - use Gemma 2 for content safety screening
-  security_model: gemma2
+  # Security model - Gemma 4 for content safety screening
+  security_model: gemma4
 
-  # Curation model - use Llama 3.2 for neutral interest scoring
-  curation_model: llama3.2
+  # Curation model - Gemma 4 for interest scoring
+  curation_model: gemma4
 
   # Embedding model for article grouping similarity.
   # IMPORTANT: Changing this model invalidates all existing group centroids.

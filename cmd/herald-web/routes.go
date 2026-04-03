@@ -78,6 +78,15 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.Handle("DELETE /groups/{groupID}", auth(http.HandlerFunc(h.handleGroupDisband)))
 	mux.Handle("POST /groups/{groupID}/mark-read", auth(http.HandlerFunc(h.handleGroupMarkRead)))
 
+	// Newsletter routes.
+	mux.Handle("GET /newsletters", auth(http.HandlerFunc(h.handleNewslettersManage)))
+	mux.Handle("POST /newsletters", auth(http.HandlerFunc(h.handleNewsletterCreate)))
+	mux.Handle("GET /newsletters/{newsletterID}", auth(http.HandlerFunc(h.handleNewsletterView)))
+	mux.Handle("DELETE /newsletters/{newsletterID}", auth(http.HandlerFunc(h.handleNewsletterDelete)))
+	mux.Handle("POST /newsletters/{newsletterID}/generate", auth(http.HandlerFunc(h.handleNewsletterGenerate)))
+	mux.Handle("POST /newsletters/{newsletterID}/send", auth(http.HandlerFunc(h.handleNewsletterSend)))
+	mux.Handle("GET /newsletters/{newsletterID}/issues/{issueID}", auth(http.HandlerFunc(h.handleNewsletterIssueView)))
+
 	// Ollama model list (used by prompt settings pages).
 	mux.Handle("GET /api/ollama/models", auth(http.HandlerFunc(h.handleOllamaModels)))
 

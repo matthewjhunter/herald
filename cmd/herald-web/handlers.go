@@ -18,6 +18,7 @@ import (
 
 	"github.com/infodancer/oidclient"
 	herald "github.com/matthewjhunter/herald"
+	"github.com/matthewjhunter/herald/internal/storage"
 	"github.com/microcosm-cc/bluemonday"
 )
 
@@ -78,13 +79,14 @@ type promptUIEntry struct {
 }
 
 // promptTypeOrder defines the display order for prompt types in the UI.
-var promptTypeOrder = []string{"curation", "summarization", "group_summary", "related_groups"}
+var promptTypeOrder = []string{"curation", "summarization", "group_summary", "related_groups", "newsletter"}
 
 var promptLabels = map[string]string{
 	"curation":       "Article Curation",
 	"summarization":  "Article Summarization",
 	"group_summary":  "Group Summary",
 	"related_groups": "Related Groups",
+	"newsletter":     "Newsletter",
 }
 
 // loadPromptEntries builds the UI entry list for a given userID.
@@ -153,10 +155,10 @@ func (h *handlers) init() {
 	tmplFS, _ := fs.Sub(embedded, "templates")
 
 	// Shared partials included in every page template.
-	shared := []string{"base.html", "nav.html", "settings_subnav.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "search_results.html", "error.html"}
+	shared := []string{"base.html", "nav.html", "settings_subnav.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "search_results.html", "newsletter_view.html", "error.html"}
 
 	// Pages that get their own template tree.
-	pages := []string{"home.html", "feeds_manage.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_stats.html", "stats.html"}
+	pages := []string{"home.html", "feeds_manage.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_stats.html", "stats.html", "newsletters_manage.html"}
 
 	h.pages = make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
@@ -171,13 +173,15 @@ func (h *handlers) init() {
 // --- Template data types ---
 
 type homeData struct {
-	UserName      string
-	Feeds         []herald.FeedStats
-	Groups        []herald.GroupStats
-	TotalUnread   int
-	ActiveFeed    int64
-	ActiveGroup   int64
-	ActiveStarred bool
+	UserName         string
+	Feeds            []herald.FeedStats
+	Groups           []herald.GroupStats
+	Newsletters      []herald.NewsletterStats
+	TotalUnread      int
+	ActiveFeed       int64
+	ActiveGroup      int64
+	ActiveNewsletter int64
+	ActiveStarred    bool
 }
 
 type articleListData struct {
@@ -466,6 +470,9 @@ func (h *handlers) handleHome(w http.ResponseWriter, r *http.Request) {
 	if groups, err := h.engine.GetGroupStats(uid); err == nil {
 		data.Groups = groups
 	}
+	if newsletters, err := h.engine.GetNewsletterStats(uid); err == nil {
+		data.Newsletters = newsletters
+	}
 
 	h.renderPage(w, r, "home.html", data)
 }
@@ -653,6 +660,9 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 	if groups, err := h.engine.GetGroupStats(uid); err == nil {
 		sidebarData.Groups = groups
 	}
+	if newsletters, err := h.engine.GetNewsletterStats(uid); err == nil {
+		sidebarData.Newsletters = newsletters
+	}
 	h.renderFragment(w, "feed_sidebar_oob", sidebarData)
 }
 
@@ -795,6 +805,9 @@ func (h *handlers) handleSidebar(w http.ResponseWriter, r *http.Request) {
 	if groups, err := h.engine.GetGroupStats(uid); err == nil {
 		data.Groups = groups
 	}
+	if newsletters, err := h.engine.GetNewsletterStats(uid); err == nil {
+		data.Newsletters = newsletters
+	}
 
 	h.renderFragment(w, "feed_sidebar_content", data)
 }
@@ -875,6 +888,219 @@ func (h *handlers) handleGroupMarkRead(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("HX-Trigger", "feeds-changed")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Newsletter handlers ---
+
+type newsletterViewData struct {
+	Newsletter    herald.Newsletter
+	LatestIssue   *herald.NewsletterIssue
+	SanitizedHTML template.HTML
+	GeneratedFmt  string
+	SentFmt       string
+	PastIssues    []newsletterIssueRow
+}
+
+type newsletterIssueRow struct {
+	ID           int64
+	Headline     string
+	GeneratedFmt string
+}
+
+type newslettersManageData struct {
+	Newsletters []storage.Newsletter
+}
+
+func (h *handlers) handleNewslettersManage(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	newsletters, err := h.engine.GetUserNewsletters(uid)
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Failed to load newsletters")
+		return
+	}
+	h.renderPage(w, r, "newsletters_manage.html", newslettersManageData{Newsletters: newsletters})
+}
+
+func (h *handlers) handleNewsletterCreate(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	minScore, _ := strconv.ParseFloat(r.FormValue("min_interest_score"), 64)
+	maxArticles, _ := strconv.Atoi(r.FormValue("max_articles"))
+	if maxArticles == 0 {
+		maxArticles = 20
+	}
+
+	config := storage.NewsletterConfig{
+		MinInterestScore: minScore,
+		MaxArticles:      maxArticles,
+	}
+
+	_, err := h.engine.CreateNewsletter(uid, r.FormValue("name"), r.FormValue("schedule"), r.FormValue("email_recipient"), config)
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Failed to create newsletter")
+		return
+	}
+
+	// Re-render the newsletter list
+	newsletters, _ := h.engine.GetUserNewsletters(uid)
+	h.renderFragment(w, "newsletter_list_fragment", newslettersManageData{Newsletters: newsletters})
+}
+
+func (h *handlers) handleNewsletterView(w http.ResponseWriter, r *http.Request) {
+	h.init()
+	uid := userFromContext(r.Context()).ID
+	newsletterID, err := strconv.ParseInt(r.PathValue("newsletterID"), 10, 64)
+	if err != nil {
+		h.renderError(w, http.StatusBadRequest, "Invalid newsletter ID")
+		return
+	}
+
+	nl, err := h.engine.GetNewsletter(newsletterID)
+	if err != nil {
+		h.renderError(w, http.StatusNotFound, "Newsletter not found")
+		return
+	}
+
+	data := newsletterViewData{
+		Newsletter: herald.Newsletter{
+			ID: nl.ID, UserID: nl.UserID, Name: nl.Name, Schedule: nl.Schedule,
+			EmailRecipient: nl.EmailRecipient, Enabled: nl.Enabled,
+		},
+	}
+
+	if issue, err := h.engine.GetLatestNewsletterIssue(newsletterID); err == nil {
+		data.LatestIssue = issue
+		data.SanitizedHTML = template.HTML(h.policy.Sanitize(issue.ContentHTML)) //nolint:gosec
+		data.GeneratedFmt = formatDate(&issue.GeneratedAt)
+		if issue.SentAt != nil {
+			data.SentFmt = formatDate(issue.SentAt)
+		}
+	}
+
+	// Load past issues (skip the latest).
+	if issues, err := h.engine.GetNewsletterIssues(newsletterID, 10, 1); err == nil {
+		for _, i := range issues {
+			data.PastIssues = append(data.PastIssues, newsletterIssueRow{
+				ID: i.ID, Headline: i.Headline, GeneratedFmt: formatDate(&i.GeneratedAt),
+			})
+		}
+	}
+
+	h.renderFragment(w, "newsletter_view", data)
+
+	// OOB sidebar update.
+	sidebarData := homeData{ActiveNewsletter: newsletterID}
+	if stats, err := h.engine.GetFeedStats(uid); err == nil && stats != nil {
+		sidebarData.Feeds = stats.Feeds
+		sidebarData.TotalUnread = stats.Total.UnreadArticles
+	}
+	if groups, err := h.engine.GetGroupStats(uid); err == nil {
+		sidebarData.Groups = groups
+	}
+	if newsletters, err := h.engine.GetNewsletterStats(uid); err == nil {
+		sidebarData.Newsletters = newsletters
+	}
+	h.renderFragment(w, "feed_sidebar_oob", sidebarData)
+}
+
+func (h *handlers) handleNewsletterDelete(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	newsletterID, err := strconv.ParseInt(r.PathValue("newsletterID"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid newsletter ID", http.StatusBadRequest)
+		return
+	}
+	if err := h.engine.DeleteNewsletter(uid, newsletterID); err != nil {
+		http.Error(w, "failed to delete newsletter", http.StatusInternalServerError)
+		return
+	}
+	// Re-render the newsletter list.
+	newsletters, _ := h.engine.GetUserNewsletters(uid)
+	h.renderFragment(w, "newsletter_list_fragment", newslettersManageData{Newsletters: newsletters})
+}
+
+func (h *handlers) handleNewsletterGenerate(w http.ResponseWriter, r *http.Request) {
+	h.init()
+	uid := userFromContext(r.Context()).ID
+	newsletterID, err := strconv.ParseInt(r.PathValue("newsletterID"), 10, 64)
+	if err != nil {
+		h.renderError(w, http.StatusBadRequest, "Invalid newsletter ID")
+		return
+	}
+
+	if _, err := h.engine.GenerateNewsletterIssue(r.Context(), uid, newsletterID); err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Generation failed: "+err.Error())
+		return
+	}
+
+	// Re-render the newsletter view with the new issue.
+	h.handleNewsletterView(w, r)
+}
+
+func (h *handlers) handleNewsletterSend(w http.ResponseWriter, r *http.Request) {
+	newsletterID, err := strconv.ParseInt(r.PathValue("newsletterID"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid newsletter ID", http.StatusBadRequest)
+		return
+	}
+
+	issue, err := h.engine.GetLatestNewsletterIssue(newsletterID)
+	if err != nil {
+		fmt.Fprint(w, `<span style="color:var(--pico-del-color)">No issue to send</span>`)
+		return
+	}
+
+	if err := h.engine.SendNewsletterIssue(issue.ID); err != nil {
+		fmt.Fprintf(w, `<span style="color:var(--pico-del-color)">Send failed: %s</span>`, template.HTMLEscapeString(err.Error()))
+		return
+	}
+
+	fmt.Fprint(w, `<span style="color:var(--pico-ins-color)">Sent!</span>`)
+}
+
+func (h *handlers) handleNewsletterIssueView(w http.ResponseWriter, r *http.Request) {
+	h.init()
+	newsletterID, err := strconv.ParseInt(r.PathValue("newsletterID"), 10, 64)
+	if err != nil {
+		h.renderError(w, http.StatusBadRequest, "Invalid newsletter ID")
+		return
+	}
+	issueID, err := strconv.ParseInt(r.PathValue("issueID"), 10, 64)
+	if err != nil {
+		h.renderError(w, http.StatusBadRequest, "Invalid issue ID")
+		return
+	}
+
+	nl, err := h.engine.GetNewsletter(newsletterID)
+	if err != nil {
+		h.renderError(w, http.StatusNotFound, "Newsletter not found")
+		return
+	}
+
+	issue, err := h.engine.GetNewsletterIssue(issueID)
+	if err != nil {
+		h.renderError(w, http.StatusNotFound, "Issue not found")
+		return
+	}
+
+	data := newsletterViewData{
+		Newsletter: herald.Newsletter{
+			ID: nl.ID, UserID: nl.UserID, Name: nl.Name, Schedule: nl.Schedule,
+			EmailRecipient: nl.EmailRecipient, Enabled: nl.Enabled,
+		},
+		LatestIssue:   issue,
+		SanitizedHTML: template.HTML(h.policy.Sanitize(issue.ContentHTML)), //nolint:gosec
+		GeneratedFmt:  formatDate(&issue.GeneratedAt),
+	}
+	if issue.SentAt != nil {
+		data.SentFmt = formatDate(issue.SentAt)
+	}
+
+	h.renderFragment(w, "newsletter_view", data)
 }
 
 func (h *handlers) handleStarToggle(w http.ResponseWriter, r *http.Request) {

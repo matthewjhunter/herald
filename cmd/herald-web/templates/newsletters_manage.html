@@ -1,0 +1,67 @@
+{{define "title"}}Herald - Newsletters{{end}}
+{{define "nav"}}{{template "shared-nav" "newsletters"}}{{end}}
+{{define "content"}}
+<main class="container">
+    <h2>Newsletters</h2>
+    <p>Create digest newsletters from your feeds. Each newsletter filters articles by score, feed, and category, then uses AI to generate a formatted edition.</p>
+
+    <details open>
+        <summary><strong>Create Newsletter</strong></summary>
+        <form hx-post="/newsletters" hx-target="#newsletter-list" hx-swap="innerHTML">
+            <div class="grid">
+                <label>Name
+                    <input type="text" name="name" required placeholder="Daily Cyber Briefing">
+                </label>
+                <label>Schedule
+                    <select name="schedule">
+                        <option value="manual">Manual</option>
+                        <option value="daily">Daily</option>
+                        <option value="hourly">Hourly</option>
+                    </select>
+                </label>
+            </div>
+            <div class="grid">
+                <label>Min Interest Score
+                    <input type="number" name="min_interest_score" value="7" min="0" max="10" step="0.5">
+                </label>
+                <label>Max Articles
+                    <input type="number" name="max_articles" value="20" min="1" max="100">
+                </label>
+            </div>
+            <label>Email Recipient (optional)
+                <input type="email" name="email_recipient" placeholder="you@example.com">
+            </label>
+            <button type="submit">Create</button>
+        </form>
+    </details>
+
+    <div id="newsletter-list">
+    {{if .Newsletters}}
+    {{range .Newsletters}}
+    <article>
+        <header>
+            <strong>{{.Name}}</strong>
+            <span class="meta">Schedule: {{.Schedule}} &middot; Max: {{.Config.MaxArticles}} articles</span>
+        </header>
+        <div class="grid">
+            <div>
+                <small>Min Interest: {{printf "%.1f" .Config.MinInterestScore}}</small>
+                {{if .EmailRecipient}}<br><small>Email: {{.EmailRecipient}}</small>{{end}}
+            </div>
+            <div style="text-align:right;">
+                <button class="outline" hx-delete="/newsletters/{{.ID}}"
+                        hx-target="#newsletter-list" hx-swap="innerHTML"
+                        hx-confirm="Delete newsletter '{{.Name}}'?"
+                        style="color:var(--pico-del-color);border-color:var(--pico-del-color);padding:0.25rem 0.75rem;font-size:0.85rem;">
+                    Delete
+                </button>
+            </div>
+        </div>
+    </article>
+    {{end}}
+    {{else}}
+    <p class="empty-state">No newsletters yet.</p>
+    {{end}}
+    </div>
+</main>
+{{end}}

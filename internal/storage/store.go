@@ -139,6 +139,26 @@ type Store interface {
 	GetArticleEmbeddings(userID int64, model string) ([]ArticleEmbeddingRow, error)
 	GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error)
 
+	// Newsletters
+	CreateNewsletter(n *Newsletter) (int64, error)
+	UpdateNewsletter(n *Newsletter) error
+	DeleteNewsletter(newsletterID int64) error
+	GetNewsletter(newsletterID int64) (*Newsletter, error)
+	GetUserNewsletters(userID int64) ([]Newsletter, error)
+	GetDueNewsletters(schedule string) ([]Newsletter, error)
+
+	// Newsletter issues
+	CreateNewsletterIssue(issue *NewsletterIssue) (int64, error)
+	GetNewsletterIssue(issueID int64) (*NewsletterIssue, error)
+	GetLatestNewsletterIssue(newsletterID int64) (*NewsletterIssue, error)
+	GetNewsletterIssues(newsletterID int64, limit, offset int) ([]NewsletterIssue, error)
+	MarkNewsletterIssueSent(issueID int64) error
+	UpdateNewsletterLastGenerated(newsletterID int64) error
+	GetNewsletterStats(userID int64) ([]NewsletterStats, error)
+
+	// Newsletter article selection
+	GetNewsletterArticles(userID int64, config *NewsletterConfig, since *time.Time, limit int) ([]Article, []float64, error)
+
 	// Embedding-based group operations
 	UpdateGroupEmbedding(groupID int64, embedding []byte, model string) error
 	GetGroupsWithEmbeddings(userID int64, model string) ([]ArticleGroupWithEmbedding, error)
