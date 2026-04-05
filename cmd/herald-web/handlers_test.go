@@ -619,6 +619,36 @@ func TestFormatDate(t *testing.T) {
 	}
 }
 
+func TestBestDate(t *testing.T) {
+	now := time.Now()
+	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	fetched := now.Add(-10 * time.Minute)
+	withTime := time.Date(now.Year(), now.Month(), now.Day(), 14, 30, 0, 0, time.UTC)
+
+	tests := []struct {
+		name      string
+		published *time.Time
+		fetched   *time.Time
+		want      *time.Time
+	}{
+		{"both nil", nil, nil, nil},
+		{"published only", &withTime, nil, &withTime},
+		{"fetched only", nil, &fetched, &fetched},
+		{"midnight published uses fetched", &midnight, &fetched, &fetched},
+		{"non-midnight published stays", &withTime, &fetched, &withTime},
+		{"midnight but fetched before published", &midnight, &midnight, &midnight},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := bestDate(tt.published, tt.fetched)
+			if got != tt.want {
+				t.Errorf("bestDate: got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseIntParam(t *testing.T) {
 	req := httptest.NewRequest("GET", "/?limit=25&bad=abc&neg=-5", nil)
 
