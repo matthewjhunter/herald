@@ -2,8 +2,8 @@ database:
   path: /data/herald.db
 ollama:
   base_url: http://ollama:11434
-  security_model: gemma3:4b
-  curation_model: llama3
+  security_model: gemma4
+  curation_model: gemma4
   embedding_model: nomic-embed-text
 grouping:
   similarity_threshold: 0.75

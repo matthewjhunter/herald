@@ -23,6 +23,17 @@
     </a>
     {{end}}
     {{end}}
+    {{if .Newsletters}}
+    <hr>
+    {{range .Newsletters}}
+    <a href="#" hx-get="/newsletters/{{.NewsletterID}}" hx-target="#article-list" hx-swap="innerHTML"
+       hx-on:click="heraldClearReadingPane()"
+       class="{{if eq $.ActiveNewsletter .NewsletterID}}active{{end}}">
+        {{.Name}}
+        {{if .IssueCount}}<span class="unread-count">{{.IssueCount}}</span>{{end}}
+    </a>
+    {{end}}
+    {{end}}
     <hr>
     {{range .Feeds}}
     <a href="#" hx-get="/articles?feed_id={{.FeedID}}" hx-target="#article-list" hx-swap="innerHTML"

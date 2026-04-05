@@ -53,6 +53,14 @@ Handles SIGINT/SIGTERM for graceful shutdown (finishes the current cycle).`,
 					log.Printf("herald daemon: cycle %d completed in %s", cycle, time.Since(start).Round(time.Millisecond))
 				}
 
+				// Process due newsletters (hourly/daily).
+				if err := processNewsletters(ctx); err != nil {
+					if ctx.Err() != nil {
+						return nil
+					}
+					log.Printf("herald daemon: newsletter processing error: %v", err)
+				}
+
 				cycle++
 
 				// Wait for the next tick or a shutdown signal.

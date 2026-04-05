@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -102,6 +103,51 @@ type GroupSummary struct {
 	ArticleCount     int
 	MaxInterestScore *float64
 	GeneratedAt      time.Time
+}
+
+// NewsletterConfig holds the filtering criteria for a newsletter definition.
+type NewsletterConfig struct {
+	MinInterestScore  float64  `json:"min_interest_score"`
+	MinSecurityScore  float64  `json:"min_security_score"`
+	IncludeFeeds      []int64  `json:"include_feeds,omitempty"`
+	ExcludeFeeds      []int64  `json:"exclude_feeds,omitempty"`
+	IncludeCategories []string `json:"include_categories,omitempty"`
+	ExcludeCategories []string `json:"exclude_categories,omitempty"`
+	MaxArticles       int      `json:"max_articles"`
+}
+
+// Newsletter represents a user-defined newsletter/digest configuration.
+type Newsletter struct {
+	ID              int64
+	UserID          int64
+	Name            string
+	Schedule        string // "manual", "hourly", "daily"
+	Config          NewsletterConfig
+	PromptTemplate  string
+	EmailRecipient  string
+	Enabled         bool
+	LastGeneratedAt *time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+// NewsletterIssue represents a single generated newsletter edition.
+type NewsletterIssue struct {
+	ID           int64
+	NewsletterID int64
+	Headline     string
+	ContentHTML  string
+	ContentText  string
+	ArticleIDs   []int64
+	GeneratedAt  time.Time
+	SentAt       *time.Time
+}
+
+// NewsletterStats holds sidebar display data for a newsletter.
+type NewsletterStats struct {
+	NewsletterID int64
+	Name         string
+	IssueCount   int
 }
 
 type UserPrompt struct {
@@ -2410,6 +2456,293 @@ func (s *SQLiteStore) GetArticlesWithoutEmbeddings(model string, limit int) ([]A
 	}
 	defer rows.Close()
 	return scanArticles(rows)
+}
+
+// --- Newsletter methods ---
+
+func (s *SQLiteStore) CreateNewsletter(n *Newsletter) (int64, error) {
+	configJSON, err := json.Marshal(n.Config)
+	if err != nil {
+		return 0, fmt.Errorf("marshal newsletter config: %w", err)
+	}
+	result, err := s.db.Exec(`
+		INSERT INTO newsletters (user_id, name, schedule, config_json, prompt_template, email_recipient, enabled)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		n.UserID, n.Name, n.Schedule, string(configJSON), n.PromptTemplate, n.EmailRecipient, n.Enabled)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func (s *SQLiteStore) UpdateNewsletter(n *Newsletter) error {
+	configJSON, err := json.Marshal(n.Config)
+	if err != nil {
+		return fmt.Errorf("marshal newsletter config: %w", err)
+	}
+	_, err = s.db.Exec(`
+		UPDATE newsletters
+		SET name = ?, schedule = ?, config_json = ?, prompt_template = ?,
+		    email_recipient = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?`,
+		n.Name, n.Schedule, string(configJSON), n.PromptTemplate, n.EmailRecipient, n.Enabled, n.ID)
+	return err
+}
+
+func (s *SQLiteStore) DeleteNewsletter(newsletterID int64) error {
+	_, err := s.db.Exec(`DELETE FROM newsletters WHERE id = ?`, newsletterID)
+	return err
+}
+
+func (s *SQLiteStore) GetNewsletter(newsletterID int64) (*Newsletter, error) {
+	var n Newsletter
+	var configJSON string
+	err := s.db.QueryRow(`
+		SELECT id, user_id, name, schedule, config_json, prompt_template,
+		       email_recipient, enabled, last_generated_at, created_at, updated_at
+		FROM newsletters WHERE id = ?`, newsletterID).Scan(
+		&n.ID, &n.UserID, &n.Name, &n.Schedule, &configJSON, &n.PromptTemplate,
+		&n.EmailRecipient, &n.Enabled, &n.LastGeneratedAt, &n.CreatedAt, &n.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	json.Unmarshal([]byte(configJSON), &n.Config) //nolint:errcheck
+	return &n, nil
+}
+
+func (s *SQLiteStore) GetUserNewsletters(userID int64) ([]Newsletter, error) {
+	rows, err := s.db.Query(`
+		SELECT id, user_id, name, schedule, config_json, prompt_template,
+		       email_recipient, enabled, last_generated_at, created_at, updated_at
+		FROM newsletters WHERE user_id = ? ORDER BY name`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var newsletters []Newsletter
+	for rows.Next() {
+		var n Newsletter
+		var configJSON string
+		if err := rows.Scan(&n.ID, &n.UserID, &n.Name, &n.Schedule, &configJSON, &n.PromptTemplate,
+			&n.EmailRecipient, &n.Enabled, &n.LastGeneratedAt, &n.CreatedAt, &n.UpdatedAt); err != nil {
+			return nil, err
+		}
+		json.Unmarshal([]byte(configJSON), &n.Config) //nolint:errcheck
+		newsletters = append(newsletters, n)
+	}
+	return newsletters, rows.Err()
+}
+
+func (s *SQLiteStore) GetDueNewsletters(schedule string) ([]Newsletter, error) {
+	var interval string
+	switch schedule {
+	case "hourly":
+		interval = "-1 hour"
+	case "daily":
+		interval = "-1 day"
+	default:
+		return nil, nil // manual newsletters are never "due"
+	}
+	rows, err := s.db.Query(`
+		SELECT id, user_id, name, schedule, config_json, prompt_template,
+		       email_recipient, enabled, last_generated_at, created_at, updated_at
+		FROM newsletters
+		WHERE enabled = 1 AND schedule = ?
+		  AND (last_generated_at IS NULL OR last_generated_at < datetime('now', ?))`,
+		schedule, interval)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var newsletters []Newsletter
+	for rows.Next() {
+		var n Newsletter
+		var configJSON string
+		if err := rows.Scan(&n.ID, &n.UserID, &n.Name, &n.Schedule, &configJSON, &n.PromptTemplate,
+			&n.EmailRecipient, &n.Enabled, &n.LastGeneratedAt, &n.CreatedAt, &n.UpdatedAt); err != nil {
+			return nil, err
+		}
+		json.Unmarshal([]byte(configJSON), &n.Config) //nolint:errcheck
+		newsletters = append(newsletters, n)
+	}
+	return newsletters, rows.Err()
+}
+
+func (s *SQLiteStore) CreateNewsletterIssue(issue *NewsletterIssue) (int64, error) {
+	articleIDsJSON, _ := json.Marshal(issue.ArticleIDs) //nolint:errcheck
+	result, err := s.db.Exec(`
+		INSERT INTO newsletter_issues (newsletter_id, headline, content_html, content_text, article_ids_json)
+		VALUES (?, ?, ?, ?, ?)`,
+		issue.NewsletterID, issue.Headline, issue.ContentHTML, issue.ContentText, string(articleIDsJSON))
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func (s *SQLiteStore) GetNewsletterIssue(issueID int64) (*NewsletterIssue, error) {
+	var issue NewsletterIssue
+	var articleIDsJSON string
+	err := s.db.QueryRow(`
+		SELECT id, newsletter_id, headline, content_html, content_text, article_ids_json, generated_at, sent_at
+		FROM newsletter_issues WHERE id = ?`, issueID).Scan(
+		&issue.ID, &issue.NewsletterID, &issue.Headline, &issue.ContentHTML, &issue.ContentText,
+		&articleIDsJSON, &issue.GeneratedAt, &issue.SentAt)
+	if err != nil {
+		return nil, err
+	}
+	json.Unmarshal([]byte(articleIDsJSON), &issue.ArticleIDs) //nolint:errcheck
+	return &issue, nil
+}
+
+func (s *SQLiteStore) GetLatestNewsletterIssue(newsletterID int64) (*NewsletterIssue, error) {
+	var issue NewsletterIssue
+	var articleIDsJSON string
+	err := s.db.QueryRow(`
+		SELECT id, newsletter_id, headline, content_html, content_text, article_ids_json, generated_at, sent_at
+		FROM newsletter_issues WHERE newsletter_id = ?
+		ORDER BY generated_at DESC LIMIT 1`, newsletterID).Scan(
+		&issue.ID, &issue.NewsletterID, &issue.Headline, &issue.ContentHTML, &issue.ContentText,
+		&articleIDsJSON, &issue.GeneratedAt, &issue.SentAt)
+	if err != nil {
+		return nil, err
+	}
+	json.Unmarshal([]byte(articleIDsJSON), &issue.ArticleIDs) //nolint:errcheck
+	return &issue, nil
+}
+
+func (s *SQLiteStore) GetNewsletterIssues(newsletterID int64, limit, offset int) ([]NewsletterIssue, error) {
+	rows, err := s.db.Query(`
+		SELECT id, newsletter_id, headline, content_text, generated_at, sent_at
+		FROM newsletter_issues WHERE newsletter_id = ?
+		ORDER BY generated_at DESC LIMIT ? OFFSET ?`,
+		newsletterID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var issues []NewsletterIssue
+	for rows.Next() {
+		var issue NewsletterIssue
+		if err := rows.Scan(&issue.ID, &issue.NewsletterID, &issue.Headline,
+			&issue.ContentText, &issue.GeneratedAt, &issue.SentAt); err != nil {
+			return nil, err
+		}
+		issues = append(issues, issue)
+	}
+	return issues, rows.Err()
+}
+
+func (s *SQLiteStore) MarkNewsletterIssueSent(issueID int64) error {
+	_, err := s.db.Exec(`UPDATE newsletter_issues SET sent_at = CURRENT_TIMESTAMP WHERE id = ?`, issueID)
+	return err
+}
+
+func (s *SQLiteStore) UpdateNewsletterLastGenerated(newsletterID int64) error {
+	_, err := s.db.Exec(`UPDATE newsletters SET last_generated_at = CURRENT_TIMESTAMP WHERE id = ?`, newsletterID)
+	return err
+}
+
+func (s *SQLiteStore) GetNewsletterStats(userID int64) ([]NewsletterStats, error) {
+	rows, err := s.db.Query(`
+		SELECT n.id, n.name, COUNT(ni.id) AS issue_count
+		FROM newsletters n
+		LEFT JOIN newsletter_issues ni ON ni.newsletter_id = n.id
+		WHERE n.user_id = ? AND n.enabled = 1
+		GROUP BY n.id
+		ORDER BY n.name`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var stats []NewsletterStats
+	for rows.Next() {
+		var s NewsletterStats
+		if err := rows.Scan(&s.NewsletterID, &s.Name, &s.IssueCount); err != nil {
+			return nil, err
+		}
+		stats = append(stats, s)
+	}
+	return stats, rows.Err()
+}
+
+func (s *SQLiteStore) GetNewsletterArticles(userID int64, config *NewsletterConfig, since *time.Time, limit int) ([]Article, []float64, error) {
+	query := `
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date, rs.interest_score
+		FROM articles a
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = uf.user_id
+		WHERE uf.user_id = ?`
+	args := []any{userID}
+
+	if config.MinInterestScore > 0 {
+		query += ` AND rs.interest_score >= ?`
+		args = append(args, config.MinInterestScore)
+	}
+	if config.MinSecurityScore > 0 {
+		query += ` AND rs.security_score >= ?`
+		args = append(args, config.MinSecurityScore)
+	}
+	if len(config.IncludeFeeds) > 0 {
+		placeholders := make([]string, len(config.IncludeFeeds))
+		for i, fid := range config.IncludeFeeds {
+			placeholders[i] = "?"
+			args = append(args, fid)
+		}
+		query += ` AND a.feed_id IN (` + strings.Join(placeholders, ",") + `)`
+	}
+	if len(config.ExcludeFeeds) > 0 {
+		placeholders := make([]string, len(config.ExcludeFeeds))
+		for i, fid := range config.ExcludeFeeds {
+			placeholders[i] = "?"
+			args = append(args, fid)
+		}
+		query += ` AND a.feed_id NOT IN (` + strings.Join(placeholders, ",") + `)`
+	}
+	if len(config.IncludeCategories) > 0 {
+		placeholders := make([]string, len(config.IncludeCategories))
+		for i, cat := range config.IncludeCategories {
+			placeholders[i] = "?"
+			args = append(args, cat)
+		}
+		query += ` AND EXISTS (SELECT 1 FROM article_categories ac WHERE ac.article_id = a.id AND ac.category IN (` + strings.Join(placeholders, ",") + `))`
+	}
+	if len(config.ExcludeCategories) > 0 {
+		placeholders := make([]string, len(config.ExcludeCategories))
+		for i, cat := range config.ExcludeCategories {
+			placeholders[i] = "?"
+			args = append(args, cat)
+		}
+		query += ` AND NOT EXISTS (SELECT 1 FROM article_categories ac WHERE ac.article_id = a.id AND ac.category IN (` + strings.Join(placeholders, ",") + `))`
+	}
+	if since != nil {
+		query += ` AND a.published_date > ?`
+		args = append(args, since)
+	}
+
+	query += ` ORDER BY rs.interest_score DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get newsletter articles: %w", err)
+	}
+	defer rows.Close()
+
+	var articles []Article
+	var scores []float64
+	for rows.Next() {
+		var a Article
+		var score float64
+		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
+			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate, &score); err != nil {
+			return nil, nil, err
+		}
+		articles = append(articles, a)
+		scores = append(scores, score)
+	}
+	return articles, scores, rows.Err()
 }
 
 // NewStore returns a Store backed by the appropriate database driver.

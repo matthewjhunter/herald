@@ -35,6 +35,7 @@ type Config struct {
 		Summarization string `yaml:"summarization,omitempty"`
 		GroupSummary  string `yaml:"group_summary,omitempty"`
 		RelatedGroups string `yaml:"related_groups,omitempty"`
+		Newsletter    string `yaml:"newsletter,omitempty"`
 	} `yaml:"prompts,omitempty"`
 
 	Summarization struct {
@@ -53,7 +54,17 @@ type Config struct {
 		Summarization float64 `yaml:"summarization"`
 		GroupSummary  float64 `yaml:"group_summary"`
 		RelatedGroups float64 `yaml:"related_groups"`
+		Newsletter    float64 `yaml:"newsletter"`
 	} `yaml:"temperatures,omitempty"`
+
+	Email struct {
+		SMTPHost    string `yaml:"smtp_host"`
+		SMTPPort    int    `yaml:"smtp_port"`
+		Username    string `yaml:"username"`
+		Password    string `yaml:"password"`
+		FromAddress string `yaml:"from_address"`
+		FromName    string `yaml:"from_name"`
+	} `yaml:"email,omitempty"`
 }
 
 // DefaultConfig returns a config with sensible defaults
@@ -62,8 +73,8 @@ func DefaultConfig() *Config {
 	cfg.DefaultUserID = 1
 	cfg.Database.Path = "./herald.db"
 	cfg.Ollama.BaseURL = "http://localhost:11434"
-	cfg.Ollama.SecurityModel = "gemma3:4b"
-	cfg.Ollama.CurationModel = "llama3"
+	cfg.Ollama.SecurityModel = "gemma4"
+	cfg.Ollama.CurationModel = "gemma4"
 	cfg.Ollama.EmbeddingModel = "nomic-embed-text"
 	cfg.Ollama.Timeout = 2 * time.Minute
 	cfg.Summarization.MinArticleLength = 200

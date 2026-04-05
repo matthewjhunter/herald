@@ -212,4 +212,34 @@ CREATE TABLE IF NOT EXISTS article_embeddings (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS newsletters (
+    id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id           BIGINT NOT NULL,
+    name              TEXT NOT NULL,
+    schedule          TEXT NOT NULL DEFAULT 'manual',
+    config_json       TEXT NOT NULL DEFAULT '{}',
+    prompt_template   TEXT NOT NULL DEFAULT '',
+    email_recipient   TEXT NOT NULL DEFAULT '',
+    enabled           BOOLEAN NOT NULL DEFAULT TRUE,
+    last_generated_at TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_newsletters_user ON newsletters(user_id);
+
+CREATE TABLE IF NOT EXISTS newsletter_issues (
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    newsletter_id    BIGINT NOT NULL,
+    headline         TEXT NOT NULL DEFAULT '',
+    content_html     TEXT NOT NULL,
+    content_text     TEXT NOT NULL DEFAULT '',
+    article_ids_json TEXT NOT NULL DEFAULT '[]',
+    generated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    sent_at          TIMESTAMPTZ,
+    FOREIGN KEY (newsletter_id) REFERENCES newsletters(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_newsletter_issues_newsletter ON newsletter_issues(newsletter_id);
+CREATE INDEX IF NOT EXISTS idx_newsletter_issues_generated ON newsletter_issues(generated_at DESC);
 `

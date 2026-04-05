@@ -1,0 +1,49 @@
+{{define "newsletter_view"}}
+<div class="newsletter-view">
+    <div class="newsletter-header">
+        <h3>{{.Newsletter.Name}}</h3>
+        <div class="newsletter-actions">
+            <button class="outline" hx-post="/newsletters/{{.Newsletter.ID}}/generate"
+                    hx-target="#article-list" hx-swap="innerHTML"
+                    hx-indicator="#newsletter-spinner">
+                Generate Now
+            </button>
+            {{if .Newsletter.EmailRecipient}}
+            <button class="outline secondary" hx-post="/newsletters/{{.Newsletter.ID}}/send"
+                    hx-target="#newsletter-send-status" hx-swap="innerHTML">
+                Send Email
+            </button>
+            {{end}}
+            <span id="newsletter-spinner" class="htmx-indicator">Generating...</span>
+            <span id="newsletter-send-status"></span>
+        </div>
+    </div>
+    {{if .LatestIssue}}
+    <div class="newsletter-issue">
+        <h2>{{.LatestIssue.Headline}}</h2>
+        <div class="newsletter-meta">
+            Generated {{.GeneratedFmt}}
+            {{if .SentFmt}} &middot; Sent {{.SentFmt}}{{end}}
+        </div>
+        <div class="newsletter-content">
+            {{.SanitizedHTML}}
+        </div>
+    </div>
+    {{if .PastIssues}}
+    <hr>
+    <details class="newsletter-past-issues">
+        <summary>Past Issues ({{len .PastIssues}})</summary>
+        {{range .PastIssues}}
+        <a href="#" hx-get="/newsletters/{{$.Newsletter.ID}}/issues/{{.ID}}"
+           hx-target="#article-list" hx-swap="innerHTML"
+           class="past-issue-link">
+            {{.Headline}} &middot; {{.GeneratedFmt}}
+        </a>
+        {{end}}
+    </details>
+    {{end}}
+    {{else}}
+    <div class="empty-state">No issues generated yet. Click "Generate Now" to create the first one.</div>
+    {{end}}
+</div>
+{{end}}
