@@ -346,6 +346,23 @@ func cleanTitle(title string) string {
 	return strings.TrimSpace(trailingURLRe.ReplaceAllString(title, ""))
 }
 
+// bestDate returns the most accurate date for relative-time display.
+// RSS feeds sometimes omit the time component, causing gofeed to default to
+// midnight UTC. When that happens, fetched_date is a better indicator of
+// recency for relative display (e.g. "3h ago" instead of "23h ago").
+func bestDate(published, fetched *time.Time) *time.Time {
+	if published != nil && fetched != nil {
+		utc := published.UTC()
+		if utc.Hour() == 0 && utc.Minute() == 0 && utc.Second() == 0 && fetched.After(*published) {
+			return fetched
+		}
+	}
+	if published != nil {
+		return published
+	}
+	return fetched
+}
+
 func formatDate(t *time.Time) string {
 	if t == nil {
 		return ""
@@ -637,7 +654,7 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 			Title:            a.Title,
 			Author:           a.Author,
 			FeedTitle:        feedTitles[a.FeedID],
-			PublishedDateFmt: formatDate(a.PublishedDate),
+			PublishedDateFmt: formatDate(bestDate(a.PublishedDate, &a.FetchedDate)),
 		})
 	}
 
@@ -697,7 +714,7 @@ func (h *handlers) handleSearch(w http.ResponseWriter, r *http.Request) {
 			Title:            r.Title,
 			Author:           r.Author,
 			FeedTitle:        feedTitles[r.FeedID],
-			PublishedDateFmt: formatDate(r.PublishedDate),
+			PublishedDateFmt: formatDate(bestDate(r.PublishedDate, &r.FetchedDate)),
 		})
 	}
 
@@ -753,7 +770,7 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 		Author:           article.Author,
 		FeedTitle:        feedTitle,
 		URL:              article.URL,
-		PublishedDateFmt: formatDate(article.PublishedDate),
+		PublishedDateFmt: formatDate(bestDate(article.PublishedDate, &article.FetchedDate)),
 		AISummary:        article.AISummary,
 		SanitizedContent: template.HTML(sanitized), //nolint:gosec // sanitized by bluemonday
 		LinkedURL:        article.LinkedURL,
