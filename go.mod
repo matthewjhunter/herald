@@ -13,7 +13,7 @@ require (
 	github.com/matthewjhunter/go-embedding v0.2.0
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/mmcdole/gofeed v1.3.0
-	github.com/modelcontextprotocol/go-sdk v1.4.1
+	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/net v0.52.0
 	golang.org/x/sync v0.20.0
