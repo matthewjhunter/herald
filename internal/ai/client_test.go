@@ -147,16 +147,25 @@ func TestCircuitBreakerHalfOpenAfterCooldown(t *testing.T) {
 	}
 }
 
-func TestCircuitBreakerAuthFailureRequiresRestart(t *testing.T) {
-	// Server always returns 401.
+func TestCircuitBreakerRecoversFrom401(t *testing.T) {
+	// Herald is a long-running daemon; even 401s must auto-recover after
+	// cooldown. The operator shouldn't have to restart the process to retry
+	// after a credential was fixed or rotated upstream.
+	var failing atomic.Bool
+	failing.Store(true)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error":"unauthorized"}`))
+		if failing.Load() {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"error":"unauthorized"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
 	}))
 	defer srv.Close()
 
 	c := newOpenAIClient(srv.URL, "bad-key")
-	c.breakerCooldown = 20 * time.Millisecond
+	c.breakerCooldown = 50 * time.Millisecond
 	ctx := context.Background()
 
 	// Trip the breaker on 401s.
@@ -167,13 +176,8 @@ func TestCircuitBreakerAuthFailureRequiresRestart(t *testing.T) {
 		t.Fatal("expected breaker open after 401s")
 	}
 
-	// Even after the cooldown elapses, a 401-tripped breaker stays open.
-	time.Sleep(c.breakerCooldown + 10*time.Millisecond)
-	if !c.isOpen() {
-		t.Fatal("401-tripped breaker should remain open past cooldown (requires restart)")
-	}
-
-	// Error message should reference 401 and "restart", not "auth failures".
+	// Error body should reference the observed status code, not speculate
+	// about causes or demand a restart.
 	_, err := c.generate(ctx, "model", "hello", 0.7)
 	var ce *ClientError
 	if !errors.As(err, &ce) {
@@ -182,11 +186,25 @@ func TestCircuitBreakerAuthFailureRequiresRestart(t *testing.T) {
 	if !strings.Contains(ce.Body, "401") {
 		t.Errorf("error body should mention status 401, got: %q", ce.Body)
 	}
-	if !strings.Contains(ce.Body, "restart") {
-		t.Errorf("error body should mention restart required, got: %q", ce.Body)
+	for _, forbidden := range []string{"auth failures", "restart required", "credential"} {
+		if strings.Contains(ce.Body, forbidden) {
+			t.Errorf("error body should not contain %q (speculative/unactionable), got: %q", forbidden, ce.Body)
+		}
 	}
-	if strings.Contains(ce.Body, "auth failures") {
-		t.Errorf("error body should not say 'auth failures' (misleading), got: %q", ce.Body)
+
+	// After cooldown and with upstream healthy, the breaker should recover.
+	time.Sleep(c.breakerCooldown + 10*time.Millisecond)
+	failing.Store(false)
+
+	result, err := c.generate(ctx, "model", "hello", 0.7)
+	if err != nil {
+		t.Fatalf("expected success after cooldown, got: %v", err)
+	}
+	if result != "ok" {
+		t.Fatalf("expected 'ok', got %q", result)
+	}
+	if c.isOpen() {
+		t.Fatal("breaker should be closed after a successful probe following 401 trip")
 	}
 }
 
