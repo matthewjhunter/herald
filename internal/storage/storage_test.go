@@ -90,6 +90,21 @@ func TestNewSQLiteStore(t *testing.T) {
 	}
 }
 
+func TestNewPostgresStorePoolLimits(t *testing.T) {
+	store, cleanup := newPGTestStore(t)
+	defer cleanup()
+
+	pg, ok := store.(*PostgresStore)
+	if !ok {
+		t.Fatalf("expected *PostgresStore, got %T", store)
+	}
+
+	stats := pg.db.Stats()
+	if stats.MaxOpenConnections != pgMaxOpenConns {
+		t.Errorf("MaxOpenConnections = %d, want %d", stats.MaxOpenConnections, pgMaxOpenConns)
+	}
+}
+
 func TestAddAndGetFeeds(t *testing.T) {
 	store, cleanup := newTestStore(t)
 	defer cleanup()

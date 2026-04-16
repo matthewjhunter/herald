@@ -19,6 +19,18 @@ type PostgresStore struct {
 // Compile-time check that PostgresStore implements Store.
 var _ Store = (*PostgresStore)(nil)
 
+// Connection pool limits. Go's database/sql defaults (unlimited MaxOpen,
+// MaxIdle=2) churn connections under concurrent load: idle conns over 2 are
+// destroyed after each use, and the resulting TIME_WAIT sockets can exhaust
+// ephemeral ports during a failure storm. Holding more idle conns warm
+// eliminates the churn.
+const (
+	pgMaxOpenConns    = 25
+	pgMaxIdleConns    = 25
+	pgConnMaxLifetime = 30 * time.Minute
+	pgConnMaxIdleTime = 5 * time.Minute
+)
+
 // NewPostgresStore opens a PostgreSQL connection, verifies it, and initializes
 // the schema (all DDL statements are idempotent).
 func NewPostgresStore(dsn string) (*PostgresStore, error) {
@@ -26,6 +38,10 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open postgres: %w", err)
 	}
+	db.SetMaxOpenConns(pgMaxOpenConns)
+	db.SetMaxIdleConns(pgMaxIdleConns)
+	db.SetConnMaxLifetime(pgConnMaxLifetime)
+	db.SetConnMaxIdleTime(pgConnMaxIdleTime)
 	if err := db.Ping(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to connect to postgres: %w", err)
