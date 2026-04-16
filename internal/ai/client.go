@@ -11,14 +11,22 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 // debugAI enables verbose logging of all model calls when HERALD_DEBUG_AI=1.
 var debugAI = os.Getenv("HERALD_DEBUG_AI") == "1"
 
-// clientBreakerThreshold is the number of consecutive 4xx errors before the
-// circuit breaker trips and blocks further calls until restart.
-const clientBreakerThreshold = 5
+const (
+	// clientBreakerThreshold is the number of consecutive 4xx errors before the
+	// circuit breaker trips.
+	clientBreakerThreshold = 5
+
+	// defaultBreakerCooldown is how long the breaker stays open before
+	// transitioning to half-open (allowing requests through again). Shorter
+	// than a fetch cycle so the next cycle always starts fresh.
+	defaultBreakerCooldown = 60 * time.Second
+)
 
 // ClientError represents an HTTP client error (4xx) that should not be retried.
 type ClientError struct {
@@ -35,23 +43,31 @@ func (e *ClientError) Error() string {
 // Ollama (>=0.1.24 with --api-key), and most local inference servers.
 //
 // A built-in circuit breaker trips after clientBreakerThreshold consecutive
-// 4xx errors (e.g. 401 auth failures), preventing tight retry loops that
-// generate massive log/spend volume. The breaker resets on process restart.
+// 4xx errors to stop the current cycle from thrashing the upstream. It
+// auto-recovers to half-open after breakerCooldown; a long-running daemon
+// should never require a process restart to resume work.
 type openAIClient struct {
 	baseURL    string
 	apiKey     string
 	httpClient *http.Client
 
+	// breakerCooldown is how long the breaker stays open before transitioning
+	// to half-open. Exposed as a field for tests.
+	breakerCooldown time.Duration
+
 	mu             sync.Mutex
 	consecutive4xx int
 	circuitOpen    bool
+	openedAt       time.Time
+	lastStatus     int
 }
 
 func newOpenAIClient(baseURL, apiKey string) *openAIClient {
 	return &openAIClient{
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		apiKey:     apiKey,
-		httpClient: &http.Client{},
+		baseURL:         strings.TrimRight(baseURL, "/"),
+		apiKey:          apiKey,
+		httpClient:      &http.Client{},
+		breakerCooldown: defaultBreakerCooldown,
 	}
 }
 
@@ -61,25 +77,43 @@ func (c *openAIClient) tripBreaker(statusCode int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.consecutive4xx++
+	c.lastStatus = statusCode
 	if c.consecutive4xx >= clientBreakerThreshold && !c.circuitOpen {
 		c.circuitOpen = true
-		log.Printf("herald: circuit breaker OPEN — %d consecutive %dxx errors from %s; all AI calls blocked until restart",
-			c.consecutive4xx, statusCode/100, c.baseURL)
+		c.openedAt = time.Now()
+		log.Printf("herald: circuit breaker OPEN — %d consecutive HTTP %d responses from %s; will retry after %v",
+			c.consecutive4xx, statusCode, c.baseURL, c.breakerCooldown)
 	}
 }
 
 // resetBreaker clears the consecutive failure counter on a successful call.
+// Also called at the start of each fetch cycle so transient failures never
+// carry across cycles.
 func (c *openAIClient) resetBreaker() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.consecutive4xx = 0
+	c.circuitOpen = false
+	c.lastStatus = 0
 }
 
-// isOpen returns true if the circuit breaker has tripped.
+// isOpen returns true if the circuit breaker is currently blocking calls.
+// Transitions to half-open (returning false) once breakerCooldown has elapsed,
+// allowing probe requests through.
 func (c *openAIClient) isOpen() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.circuitOpen
+	if !c.circuitOpen {
+		return false
+	}
+	if time.Since(c.openedAt) >= c.breakerCooldown {
+		log.Printf("herald: circuit breaker half-open after %v cooldown; allowing probe requests to %s",
+			c.breakerCooldown, c.baseURL)
+		c.circuitOpen = false
+		c.consecutive4xx = 0
+		return false
+	}
+	return true
 }
 
 type chatRequest struct {
@@ -114,7 +148,13 @@ type modelsResponse struct {
 // A built-in circuit breaker blocks all calls after repeated 4xx failures.
 func (c *openAIClient) generate(ctx context.Context, model, prompt string, temperature float64) (string, error) {
 	if c.isOpen() {
-		return "", &ClientError{StatusCode: 0, Body: "circuit breaker open — AI calls blocked after repeated auth failures; restart to retry"}
+		c.mu.Lock()
+		status := c.lastStatus
+		c.mu.Unlock()
+		return "", &ClientError{
+			StatusCode: 0,
+			Body:       fmt.Sprintf("circuit breaker open — AI calls blocked after repeated HTTP %d responses; retrying after cooldown", status),
+		}
 	}
 
 	body := chatRequest{
