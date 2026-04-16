@@ -45,8 +45,8 @@ func (e *ClientError) Error() string {
 //
 // A built-in circuit breaker trips after clientBreakerThreshold consecutive
 // 4xx errors, preventing tight retry loops that generate massive log/spend
-// volume. Auth failures (401/403) hold the breaker open until restart; other
-// 4xx transition to half-open after breakerCooldown.
+// volume. 401/403 responses hold the breaker open until restart; other 4xx
+// transition to half-open after breakerCooldown.
 type openAIClient struct {
 	baseURL    string
 	apiKey     string
@@ -72,9 +72,9 @@ func newOpenAIClient(baseURL, apiKey string) *openAIClient {
 	}
 }
 
-// requiresRestart reports whether a status code indicates a failure that won't
-// recover on its own — typically auth/permission problems where the credential
-// is the actual blocker.
+// requiresRestart reports whether a status code is treated as persistent
+// (401/403) rather than transient. Persistent failures hold the breaker open
+// until restart; transient failures auto-recover after breakerCooldown.
 func requiresRestart(status int) bool {
 	return status == http.StatusUnauthorized || status == http.StatusForbidden
 }
@@ -90,7 +90,7 @@ func (c *openAIClient) tripBreaker(statusCode int) {
 		c.circuitOpen = true
 		c.openedAt = time.Now()
 		if requiresRestart(statusCode) {
-			log.Printf("herald: circuit breaker OPEN — %d consecutive HTTP %d responses from %s; credential likely invalid, restart required to retry",
+			log.Printf("herald: circuit breaker OPEN — %d consecutive HTTP %d responses from %s; restart required to retry",
 				c.consecutive4xx, statusCode, c.baseURL)
 		} else {
 			log.Printf("herald: circuit breaker OPEN — %d consecutive HTTP %d responses from %s; will retry after %v",
