@@ -1,10 +1,12 @@
 database:
   path: /data/herald.db
+# Embedding configuration is read from environment variables, not YAML.
+# Set EMBEDDING_BASE_URL and EMBEDDING_MODEL (or HERALD_EMBED_* to override
+# just for herald). See README.md for the full env-var list.
 ollama:
   base_url: http://ollama:11434
   security_model: gemma4
   curation_model: gemma4
-  embedding_model: nomic-embed-text
 grouping:
   similarity_threshold: 0.75
 thresholds:

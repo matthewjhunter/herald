@@ -30,6 +30,10 @@ func (m *mockEmbedder) Embed(_ context.Context, texts []string) ([][]float32, er
 
 func (m *mockEmbedder) Model() string { return m.model }
 
+func (m *mockEmbedder) Fingerprint() embedding.Fingerprint {
+	return embedding.Fingerprint{Model: m.model}
+}
+
 // mockStore implements the subset of storage.Store used by GroupMatcher.
 type mockStore struct {
 	storage.Store // embed interface to satisfy compiler; unused methods will panic

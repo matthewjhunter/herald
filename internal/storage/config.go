@@ -10,13 +10,12 @@ type Config struct {
 	} `yaml:"database"`
 
 	Ollama struct {
-		BaseURL        string        `yaml:"base_url"`
-		APIKey         string        `yaml:"api_key"`
-		SecurityModel  string        `yaml:"security_model"`
-		CurationModel  string        `yaml:"curation_model"`
-		EmbeddingModel string        `yaml:"embedding_model"`
-		Timeout        time.Duration `yaml:"timeout"`
-		MaxParallel    int           `yaml:"max_parallel"`
+		BaseURL       string        `yaml:"base_url"`
+		APIKey        string        `yaml:"api_key"`
+		SecurityModel string        `yaml:"security_model"`
+		CurationModel string        `yaml:"curation_model"`
+		Timeout       time.Duration `yaml:"timeout"`
+		MaxParallel   int           `yaml:"max_parallel"`
 	} `yaml:"ollama"`
 
 	Thresholds struct {
@@ -75,7 +74,6 @@ func DefaultConfig() *Config {
 	cfg.Ollama.BaseURL = "http://localhost:11434"
 	cfg.Ollama.SecurityModel = "gemma4"
 	cfg.Ollama.CurationModel = "gemma4"
-	cfg.Ollama.EmbeddingModel = "nomic-embed-text"
 	cfg.Ollama.Timeout = 2 * time.Minute
 	cfg.Summarization.MinArticleLength = 200
 	cfg.Summarization.MaxSummaryLength = 500

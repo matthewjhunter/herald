@@ -6,7 +6,7 @@ database:
   path: ./herald.db
 
 ollama:
-  # Ollama API base URL
+  # Ollama API base URL (chat models only — see embedding env vars below).
   base_url: http://localhost:11434
 
   # Security model - Gemma 4 for content safety screening
@@ -15,12 +15,23 @@ ollama:
   # Curation model - Gemma 4 for interest scoring
   curation_model: gemma4
 
-  # Embedding model for article grouping similarity.
-  # IMPORTANT: Changing this model invalidates all existing group centroids.
-  # Stale centroids from the previous model are automatically ignored and
-  # will rebuild as new articles are processed. If you need to force a full
-  # rebuild, clear the embedding column: UPDATE article_groups SET embedding = NULL;
-  embedding_model: nomic-embed-text
+# Embedding configuration is read from environment variables, not YAML, so a
+# single set of variables can drive every app in the ecosystem (memstore,
+# herald, …) without duplicating values across config files.
+#
+#   EMBEDDING_BACKEND   ollama | openai     (default: ollama)
+#   EMBEDDING_BASE_URL  embedder host       (default: http://localhost:11434)
+#   EMBEDDING_MODEL     model name          (default: nomic-embed-text)
+#   EMBEDDING_API_KEY   bearer token        (optional)
+#   EMBEDDING_STRICT    true | false        (error vs. truncate on oversize input)
+#
+# Override just for herald using the HERALD_EMBED_* prefix; those values cascade
+# to EMBEDDING_* if unset.
+#
+# IMPORTANT: changing the embedding model invalidates existing group centroids.
+# Stale centroids from the previous model are automatically ignored and rebuild
+# as new articles are processed. To force a full rebuild, clear the column:
+# UPDATE article_groups SET embedding = NULL;
 
 majordomo:
   # Enable formatted notification output (for future Majordomo integration)
