@@ -40,8 +40,15 @@ var (
 // Articles are processed in batches of 100 until the queue is empty.
 // Group summary updates are deferred until all batches complete.
 func processArticlesForUser(ctx context.Context, store storage.Store, processor *ai.AIProcessor, formatter *output.Formatter, appCfg *storage.Config, userID int64) (int, error) {
-	embedder := embedding.NewOpenAIEmbedder(appCfg.Ollama.BaseURL, appCfg.Ollama.APIKey, appCfg.Ollama.EmbeddingModel)
-	groupMatcher := ai.NewGroupMatcher(embedder, store, appCfg.Ollama.EmbeddingModel, appCfg.Grouping.SimilarityThreshold)
+	embCfg, err := embedding.ConfigFromEnvPrefix("HERALD_EMBED")
+	if err != nil {
+		return 0, fmt.Errorf("embedder config: %w", err)
+	}
+	embedder, err := embedding.New(embCfg)
+	if err != nil {
+		return 0, fmt.Errorf("create embedder: %w", err)
+	}
+	groupMatcher := ai.NewGroupMatcher(embedder, store, embCfg.Model, appCfg.Grouping.SimilarityThreshold)
 
 	maxParallel := appCfg.Ollama.MaxParallel
 	if maxParallel < 1 {

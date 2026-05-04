@@ -5,6 +5,25 @@ All notable changes to FeedReader will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Embedding configuration moved from YAML to environment variables.**
+  The embedder is now built from `EMBEDDING_BACKEND`, `EMBEDDING_BASE_URL`,
+  `EMBEDDING_MODEL`, `EMBEDDING_API_KEY`, and `EMBEDDING_STRICT`, with
+  `HERALD_EMBED_*` overrides for herald-specific tuning. This lets a single
+  set of env vars drive every app in the ecosystem (herald, memstore, …)
+  without duplicating values across config files. Backed by
+  github.com/matthewjhunter/go-embedding v0.3.0.
+
+### Removed
+
+- **`ollama.embedding_model` YAML field.** Set `EMBEDDING_MODEL`
+  (or `HERALD_EMBED_MODEL`) instead. If unset, falls back to
+  `nomic-embed-text` via `embedding.DefaultConfig`. Existing YAML files
+  with this field continue to parse but the value is ignored.
+
 ## [1.0.0] - 2026-02-17
 
 ### Added

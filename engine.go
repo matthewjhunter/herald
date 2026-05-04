@@ -90,8 +90,17 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 
 	var groupMatcher *ai.GroupMatcher
 	if !cfg.ReadOnly && cfg.OllamaBaseURL != "" {
-		embedder := embedding.NewOpenAIEmbedder(cfg.OllamaBaseURL, "", storeCfg.Ollama.EmbeddingModel)
-		groupMatcher = ai.NewGroupMatcher(embedder, store, storeCfg.Ollama.EmbeddingModel, storeCfg.Grouping.SimilarityThreshold)
+		embCfg, err := embedding.ConfigFromEnvPrefix("HERALD_EMBED")
+		if err != nil {
+			store.Close()
+			return nil, fmt.Errorf("embedder config: %w", err)
+		}
+		embedder, err := embedding.New(embCfg)
+		if err != nil {
+			store.Close()
+			return nil, fmt.Errorf("create embedder: %w", err)
+		}
+		groupMatcher = ai.NewGroupMatcher(embedder, store, embCfg.Model, storeCfg.Grouping.SimilarityThreshold)
 	}
 
 	e := &Engine{
