@@ -77,6 +77,7 @@ type Store interface {
 	GetUnscoredArticlesForUser(userID int64, limit int) ([]Article, error)
 	GetUnscoredArticleCount(userID int64) (int, error)
 	GetUnsummarizedArticleCount(userID int64) (int, error)
+	GetUnsummarizedScoredArticles(userID int64, securityThreshold float64, limit int) ([]Article, error)
 	GetArticlesNeedingFullText(limit int) ([]Article, error)
 	UpdateArticleContent(articleID int64, content string) error
 	UpdateArticleLinkedContent(articleID int64, linkedURL, linkedContent string) error
