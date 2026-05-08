@@ -269,19 +269,27 @@ func backfillSummariesForUser(ctx context.Context, store storage.Store, processo
 				maxLen := appCfg.Summarization.MaxSummaryLength
 				summary, err := processor.SummarizeArticle(ctx, userID, article.Title, content, maxLen)
 				if err != nil {
+					// Transient — leave unsummarized, retry next cycle.
 					formatter.Warning("backfill summarization failed for article %d: %v", article.ID, err)
 					return
 				}
 				if herald.LooksLikeGarbage(summary) {
+					// Mostly load-related, sometimes recovers under lower load — retry.
 					formatter.Warning("discarding garbled backfill summary for article %d", article.ID)
 					return
 				}
+				// Deterministic rejections: the model can't compress this content
+				// any more than its existing form. Mark skipped so we stop retrying.
 				if len(summary) > len(content) {
-					formatter.Warning("discarding backfill summary for article %d: longer than content (%d > %d)", article.ID, len(summary), len(content))
+					reason := fmt.Sprintf("summary longer than content (%d > %d)", len(summary), len(content))
+					formatter.Warning("marking article %d summarization skipped: %s", article.ID, reason)
+					store.MarkSummarizationSkipped(userID, article.ID, reason) //nolint:errcheck
 					return
 				}
 				if maxLen > 0 && len(summary) > maxLen+maxLen*15/100 {
-					formatter.Warning("discarding backfill summary for article %d: exceeds max length by >15%% (%d > %d)", article.ID, len(summary), maxLen)
+					reason := fmt.Sprintf("summary exceeds max length by >15%% (%d > %d)", len(summary), maxLen)
+					formatter.Warning("marking article %d summarization skipped: %s", article.ID, reason)
+					store.MarkSummarizationSkipped(userID, article.ID, reason) //nolint:errcheck
 					return
 				}
 				if err := store.UpdateArticleAISummary(userID, article.ID, summary); err != nil {

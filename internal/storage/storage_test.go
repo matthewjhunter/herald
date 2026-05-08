@@ -1710,6 +1710,16 @@ func TestGetUnsummarizedScoredArticles(t *testing.T) {
 		URL: "https://example.com/4", PublishedDate: &now,
 	})
 
+	// Article 5: scored, passed security, summarization marked SKIPPED — excluded.
+	a5, _ := store.AddArticle(&Article{
+		FeedID: feedID, GUID: "a5", Title: "Skipped — too short to compress",
+		URL: "https://example.com/5", PublishedDate: &now,
+	})
+	store.UpdateReadState(1, a5, false, &score, &sec, nil)
+	if err := store.MarkSummarizationSkipped(1, a5, "summary longer than content"); err != nil {
+		t.Fatalf("MarkSummarizationSkipped: %v", err)
+	}
+
 	got, err := store.GetUnsummarizedScoredArticles(1, 7.0, 100)
 	if err != nil {
 		t.Fatalf("GetUnsummarizedScoredArticles: %v", err)
@@ -1719,6 +1729,18 @@ func TestGetUnsummarizedScoredArticles(t *testing.T) {
 	}
 	if got[0].ID != a2 {
 		t.Errorf("expected article %d, got %d", a2, got[0].ID)
+	}
+
+	// Sanity: skipped article (a5) shouldn't show in the unsummarized count.
+	// a1 has a summary row, a5 has a sentinel row — both are excluded.
+	// a2 (scored, no summary), a3 (security-failed, no summary row written),
+	// and a4 (never scored, no summary row) are all counted.
+	count, err := store.GetUnsummarizedArticleCount(1)
+	if err != nil {
+		t.Fatalf("GetUnsummarizedArticleCount: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("expected unsummarized count 3 (a2 + a3 + a4), got %d", count)
 	}
 }
 

@@ -24,7 +24,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with bounded parallelism (Ollama.MaxParallel), stores a sentinel
   on error / too-short content to prevent infinite retries.
 
+- **Summary backfill now distinguishes deterministic rejections.**
+  When the model returns a summary longer than the original content
+  (too-short content) or longer than `MaxSummaryLength + 15%` (model
+  rambling), the article is marked with a `skip_reason` and dropped
+  from the backfill set — no more retrying these every cycle.
+  Transient errors (Ollama timeout, garbled output that
+  `LooksLikeGarbage` matches) continue to retry as before.
+
 ### Changed
+
+- **`article_summaries` schema gains nullable `skip_reason TEXT`
+  column.** A non-null value with empty `ai_summary` marks a
+  sentinel row (deterministic rejection). A successful re-summary
+  via `UpdateArticleAISummary` clears the skip_reason. Migration is
+  idempotent ALTER TABLE — no data conversion needed.
 
 - **Embedding configuration moved from YAML to environment variables.**
   The embedder is now built from `EMBEDDING_BACKEND`, `EMBEDDING_BASE_URL`,
