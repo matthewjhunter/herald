@@ -32,6 +32,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Transient errors (Ollama timeout, garbled output that
   `LooksLikeGarbage` matches) continue to retry as before.
 
+### Fixed
+
+- **Daemon AI passes ran only on cycles with at least one feed due
+  to fetch.** With adaptive fetch scheduling, `next_fetch_at`
+  staggers across feeds, so it's common for an individual cycle to
+  have zero due. The early-return on `len(subscribedFeeds) == 0`
+  bypassed AI processing entirely on those cycles — the
+  unscored-articles loop, summary backfill, and embedding backfill
+  never ran. Removed the early return; the fetch loop is naturally
+  a no-op when no feeds are due, but the AI passes downstream now
+  drain pending work as designed.
+
 ### Changed
 
 - **`article_summaries` schema gains nullable `skip_reason TEXT`

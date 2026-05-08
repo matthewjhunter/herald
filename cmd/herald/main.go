@@ -722,15 +722,13 @@ func doFetch(ctx context.Context) error {
 	}
 	defer store.Close()
 
-	// Get all feeds that ANY user is subscribed to
+	// Get all feeds due to fetch this cycle. Adaptive scheduling stages
+	// next_fetch_at across feeds, so it's normal for an individual cycle to
+	// have zero due — the AI passes downstream still need to run to drain
+	// pending work from prior cycles, so we don't early-return on this.
 	subscribedFeeds, err := store.GetAllSubscribedFeeds()
 	if err != nil {
 		return fmt.Errorf("failed to get subscribed feeds: %w", err)
-	}
-
-	if len(subscribedFeeds) == 0 {
-		formatter.Warning("no feeds subscribed by any user")
-		return formatter.OutputFetchResult(&output.FetchResult{})
 	}
 
 	// Fetch each feed once (efficient)
