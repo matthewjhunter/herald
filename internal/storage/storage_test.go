@@ -1672,6 +1672,56 @@ func TestAIRetryLimit(t *testing.T) {
 	}
 }
 
+func TestGetUnsummarizedScoredArticles(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, _ := store.AddFeed("https://example.com/feed", "Test Feed", "")
+	store.SubscribeUserToFeed(1, feedID)
+	now := time.Now()
+
+	// Article 1: scored, passed security, has summary — excluded.
+	a1, _ := store.AddArticle(&Article{
+		FeedID: feedID, GUID: "a1", Title: "Has summary",
+		URL: "https://example.com/1", PublishedDate: &now,
+	})
+	score, sec := 8.0, 10.0
+	store.UpdateReadState(1, a1, false, &score, &sec, nil)
+	store.UpdateArticleAISummary(1, a1, "an existing summary")
+
+	// Article 2: scored, passed security, NO summary — included.
+	a2, _ := store.AddArticle(&Article{
+		FeedID: feedID, GUID: "a2", Title: "Missing summary",
+		URL: "https://example.com/2", PublishedDate: &now,
+	})
+	store.UpdateReadState(1, a2, false, &score, &sec, nil)
+
+	// Article 3: scored, FAILED security — excluded (security_score < threshold).
+	a3, _ := store.AddArticle(&Article{
+		FeedID: feedID, GUID: "a3", Title: "Failed security",
+		URL: "https://example.com/3", PublishedDate: &now,
+	})
+	zero, low := 0.0, 3.0
+	store.UpdateReadState(1, a3, false, &zero, &low, nil)
+
+	// Article 4: never scored — excluded (no read_state).
+	store.AddArticle(&Article{
+		FeedID: feedID, GUID: "a4", Title: "Never scored",
+		URL: "https://example.com/4", PublishedDate: &now,
+	})
+
+	got, err := store.GetUnsummarizedScoredArticles(1, 7.0, 100)
+	if err != nil {
+		t.Fatalf("GetUnsummarizedScoredArticles: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 article, got %d", len(got))
+	}
+	if got[0].ID != a2 {
+		t.Errorf("expected article %d, got %d", a2, got[0].ID)
+	}
+}
+
 func TestSearchArticlesFTS(t *testing.T) {
 	store, cleanup := newTestStore(t)
 	defer cleanup()

@@ -1765,6 +1765,43 @@ func (s *SQLiteStore) GetUnscoredArticlesForUser(userID int64, limit int) ([]Art
 	return articles, rows.Err()
 }
 
+// GetUnsummarizedScoredArticles returns articles that have been AI-scored with
+// a passing security score but lack a cached AI summary. Used by the daemon's
+// summary backfill pass to re-attempt summarization that failed transiently
+// (e.g., Ollama timeout, garbled output) during the original scoring cycle.
+func (s *SQLiteStore) GetUnsummarizedScoredArticles(userID int64, securityThreshold float64, limit int) ([]Article, error) {
+	query := `
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date
+		FROM articles a
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
+		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id AND asumm.user_id = uf.user_id
+		WHERE uf.user_id = ?
+		  AND rs.ai_scored = 1
+		  AND rs.security_score >= ?
+		  AND asumm.article_id IS NULL
+		ORDER BY a.published_date DESC
+		LIMIT ?
+	`
+	rows, err := s.db.Query(query, userID, securityThreshold, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get unsummarized scored articles: %w", err)
+	}
+	defer rows.Close()
+
+	var articles []Article
+	for rows.Next() {
+		var a Article
+		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
+			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate); err != nil {
+			return nil, fmt.Errorf("scan article: %w", err)
+		}
+		articles = append(articles, a)
+	}
+	return articles, rows.Err()
+}
+
 // GetUnreadArticlesForUser returns unread articles from feeds the user subscribes to
 func (s *SQLiteStore) GetUnreadArticlesForUser(userID int64, limit, offset int, filterThreshold *int) ([]Article, error) {
 	filterSQL, filterArgs := filterScoreClause(userID, filterThreshold)

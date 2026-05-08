@@ -864,6 +864,27 @@ func (s *PostgresStore) GetUnscoredArticleCount(userID int64) (int, error) {
 	return count, nil
 }
 
+func (s *PostgresStore) GetUnsummarizedScoredArticles(userID int64, securityThreshold float64, limit int) ([]Article, error) {
+	rows, err := s.db.Query(`
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date
+		FROM articles a
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
+		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id AND asumm.user_id = uf.user_id
+		WHERE uf.user_id = ?
+		  AND rs.ai_scored = TRUE
+		  AND rs.security_score >= ?
+		  AND asumm.article_id IS NULL
+		ORDER BY a.published_date DESC
+		LIMIT ?`, userID, securityThreshold, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get unsummarized scored articles: %w", err)
+	}
+	defer rows.Close()
+	return scanArticles(rows)
+}
+
 func (s *PostgresStore) GetUnsummarizedArticleCount(userID int64) (int, error) {
 	var count int
 	err := s.db.QueryRow(`

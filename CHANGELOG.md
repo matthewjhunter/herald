@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Daemon now backfills missing AI summaries.** Articles that pass the
+  security check but lose their summary to a transient failure (Ollama
+  timeout, garbled output) are re-summarized on the next daemon cycle.
+  Previously these articles were marked `ai_scored=true` and never
+  retried. The pass runs every cycle, regardless of whether new
+  articles were fetched.
+
 ### Changed
 
 - **Embedding configuration moved from YAML to environment variables.**

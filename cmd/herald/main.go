@@ -218,6 +218,82 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 	return processed, nil
 }
 
+// backfillSummariesForUser re-attempts AI summarization for articles that have
+// been scored with a passing security score but lack a cached summary. This
+// catches transient summarization failures (e.g., Ollama timeouts, garbled
+// output) from previous cycles. Rejections (garbled, too-long) are logged but
+// not retry-bounded — systematic failures will be re-attempted each cycle.
+func backfillSummariesForUser(ctx context.Context, store storage.Store, processor *ai.AIProcessor, formatter *output.Formatter, appCfg *storage.Config, userID int64) (int, error) {
+	maxParallel := appCfg.Ollama.MaxParallel
+	if maxParallel < 1 {
+		maxParallel = 1
+	}
+
+	var (
+		mu        sync.Mutex
+		succeeded int
+	)
+	sem := make(chan struct{}, maxParallel)
+	var wg sync.WaitGroup
+
+	for ctx.Err() == nil { //nolint:staticcheck // QF1006: batch-fetch-then-check pattern is intentional
+		articles, err := store.GetUnsummarizedScoredArticles(userID, appCfg.Thresholds.SecurityScore, 100)
+		if err != nil {
+			return succeeded, fmt.Errorf("failed to get unsummarized scored articles: %w", err)
+		}
+		if len(articles) == 0 {
+			break
+		}
+
+		for _, article := range articles {
+			if ctx.Err() != nil {
+				break
+			}
+			sem <- struct{}{}
+			wg.Add(1)
+			go func(article storage.Article) {
+				defer func() { <-sem; wg.Done() }()
+
+				content := article.Content
+				if content == "" {
+					content = article.Summary
+				}
+				if article.LinkedContent != "" {
+					content = content + "\n\n" + article.LinkedContent
+				}
+
+				maxLen := appCfg.Summarization.MaxSummaryLength
+				summary, err := processor.SummarizeArticle(ctx, userID, article.Title, content, maxLen)
+				if err != nil {
+					formatter.Warning("backfill summarization failed for article %d: %v", article.ID, err)
+					return
+				}
+				if herald.LooksLikeGarbage(summary) {
+					formatter.Warning("discarding garbled backfill summary for article %d", article.ID)
+					return
+				}
+				if len(summary) > len(content) {
+					formatter.Warning("discarding backfill summary for article %d: longer than content (%d > %d)", article.ID, len(summary), len(content))
+					return
+				}
+				if maxLen > 0 && len(summary) > maxLen+maxLen*15/100 {
+					formatter.Warning("discarding backfill summary for article %d: exceeds max length by >15%% (%d > %d)", article.ID, len(summary), maxLen)
+					return
+				}
+				if err := store.UpdateArticleAISummary(userID, article.ID, summary); err != nil {
+					formatter.Warning("failed to cache backfill summary for %d: %v", article.ID, err)
+					return
+				}
+				mu.Lock()
+				succeeded++
+				mu.Unlock()
+			}(article)
+		}
+		wg.Wait()
+	}
+	return succeeded, nil
+}
+
 // updateGroupSummary regenerates the summary for a group
 func updateGroupSummary(ctx context.Context, store storage.Store, processor *ai.AIProcessor, groupID, userID int64) error {
 	// Get all articles in the group
@@ -634,11 +710,9 @@ func doFetch(ctx context.Context) error {
 		fmt.Fprintf(os.Stdout, "Cached favicons for %d feeds\n", faviconStored)
 	}
 
-	if fetchResult.NewArticles == 0 {
-		return formatter.OutputFetchResult(fetchResult)
-	}
-
-	// Process unread articles with AI
+	// Run AI passes every cycle, regardless of whether new articles were fetched
+	// this cycle — pending work from prior cycles (unscored articles, missing
+	// summaries from transient failures) needs to drain.
 	processor, err := ai.NewAIProcessor(cfg.Ollama.BaseURL, cfg.Ollama.SecurityModel, cfg.Ollama.CurationModel, store, cfg)
 	if err != nil {
 		formatter.Warning("failed to create AI processor: %v", err)
@@ -658,6 +732,7 @@ func doFetch(ctx context.Context) error {
 	}
 
 	totalProcessed := 0
+	totalSummariesBackfilled := 0
 
 	// Process articles for each subscribing user
 	for _, userID := range allUserIDs {
@@ -667,9 +742,18 @@ func doFetch(ctx context.Context) error {
 			continue
 		}
 		totalProcessed += processed
+
+		summarized, err := backfillSummariesForUser(ctx, store, processor, formatter, cfg, userID)
+		if err != nil {
+			formatter.Warning("failed to backfill summaries for user %d: %v", userID, err)
+		}
+		totalSummariesBackfilled += summarized
 	}
 
 	fetchResult.ProcessedCount = totalProcessed
+	if totalSummariesBackfilled > 0 {
+		fmt.Fprintf(os.Stdout, "Backfilled %d missing AI summaries\n", totalSummariesBackfilled)
+	}
 
 	// Get and output high-interest articles
 	// Show high-interest articles for the first subscribing user.
