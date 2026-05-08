@@ -59,6 +59,8 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 		"ALTER TABLE group_summaries ADD COLUMN IF NOT EXISTS headline TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE article_groups ADD COLUMN IF NOT EXISTS embedding_model TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE read_state ADD COLUMN IF NOT EXISTS ai_retries INTEGER NOT NULL DEFAULT 0",
+		// Sentinel marker for summarization rejections that shouldn't be retried.
+		"ALTER TABLE article_summaries ADD COLUMN IF NOT EXISTS skip_reason TEXT",
 		// Full-text search: tsvector column with GIN index.
 		"ALTER TABLE articles ADD COLUMN IF NOT EXISTS search_vector tsvector",
 		"CREATE INDEX IF NOT EXISTS idx_articles_search_vector ON articles USING gin(search_vector)",
@@ -1224,15 +1226,31 @@ func (s *PostgresStore) HasFilterRules(userID int64) (bool, error) {
 
 func (s *PostgresStore) UpdateArticleAISummary(userID, articleID int64, aiSummary string) error {
 	_, err := s.db.Exec(
-		`INSERT INTO article_summaries (user_id, article_id, ai_summary)
-		 VALUES (?, ?, ?)
+		`INSERT INTO article_summaries (user_id, article_id, ai_summary, skip_reason)
+		 VALUES (?, ?, ?, NULL)
 		 ON CONFLICT(user_id, article_id) DO UPDATE SET
-		   ai_summary = excluded.ai_summary,
+		   ai_summary = EXCLUDED.ai_summary,
+		   skip_reason = NULL,
 		   generated_at = NOW()`,
 		userID, articleID, aiSummary,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update AI summary: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) MarkSummarizationSkipped(userID, articleID int64, reason string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO article_summaries (user_id, article_id, ai_summary, skip_reason)
+		 VALUES (?, ?, '', ?)
+		 ON CONFLICT (user_id, article_id) DO UPDATE SET
+		   skip_reason = EXCLUDED.skip_reason,
+		   generated_at = NOW()`,
+		userID, articleID, reason,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to mark summarization skipped: %w", err)
 	}
 	return nil
 }

@@ -262,6 +262,10 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		"ALTER TABLE article_groups ADD COLUMN embedding_model TEXT NOT NULL DEFAULT ''",
 		// Retry counter for AI pipeline failures (prevents infinite retry loops).
 		"ALTER TABLE read_state ADD COLUMN ai_retries INTEGER NOT NULL DEFAULT 0",
+		// Sentinel marker for summarization rejections that shouldn't be retried
+		// (summary longer than content, summary exceeds maxLen+15%). Non-null
+		// reason + empty ai_summary = "we tried, it didn't fit, don't retry."
+		"ALTER TABLE article_summaries ADD COLUMN skip_reason TEXT",
 		// FTS5 full-text search index (external-content, synced via triggers).
 		`CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
 			title, content, summary, linked_content,
@@ -1109,18 +1113,40 @@ func (s *SQLiteStore) GetArticlesByInterestScore(userID int64, threshold float64
 	return articles, scores, rows.Err()
 }
 
-// UpdateArticleAISummary stores the AI-generated summary for an article (per-user)
+// UpdateArticleAISummary stores the AI-generated summary for an article (per-user).
+// Clears any prior skip_reason so a previously-skipped article that later
+// summarizes successfully transitions back to a normal cached row.
 func (s *SQLiteStore) UpdateArticleAISummary(userID, articleID int64, aiSummary string) error {
 	_, err := s.db.Exec(
-		`INSERT INTO article_summaries (user_id, article_id, ai_summary)
-		 VALUES (?, ?, ?)
+		`INSERT INTO article_summaries (user_id, article_id, ai_summary, skip_reason)
+		 VALUES (?, ?, ?, NULL)
 		 ON CONFLICT(user_id, article_id) DO UPDATE SET
 		   ai_summary = excluded.ai_summary,
+		   skip_reason = NULL,
 		   generated_at = CURRENT_TIMESTAMP`,
 		userID, articleID, aiSummary,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update AI summary: %w", err)
+	}
+	return nil
+}
+
+// MarkSummarizationSkipped records a deterministic summarization rejection
+// (e.g., the model can't compress content shorter than the input). Stores an
+// empty ai_summary plus a non-null skip_reason so the article drops out of the
+// backfill set and isn't retried each cycle.
+func (s *SQLiteStore) MarkSummarizationSkipped(userID, articleID int64, reason string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO article_summaries (user_id, article_id, ai_summary, skip_reason)
+		 VALUES (?, ?, '', ?)
+		 ON CONFLICT(user_id, article_id) DO UPDATE SET
+		   skip_reason = excluded.skip_reason,
+		   generated_at = CURRENT_TIMESTAMP`,
+		userID, articleID, reason,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to mark summarization skipped: %w", err)
 	}
 	return nil
 }

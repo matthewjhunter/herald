@@ -111,6 +111,7 @@ type Store interface {
 
 	// Article summaries
 	UpdateArticleAISummary(userID, articleID int64, aiSummary string) error
+	MarkSummarizationSkipped(userID, articleID int64, reason string) error
 	GetArticleSummary(userID, articleID int64) (*ArticleSummary, error)
 
 	// Feed stats

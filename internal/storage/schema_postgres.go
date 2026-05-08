@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS article_summaries (
     user_id      BIGINT NOT NULL DEFAULT 1,
     article_id   BIGINT NOT NULL,
     ai_summary   TEXT NOT NULL,
+    skip_reason  TEXT,
     generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (user_id, article_id),
     FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
