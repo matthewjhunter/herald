@@ -25,6 +25,20 @@ var (
 	outputFormat string
 )
 
+// newGroupMatcher constructs a GroupMatcher from HERALD_EMBED env vars and
+// the Grouping config. Used by both the daemon cycle and the `process` CLI.
+func newGroupMatcher(store storage.Store, appCfg *storage.Config) (*ai.GroupMatcher, error) {
+	embCfg, err := embedding.ConfigFromEnvPrefix("HERALD_EMBED")
+	if err != nil {
+		return nil, fmt.Errorf("embedder config: %w", err)
+	}
+	embedder, err := embedding.New(embCfg)
+	if err != nil {
+		return nil, fmt.Errorf("create embedder: %w", err)
+	}
+	return ai.NewGroupMatcher(embedder, store, embCfg.Model, appCfg.Grouping.SimilarityThreshold), nil
+}
+
 // processArticlesForUser runs the AI pipeline (summarize, security check,
 // interest scoring, grouping) for a single user's unscored articles. Returns
 // the number of articles processed. This is the shared core used by both
@@ -39,17 +53,7 @@ var (
 // since they are independent; curation and group matching run after.
 // Articles are processed in batches of 100 until the queue is empty.
 // Group summary updates are deferred until all batches complete.
-func processArticlesForUser(ctx context.Context, store storage.Store, processor *ai.AIProcessor, formatter *output.Formatter, appCfg *storage.Config, userID int64) (int, error) {
-	embCfg, err := embedding.ConfigFromEnvPrefix("HERALD_EMBED")
-	if err != nil {
-		return 0, fmt.Errorf("embedder config: %w", err)
-	}
-	embedder, err := embedding.New(embCfg)
-	if err != nil {
-		return 0, fmt.Errorf("create embedder: %w", err)
-	}
-	groupMatcher := ai.NewGroupMatcher(embedder, store, embCfg.Model, appCfg.Grouping.SimilarityThreshold)
-
+func processArticlesForUser(ctx context.Context, store storage.Store, processor *ai.AIProcessor, groupMatcher *ai.GroupMatcher, formatter *output.Formatter, appCfg *storage.Config, userID int64) (int, error) {
 	maxParallel := appCfg.Ollama.MaxParallel
 	if maxParallel < 1 {
 		maxParallel = 1
@@ -288,6 +292,75 @@ func backfillSummariesForUser(ctx context.Context, store storage.Store, processo
 				succeeded++
 				mu.Unlock()
 			}(article)
+		}
+		wg.Wait()
+	}
+	return succeeded, nil
+}
+
+// backfillEmbeddingsInCycle generates per-article embedding vectors for any
+// articles missing them. Mirrors engine.BackfillEmbeddings but runs with
+// bounded parallelism (Ollama.MaxParallel) so the daemon can drain a large
+// initial backlog without blocking the cycle for too long. Stores a sentinel
+// for articles that error or are too short to embed, matching the engine
+// behavior — prevents infinite retries.
+func backfillEmbeddingsInCycle(ctx context.Context, store storage.Store, groupMatcher *ai.GroupMatcher, formatter *output.Formatter) (int, error) {
+	maxParallel := cfg.Ollama.MaxParallel
+	if maxParallel < 1 {
+		maxParallel = 1
+	}
+
+	sentinel := []byte{0}
+	model := groupMatcher.Model()
+
+	var (
+		mu        sync.Mutex
+		succeeded int
+	)
+	sem := make(chan struct{}, maxParallel)
+	var wg sync.WaitGroup
+
+	for ctx.Err() == nil { //nolint:staticcheck // QF1006: batch-fetch-then-check pattern is intentional
+		articles, err := store.GetArticlesWithoutEmbeddings(model, 100)
+		if err != nil {
+			return succeeded, fmt.Errorf("get articles without embeddings: %w", err)
+		}
+		if len(articles) == 0 {
+			break
+		}
+
+		for _, a := range articles {
+			if ctx.Err() != nil {
+				break
+			}
+			sem <- struct{}{}
+			wg.Add(1)
+			go func(a storage.Article) {
+				defer func() { <-sem; wg.Done() }()
+
+				content := a.Content
+				if content == "" {
+					content = a.Summary
+				}
+				emb, err := groupMatcher.EmbedArticle(ctx, a.Title, content)
+				if err != nil {
+					formatter.Warning("backfill embed article %d: %v", a.ID, err)
+					store.StoreArticleEmbedding(a.ID, sentinel, model) //nolint:errcheck
+					return
+				}
+				if emb == nil {
+					// Content too short to embed meaningfully.
+					store.StoreArticleEmbedding(a.ID, sentinel, model) //nolint:errcheck
+					return
+				}
+				if err := store.StoreArticleEmbedding(a.ID, embedding.EncodeFloat32s(emb), model); err != nil {
+					formatter.Warning("backfill store embedding %d: %v", a.ID, err)
+					return
+				}
+				mu.Lock()
+				succeeded++
+				mu.Unlock()
+			}(a)
 		}
 		wg.Wait()
 	}
@@ -581,7 +654,12 @@ func processCmd() *cobra.Command {
 				return nil
 			}
 
-			processed, err := processArticlesForUser(ctx, store, processor, formatter, cfg, userID)
+			groupMatcher, err := newGroupMatcher(store, cfg)
+			if err != nil {
+				return err
+			}
+
+			processed, err := processArticlesForUser(ctx, store, processor, groupMatcher, formatter, cfg, userID)
 			if err != nil {
 				return err
 			}
@@ -731,17 +809,27 @@ func doFetch(ctx context.Context) error {
 		return formatter.OutputFetchResult(fetchResult)
 	}
 
+	groupMatcher, err := newGroupMatcher(store, cfg)
+	if err != nil {
+		formatter.Warning("failed to create group matcher: %v", err)
+		formatter.Warning("skipping embedding backfill and group matching")
+	}
+
 	totalProcessed := 0
 	totalSummariesBackfilled := 0
 
-	// Process articles for each subscribing user
+	// Process articles for each subscribing user. The unscored scoring loop
+	// uses the group matcher; if embedder construction failed we skip it but
+	// still run the summary backfill (which only needs the AI processor).
 	for _, userID := range allUserIDs {
-		processed, err := processArticlesForUser(ctx, store, processor, formatter, cfg, userID)
-		if err != nil {
-			formatter.Warning("failed to process articles for user %d: %v", userID, err)
-			continue
+		if groupMatcher != nil {
+			processed, err := processArticlesForUser(ctx, store, processor, groupMatcher, formatter, cfg, userID)
+			if err != nil {
+				formatter.Warning("failed to process articles for user %d: %v", userID, err)
+			} else {
+				totalProcessed += processed
+			}
 		}
-		totalProcessed += processed
 
 		summarized, err := backfillSummariesForUser(ctx, store, processor, formatter, cfg, userID)
 		if err != nil {
@@ -753,6 +841,15 @@ func doFetch(ctx context.Context) error {
 	fetchResult.ProcessedCount = totalProcessed
 	if totalSummariesBackfilled > 0 {
 		fmt.Fprintf(os.Stdout, "Backfilled %d missing AI summaries\n", totalSummariesBackfilled)
+	}
+
+	// Embedding backfill is global (not per-user) and runs once per cycle.
+	if groupMatcher != nil {
+		if embedded, err := backfillEmbeddingsInCycle(ctx, store, groupMatcher, formatter); err != nil {
+			formatter.Warning("embedding backfill error: %v", err)
+		} else if embedded > 0 {
+			fmt.Fprintf(os.Stdout, "Backfilled %d article embeddings\n", embedded)
+		}
 	}
 
 	// Get and output high-interest articles
