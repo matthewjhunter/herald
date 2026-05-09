@@ -22,7 +22,10 @@ Title: {{.Title}}
 {{.Content}}
 </article>
 
-Respond ONLY with valid JSON in this exact format:
+Respond ONLY with valid JSON in this exact format. Output the raw JSON
+object directly — do NOT wrap it in markdown code fences (no ```json
+or ``` blocks), do NOT prefix it with explanation or commentary, and
+keep your reasoning to a single sentence inside the JSON:
 {
   "safe": true/false,
   "score": <0-10, where 10 is completely safe and 0 means confirmed malicious>,

@@ -2,7 +2,9 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -233,5 +235,89 @@ func TestCircuitBreakerIgnores5xx(t *testing.T) {
 
 	if c.isOpen() {
 		t.Fatal("breaker should not trip on 5xx errors")
+	}
+}
+
+func TestGenerate_SendsMaxTokens(t *testing.T) {
+	// Reasoning-style models (Gemma 4, Qwen 3) burn most of their output
+	// budget on chain-of-thought before emitting JSON. Without an explicit
+	// max_tokens, the server-side default (often ~400) is consumed by the
+	// reasoning trace and the JSON arrives empty. herald must always send
+	// max_tokens so the budget is sized for both reasoning and output.
+	var captured chatRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	c := newOpenAIClient(srv.URL, "")
+	if _, err := c.generate(context.Background(), "test-model", "hello", 0.1); err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if captured.MaxTokens != chatMaxTokens {
+		t.Errorf("max_tokens: got %d, want %d", captured.MaxTokens, chatMaxTokens)
+	}
+}
+
+func TestExtractJSON_StripsMarkdownFences(t *testing.T) {
+	// Gemma 4 wraps JSON output in ```json ... ``` markdown fences even
+	// when the prompt asks for raw JSON. extractJSON's first-`{` to
+	// last-`}` scan is what makes this tolerable — it pulls the JSON
+	// out regardless of surrounding fences. A regression here would
+	// re-introduce the "Security response did not match expected JSON
+	// format" failure mode for every gemma4 article.
+	cases := []struct {
+		name, in, want string
+	}{
+		{
+			name: "fenced with language tag",
+			in:   "```json\n{\"safe\": true, \"score\": 10}\n```",
+			want: "{\"safe\": true, \"score\": 10}",
+		},
+		{
+			name: "fenced bare",
+			in:   "```\n{\"safe\": true}\n```",
+			want: "{\"safe\": true}",
+		},
+		{
+			name: "leading prose then fenced JSON",
+			in:   "Sure, here's my analysis:\n```json\n{\"score\": 7}\n```",
+			want: "{\"score\": 7}",
+		},
+		{
+			name: "raw JSON, no fence",
+			in:   "{\"safe\":false}",
+			want: "{\"safe\":false}",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractJSON(tc.in)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+			// Verify the output is parseable — the whole point of
+			// extractJSON is to feed json.Unmarshal something valid.
+			var v map[string]interface{}
+			if err := json.Unmarshal([]byte(got), &v); err != nil {
+				t.Errorf("extracted JSON did not parse: %v (got %q)", err, got)
+			}
+		})
+	}
+}
+
+func TestExtractJSON_EmptyAndPlainText(t *testing.T) {
+	// extractJSON returns the input unchanged when there's no `{` to
+	// anchor on. The caller (SecurityCheck/CurateArticle) is then
+	// responsible for distinguishing empty from "JSON parse failed".
+	if got := extractJSON(""); got != "" {
+		t.Errorf("empty input: got %q, want empty", got)
+	}
+	if got := extractJSON("nothing useful here"); got != "nothing useful here" {
+		t.Errorf("no-brace input: got %q", got)
 	}
 }

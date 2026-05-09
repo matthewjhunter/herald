@@ -116,10 +116,20 @@ func (c *openAIClient) isOpen() bool {
 	return true
 }
 
+// chatMaxTokens caps the model's response length. Sized for reasoning-style
+// models (Gemma 4, Qwen 3, etc.) that burn a substantial token budget on
+// chain-of-thought before producing output. With a tight cap, all tokens
+// are consumed by reasoning and the response content arrives empty —
+// herald then mis-labels the empty body as a malformed-JSON injection
+// attempt. 2048 leaves room for ~1500-2000 reasoning tokens plus a
+// concise JSON object (typically <100 tokens for our schemas).
+const chatMaxTokens = 2048
+
 type chatRequest struct {
 	Model       string        `json:"model"`
 	Messages    []chatMessage `json:"messages"`
 	Temperature float64       `json:"temperature,omitempty"`
+	MaxTokens   int           `json:"max_tokens,omitempty"`
 	Stream      bool          `json:"stream"`
 }
 
@@ -163,6 +173,7 @@ func (c *openAIClient) generate(ctx context.Context, model, prompt string, tempe
 			{Role: "user", Content: prompt},
 		},
 		Temperature: temperature,
+		MaxTokens:   chatMaxTokens,
 		Stream:      false,
 	}
 

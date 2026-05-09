@@ -104,8 +104,20 @@ func (p *AIProcessor) SecurityCheck(ctx context.Context, userID int64, title, co
 		return nil, fmt.Errorf("ollama security check failed: %w", err)
 	}
 
+	extracted := extractJSON(responseText)
+	if strings.TrimSpace(extracted) == "" {
+		// Empty content typically means the model burned its output budget
+		// on a reasoning trace before emitting JSON. Distinguish this from
+		// malformed-JSON so it isn't filed as a prompt-injection signal.
+		return &SecurityResult{
+			Safe:      false,
+			Score:     0,
+			Reasoning: "Security check returned no content (likely max_tokens exhausted by model reasoning) -- not scored",
+		}, nil
+	}
+
 	var result SecurityResult
-	if err := json.Unmarshal([]byte(extractJSON(responseText)), &result); err != nil {
+	if err := json.Unmarshal([]byte(extracted), &result); err != nil {
 		return &SecurityResult{
 			Safe:      false,
 			Score:     0,
@@ -152,8 +164,16 @@ func (p *AIProcessor) CurateArticle(ctx context.Context, userID int64, title, co
 		return nil, fmt.Errorf("ollama curation failed: %w", err)
 	}
 
+	extracted := extractJSON(responseText)
+	if strings.TrimSpace(extracted) == "" {
+		return &CurationResult{
+			InterestScore: 0,
+			Reasoning:     "Curation returned no content (likely max_tokens exhausted by model reasoning) -- not scored",
+		}, nil
+	}
+
 	var result CurationResult
-	if err := json.Unmarshal([]byte(extractJSON(responseText)), &result); err != nil {
+	if err := json.Unmarshal([]byte(extracted), &result); err != nil {
 		return &CurationResult{
 			InterestScore: 0,
 			Reasoning:     "Curation response did not match expected JSON format -- possible prompt injection",
