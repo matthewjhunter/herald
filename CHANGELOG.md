@@ -71,10 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   basis to learn metadata as features — articles from "Schneier on
   Security" cluster differently from articles on the same topic from
   "Hacker News" because the source itself is part of the vector.
-  Implementation uses go-embedding v0.4.0's `FormatRecordForTask`
+  Implementation uses go-embedding v0.4.1's `FormatRecordForTask`
   with `TaskClustering`, which also wraps the text in the model's
-  task-specific prompt prefix (e.g. `clustering: ` for nomic,
-  `task: clustering | query: ` for EmbeddingGemma).
+  task-specific prompt prefix (`clustering:\n` for nomic,
+  `task: clustering | query:\n` for EmbeddingGemma — v0.4.1 places
+  field labels at column 0 below the prefix line).
 
   This invalidates every existing embedding — old vectors were built
   from `title + content` only and are not directly comparable to the
@@ -89,7 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consumers need the title even for disabled feeds).
 
 - **Embedding length enforcement delegated to go-embedding.** Bumped
-  to `go-embedding v0.4.0` and removed herald's local 7500-byte cap
+  to `go-embedding v0.4.1` and removed herald's local 7500-byte cap
   in `internal/ai/grouping.go`. The library applies a per-model byte
   budget (now 6000 for nomic-embed-text — empirically tighter than
   the prior 7500 for dense English at ~3 bytes/token) with
