@@ -201,10 +201,18 @@ CREATE TABLE IF NOT EXISTS feed_favicons (
     FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE
 );
 
+-- See storage.EmbedStatus* constants for the meaning of status codes:
+-- 0 = ok (real vector stored), 1 = too_short (deterministic skip, no
+-- retry), 2 = error (transient failure, retryable while attempts < 5).
+-- error_message holds the last error text when status=2; NULL otherwise,
+-- and is critical for post-mortem diagnosis of backend failures.
 CREATE TABLE IF NOT EXISTS article_embeddings (
     article_id INTEGER PRIMARY KEY,
     embedding BLOB NOT NULL,
     embedding_model TEXT NOT NULL,
+    status SMALLINT NOT NULL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
 );

@@ -61,6 +61,22 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 		"ALTER TABLE read_state ADD COLUMN IF NOT EXISTS ai_retries INTEGER NOT NULL DEFAULT 0",
 		// Sentinel marker for summarization rejections that shouldn't be retried.
 		"ALTER TABLE article_summaries ADD COLUMN IF NOT EXISTS skip_reason TEXT",
+		// Embedding lifecycle state — see EmbedStatus* constants.
+		"ALTER TABLE article_embeddings ADD COLUMN IF NOT EXISTS status SMALLINT NOT NULL DEFAULT 0",
+		"ALTER TABLE article_embeddings ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE article_embeddings ADD COLUMN IF NOT EXISTS error_message TEXT",
+		// Reclassify legacy 1-byte sentinels (see SQLite migration for rationale).
+		`UPDATE article_embeddings
+		 SET status = 1
+		 WHERE octet_length(embedding) = 1 AND status = 0
+		   AND article_id IN (
+		     SELECT id FROM articles
+		     WHERE octet_length(COALESCE(NULLIF(content, ''), summary, '')) < 200
+		   )`,
+		`UPDATE article_embeddings
+		 SET status = 2,
+		     error_message = 'migrated from legacy 1-byte sentinel — original error not preserved'
+		 WHERE octet_length(embedding) = 1 AND status = 0`,
 		// Full-text search: tsvector column with GIN index.
 		"ALTER TABLE articles ADD COLUMN IF NOT EXISTS search_vector tsvector",
 		"CREATE INDEX IF NOT EXISTS idx_articles_search_vector ON articles USING gin(search_vector)",
@@ -2207,14 +2223,50 @@ func (s *PostgresStore) SearchArticlesFTS(userID int64, query string, limit, off
 	return scanArticles(rows)
 }
 
-// StoreArticleEmbedding upserts a per-article embedding vector.
+// StoreArticleEmbedding upserts a successful embedding vector. Resets
+// status, attempts, and error_message — see SQLiteStore for rationale.
 func (s *PostgresStore) StoreArticleEmbedding(articleID int64, embedding []byte, model string) error {
 	_, err := s.db.Exec(s.db.prepare(`
-		INSERT INTO article_embeddings (article_id, embedding, embedding_model)
-		VALUES (?, ?, ?)
+		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message)
+		VALUES (?, ?, ?, ?, 0, NULL)
 		ON CONFLICT (article_id) DO UPDATE
-		SET embedding = EXCLUDED.embedding, embedding_model = EXCLUDED.embedding_model, created_at = NOW()`),
-		articleID, embedding, model)
+		SET embedding = EXCLUDED.embedding,
+		    embedding_model = EXCLUDED.embedding_model,
+		    status = ?,
+		    attempts = 0,
+		    error_message = NULL,
+		    created_at = NOW()`),
+		articleID, embedding, model, EmbedStatusOK, EmbedStatusOK)
+	return err
+}
+
+// MarkArticleEmbeddingSkipped — see SQLiteStore for behaviour.
+func (s *PostgresStore) MarkArticleEmbeddingSkipped(articleID int64, model string) error {
+	_, err := s.db.Exec(s.db.prepare(`
+		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message)
+		VALUES (?, ?, ?, ?, 0, NULL)
+		ON CONFLICT (article_id) DO UPDATE
+		SET embedding_model = EXCLUDED.embedding_model,
+		    status = ?,
+		    attempts = 0,
+		    error_message = NULL,
+		    created_at = NOW()`),
+		articleID, embedSentinelBytes, model, EmbedStatusTooShort, EmbedStatusTooShort)
+	return err
+}
+
+// MarkArticleEmbeddingFailed — see SQLiteStore for behaviour.
+func (s *PostgresStore) MarkArticleEmbeddingFailed(articleID int64, model, errMsg string) error {
+	_, err := s.db.Exec(s.db.prepare(`
+		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message)
+		VALUES (?, ?, ?, ?, 1, ?)
+		ON CONFLICT (article_id) DO UPDATE
+		SET embedding_model = EXCLUDED.embedding_model,
+		    status = ?,
+		    attempts = article_embeddings.attempts + 1,
+		    error_message = EXCLUDED.error_message,
+		    created_at = NOW()`),
+		articleID, embedSentinelBytes, model, EmbedStatusError, errMsg, EmbedStatusError)
 	return err
 }
 
@@ -2263,8 +2315,8 @@ func (s *PostgresStore) ResetAllGroupEmbeddings() (int64, error) {
 	return r.RowsAffected()
 }
 
-// GetArticlesWithoutEmbeddings returns articles that have no embedding for the
-// specified model. Used for backfill.
+// GetArticlesWithoutEmbeddings returns articles eligible for an embedding
+// pass under the given model. See SQLiteStore for retry-eligibility rules.
 func (s *PostgresStore) GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error) {
 	rows, err := s.db.Query(s.db.prepare(`
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
@@ -2272,8 +2324,9 @@ func (s *PostgresStore) GetArticlesWithoutEmbeddings(model string, limit int) ([
 		FROM articles a
 		LEFT JOIN article_embeddings ae ON a.id = ae.article_id AND ae.embedding_model = ?
 		WHERE ae.article_id IS NULL
+		   OR (ae.status = ? AND ae.attempts < ?)
 		ORDER BY a.published_date DESC
-		LIMIT ?`), model, limit)
+		LIMIT ?`), model, EmbedStatusError, EmbedMaxAttempts, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get articles without embeddings: %w", err)
 	}

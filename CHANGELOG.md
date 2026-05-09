@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Embedding sentinel rows now distinguish transient errors from
+  deterministic skips.** Earlier behavior: every failed embed wrote
+  the same `[]byte{0}` sentinel, and `GetArticlesWithoutEmbeddings`
+  treated all sentinels as "row exists, skip forever." A 2026-05-09
+  03:30/03:53 UTC backend-saturation burst sentineled ~15,062
+  articles that should have valid embeddings — those rows were then
+  permanent skip-records that no future cycle would retry.
+
+  Now: `article_embeddings` gains `status SMALLINT`, `attempts INTEGER`,
+  and `error_message TEXT` columns. Three terminal states:
+  - `EmbedStatusOK` (0) — real vector stored, normal case
+  - `EmbedStatusTooShort` (1) — content below minimum length, never retried
+  - `EmbedStatusError` (2) — transient failure, retried while
+    `attempts < EmbedMaxAttempts` (5)
+
+  New storage methods `MarkArticleEmbeddingSkipped` and
+  `MarkArticleEmbeddingFailed` write the appropriate state; the
+  failed-path's `ON CONFLICT DO UPDATE` increments attempts on each
+  retry. `GetArticlesWithoutEmbeddings` returns rows that are
+  missing OR in error state with retries remaining.
+
+  Migration is idempotent: `ALTER TABLE` adds the columns with safe
+  defaults, then two `UPDATE` statements reclassify existing 1-byte
+  legacy sentinels — articles whose body is genuinely too short land
+  in `status=1` (permanent skip), everything else lands in `status=2`
+  (eligible for retry on the next backfill cycle).
+
+  `error_message` is the bonus the original incident motivated. Had
+  this column existed during the 03:30/03:53 burst, we'd have known
+  exactly what the cube/quad backends were saying. Going forward,
+  every error sentinel carries a diagnostic trail.
+
 - **AI calls now send `max_tokens` so reasoning models can finish.**
   Reasoning-style chat models (Gemma 4, Qwen 3) burn 1500-2000
   output tokens on a chain-of-thought trace before emitting any

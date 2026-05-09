@@ -206,10 +206,15 @@ CREATE TABLE IF NOT EXISTS feed_favicons (
     FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE
 );
 
+-- See storage.EmbedStatus* constants for status codes (0=ok, 1=too_short,
+-- 2=error). error_message holds the last failure text when status=2.
 CREATE TABLE IF NOT EXISTS article_embeddings (
     article_id BIGINT PRIMARY KEY,
     embedding  BYTEA NOT NULL,
     embedding_model TEXT NOT NULL,
+    status SMALLINT NOT NULL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
 );

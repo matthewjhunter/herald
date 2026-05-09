@@ -139,6 +139,8 @@ type Store interface {
 	// Search
 	SearchArticlesFTS(userID int64, query string, limit, offset int) ([]Article, error)
 	StoreArticleEmbedding(articleID int64, embedding []byte, model string) error
+	MarkArticleEmbeddingSkipped(articleID int64, model string) error
+	MarkArticleEmbeddingFailed(articleID int64, model, errMsg string) error
 	GetArticleEmbeddings(userID int64, model string) ([]ArticleEmbeddingRow, error)
 	GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error)
 	ResetAllArticleEmbeddings() (int64, error)
