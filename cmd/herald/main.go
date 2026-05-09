@@ -318,7 +318,6 @@ func backfillEmbeddingsInCycle(ctx context.Context, store storage.Store, groupMa
 		maxParallel = 1
 	}
 
-	sentinel := []byte{0}
 	model := groupMatcher.Model()
 
 	var (
@@ -350,12 +349,12 @@ func backfillEmbeddingsInCycle(ctx context.Context, store storage.Store, groupMa
 				emb, err := groupMatcher.EmbedRecord(ctx, fields, body)
 				if err != nil {
 					formatter.Warning("backfill embed article %d: %v", a.ID, err)
-					store.StoreArticleEmbedding(a.ID, sentinel, model) //nolint:errcheck
+					store.MarkArticleEmbeddingFailed(a.ID, model, err.Error()) //nolint:errcheck
 					return
 				}
 				if emb == nil {
-					// Body too short to embed meaningfully.
-					store.StoreArticleEmbedding(a.ID, sentinel, model) //nolint:errcheck
+					// Body too short to embed meaningfully — deterministic skip.
+					store.MarkArticleEmbeddingSkipped(a.ID, model) //nolint:errcheck
 					return
 				}
 				if err := store.StoreArticleEmbedding(a.ID, embedding.EncodeFloat32s(emb), model); err != nil {

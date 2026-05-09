@@ -266,6 +266,27 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		// (summary longer than content, summary exceeds maxLen+15%). Non-null
 		// reason + empty ai_summary = "we tried, it didn't fit, don't retry."
 		"ALTER TABLE article_summaries ADD COLUMN skip_reason TEXT",
+		// Embedding lifecycle state. Replaces the legacy single-byte
+		// sentinel encoding that conflated transient errors with permanent
+		// skips. See EmbedStatus* constants.
+		"ALTER TABLE article_embeddings ADD COLUMN status SMALLINT NOT NULL DEFAULT 0",
+		"ALTER TABLE article_embeddings ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE article_embeddings ADD COLUMN error_message TEXT",
+		// Reclassify legacy 1-byte sentinels:
+		//   articles whose body is genuinely too short → status=1 (no retry)
+		//   everything else with a 1-byte sentinel    → status=2 (retryable)
+		// Idempotent: each UPDATE narrows by status=0 so re-running is a no-op.
+		`UPDATE article_embeddings
+		 SET status = 1
+		 WHERE octet_length(embedding) = 1 AND status = 0
+		   AND article_id IN (
+		     SELECT id FROM articles
+		     WHERE octet_length(COALESCE(NULLIF(content, ''), summary, '')) < 200
+		   )`,
+		`UPDATE article_embeddings
+		 SET status = 2,
+		     error_message = 'migrated from legacy 1-byte sentinel — original error not preserved'
+		 WHERE octet_length(embedding) = 1 AND status = 0`,
 		// FTS5 full-text search index (external-content, synced via triggers).
 		`CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
 			title, content, summary, linked_content,
@@ -2493,11 +2514,63 @@ func (s *SQLiteStore) SearchArticlesFTS(userID int64, query string, limit, offse
 	return scanArticles(rows)
 }
 
-// StoreArticleEmbedding upserts a per-article embedding vector.
+// StoreArticleEmbedding upserts a successful embedding vector. Resets
+// status to ok, attempts to 0, and clears any prior error_message — the
+// success "wins" over any prior error/skip state for this article.
 func (s *SQLiteStore) StoreArticleEmbedding(articleID int64, embedding []byte, model string) error {
 	_, err := s.db.Exec(`
-		INSERT OR REPLACE INTO article_embeddings (article_id, embedding, embedding_model)
-		VALUES (?, ?, ?)`, articleID, embedding, model)
+		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message)
+		VALUES (?, ?, ?, ?, 0, NULL)
+		ON CONFLICT(article_id) DO UPDATE SET
+			embedding = excluded.embedding,
+			embedding_model = excluded.embedding_model,
+			status = ?,
+			attempts = 0,
+			error_message = NULL,
+			created_at = CURRENT_TIMESTAMP`,
+		articleID, embedding, model, EmbedStatusOK, EmbedStatusOK)
+	return err
+}
+
+// embedSentinelBytes is the placeholder written to the embedding column
+// for non-ok status rows. The schema declares embedding NOT NULL, so we
+// need some bytes to satisfy the constraint; one byte distinguishes
+// these rows from real vectors (≥ 4 bytes for any single float32) and
+// matches the legacy sentinel encoding for backward compatibility.
+var embedSentinelBytes = []byte{0}
+
+// MarkArticleEmbeddingSkipped records a deterministic skip (e.g. body
+// too short to embed). status=too_short, attempts=0, error_message=NULL.
+// Never returned by GetArticlesWithoutEmbeddings — permanent skip.
+func (s *SQLiteStore) MarkArticleEmbeddingSkipped(articleID int64, model string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message)
+		VALUES (?, ?, ?, ?, 0, NULL)
+		ON CONFLICT(article_id) DO UPDATE SET
+			embedding_model = excluded.embedding_model,
+			status = ?,
+			attempts = 0,
+			error_message = NULL,
+			created_at = CURRENT_TIMESTAMP`,
+		articleID, embedSentinelBytes, model, EmbedStatusTooShort, EmbedStatusTooShort)
+	return err
+}
+
+// MarkArticleEmbeddingFailed records a transient failure. status=error,
+// attempts=attempts+1 on update (1 on first insert), error_message captures
+// the failure text. Eligible for retry by GetArticlesWithoutEmbeddings
+// while attempts < EmbedMaxAttempts.
+func (s *SQLiteStore) MarkArticleEmbeddingFailed(articleID int64, model, errMsg string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message)
+		VALUES (?, ?, ?, ?, 1, ?)
+		ON CONFLICT(article_id) DO UPDATE SET
+			embedding_model = excluded.embedding_model,
+			status = ?,
+			attempts = article_embeddings.attempts + 1,
+			error_message = excluded.error_message,
+			created_at = CURRENT_TIMESTAMP`,
+		articleID, embedSentinelBytes, model, EmbedStatusError, errMsg, EmbedStatusError)
 	return err
 }
 
@@ -2557,8 +2630,12 @@ func (s *SQLiteStore) ResetAllGroupEmbeddings() (int64, error) {
 	return r.RowsAffected()
 }
 
-// GetArticlesWithoutEmbeddings returns articles that have no embedding for the
-// specified model. Used for backfill.
+// GetArticlesWithoutEmbeddings returns articles eligible for an embedding
+// pass under the given model: either no row exists yet for this model,
+// or the row is in error state with retries remaining. status=too_short
+// rows are NEVER returned (permanent skip). status=error rows are
+// retried until attempts reaches EmbedMaxAttempts, at which point they
+// stay sentineled but stop consuming retry budget.
 func (s *SQLiteStore) GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error) {
 	rows, err := s.db.Query(`
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
@@ -2566,8 +2643,9 @@ func (s *SQLiteStore) GetArticlesWithoutEmbeddings(model string, limit int) ([]A
 		FROM articles a
 		LEFT JOIN article_embeddings ae ON a.id = ae.article_id AND ae.embedding_model = ?
 		WHERE ae.article_id IS NULL
+		   OR (ae.status = ? AND ae.attempts < ?)
 		ORDER BY a.published_date DESC
-		LIMIT ?`, model, limit)
+		LIMIT ?`, model, EmbedStatusError, EmbedMaxAttempts, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get articles without embeddings: %w", err)
 	}

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -1928,6 +1929,124 @@ func TestStoreAndGetArticleEmbeddings(t *testing.T) {
 	}
 	if string(embs[0].Embedding) != string(newEmb) {
 		t.Errorf("embedding not updated after upsert")
+	}
+}
+
+func TestEmbeddingStatusLifecycle(t *testing.T) {
+	// Walks the full lifecycle of an article_embeddings row across the
+	// three terminal states (ok, too_short, error) and verifies that
+	// GetArticlesWithoutEmbeddings honors retry eligibility correctly.
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	userID := int64(1)
+	store.CreateUser("u")
+	feedID, _ := store.AddFeed("https://example.com/feed", "F", "")
+	store.SubscribeUserToFeed(userID, feedID)
+	now := time.Now()
+	addArticle := func(guid string) int64 {
+		id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: guid, Title: guid, URL: "u/" + guid, Content: "x", PublishedDate: &now})
+		return id
+	}
+	a1 := addArticle("a1") // will get a real embedding
+	a2 := addArticle("a2") // will be marked too-short (deterministic skip)
+	a3 := addArticle("a3") // will be marked failed; retried; eventually maxes out
+	a4 := addArticle("a4") // will be left untouched (no row → eligible)
+
+	const model = "nomic-embed-text"
+
+	// 1. Real embedding for a1 — status=ok, attempts=0, no error_message.
+	if err := store.StoreArticleEmbedding(a1, []byte{1, 2, 3, 4}, model); err != nil {
+		t.Fatalf("StoreArticleEmbedding a1: %v", err)
+	}
+
+	// 2. Too-short skip for a2 — permanent, never returned again.
+	if err := store.MarkArticleEmbeddingSkipped(a2, model); err != nil {
+		t.Fatalf("MarkArticleEmbeddingSkipped a2: %v", err)
+	}
+
+	// 3. Transient failure for a3 — should be retry-eligible immediately.
+	if err := store.MarkArticleEmbeddingFailed(a3, model, "first attempt failed"); err != nil {
+		t.Fatalf("MarkArticleEmbeddingFailed a3 (1): %v", err)
+	}
+
+	missing, err := store.GetArticlesWithoutEmbeddings(model, 100)
+	if err != nil {
+		t.Fatalf("GetArticlesWithoutEmbeddings: %v", err)
+	}
+	gotIDs := make(map[int64]bool)
+	for _, a := range missing {
+		gotIDs[a.ID] = true
+	}
+	if !gotIDs[a3] {
+		t.Errorf("a3 (status=error, attempts=1) should be retry-eligible, missing from result")
+	}
+	if !gotIDs[a4] {
+		t.Errorf("a4 (no row) should be eligible, missing from result")
+	}
+	if gotIDs[a1] {
+		t.Errorf("a1 (status=ok) should NOT be returned")
+	}
+	if gotIDs[a2] {
+		t.Errorf("a2 (status=too_short) should NOT be returned — deterministic skip")
+	}
+
+	// 4. Burn through retries on a3 until attempts hits EmbedMaxAttempts.
+	// First MarkFailed already counted as attempt=1, so we need MaxAttempts-1 more
+	// calls to exhaust the budget.
+	for i := 1; i < EmbedMaxAttempts; i++ {
+		if err := store.MarkArticleEmbeddingFailed(a3, model, "retry failed"); err != nil {
+			t.Fatalf("MarkArticleEmbeddingFailed a3 (retry %d): %v", i, err)
+		}
+	}
+	missing, _ = store.GetArticlesWithoutEmbeddings(model, 100)
+	for _, a := range missing {
+		if a.ID == a3 {
+			t.Errorf("a3 should be exhausted after %d failures, but is still retry-eligible", EmbedMaxAttempts)
+		}
+	}
+
+	// 5. Success after failures resets the row — attempts=0, status=ok.
+	if err := store.StoreArticleEmbedding(a3, []byte{5, 6, 7, 8}, model); err != nil {
+		t.Fatalf("StoreArticleEmbedding a3 (recovery): %v", err)
+	}
+	missing, _ = store.GetArticlesWithoutEmbeddings(model, 100)
+	for _, a := range missing {
+		if a.ID == a3 {
+			t.Errorf("a3 should not appear after successful re-embed")
+		}
+	}
+}
+
+func TestEmbeddingFailedAttemptsIncrement(t *testing.T) {
+	// Verify MarkArticleEmbeddingFailed increments attempts via the
+	// ON CONFLICT path. Without this, every retry would start at 1
+	// and the EmbedMaxAttempts cap would never trigger.
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+	store.CreateUser("u")
+	feedID, _ := store.AddFeed("https://example.com/feed", "F", "")
+	now := time.Now()
+	id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "x", Title: "x", URL: "u", Content: "x", PublishedDate: &now})
+
+	const model = "nomic-embed-text"
+	for i := 1; i <= 3; i++ {
+		if err := store.MarkArticleEmbeddingFailed(id, model, fmt.Sprintf("attempt %d", i)); err != nil {
+			t.Fatalf("MarkArticleEmbeddingFailed iter %d: %v", i, err)
+		}
+	}
+
+	// After 3 calls, attempts should be 3 and the row should still be
+	// retry-eligible (3 < EmbedMaxAttempts=5).
+	missing, _ := store.GetArticlesWithoutEmbeddings(model, 100)
+	found := false
+	for _, a := range missing {
+		if a.ID == id {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("after 3 attempts (< %d cap) row should still be retry-eligible", EmbedMaxAttempts)
 	}
 }
 

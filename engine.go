@@ -536,15 +536,11 @@ func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, er
 	if e.groupMatcher == nil {
 		return 0, fmt.Errorf("embedding not configured (no Ollama URL)")
 	}
-	articles, err := e.store.GetArticlesWithoutEmbeddings(e.groupMatcher.Model(), batchSize)
+	model := e.groupMatcher.Model()
+	articles, err := e.store.GetArticlesWithoutEmbeddings(model, batchSize)
 	if err != nil {
 		return 0, err
 	}
-	// Sentinel stored for articles that cannot be embedded (too short, too long,
-	// or embedding error). Prevents infinite retry loops. The single zero byte
-	// is ignored by semantic search because DecodeFloat32s produces an empty
-	// vector, which gets cosine similarity 0.
-	sentinel := []byte{0}
 
 	count := 0
 	for _, a := range articles {
@@ -552,15 +548,15 @@ func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, er
 		emb, err := e.groupMatcher.EmbedRecord(ctx, fields, body)
 		if err != nil {
 			log.Printf("backfill embed article %d: %v", a.ID, err)
-			e.store.StoreArticleEmbedding(a.ID, sentinel, e.groupMatcher.Model()) //nolint:errcheck
+			e.store.MarkArticleEmbeddingFailed(a.ID, model, err.Error()) //nolint:errcheck
 			continue
 		}
 		if emb == nil {
-			// Body too short to embed meaningfully.
-			e.store.StoreArticleEmbedding(a.ID, sentinel, e.groupMatcher.Model()) //nolint:errcheck
+			// Body too short to embed meaningfully — deterministic skip.
+			e.store.MarkArticleEmbeddingSkipped(a.ID, model) //nolint:errcheck
 			continue
 		}
-		if err := e.store.StoreArticleEmbedding(a.ID, embedding.EncodeFloat32s(emb), e.groupMatcher.Model()); err != nil {
+		if err := e.store.StoreArticleEmbedding(a.ID, embedding.EncodeFloat32s(emb), model); err != nil {
 			log.Printf("backfill store embedding %d: %v", a.ID, err)
 			continue
 		}
