@@ -685,6 +685,62 @@ func TestBuildArticleEmbedInput_SummaryFallbackWhenContentEmpty(t *testing.T) {
 	}
 }
 
+func TestBuildArticleEmbedInput_StripsNonsemantic(t *testing.T) {
+	// Verify URLs, HTML tags, and markdown link/image syntax are stripped
+	// from the body before it reaches the embedder. Title and other
+	// fields are unchanged — stripping is body-only because metadata
+	// values are short, controlled, and don't carry the noise problem.
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+	feedID, _ := engine.store.AddFeed("https://example.com/feed", "F", "")
+	articleID, _ := engine.store.AddArticle(&storage.Article{
+		FeedID: feedID,
+		GUID:   "g-strip",
+		Title:  "Real article — see https://example.com/source", // intentionally URL-bearing
+		URL:    "u",
+		Content: `<p>Read the full article at <a href="https://example.com/post">example.com</a> ` +
+			`for more, or see the [research paper](https://arxiv.org/abs/2026.12345) directly. ` +
+			`<strong>Tags:</strong> ![icon](https://cdn.example.com/tag.svg) policy.</p>`,
+	})
+	a, _ := engine.store.GetArticle(articleID)
+	fields, body := BuildArticleEmbedInput(engine.store, *a)
+
+	// Body: visible text preserved, URLs/HTML/markdown markup stripped.
+	wantSubstrings := []string{
+		"Read the full article at example.com for more",
+		"see the research paper directly",
+		"Tags:",
+		"icon",
+		"policy",
+	}
+	for _, s := range wantSubstrings {
+		if !strings.Contains(body, s) {
+			t.Errorf("body missing %q after stripping; got %q", s, body)
+		}
+	}
+	mustNotContain := []string{
+		"https://",
+		"<p>",
+		"<a ",
+		"<strong>",
+		"](https",
+	}
+	for _, s := range mustNotContain {
+		if strings.Contains(body, s) {
+			t.Errorf("body still contains %q after stripping; got %q", s, body)
+		}
+	}
+
+	// Title is metadata — preserved as-is. The embedder sees it as a
+	// short label, not body prose, so the URL inside isn't a context-
+	// budget concern.
+	for _, f := range fields {
+		if f.Key == "title" && !strings.Contains(f.Value, "https://example.com/source") {
+			t.Errorf("title metadata should preserve URLs; got %q", f.Value)
+		}
+	}
+}
+
 func TestBuildArticleEmbedInput_MissingMetadataOmitsFields(t *testing.T) {
 	// Empty author and no categories should produce empty Field values —
 	// FormatRecord drops them automatically, so the embedder doesn't see

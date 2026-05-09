@@ -499,6 +499,13 @@ func (e *Engine) Search(ctx context.Context, userID int64, query string, limit, 
 // (link-blog posts), falling back to the RSS summary when content is
 // empty. Mirrors the body-assembly logic in ProcessNewArticles so backfill
 // embeds and live-scoring embeds see the same input shape.
+//
+// The body is run through embedding.StripNonsemantic before return: bare
+// URLs, HTML tags, and markdown link/image syntax come out, and
+// whitespace runs collapse. Net effect is more real prose per byte of
+// the embedder's MaxBytes budget — the 2026-05-09 incident showed
+// ~773 articles erroring on nomic-embed-text's 2K-token context after
+// the byte-budget truncation, with URL-dense feeds the hot spot.
 func BuildArticleEmbedInput(store storage.Store, a storage.Article) ([]embedding.Field, string) {
 	var feedTitle string
 	if f, err := store.GetFeed(a.FeedID); err == nil {
@@ -527,7 +534,7 @@ func BuildArticleEmbedInput(store storage.Store, a storage.Article) ([]embedding
 			body = a.LinkedContent
 		}
 	}
-	return fields, body
+	return fields, embedding.StripNonsemantic(body)
 }
 
 // ResetStuckEmbeddings clears the retry budget on rows stuck at
