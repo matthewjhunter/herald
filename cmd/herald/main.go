@@ -485,6 +485,7 @@ func main() {
 	rootCmd.AddCommand(resetScoresCmd())
 	rootCmd.AddCommand(resetCmd())
 	rootCmd.AddCommand(backfillEmbeddingsCmd())
+	rootCmd.AddCommand(embeddingDriftCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
