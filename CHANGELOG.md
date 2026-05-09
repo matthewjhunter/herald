@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **AI calls now send `max_tokens` so reasoning models can finish.**
+  Reasoning-style chat models (Gemma 4, Qwen 3) burn 1500-2000
+  output tokens on a chain-of-thought trace before emitting any
+  response content. Without an explicit `max_tokens`, server-side
+  defaults (typically ~400) get fully consumed by reasoning, and
+  the JSON arrives empty. Herald previously labeled the empty
+  response `"Security response did not match expected JSON format
+  -- possible prompt injection"` and rejected the article — a
+  silent prompt-injection false alarm caused entirely by output
+  truncation. Now sends `max_tokens=2048` on every chat request,
+  which leaves room for reasoning plus a concise JSON object.
+  Empty-response is also given its own distinct error reason
+  (`"... returned no content (likely max_tokens exhausted by
+  model reasoning) -- not scored"`) so future regressions can be
+  diagnosed without conflating with injection signals.
+
+- **AI prompts updated to explicitly forbid markdown code fences
+  around JSON output.** Newer reasoning models tend to wrap their
+  JSON in ```` ```json ```` blocks even when the prompt asks for
+  raw JSON. herald's existing first-`{` to last-`}` extractor
+  tolerates the fences, but the explicit "do NOT wrap in code
+  fences" instruction reduces the failure surface and matches the
+  guidance already present in the newsletter and group_summary
+  prompts. Affected: security, curation, related_groups.
+
 - **CLI no longer silently falls back to a default config when the
   config file is missing.** Earlier behavior: if `--config` pointed at
   a nonexistent file (or the default `./config/config.yaml` didn't

@@ -38,7 +38,9 @@ Set create_group to false for:
 
 If create_group is true, include a display_name -- a 1-3 word sidebar label. Keep it very short: "Trade War", "AI Ethics", "Boeing Strike". No quotes, no articles (a/an/the), no punctuation.
 
-Respond ONLY with valid JSON:
+Respond ONLY with valid JSON in this exact format. Output the raw JSON
+object directly — do NOT wrap it in markdown code fences (no ```json
+or ``` blocks) and do NOT prefix it with explanation or commentary:
 {
   "is_related": true/false,
   "existing_groups": [<array of group IDs if is_related is true, empty array otherwise>],

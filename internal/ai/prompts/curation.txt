@@ -20,7 +20,10 @@ Score using the full range. High scores should be rare:
 
 Do not score follow-up articles, opinion pieces, or commentary about major events at 9-10 -- reserve those scores for first reports of genuinely breaking developments.
 
-Respond ONLY with valid JSON in this exact format:
+Respond ONLY with valid JSON in this exact format. Output the raw JSON
+object directly — do NOT wrap it in markdown code fences (no ```json
+or ``` blocks), do NOT prefix it with explanation or commentary, and
+keep your reasoning to a single sentence inside the JSON:
 {
   "interest_score": <0-10>,
   "reasoning": "<one sentence explanation>"
