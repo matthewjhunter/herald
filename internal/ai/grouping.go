@@ -70,25 +70,31 @@ func (m *GroupMatcher) MatchArticleToGroup(ctx context.Context, userID int64, ti
 	return nil, articleEmb, nil
 }
 
-// minEmbedContentLen is the minimum article content length (in bytes) required
-// for embedding. Shorter articles don't carry enough signal.
+// minEmbedContentLen is the minimum article body length (in bytes) required
+// for embedding. Shorter bodies don't carry enough signal — they get a
+// sentinel from the caller and skip the embed call entirely.
 const minEmbedContentLen = 200
 
-// EmbedArticle generates an embedding for an article using its full content
-// when available, falling back to title + summary. Returns nil embedding
-// (not an error) when the content is too short to be meaningful.
+// EmbedRecord generates an embedding for a structured record: a slice of
+// labeled metadata fields plus a body. The text is assembled via
+// go-embedding's FormatRecordForTask under the model's TaskClustering
+// prefix (herald uses article-to-article cosine similarity for grouping,
+// which is the clustering use case rather than asymmetric retrieval).
+//
+// Returns (nil, nil) — not an error — when the body is shorter than
+// minEmbedContentLen. Callers treat that as a deterministic skip.
 //
 // Upper-bound truncation is delegated to go-embedding's per-model byte
-// budget (LookupLimits + applyLimits), which uses UTF-8-safe truncation
-// and shares an architectural limit across tagged variants of the same
-// base model.
-func (m *GroupMatcher) EmbedArticle(ctx context.Context, title, content string) ([]float32, error) {
-	if len(content) < minEmbedContentLen {
+// budget (UTF-8-safe). Truncation trims from the end, preserving the
+// task prefix and field labels while the body absorbs the cut.
+func (m *GroupMatcher) EmbedRecord(ctx context.Context, fields []embedding.Field, body string) ([]float32, error) {
+	if len(body) < minEmbedContentLen {
 		return nil, nil
 	}
-	emb, err := m.EmbedText(ctx, title+"\n"+content)
+	text := embedding.FormatRecordForTask(m.model, embedding.TaskClustering, fields, body)
+	emb, err := m.EmbedText(ctx, text)
 	if err != nil {
-		return nil, fmt.Errorf("embed article: %w", err)
+		return nil, fmt.Errorf("embed record: %w", err)
 	}
 	return emb, nil
 }

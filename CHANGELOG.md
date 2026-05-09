@@ -52,8 +52,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   via `UpdateArticleAISummary` clears the skip_reason. Migration is
   idempotent ALTER TABLE — no data conversion needed.
 
+- **Embeddings include article metadata, not just title + content.**
+  Each article's embed text now includes the feed title, author,
+  comma-joined categories, and article title as labeled `key: value`
+  lines, plus the body. Stable structured fields give the embedder a
+  basis to learn metadata as features — articles from "Schneier on
+  Security" cluster differently from articles on the same topic from
+  "Hacker News" because the source itself is part of the vector.
+  Implementation uses go-embedding v0.4.0's `FormatRecordForTask`
+  with `TaskClustering`, which also wraps the text in the model's
+  task-specific prompt prefix (e.g. `clustering: ` for nomic,
+  `task: clustering | query: ` for EmbeddingGemma).
+
+  This invalidates every existing embedding — old vectors were built
+  from `title + content` only and are not directly comparable to the
+  new metadata-enriched vectors. Operators should clear
+  `article_embeddings` and `article_groups.embedding` after deploy;
+  the daemon's existing per-cycle backfill repopulates over the
+  following cycles.
+
+- **`Store.GetFeed(id)` added.** Single-row feed lookup used by
+  `BuildArticleEmbedInput` to fetch the feed title at embed time.
+  Returns the row regardless of `enabled`/`status` (metadata
+  consumers need the title even for disabled feeds).
+
 - **Embedding length enforcement delegated to go-embedding.** Bumped
-  to `go-embedding v0.3.1` and removed herald's local 7500-byte cap
+  to `go-embedding v0.4.0` and removed herald's local 7500-byte cap
   in `internal/ai/grouping.go`. The library applies a per-model byte
   budget (now 6000 for nomic-embed-text — empirically tighter than
   the prior 7500 for dense English at ~3 bytes/token) with

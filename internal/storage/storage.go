@@ -744,6 +744,29 @@ func (s *SQLiteStore) AddFeed(url, title, description string) (int64, error) {
 }
 
 // GetAllFeeds returns all active enabled feeds that are due for fetching.
+// GetFeed returns the feed with the given ID, or an error if not found.
+// Unlike GetAllFeeds, this returns the row regardless of enabled/status —
+// callers using it for metadata lookup (e.g. embedding context) need the
+// title even for disabled feeds.
+func (s *SQLiteStore) GetFeed(feedID int64) (*Feed, error) {
+	var f Feed
+	var etag, lastMod sql.NullString
+	err := s.db.QueryRow(
+		`SELECT id, url, title, description, site_url, last_fetched, last_error,
+		        etag, last_modified, enabled, created_at,
+		        consecutive_errors, next_fetch_at, status
+		 FROM feeds WHERE id = ?`, feedID,
+	).Scan(&f.ID, &f.URL, &f.Title, &f.Description, &f.SiteURL, &f.LastFetched,
+		&f.LastError, &etag, &lastMod, &f.Enabled, &f.CreatedAt,
+		&f.ConsecutiveErrors, &f.NextFetchAt, &f.Status)
+	if err != nil {
+		return nil, fmt.Errorf("get feed %d: %w", feedID, err)
+	}
+	f.ETag = etag.String
+	f.LastModified = lastMod.String
+	return &f, nil
+}
+
 func (s *SQLiteStore) GetAllFeeds() ([]Feed, error) {
 	rows, err := s.db.Query(`
 		SELECT id, url, title, description, site_url, last_fetched, last_error, etag, last_modified,

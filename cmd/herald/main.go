@@ -346,18 +346,15 @@ func backfillEmbeddingsInCycle(ctx context.Context, store storage.Store, groupMa
 			go func(a storage.Article) {
 				defer func() { <-sem; wg.Done() }()
 
-				content := a.Content
-				if content == "" {
-					content = a.Summary
-				}
-				emb, err := groupMatcher.EmbedArticle(ctx, a.Title, content)
+				fields, body := herald.BuildArticleEmbedInput(store, a)
+				emb, err := groupMatcher.EmbedRecord(ctx, fields, body)
 				if err != nil {
 					formatter.Warning("backfill embed article %d: %v", a.ID, err)
 					store.StoreArticleEmbedding(a.ID, sentinel, model) //nolint:errcheck
 					return
 				}
 				if emb == nil {
-					// Content too short to embed meaningfully.
+					// Body too short to embed meaningfully.
 					store.StoreArticleEmbedding(a.ID, sentinel, model) //nolint:errcheck
 					return
 				}

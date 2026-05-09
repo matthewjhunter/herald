@@ -259,7 +259,8 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 				// then call LLM only when embedding suggests a possible match.
 				var articleEmb []float32
 				if e.groupMatcher != nil {
-					articleEmb, _ = e.groupMatcher.EmbedArticle(ctx, article.Title, content)
+					fields, body := BuildArticleEmbedInput(e.store, article)
+					articleEmb, _ = e.groupMatcher.EmbedRecord(ctx, fields, body)
 				}
 
 				// Persist the article embedding for semantic search.
@@ -484,6 +485,51 @@ func (e *Engine) Search(ctx context.Context, userID int64, query string, limit, 
 	return results, nil
 }
 
+// BuildArticleEmbedInput assembles the metadata fields and body string for
+// embedding a single article. The returned (fields, body) pair feeds
+// GroupMatcher.EmbedRecord, which wraps it in the model's task-clustering
+// prefix and applies UTF-8-safe truncation.
+//
+// Metadata included: feed title, author, categories (comma-joined), and
+// article title. Lookups that fail (orphaned feed, missing category data)
+// silently omit that field rather than failing the embed — the body alone
+// still produces a usable vector.
+//
+// Body is the article content, with linked_content appended when present
+// (link-blog posts), falling back to the RSS summary when content is
+// empty. Mirrors the body-assembly logic in ProcessNewArticles so backfill
+// embeds and live-scoring embeds see the same input shape.
+func BuildArticleEmbedInput(store storage.Store, a storage.Article) ([]embedding.Field, string) {
+	var feedTitle string
+	if f, err := store.GetFeed(a.FeedID); err == nil {
+		feedTitle = f.Title
+	}
+	var categories string
+	if cats, err := store.GetArticleCategories(a.ID); err == nil && len(cats) > 0 {
+		categories = strings.Join(cats, ", ")
+	}
+
+	fields := []embedding.Field{
+		{Key: "feed", Value: feedTitle},
+		{Key: "author", Value: a.Author},
+		{Key: "categories", Value: categories},
+		{Key: "title", Value: a.Title},
+	}
+
+	body := a.Content
+	if body == "" {
+		body = a.Summary
+	}
+	if a.LinkedContent != "" {
+		if body != "" {
+			body = body + "\n\n" + a.LinkedContent
+		} else {
+			body = a.LinkedContent
+		}
+	}
+	return fields, body
+}
+
 // BackfillEmbeddings generates embeddings for articles that don't have them yet.
 // Processes up to batchSize articles per call. Returns the count processed.
 func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, error) {
@@ -502,18 +548,15 @@ func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, er
 
 	count := 0
 	for _, a := range articles {
-		content := a.Content
-		if content == "" {
-			content = a.Summary
-		}
-		emb, err := e.groupMatcher.EmbedArticle(ctx, a.Title, content)
+		fields, body := BuildArticleEmbedInput(e.store, a)
+		emb, err := e.groupMatcher.EmbedRecord(ctx, fields, body)
 		if err != nil {
 			log.Printf("backfill embed article %d: %v", a.ID, err)
 			e.store.StoreArticleEmbedding(a.ID, sentinel, e.groupMatcher.Model()) //nolint:errcheck
 			continue
 		}
 		if emb == nil {
-			// Content too short to embed meaningfully.
+			// Body too short to embed meaningfully.
 			e.store.StoreArticleEmbedding(a.ID, sentinel, e.groupMatcher.Model()) //nolint:errcheck
 			continue
 		}
