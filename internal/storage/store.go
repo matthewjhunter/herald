@@ -140,6 +140,8 @@ type Store interface {
 	StoreArticleEmbedding(articleID int64, embedding []byte, model string) error
 	GetArticleEmbeddings(userID int64, model string) ([]ArticleEmbeddingRow, error)
 	GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error)
+	ResetAllArticleEmbeddings() (int64, error)
+	ResetAllGroupEmbeddings() (int64, error)
 
 	// Newsletters
 	CreateNewsletter(n *Newsletter) (int64, error)

@@ -1902,6 +1902,89 @@ func TestStoreAndGetArticleEmbeddings(t *testing.T) {
 	}
 }
 
+func TestResetAllArticleEmbeddings(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	userID := int64(1)
+	store.CreateUser("u")
+	feedID, _ := store.AddFeed("https://example.com/feed", "F", "")
+	store.SubscribeUserToFeed(userID, feedID)
+	now := time.Now()
+	a1, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "g1", Title: "T1", URL: "u1", PublishedDate: &now})
+	a2, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "g2", Title: "T2", URL: "u2", PublishedDate: &now})
+
+	if err := store.StoreArticleEmbedding(a1, []byte{1, 2, 3, 4}, "nomic-embed-text"); err != nil {
+		t.Fatalf("StoreArticleEmbedding a1: %v", err)
+	}
+	if err := store.StoreArticleEmbedding(a2, []byte{5, 6, 7, 8}, "nomic-embed-text"); err != nil {
+		t.Fatalf("StoreArticleEmbedding a2: %v", err)
+	}
+
+	n, err := store.ResetAllArticleEmbeddings()
+	if err != nil {
+		t.Fatalf("ResetAllArticleEmbeddings: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("rows deleted: got %d, want 2", n)
+	}
+
+	embs, _ := store.GetArticleEmbeddings(userID, "nomic-embed-text")
+	if len(embs) != 0 {
+		t.Errorf("expected 0 embeddings after reset, got %d", len(embs))
+	}
+
+	// Idempotent — second call deletes 0 rows, no error.
+	n2, err := store.ResetAllArticleEmbeddings()
+	if err != nil {
+		t.Fatalf("second ResetAllArticleEmbeddings: %v", err)
+	}
+	if n2 != 0 {
+		t.Errorf("second call: got %d, want 0", n2)
+	}
+}
+
+func TestResetAllGroupEmbeddings(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	userID := int64(1)
+	store.CreateUser("u")
+	g1, _ := store.CreateArticleGroup(userID, "topic 1")
+	g2, _ := store.CreateArticleGroup(userID, "topic 2")
+	if err := store.UpdateGroupEmbedding(g1, []byte{1, 2, 3, 4}, "nomic-embed-text"); err != nil {
+		t.Fatalf("UpdateGroupEmbedding g1: %v", err)
+	}
+	if err := store.UpdateGroupEmbedding(g2, []byte{5, 6, 7, 8}, "nomic-embed-text"); err != nil {
+		t.Fatalf("UpdateGroupEmbedding g2: %v", err)
+	}
+
+	n, err := store.ResetAllGroupEmbeddings()
+	if err != nil {
+		t.Fatalf("ResetAllGroupEmbeddings: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("rows updated: got %d, want 2", n)
+	}
+
+	// Verify both centroids are now NULL — GetGroupsWithEmbeddings filters
+	// them out, so it should return zero groups.
+	groups, _ := store.GetGroupsWithEmbeddings(userID, "nomic-embed-text")
+	if len(groups) != 0 {
+		t.Errorf("expected 0 groups with embeddings after reset, got %d", len(groups))
+	}
+
+	// Group rows themselves still exist — verify via single-group lookup.
+	// (GetUserGroups filters on members ≥ 2, which doesn't apply here since
+	// these test groups have no members.)
+	if g, err := store.GetGroup(g1); err != nil || g == nil {
+		t.Errorf("group g1 row lost after reset: err=%v g=%v", err, g)
+	}
+	if g, err := store.GetGroup(g2); err != nil || g == nil {
+		t.Errorf("group g2 row lost after reset: err=%v g=%v", err, g)
+	}
+}
+
 func TestSearchArticlesFTS_PG(t *testing.T) {
 	store, cleanup := newPGTestStore(t)
 	defer cleanup()
