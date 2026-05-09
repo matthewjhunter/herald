@@ -10,7 +10,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/infodancer/oidclient v0.0.0-20260322032919-e22e14ec6f09
 	github.com/jackc/pgx/v5 v5.9.2
-	github.com/matthewjhunter/go-embedding v0.4.1
+	github.com/matthewjhunter/go-embedding v0.4.2
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/mmcdole/gofeed v1.3.0
 	github.com/modelcontextprotocol/go-sdk v1.6.0
