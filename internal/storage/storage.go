@@ -2526,6 +2526,37 @@ func (s *SQLiteStore) GetArticleEmbeddings(userID int64, model string) ([]Articl
 	return result, rows.Err()
 }
 
+// ResetAllArticleEmbeddings deletes every row in article_embeddings.
+// Returns the number of rows deleted. The daemon's per-cycle backfill
+// repopulates from articles missing an embedding for the current model.
+//
+// Used after an embed-format change (e.g. switching the input from
+// title+content to a metadata-enriched record) when every existing
+// vector becomes incompatible with new ones.
+func (s *SQLiteStore) ResetAllArticleEmbeddings() (int64, error) {
+	r, err := s.db.Exec(`DELETE FROM article_embeddings`)
+	if err != nil {
+		return 0, fmt.Errorf("reset article embeddings: %w", err)
+	}
+	return r.RowsAffected()
+}
+
+// ResetAllGroupEmbeddings clears the embedding centroid and stored model
+// name on every row in article_groups. Returns the number of rows
+// updated. Group memberships are preserved; centroids will repopulate
+// as articles re-embed and rejoin groups via the scoring pipeline.
+//
+// Pairs with ResetAllArticleEmbeddings: stale group centroids built from
+// the old vector format are silent-garbage hazards if left behind, so
+// any reset of article embeddings should also clear centroids.
+func (s *SQLiteStore) ResetAllGroupEmbeddings() (int64, error) {
+	r, err := s.db.Exec(`UPDATE article_groups SET embedding = NULL, embedding_model = ''`)
+	if err != nil {
+		return 0, fmt.Errorf("reset group embeddings: %w", err)
+	}
+	return r.RowsAffected()
+}
+
 // GetArticlesWithoutEmbeddings returns articles that have no embedding for the
 // specified model. Used for backfill.
 func (s *SQLiteStore) GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error) {

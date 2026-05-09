@@ -2243,6 +2243,26 @@ func (s *PostgresStore) GetArticleEmbeddings(userID int64, model string) ([]Arti
 	return result, rows.Err()
 }
 
+// ResetAllArticleEmbeddings deletes every row in article_embeddings.
+// See SQLiteStore.ResetAllArticleEmbeddings for usage notes.
+func (s *PostgresStore) ResetAllArticleEmbeddings() (int64, error) {
+	r, err := s.db.Exec(`DELETE FROM article_embeddings`)
+	if err != nil {
+		return 0, fmt.Errorf("reset article embeddings: %w", err)
+	}
+	return r.RowsAffected()
+}
+
+// ResetAllGroupEmbeddings clears the centroid and embedding_model on
+// every article_groups row. See SQLiteStore.ResetAllGroupEmbeddings.
+func (s *PostgresStore) ResetAllGroupEmbeddings() (int64, error) {
+	r, err := s.db.Exec(`UPDATE article_groups SET embedding = NULL, embedding_model = ''`)
+	if err != nil {
+		return 0, fmt.Errorf("reset group embeddings: %w", err)
+	}
+	return r.RowsAffected()
+}
+
 // GetArticlesWithoutEmbeddings returns articles that have no embedding for the
 // specified model. Used for backfill.
 func (s *PostgresStore) GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error) {
