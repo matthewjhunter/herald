@@ -1,5 +1,7 @@
 package storage
 
+import "time"
+
 // EmbedStatus is the lifecycle state of an article_embeddings row.
 //
 // Stored as a SMALLINT in the database — 1-2 bytes vs ~5 for an enum-like
@@ -32,3 +34,16 @@ const (
 // GetArticlesWithoutEmbeddings — operators can manually clear sentinels
 // (e.g. via a "herald backfill embeddings" CLI) to reset the budget.
 const EmbedMaxAttempts = 5
+
+// EmbedRetryCooldown is the minimum interval between retries on a
+// status=error row. The daemon's intra-cycle outer loop in
+// backfillEmbeddingsInCycle (and the equivalent CLI loop) repeatedly
+// calls GetArticlesWithoutEmbeddings until no work remains; without a
+// cooldown, a transient backend issue burns the full EmbedMaxAttempts
+// budget in seconds and the row becomes terminally errored. With this
+// cooldown, an article gets at most one retry per cooldown interval —
+// roughly one retry per daemon cycle at the default 30-minute pacing.
+//
+// Declared as var (not const) so tests can override to 0 for immediate
+// retry eligibility.
+var EmbedRetryCooldown = 30 * time.Minute
