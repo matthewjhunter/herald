@@ -272,6 +272,10 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		"ALTER TABLE article_embeddings ADD COLUMN status SMALLINT NOT NULL DEFAULT 0",
 		"ALTER TABLE article_embeddings ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE article_embeddings ADD COLUMN error_message TEXT",
+		// Time-based retry eligibility — see EmbedRetryCooldown. Existing
+		// rows have NULL here, which the GetArticlesWithoutEmbeddings query
+		// treats as "no recorded attempt, eligible immediately."
+		"ALTER TABLE article_embeddings ADD COLUMN last_attempted_at DATETIME",
 		// Reclassify legacy 1-byte sentinels:
 		//   articles whose body is genuinely too short → status=1 (no retry)
 		//   everything else with a 1-byte sentinel    → status=2 (retryable)
@@ -2515,18 +2519,20 @@ func (s *SQLiteStore) SearchArticlesFTS(userID int64, query string, limit, offse
 }
 
 // StoreArticleEmbedding upserts a successful embedding vector. Resets
-// status to ok, attempts to 0, and clears any prior error_message — the
-// success "wins" over any prior error/skip state for this article.
+// status to ok, attempts to 0, and clears any prior error_message and
+// last_attempted_at — the success "wins" over any prior error/skip
+// state for this article.
 func (s *SQLiteStore) StoreArticleEmbedding(articleID int64, embedding []byte, model string) error {
 	_, err := s.db.Exec(`
-		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message)
-		VALUES (?, ?, ?, ?, 0, NULL)
+		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message, last_attempted_at)
+		VALUES (?, ?, ?, ?, 0, NULL, NULL)
 		ON CONFLICT(article_id) DO UPDATE SET
 			embedding = excluded.embedding,
 			embedding_model = excluded.embedding_model,
 			status = ?,
 			attempts = 0,
 			error_message = NULL,
+			last_attempted_at = NULL,
 			created_at = CURRENT_TIMESTAMP`,
 		articleID, embedding, model, EmbedStatusOK, EmbedStatusOK)
 	return err
@@ -2544,13 +2550,14 @@ var embedSentinelBytes = []byte{0}
 // Never returned by GetArticlesWithoutEmbeddings — permanent skip.
 func (s *SQLiteStore) MarkArticleEmbeddingSkipped(articleID int64, model string) error {
 	_, err := s.db.Exec(`
-		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message)
-		VALUES (?, ?, ?, ?, 0, NULL)
+		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message, last_attempted_at)
+		VALUES (?, ?, ?, ?, 0, NULL, NULL)
 		ON CONFLICT(article_id) DO UPDATE SET
 			embedding_model = excluded.embedding_model,
 			status = ?,
 			attempts = 0,
 			error_message = NULL,
+			last_attempted_at = NULL,
 			created_at = CURRENT_TIMESTAMP`,
 		articleID, embedSentinelBytes, model, EmbedStatusTooShort, EmbedStatusTooShort)
 	return err
@@ -2558,19 +2565,28 @@ func (s *SQLiteStore) MarkArticleEmbeddingSkipped(articleID int64, model string)
 
 // MarkArticleEmbeddingFailed records a transient failure. status=error,
 // attempts=attempts+1 on update (1 on first insert), error_message captures
-// the failure text. Eligible for retry by GetArticlesWithoutEmbeddings
-// while attempts < EmbedMaxAttempts.
+// the failure text, last_attempted_at = now() to gate the next retry by
+// EmbedRetryCooldown. Eligible for retry by GetArticlesWithoutEmbeddings
+// while attempts < EmbedMaxAttempts AND the cooldown has elapsed.
+//
+// last_attempted_at is bound as a Go time.Time (not CURRENT_TIMESTAMP)
+// so writes and the cutoff comparison in GetArticlesWithoutEmbeddings
+// share a single string format under the SQLite driver — mixing
+// CURRENT_TIMESTAMP ("YYYY-MM-DD HH:MM:SS") with driver-formatted
+// time.Time values broke the comparison subtly during cooldown checks.
 func (s *SQLiteStore) MarkArticleEmbeddingFailed(articleID int64, model, errMsg string) error {
+	now := time.Now().UTC()
 	_, err := s.db.Exec(`
-		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message)
-		VALUES (?, ?, ?, ?, 1, ?)
+		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message, last_attempted_at)
+		VALUES (?, ?, ?, ?, 1, ?, ?)
 		ON CONFLICT(article_id) DO UPDATE SET
 			embedding_model = excluded.embedding_model,
 			status = ?,
 			attempts = article_embeddings.attempts + 1,
 			error_message = excluded.error_message,
-			created_at = CURRENT_TIMESTAMP`,
-		articleID, embedSentinelBytes, model, EmbedStatusError, errMsg, EmbedStatusError)
+			last_attempted_at = excluded.last_attempted_at,
+			created_at = excluded.last_attempted_at`,
+		articleID, embedSentinelBytes, model, EmbedStatusError, errMsg, now, EmbedStatusError)
 	return err
 }
 
@@ -2632,20 +2648,31 @@ func (s *SQLiteStore) ResetAllGroupEmbeddings() (int64, error) {
 
 // GetArticlesWithoutEmbeddings returns articles eligible for an embedding
 // pass under the given model: either no row exists yet for this model,
-// or the row is in error state with retries remaining. status=too_short
+// or the row is in error state with retries remaining AND the
+// EmbedRetryCooldown has elapsed since the last attempt. status=too_short
 // rows are NEVER returned (permanent skip). status=error rows are
 // retried until attempts reaches EmbedMaxAttempts, at which point they
 // stay sentineled but stop consuming retry budget.
+//
+// Rows migrated from before the cooldown column existed have
+// last_attempted_at IS NULL; those are eligible immediately, which is
+// the right behavior — we have no record of when they last failed.
 func (s *SQLiteStore) GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error) {
+	// UTC matches the format used by MarkArticleEmbeddingFailed when
+	// writing last_attempted_at. Mixing local-time and UTC produces
+	// driver-formatted strings ("...-05:00" vs "...Z") that don't
+	// compare correctly under SQLite's string-based DATETIME compare.
+	cutoff := time.Now().UTC().Add(-EmbedRetryCooldown)
 	rows, err := s.db.Query(`
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date
 		FROM articles a
 		LEFT JOIN article_embeddings ae ON a.id = ae.article_id AND ae.embedding_model = ?
 		WHERE ae.article_id IS NULL
-		   OR (ae.status = ? AND ae.attempts < ?)
+		   OR (ae.status = ? AND ae.attempts < ?
+		       AND (ae.last_attempted_at IS NULL OR ae.last_attempted_at < ?))
 		ORDER BY a.published_date DESC
-		LIMIT ?`, model, EmbedStatusError, EmbedMaxAttempts, limit)
+		LIMIT ?`, model, EmbedStatusError, EmbedMaxAttempts, cutoff, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get articles without embeddings: %w", err)
 	}

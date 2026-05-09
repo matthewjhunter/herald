@@ -213,6 +213,7 @@ CREATE TABLE IF NOT EXISTS article_embeddings (
     status SMALLINT NOT NULL DEFAULT 0,
     attempts INTEGER NOT NULL DEFAULT 0,
     error_message TEXT,
+    last_attempted_at DATETIME,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
 );

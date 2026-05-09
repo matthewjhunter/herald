@@ -65,6 +65,8 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 		"ALTER TABLE article_embeddings ADD COLUMN IF NOT EXISTS status SMALLINT NOT NULL DEFAULT 0",
 		"ALTER TABLE article_embeddings ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE article_embeddings ADD COLUMN IF NOT EXISTS error_message TEXT",
+		// Time-based retry eligibility — see EmbedRetryCooldown.
+		"ALTER TABLE article_embeddings ADD COLUMN IF NOT EXISTS last_attempted_at TIMESTAMPTZ",
 		// Reclassify legacy 1-byte sentinels (see SQLite migration for rationale).
 		`UPDATE article_embeddings
 		 SET status = 1
@@ -2224,17 +2226,19 @@ func (s *PostgresStore) SearchArticlesFTS(userID int64, query string, limit, off
 }
 
 // StoreArticleEmbedding upserts a successful embedding vector. Resets
-// status, attempts, and error_message — see SQLiteStore for rationale.
+// status, attempts, error_message, and last_attempted_at —
+// see SQLiteStore for rationale.
 func (s *PostgresStore) StoreArticleEmbedding(articleID int64, embedding []byte, model string) error {
 	_, err := s.db.Exec(s.db.prepare(`
-		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message)
-		VALUES (?, ?, ?, ?, 0, NULL)
+		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message, last_attempted_at)
+		VALUES (?, ?, ?, ?, 0, NULL, NULL)
 		ON CONFLICT (article_id) DO UPDATE
 		SET embedding = EXCLUDED.embedding,
 		    embedding_model = EXCLUDED.embedding_model,
 		    status = ?,
 		    attempts = 0,
 		    error_message = NULL,
+		    last_attempted_at = NULL,
 		    created_at = NOW()`),
 		articleID, embedding, model, EmbedStatusOK, EmbedStatusOK)
 	return err
@@ -2243,13 +2247,14 @@ func (s *PostgresStore) StoreArticleEmbedding(articleID int64, embedding []byte,
 // MarkArticleEmbeddingSkipped — see SQLiteStore for behaviour.
 func (s *PostgresStore) MarkArticleEmbeddingSkipped(articleID int64, model string) error {
 	_, err := s.db.Exec(s.db.prepare(`
-		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message)
-		VALUES (?, ?, ?, ?, 0, NULL)
+		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message, last_attempted_at)
+		VALUES (?, ?, ?, ?, 0, NULL, NULL)
 		ON CONFLICT (article_id) DO UPDATE
 		SET embedding_model = EXCLUDED.embedding_model,
 		    status = ?,
 		    attempts = 0,
 		    error_message = NULL,
+		    last_attempted_at = NULL,
 		    created_at = NOW()`),
 		articleID, embedSentinelBytes, model, EmbedStatusTooShort, EmbedStatusTooShort)
 	return err
@@ -2258,13 +2263,14 @@ func (s *PostgresStore) MarkArticleEmbeddingSkipped(articleID int64, model strin
 // MarkArticleEmbeddingFailed — see SQLiteStore for behaviour.
 func (s *PostgresStore) MarkArticleEmbeddingFailed(articleID int64, model, errMsg string) error {
 	_, err := s.db.Exec(s.db.prepare(`
-		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message)
-		VALUES (?, ?, ?, ?, 1, ?)
+		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message, last_attempted_at)
+		VALUES (?, ?, ?, ?, 1, ?, NOW())
 		ON CONFLICT (article_id) DO UPDATE
 		SET embedding_model = EXCLUDED.embedding_model,
 		    status = ?,
 		    attempts = article_embeddings.attempts + 1,
 		    error_message = EXCLUDED.error_message,
+		    last_attempted_at = NOW(),
 		    created_at = NOW()`),
 		articleID, embedSentinelBytes, model, EmbedStatusError, errMsg, EmbedStatusError)
 	return err
@@ -2318,15 +2324,17 @@ func (s *PostgresStore) ResetAllGroupEmbeddings() (int64, error) {
 // GetArticlesWithoutEmbeddings returns articles eligible for an embedding
 // pass under the given model. See SQLiteStore for retry-eligibility rules.
 func (s *PostgresStore) GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error) {
+	cutoff := time.Now().UTC().Add(-EmbedRetryCooldown)
 	rows, err := s.db.Query(s.db.prepare(`
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date
 		FROM articles a
 		LEFT JOIN article_embeddings ae ON a.id = ae.article_id AND ae.embedding_model = ?
 		WHERE ae.article_id IS NULL
-		   OR (ae.status = ? AND ae.attempts < ?)
+		   OR (ae.status = ? AND ae.attempts < ?
+		       AND (ae.last_attempted_at IS NULL OR ae.last_attempted_at < ?))
 		ORDER BY a.published_date DESC
-		LIMIT ?`), model, EmbedStatusError, EmbedMaxAttempts, limit)
+		LIMIT ?`), model, EmbedStatusError, EmbedMaxAttempts, cutoff, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get articles without embeddings: %w", err)
 	}

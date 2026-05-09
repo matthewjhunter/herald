@@ -1932,10 +1932,22 @@ func TestStoreAndGetArticleEmbeddings(t *testing.T) {
 	}
 }
 
+// disableEmbedRetryCooldown sets EmbedRetryCooldown to 0 for the duration
+// of the test. Required by tests that assert retry eligibility immediately
+// after MarkArticleEmbeddingFailed, which the production 30-minute cooldown
+// would otherwise block.
+func disableEmbedRetryCooldown(t *testing.T) {
+	t.Helper()
+	saved := EmbedRetryCooldown
+	EmbedRetryCooldown = 0
+	t.Cleanup(func() { EmbedRetryCooldown = saved })
+}
+
 func TestEmbeddingStatusLifecycle(t *testing.T) {
 	// Walks the full lifecycle of an article_embeddings row across the
 	// three terminal states (ok, too_short, error) and verifies that
 	// GetArticlesWithoutEmbeddings honors retry eligibility correctly.
+	disableEmbedRetryCooldown(t)
 	store, cleanup := newTestStore(t)
 	defer cleanup()
 
@@ -2022,6 +2034,7 @@ func TestEmbeddingFailedAttemptsIncrement(t *testing.T) {
 	// Verify MarkArticleEmbeddingFailed increments attempts via the
 	// ON CONFLICT path. Without this, every retry would start at 1
 	// and the EmbedMaxAttempts cap would never trigger.
+	disableEmbedRetryCooldown(t)
 	store, cleanup := newTestStore(t)
 	defer cleanup()
 	store.CreateUser("u")
@@ -2047,6 +2060,57 @@ func TestEmbeddingFailedAttemptsIncrement(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("after 3 attempts (< %d cap) row should still be retry-eligible", EmbedMaxAttempts)
+	}
+}
+
+func TestEmbeddingRetryCooldown(t *testing.T) {
+	// Verify that an article that just failed is NOT immediately retry-
+	// eligible while EmbedRetryCooldown is in effect. This is the fix
+	// for the 2026-05-09 burnout pathology where the daemon's intra-
+	// cycle outer loop would refetch a freshly-failed article and
+	// exhaust all 5 attempts within seconds during a transient backend
+	// outage.
+	saved := EmbedRetryCooldown
+	EmbedRetryCooldown = 30 * time.Minute
+	t.Cleanup(func() { EmbedRetryCooldown = saved })
+
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+	store.CreateUser("u")
+	feedID, _ := store.AddFeed("https://example.com/feed", "F", "")
+	now := time.Now()
+	id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "x", Title: "x", URL: "u", Content: "x", PublishedDate: &now})
+
+	const model = "nomic-embed-text"
+	if err := store.MarkArticleEmbeddingFailed(id, model, "transient"); err != nil {
+		t.Fatalf("MarkArticleEmbeddingFailed: %v", err)
+	}
+
+	// Cooldown active: row must NOT be returned even though attempts<5.
+	missing, err := store.GetArticlesWithoutEmbeddings(model, 100)
+	if err != nil {
+		t.Fatalf("GetArticlesWithoutEmbeddings during cooldown: %v", err)
+	}
+	for _, a := range missing {
+		if a.ID == id {
+			t.Errorf("article %d returned during cooldown — expected to be filtered out", id)
+		}
+	}
+
+	// Simulate cooldown elapsed by zeroing it; row should now be eligible.
+	EmbedRetryCooldown = 0
+	missing, err = store.GetArticlesWithoutEmbeddings(model, 100)
+	if err != nil {
+		t.Fatalf("GetArticlesWithoutEmbeddings after cooldown: %v", err)
+	}
+	found := false
+	for _, a := range missing {
+		if a.ID == id {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("article %d not retry-eligible after cooldown elapsed", id)
 	}
 }
 
