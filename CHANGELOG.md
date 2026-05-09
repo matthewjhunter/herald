@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **CLI no longer silently falls back to a default config when the
+  config file is missing.** Earlier behavior: if `--config` pointed at
+  a nonexistent file (or the default `./config/config.yaml` didn't
+  exist), `loadConfig` quietly used `storage.DefaultConfig`. The result
+  was that an interactive `herald reset embeddings` invoked from `/`
+  inside the container — without the `--config /etc/herald/config.yaml`
+  flag the daemon passes — opened the default SQLite path instead of
+  the production Postgres, talked to an empty DB, and reported
+  nonsense like "no users with subscriptions" against a corpus of
+  19,000 articles.
+
+  Now: missing config is a hard error with a clear remediation hint
+  (run `herald init-config` or pass `--config <path>`). The
+  `init-config` subcommand carries a new `herald.skip-config-load`
+  cobra annotation so it can still bootstrap before any config exists.
+
 ### Added
 
 - **`herald reset embeddings` CLI.** Pure DB state mutator: clears
