@@ -52,6 +52,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   via `UpdateArticleAISummary` clears the skip_reason. Migration is
   idempotent ALTER TABLE — no data conversion needed.
 
+- **Embedding length enforcement delegated to go-embedding.** Bumped
+  to `go-embedding v0.3.1` and removed herald's local 7500-byte cap
+  in `internal/ai/grouping.go`. The library applies a per-model byte
+  budget (now 6000 for nomic-embed-text — empirically tighter than
+  the prior 7500 for dense English at ~3 bytes/token) with
+  UTF-8-safe truncation, and v0.3.1 fixes a bug where tagged model
+  names (e.g. `nomic-embed-text:latest`) silently bypassed
+  enforcement. Production was hitting this: ~14% of articles had
+  embed-error sentinels because oversized payloads cleared herald's
+  byte cap but exceeded the backend's token limit.
+
 - **Embedding configuration moved from YAML to environment variables.**
   The embedder is now built from `EMBEDDING_BACKEND`, `EMBEDDING_BASE_URL`,
   `EMBEDDING_MODEL`, `EMBEDDING_API_KEY`, and `EMBEDDING_STRICT`, with

@@ -74,23 +74,19 @@ func (m *GroupMatcher) MatchArticleToGroup(ctx context.Context, userID int64, ti
 // for embedding. Shorter articles don't carry enough signal.
 const minEmbedContentLen = 200
 
-// maxEmbedContentLen caps the text sent to the embedding model.
-// EmbeddingGemma has a 2K token context; ~4 bytes/token gives ~8000 bytes.
-// We leave headroom for the title prefix.
-const maxEmbedContentLen = 7500
-
 // EmbedArticle generates an embedding for an article using its full content
 // when available, falling back to title + summary. Returns nil embedding
 // (not an error) when the content is too short to be meaningful.
+//
+// Upper-bound truncation is delegated to go-embedding's per-model byte
+// budget (LookupLimits + applyLimits), which uses UTF-8-safe truncation
+// and shares an architectural limit across tagged variants of the same
+// base model.
 func (m *GroupMatcher) EmbedArticle(ctx context.Context, title, content string) ([]float32, error) {
 	if len(content) < minEmbedContentLen {
 		return nil, nil
 	}
-	text := title + "\n" + content
-	if len(text) > maxEmbedContentLen {
-		text = text[:maxEmbedContentLen]
-	}
-	emb, err := m.EmbedText(ctx, text)
+	emb, err := m.EmbedText(ctx, title+"\n"+content)
 	if err != nil {
 		return nil, fmt.Errorf("embed article: %w", err)
 	}
