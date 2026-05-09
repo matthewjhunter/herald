@@ -29,6 +29,10 @@ config/config.yaml
 # Claude Code / OMC state
 .omc/
 
+# direnv environment (contains DSNs and secrets for MCP servers)
+.envrc
+.envrc.local
+
 # Build output
 dist/
 
