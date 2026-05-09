@@ -537,6 +537,35 @@ func BuildArticleEmbedInput(store storage.Store, a storage.Article) ([]embedding
 	return fields, embedding.StripNonsemantic(body)
 }
 
+// EmbedRecord embeds a structured (fields, body) record using the
+// configured embedding model and task-clustering prompt. Exposes the
+// internal GroupMatcher.EmbedRecord so external diagnostics
+// (embedding-drift, ad-hoc evaluation tools) can produce vectors
+// through the exact same pipeline the live scoring path uses.
+func (e *Engine) EmbedRecord(ctx context.Context, fields []embedding.Field, body string) ([]float32, error) {
+	if e.groupMatcher == nil {
+		return nil, fmt.Errorf("embedding not configured (no Ollama URL)")
+	}
+	return e.groupMatcher.EmbedRecord(ctx, fields, body)
+}
+
+// EmbeddingModel returns the active embedding model name, or "" when
+// embedding is not configured. Lets diagnostic tools query the same
+// model identifier the storage layer keys vectors by.
+func (e *Engine) EmbeddingModel() string {
+	if e.groupMatcher == nil {
+		return ""
+	}
+	return e.groupMatcher.Model()
+}
+
+// Store returns the underlying storage handle. Intended for diagnostic
+// commands that need direct table access (embedding-drift sampling,
+// migrate-db). Live request paths should call the typed Engine methods.
+func (e *Engine) Store() storage.Store {
+	return e.store
+}
+
 // ResetStuckEmbeddings clears the retry budget on rows stuck at
 // EmbedMaxAttempts for the configured embedding model. errorPattern is
 // an optional SQL LIKE pattern (use "" for unfiltered) that narrows
