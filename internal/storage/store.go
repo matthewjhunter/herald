@@ -145,6 +145,7 @@ type Store interface {
 	GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error)
 	ResetAllArticleEmbeddings() (int64, error)
 	ResetAllGroupEmbeddings() (int64, error)
+	ResetStuckEmbeddings(model, errorPattern string) (int64, error)
 
 	// Newsletters
 	CreateNewsletter(n *Newsletter) (int64, error)
