@@ -1178,7 +1178,11 @@ Examples:
 }
 
 func backfillEmbeddingsCmd() *cobra.Command {
-	var batchSize int
+	var (
+		batchSize    int
+		resetErrors  bool
+		resetPattern string
+	)
 	cmd := &cobra.Command{
 		Use:   "backfill-embeddings",
 		Short: "Generate embeddings for articles that don't have them (for semantic search)",
@@ -1186,7 +1190,13 @@ func backfillEmbeddingsCmd() *cobra.Command {
 configured Ollama embedding model. Processes articles in batches until all
 articles have embeddings. Required for semantic search to return results.
 
-Existing embeddings are not regenerated unless the embedding model has changed.`,
+Existing embeddings are not regenerated unless the embedding model has changed.
+
+Use --reset-errors to clear the retry budget on rows that hit
+EmbedMaxAttempts (e.g. after a sustained backend outage). Combine with
+--reset-pattern to narrow the reset to a specific error class — for
+example, "%HTTP 403%" to retry only rate-limited rows after fixing the
+limiter, leaving rows stuck on other errors untouched.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 
@@ -1199,6 +1209,18 @@ Existing embeddings are not regenerated unless the embedding model has changed.`
 				return fmt.Errorf("failed to create engine: %w", err)
 			}
 			defer engine.Close()
+
+			if resetErrors {
+				n, err := engine.ResetStuckEmbeddings(resetPattern)
+				if err != nil {
+					return fmt.Errorf("reset stuck embeddings: %w", err)
+				}
+				if resetPattern == "" {
+					fmt.Printf("Reset %d stuck embedding rows\n", n)
+				} else {
+					fmt.Printf("Reset %d stuck embedding rows matching %q\n", n, resetPattern)
+				}
+			}
 
 			total := 0
 			for {
@@ -1218,5 +1240,7 @@ Existing embeddings are not regenerated unless the embedding model has changed.`
 		},
 	}
 	cmd.Flags().IntVar(&batchSize, "batch", 50, "number of articles to process per batch")
+	cmd.Flags().BoolVar(&resetErrors, "reset-errors", false, "before backfill, clear retry budget on rows stuck at EmbedMaxAttempts so they get re-tried")
+	cmd.Flags().StringVar(&resetPattern, "reset-pattern", "", "optional SQL LIKE pattern narrowing --reset-errors to matching error_message values (e.g. '%HTTP 403%')")
 	return cmd
 }

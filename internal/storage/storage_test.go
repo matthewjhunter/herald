@@ -2063,6 +2063,113 @@ func TestEmbeddingFailedAttemptsIncrement(t *testing.T) {
 	}
 }
 
+func TestResetStuckEmbeddings(t *testing.T) {
+	// Verify ResetStuckEmbeddings clears the retry budget on rows stuck
+	// at EmbedMaxAttempts, scopes to embedding_model, supports an
+	// optional error_message LIKE filter, and leaves non-stuck rows
+	// (status=ok, status=too_short, status=error with attempts<max)
+	// untouched.
+	disableEmbedRetryCooldown(t)
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	store.CreateUser("u")
+	feedID, _ := store.AddFeed("https://example.com/feed", "F", "")
+	now := time.Now()
+	addArticle := func(guid string) int64 {
+		id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: guid, Title: guid, URL: "u/" + guid, Content: "x", PublishedDate: &now})
+		return id
+	}
+	stuck403 := addArticle("stuck403")     // status=error, attempts=max, "HTTP 403"
+	stuck400 := addArticle("stuck400")     // status=error, attempts=max, "HTTP 400 ctx"
+	progress := addArticle("progress")     // status=error, attempts=2, retryable
+	ok := addArticle("ok")                 // status=ok
+	tooShort := addArticle("tooShort")     // status=too_short
+	otherModel := addArticle("otherModel") // status=error, attempts=max, but different model
+
+	const model = "nomic-embed-text"
+	const otherModelName = "other-model"
+
+	// Set up: stuck403 hits max with HTTP 403 error.
+	for range EmbedMaxAttempts {
+		if err := store.MarkArticleEmbeddingFailed(stuck403, model, "openai embed: HTTP 403 Forbidden"); err != nil {
+			t.Fatalf("MarkArticleEmbeddingFailed stuck403: %v", err)
+		}
+	}
+	// stuck400 hits max with a different error.
+	for range EmbedMaxAttempts {
+		if err := store.MarkArticleEmbeddingFailed(stuck400, model, "input length exceeds context length"); err != nil {
+			t.Fatalf("MarkArticleEmbeddingFailed stuck400: %v", err)
+		}
+	}
+	// progress: only 2 attempts, still has retry budget.
+	for range 2 {
+		if err := store.MarkArticleEmbeddingFailed(progress, model, "transient"); err != nil {
+			t.Fatalf("MarkArticleEmbeddingFailed progress: %v", err)
+		}
+	}
+	// ok: real embedding.
+	if err := store.StoreArticleEmbedding(ok, []byte{1, 2, 3, 4}, model); err != nil {
+		t.Fatalf("StoreArticleEmbedding ok: %v", err)
+	}
+	// tooShort: deterministic skip.
+	if err := store.MarkArticleEmbeddingSkipped(tooShort, model); err != nil {
+		t.Fatalf("MarkArticleEmbeddingSkipped tooShort: %v", err)
+	}
+	// otherModel: stuck under a different embedding_model.
+	for range EmbedMaxAttempts {
+		if err := store.MarkArticleEmbeddingFailed(otherModel, otherModelName, "HTTP 403 Forbidden"); err != nil {
+			t.Fatalf("MarkArticleEmbeddingFailed otherModel: %v", err)
+		}
+	}
+
+	// Pattern-narrowed reset: only HTTP 403 rows for the active model.
+	n, err := store.ResetStuckEmbeddings(model, "%HTTP 403%")
+	if err != nil {
+		t.Fatalf("ResetStuckEmbeddings(403): %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected to reset 1 row (stuck403), got %d", n)
+	}
+
+	missing, _ := store.GetArticlesWithoutEmbeddings(model, 100)
+	gotIDs := make(map[int64]bool)
+	for _, a := range missing {
+		gotIDs[a.ID] = true
+	}
+	if !gotIDs[stuck403] {
+		t.Errorf("stuck403 should be retry-eligible after reset")
+	}
+	if gotIDs[stuck400] {
+		t.Errorf("stuck400 should NOT be eligible — pattern excluded it")
+	}
+	if !gotIDs[progress] {
+		t.Errorf("progress (attempts<max, untouched) should still be retry-eligible")
+	}
+	if gotIDs[ok] || gotIDs[tooShort] {
+		t.Errorf("ok/tooShort should NOT be retry-eligible")
+	}
+
+	// Unfiltered reset: clears stuck400 too. otherModel stays stuck
+	// (different embedding_model).
+	n, err = store.ResetStuckEmbeddings(model, "")
+	if err != nil {
+		t.Fatalf("ResetStuckEmbeddings(all): %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected to reset 1 remaining row (stuck400), got %d", n)
+	}
+
+	// otherModel should still be stuck under its own model.
+	missingOther, _ := store.GetArticlesWithoutEmbeddings(otherModelName, 100)
+	for _, a := range missingOther {
+		if a.ID == otherModel {
+			// Should NOT be eligible — still attempts=max for its own model.
+			t.Errorf("otherModel reset leaked across embedding_model — should still be stuck")
+		}
+	}
+}
+
 func TestEmbeddingRetryCooldown(t *testing.T) {
 	// Verify that an article that just failed is NOT immediately retry-
 	// eligible while EmbedRetryCooldown is in effect. This is the fix

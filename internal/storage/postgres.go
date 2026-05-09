@@ -2321,6 +2321,32 @@ func (s *PostgresStore) ResetAllGroupEmbeddings() (int64, error) {
 	return r.RowsAffected()
 }
 
+// ResetStuckEmbeddings — see SQLiteStore for behaviour.
+func (s *PostgresStore) ResetStuckEmbeddings(model, errorPattern string) (int64, error) {
+	var (
+		r   sql.Result
+		err error
+	)
+	if errorPattern == "" {
+		r, err = s.db.Exec(s.db.prepare(`
+			UPDATE article_embeddings
+			SET attempts = 0, last_attempted_at = NULL, error_message = NULL
+			WHERE embedding_model = ? AND status = ? AND attempts >= ?`),
+			model, EmbedStatusError, EmbedMaxAttempts)
+	} else {
+		r, err = s.db.Exec(s.db.prepare(`
+			UPDATE article_embeddings
+			SET attempts = 0, last_attempted_at = NULL, error_message = NULL
+			WHERE embedding_model = ? AND status = ? AND attempts >= ?
+			  AND error_message LIKE ?`),
+			model, EmbedStatusError, EmbedMaxAttempts, errorPattern)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("reset stuck embeddings: %w", err)
+	}
+	return r.RowsAffected()
+}
+
 // GetArticlesWithoutEmbeddings returns articles eligible for an embedding
 // pass under the given model. See SQLiteStore for retry-eligibility rules.
 func (s *PostgresStore) GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error) {

@@ -2646,6 +2646,46 @@ func (s *SQLiteStore) ResetAllGroupEmbeddings() (int64, error) {
 	return r.RowsAffected()
 }
 
+// ResetStuckEmbeddings clears the retry budget on rows that exhausted
+// EmbedMaxAttempts. Sets attempts=0, last_attempted_at=NULL,
+// error_message=NULL on rows where status=error AND attempts >=
+// EmbedMaxAttempts AND embedding_model = model. The next backfill cycle
+// then picks them up again with a fresh budget.
+//
+// errorPattern is an optional SQL LIKE pattern (use "" for unfiltered).
+// Useful for narrowing the reset to a specific cause — e.g. resetting
+// only "%HTTP 403%" rows after fixing a rate-limit misconfiguration,
+// without touching rows stuck on a different error class.
+//
+// Status stays at EmbedStatusError so reset rows stay distinguishable
+// from never-attempted rows; the (status, attempts<5, last_attempted_at
+// IS NULL) shape is what GetArticlesWithoutEmbeddings looks for. Returns
+// the number of rows updated.
+func (s *SQLiteStore) ResetStuckEmbeddings(model, errorPattern string) (int64, error) {
+	var (
+		r   sql.Result
+		err error
+	)
+	if errorPattern == "" {
+		r, err = s.db.Exec(`
+			UPDATE article_embeddings
+			SET attempts = 0, last_attempted_at = NULL, error_message = NULL
+			WHERE embedding_model = ? AND status = ? AND attempts >= ?`,
+			model, EmbedStatusError, EmbedMaxAttempts)
+	} else {
+		r, err = s.db.Exec(`
+			UPDATE article_embeddings
+			SET attempts = 0, last_attempted_at = NULL, error_message = NULL
+			WHERE embedding_model = ? AND status = ? AND attempts >= ?
+			  AND error_message LIKE ?`,
+			model, EmbedStatusError, EmbedMaxAttempts, errorPattern)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("reset stuck embeddings: %w", err)
+	}
+	return r.RowsAffected()
+}
+
 // GetArticlesWithoutEmbeddings returns articles eligible for an embedding
 // pass under the given model: either no row exists yet for this model,
 // or the row is in error state with retries remaining AND the
