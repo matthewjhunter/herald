@@ -554,6 +554,23 @@ func (e *Engine) ResetStuckEmbeddings(errorPattern string) (int64, error) {
 	return e.store.ResetStuckEmbeddings(model, errorPattern)
 }
 
+// ResetStuckEmbeddings clears the retry budget on rows stuck at
+// EmbedMaxAttempts for the configured embedding model. errorPattern is
+// an optional SQL LIKE pattern (use "" for unfiltered) that narrows
+// the reset to matching error_message values. Returns the number of
+// rows reset.
+//
+// Pairs with the next BackfillEmbeddings call: reset rows have
+// last_attempted_at=NULL, so they're picked up immediately under the
+// retry-cooldown logic without waiting for the cooldown window.
+func (e *Engine) ResetStuckEmbeddings(errorPattern string) (int64, error) {
+	if e.groupMatcher == nil {
+		return 0, fmt.Errorf("embedding not configured (no Ollama URL)")
+	}
+	model := e.groupMatcher.Model()
+	return e.store.ResetStuckEmbeddings(model, errorPattern)
+}
+
 // BackfillEmbeddings generates embeddings for articles that don't have them yet.
 // Processes up to batchSize articles per call. Returns the count processed.
 func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, error) {
