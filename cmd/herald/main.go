@@ -453,11 +453,19 @@ func updateGroupSummary(ctx context.Context, store storage.Store, processor *ai.
 	return nil
 }
 
+// annotationSkipConfigLoad marks a subcommand that bootstraps its own
+// config (e.g. init-config writes a fresh one). The persistent pre-run
+// skips loadConfig for these so they can run before any config exists.
+const annotationSkipConfigLoad = "herald.skip-config-load"
+
 func main() {
 	rootCmd := &cobra.Command{
 		Use:   "herald",
 		Short: "Your AI-powered news herald - intelligent RSS/Atom feed reader with AI curation",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Annotations[annotationSkipConfigLoad] == "true" {
+				return nil
+			}
 			return loadConfig()
 		},
 	}
@@ -485,16 +493,33 @@ func main() {
 	}
 }
 
+// defaultConfigPath is the search location for the config file when the
+// caller does not pass --config explicitly. Kept as a constant so tests
+// can refer to the same value without duplication.
+const defaultConfigPath = "./config/config.yaml"
+
+// loadConfig reads the YAML config from configPath into the package-level
+// cfg, layered over storage.DefaultConfig (so unset fields keep their
+// defaults).
+//
+// Missing-file is a hard error. Earlier versions silently fell back to a
+// pure-defaults config when the file didn't exist, which produced a
+// surprising "empty SQLite at the binary's CWD" when the running user
+// expected to be talking to their real database. Bootstrap commands that
+// need to run before any config exists (init-config) opt out via the
+// annotationSkipConfigLoad cobra annotation.
 func loadConfig() error {
 	if configPath == "" {
-		configPath = "./config/config.yaml"
+		configPath = defaultConfigPath
 	}
 
-	// Check if config exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		// Use default config
-		cfg = storage.DefaultConfig()
-		return nil
+		return fmt.Errorf("config file not found: %s\n"+
+			"  Create one with:  herald init-config [--config <path>]\n"+
+			"  Or point at an existing config:  --config <path>",
+			configPath)
+	} else if err != nil {
+		return fmt.Errorf("failed to stat config %s: %w", configPath, err)
 	}
 
 	data, err := os.ReadFile(configPath)
@@ -1008,9 +1033,12 @@ func initConfigCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init-config",
 		Short: "Create a default config file",
+		// init-config bootstraps the config file itself, so it must run
+		// before any config exists. Skip the persistent loadConfig.
+		Annotations: map[string]string{annotationSkipConfigLoad: "true"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if configPath == "" {
-				configPath = "./config/config.yaml"
+				configPath = defaultConfigPath
 			}
 
 			// Create config directory
