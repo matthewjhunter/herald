@@ -2,6 +2,7 @@ package herald
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -581,6 +582,133 @@ func TestSummarizationConfigDefaults(t *testing.T) {
 	}
 	if cfg.Summarization.MaxSummaryLength != 500 {
 		t.Errorf("MaxSummaryLength: got %d, want 500", cfg.Summarization.MaxSummaryLength)
+	}
+}
+
+func TestBuildArticleEmbedInput_FullRecord(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	feedID, err := engine.store.AddFeed("https://example.com/feed", "Schneier on Security", "")
+	if err != nil {
+		t.Fatalf("AddFeed: %v", err)
+	}
+	pub := time.Now()
+	articleID, err := engine.store.AddArticle(&storage.Article{
+		FeedID:        feedID,
+		GUID:          "g1",
+		Title:         "How AI Will Change Cyber Defense",
+		URL:           "https://example.com/post1",
+		Content:       "Body of the article — at least 200 bytes long blah blah blah blah blah blah blah blah blah blah blah blah blah blah blah blah blah blah blah blah blah blah.",
+		Author:        "Bruce Schneier",
+		PublishedDate: &pub,
+	})
+	if err != nil {
+		t.Fatalf("AddArticle: %v", err)
+	}
+	if err := engine.store.StoreArticleCategories(articleID, []string{"cryptography", "surveillance"}); err != nil {
+		t.Fatalf("StoreArticleCategories: %v", err)
+	}
+
+	a, err := engine.store.GetArticle(articleID)
+	if err != nil {
+		t.Fatalf("GetArticle: %v", err)
+	}
+	fields, body := BuildArticleEmbedInput(engine.store, *a)
+
+	wantFields := map[string]string{
+		"feed":       "Schneier on Security",
+		"author":     "Bruce Schneier",
+		"categories": "cryptography, surveillance",
+		"title":      "How AI Will Change Cyber Defense",
+	}
+	if len(fields) != 4 {
+		t.Fatalf("got %d fields, want 4", len(fields))
+	}
+	wantOrder := []string{"feed", "author", "categories", "title"}
+	for i, f := range fields {
+		if f.Key != wantOrder[i] {
+			t.Errorf("field %d: key=%q, want %q (order matters)", i, f.Key, wantOrder[i])
+		}
+		if f.Value != wantFields[f.Key] {
+			t.Errorf("field %q: value=%q, want %q", f.Key, f.Value, wantFields[f.Key])
+		}
+	}
+	if !strings.Contains(body, "Body of the article") {
+		t.Errorf("body missing content: %q", body)
+	}
+}
+
+func TestBuildArticleEmbedInput_LinkedContentAppended(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+	feedID, _ := engine.store.AddFeed("https://example.com/feed", "Link Blog", "")
+	articleID, _ := engine.store.AddArticle(&storage.Article{
+		FeedID:  feedID,
+		GUID:    "g2",
+		Title:   "Worth a read",
+		URL:     "https://blog.example.com/post",
+		Content: "Short post commentary.",
+	})
+	// LinkedContent is persisted via a separate Update call (AddArticle
+	// only writes the columns set during ingest; linked_url/linked_content
+	// are filled in later by the link-blog fetcher).
+	if err := engine.store.UpdateArticleLinkedContent(articleID, "https://example.org/", "Full article fetched from the linked URL goes here."); err != nil {
+		t.Fatalf("UpdateArticleLinkedContent: %v", err)
+	}
+	a, _ := engine.store.GetArticle(articleID)
+	_, body := BuildArticleEmbedInput(engine.store, *a)
+	if !strings.Contains(body, "Short post commentary.") {
+		t.Errorf("body missing original content: %q", body)
+	}
+	if !strings.Contains(body, "Full article fetched") {
+		t.Errorf("body missing linked content: %q", body)
+	}
+}
+
+func TestBuildArticleEmbedInput_SummaryFallbackWhenContentEmpty(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+	feedID, _ := engine.store.AddFeed("https://example.com/feed", "F", "")
+	articleID, _ := engine.store.AddArticle(&storage.Article{
+		FeedID:  feedID,
+		GUID:    "g3",
+		Title:   "T",
+		URL:     "u",
+		Content: "",
+		Summary: "Summary text only.",
+	})
+	a, _ := engine.store.GetArticle(articleID)
+	_, body := BuildArticleEmbedInput(engine.store, *a)
+	if body != "Summary text only." {
+		t.Errorf("got body=%q, want summary fallback", body)
+	}
+}
+
+func TestBuildArticleEmbedInput_MissingMetadataOmitsFields(t *testing.T) {
+	// Empty author and no categories should produce empty Field values —
+	// FormatRecord drops them automatically, so the embedder doesn't see
+	// "author: " or "categories: " noise.
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+	feedID, _ := engine.store.AddFeed("https://example.com/feed", "F", "")
+	articleID, _ := engine.store.AddArticle(&storage.Article{
+		FeedID: feedID,
+		GUID:   "g4",
+		Title:  "T",
+		URL:    "u",
+		// no Author, no Content, no LinkedContent
+		Summary: "Body.",
+	})
+	a, _ := engine.store.GetArticle(articleID)
+	fields, _ := BuildArticleEmbedInput(engine.store, *a)
+	for _, f := range fields {
+		if f.Key == "author" && f.Value != "" {
+			t.Errorf("expected empty author value, got %q", f.Value)
+		}
+		if f.Key == "categories" && f.Value != "" {
+			t.Errorf("expected empty categories value, got %q", f.Value)
+		}
 	}
 }
 

@@ -57,6 +57,7 @@ type Store interface {
 	// Feeds
 	AddFeed(url, title, description string) (int64, error)
 	GetAllFeeds() ([]Feed, error)
+	GetFeed(feedID int64) (*Feed, error)
 	UpdateFeedError(feedID int64, errMsg string) error
 	ClearFeedError(feedID int64) error
 	MarkFeedFetched(feedID int64) error

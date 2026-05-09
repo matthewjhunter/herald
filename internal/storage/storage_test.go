@@ -134,6 +134,35 @@ func TestAddAndGetFeeds(t *testing.T) {
 	}
 }
 
+func TestGetFeed(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feedID, err := store.AddFeed("https://example.com/feed", "Schneier on Security", "Security blog")
+	if err != nil {
+		t.Fatalf("AddFeed: %v", err)
+	}
+
+	f, err := store.GetFeed(feedID)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if f.ID != feedID {
+		t.Errorf("ID: got %d, want %d", f.ID, feedID)
+	}
+	if f.Title != "Schneier on Security" {
+		t.Errorf("Title: got %q", f.Title)
+	}
+	if f.URL != "https://example.com/feed" {
+		t.Errorf("URL: got %q", f.URL)
+	}
+
+	// Missing feed → error
+	if _, err := store.GetFeed(99999); err == nil {
+		t.Error("expected error for missing feed, got nil")
+	}
+}
+
 func TestAddAndGetArticles(t *testing.T) {
 	store, cleanup := newTestStore(t)
 	defer cleanup()
