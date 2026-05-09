@@ -479,6 +479,7 @@ func main() {
 	rootCmd.AddCommand(initConfigCmd())
 	rootCmd.AddCommand(migrateDBCmd())
 	rootCmd.AddCommand(resetScoresCmd())
+	rootCmd.AddCommand(resetCmd())
 	rootCmd.AddCommand(backfillEmbeddingsCmd())
 
 	if err := rootCmd.Execute(); err != nil {

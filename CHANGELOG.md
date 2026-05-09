@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`herald reset embeddings` CLI.** Pure DB state mutator: clears
+  every `article_embeddings` row and sets `article_groups.embedding`
+  to NULL. Used after an embed-format change (e.g. switching from
+  title+content to a metadata-enriched record) when every existing
+  vector becomes incompatible with new ones. Group memberships are
+  preserved; centroids rebuild gradually as articles rejoin groups
+  via the scoring pipeline. The daemon's per-cycle embedding backfill
+  repopulates article embeddings (~16 min for ~19k articles at
+  MaxParallel=8). Confirmation prompt by default; `--yes` for
+  non-interactive. Backed by new `Store.ResetAllArticleEmbeddings`
+  and `Store.ResetAllGroupEmbeddings`.
+
 - **Daemon now backfills missing AI summaries.** Articles that pass the
   security check but lose their summary to a transient failure (Ollama
   timeout, garbled output) are re-summarized on the next daemon cycle.
