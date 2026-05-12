@@ -94,11 +94,11 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 				}
 				if content == "" {
 					formatter.Warning("skipping article %d %q: no content", article.ID, article.Title)
-					// Mark as scored so it doesn't block the queue forever.
+					// Mark as scored (ai_scored=1) with NULL security/interest scores so the
+					// article doesn't re-enter the queue but doesn't pollute security metrics.
 					zeroInterest := 0.0
-					zeroSec := 0.0
 					reason := "no content"
-					store.UpdateReadState(userID, article.ID, false, &zeroInterest, &zeroSec, &reason) //nolint:errcheck
+					store.UpdateReadState(userID, article.ID, false, &zeroInterest, nil, &reason) //nolint:errcheck
 					return
 				}
 				if article.LinkedContent != "" {
@@ -106,14 +106,14 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 				}
 
 				// Skip entire AI pipeline for articles too short to process meaningfully.
-				// Mark as scored so they don't block the queue forever.
+				// Mark as scored with NULL security score — not a security failure, just
+				// insufficient content.
 				minLen := cfg.Summarization.MinArticleLength
 				if minLen > 0 && len(content) < minLen {
 					formatter.Warning("skipping article %d: content too short (%d < %d)", article.ID, len(content), minLen)
 					zeroInterest := 0.0
-					zeroSec := 0.0
 					reason := fmt.Sprintf("content too short (%d < %d)", len(content), minLen)
-					store.UpdateReadState(userID, article.ID, false, &zeroInterest, &zeroSec, &reason) //nolint:errcheck
+					store.UpdateReadState(userID, article.ID, false, &zeroInterest, nil, &reason) //nolint:errcheck
 					return
 				}
 
