@@ -158,6 +158,10 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 
 				if secErr != nil {
 					formatter.Warning("security check failed for article %d: %v", article.ID, secErr)
+					// Increment retry counter so the article is re-queued on the next
+					// cycle. After 3 failures it falls out of GetUnscoredArticlesForUser
+					// and won't be retried further.
+					store.IncrementAIRetries(userID, article.ID) //nolint:errcheck
 					return
 				}
 
