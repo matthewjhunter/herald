@@ -397,21 +397,26 @@ func updateGroupSummary(ctx context.Context, store storage.Store, processor *ai.
 		}
 	}
 
-	// Build input for group summary
+	// Fetch real interest scores for all articles in one query.
+	articleIDs := make([]int64, len(articles))
+	for i, a := range articles {
+		articleIDs[i] = a.ID
+	}
+	interestScores, err := store.GetArticleInterestScores(userID, articleIDs)
+	if err != nil {
+		return fmt.Errorf("failed to get interest scores for group %d: %w", groupID, err)
+	}
+
 	var summaryInputs []ai.GroupSummaryInput
 	var maxScore float64
 
 	for _, article := range articles {
-		// Get AI summary for this article
 		summary, err := store.GetArticleSummary(userID, article.ID)
 		if err != nil || summary == nil {
 			continue
 		}
 
-		// Get interest score
-		// For now, query from read_state
-		// TODO: could add a method to get this more efficiently
-		score := 5.0 // default
+		score := interestScores[article.ID] // 0.0 if not scored yet
 
 		summaryInputs = append(summaryInputs, ai.GroupSummaryInput{
 			Title:     article.Title,
