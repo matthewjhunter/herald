@@ -118,6 +118,13 @@ func (p *AIProcessor) SecurityCheck(ctx context.Context, userID int64, title, co
 		return nil, fmt.Errorf("security check returned malformed JSON: %w", err)
 	}
 
+	// The prompt asks for a 0–10 scale (10=safe). Some models respond on a
+	// 0–1 scale instead. Detect this by checking for Safe=true with a score
+	// that would be nonsensically low on the 0–10 scale, and normalize.
+	if result.Safe && result.Score <= 1.0 {
+		result.Score *= 10.0
+	}
+
 	return &result, nil
 }
 
