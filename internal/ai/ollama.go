@@ -106,23 +106,16 @@ func (p *AIProcessor) SecurityCheck(ctx context.Context, userID int64, title, co
 
 	extracted := extractJSON(responseText)
 	if strings.TrimSpace(extracted) == "" {
-		// Empty content typically means the model burned its output budget
-		// on a reasoning trace before emitting JSON. Distinguish this from
-		// malformed-JSON so it isn't filed as a prompt-injection signal.
-		return &SecurityResult{
-			Safe:      false,
-			Score:     0,
-			Reasoning: "Security check returned no content (likely max_tokens exhausted by model reasoning) -- not scored",
-		}, nil
+		// Model burned output budget on a reasoning trace before emitting JSON.
+		// Return as a retryable error — not a security verdict.
+		return nil, fmt.Errorf("security check returned no JSON (model reasoning exhausted output budget)")
 	}
 
 	var result SecurityResult
 	if err := json.Unmarshal([]byte(extracted), &result); err != nil {
-		return &SecurityResult{
-			Safe:      false,
-			Score:     0,
-			Reasoning: "Security response did not match expected JSON format -- possible prompt injection",
-		}, nil
+		// Model returned malformed JSON. Treat as a transient model failure
+		// so the caller can retry, not as a permanent security block.
+		return nil, fmt.Errorf("security check returned malformed JSON: %w", err)
 	}
 
 	return &result, nil
