@@ -8,6 +8,10 @@
     </div>
 </div>
 
+{{if .SecurityFlagged}}
+<div class="security-flag-banner">&#9888; Security flagged — this article passed a lower threshold and has not been AI-summarized. Review with caution.</div>
+{{end}}
+
 {{if .AISummary}}
 <div class="ai-summary">
     <strong>AI Summary</strong>

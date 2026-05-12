@@ -203,6 +203,7 @@ type articleRow struct {
 	PublishedDateFmt string
 	Read             bool
 	Starred          bool
+	SecurityFlagged  bool
 }
 
 type searchResultsData struct {
@@ -222,6 +223,7 @@ type articleViewData struct {
 	AISummary              string
 	SanitizedContent       template.HTML
 	Starred                bool
+	SecurityFlagged        bool
 	LinkedURL              string
 	LinkedDomain           string
 	SanitizedLinkedContent template.HTML
@@ -662,6 +664,7 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 			Author:           a.Author,
 			FeedTitle:        feedTitles[a.FeedID],
 			PublishedDateFmt: formatDate(bestDate(a.PublishedDate, &a.FetchedDate)),
+			SecurityFlagged:  a.SecurityFlagged,
 		})
 	}
 
@@ -783,6 +786,7 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 		PublishedDateFmt: formatDate(bestDate(article.PublishedDate, &article.FetchedDate)),
 		AISummary:        article.AISummary,
 		SanitizedContent: template.HTML(sanitized), //nolint:gosec // sanitized by bluemonday
+		SecurityFlagged:  article.SecurityFlagged,
 		LinkedURL:        article.LinkedURL,
 	}
 	if article.LinkedURL != "" {

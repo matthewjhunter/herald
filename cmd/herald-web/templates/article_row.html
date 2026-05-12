@@ -6,6 +6,7 @@
      hx-on::after-request="this.classList.add('read'); document.querySelectorAll('.article-row').forEach(r => r.classList.remove('active')); this.classList.add('active'); htmx.trigger(document.body, 'feeds-changed');">
     <h4>
         {{if .Starred}}<span class="starred" aria-label="starred">&#9733;</span> {{end}}
+        {{if .SecurityFlagged}}<span class="security-flag" title="Security flagged — not AI-summarized, pending audit" aria-label="security flagged">&#9888;</span> {{end}}
         {{cleanTitle .Title}}
     </h4>
     <div class="meta">
