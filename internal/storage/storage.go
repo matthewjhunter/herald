@@ -1338,6 +1338,39 @@ func (s *SQLiteStore) GetGroupArticles(groupID int64) ([]Article, error) {
 	return articles, rows.Err()
 }
 
+// GetArticleInterestScores returns a map of article ID → interest score for the
+// given user. Articles with no read_state row or a NULL interest_score are omitted.
+func (s *SQLiteStore) GetArticleInterestScores(userID int64, articleIDs []int64) (map[int64]float64, error) {
+	if len(articleIDs) == 0 {
+		return map[int64]float64{}, nil
+	}
+	placeholders := make([]string, len(articleIDs))
+	args := make([]any, 0, len(articleIDs)+1)
+	args = append(args, userID)
+	for i, id := range articleIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	query := `SELECT article_id, interest_score FROM read_state
+		WHERE user_id = ? AND article_id IN (` + strings.Join(placeholders, ",") + `)
+		AND interest_score IS NOT NULL`
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get article interest scores: %w", err)
+	}
+	defer rows.Close()
+	scores := make(map[int64]float64, len(articleIDs))
+	for rows.Next() {
+		var id int64
+		var score float64
+		if err := rows.Scan(&id, &score); err != nil {
+			return nil, fmt.Errorf("scan interest score: %w", err)
+		}
+		scores[id] = score
+	}
+	return scores, rows.Err()
+}
+
 // UpdateGroupSummary stores or updates the summary for a group
 func (s *SQLiteStore) UpdateGroupSummary(groupID int64, headline, summary string, articleCount int, maxInterestScore *float64) error {
 	_, err := s.db.Exec(
