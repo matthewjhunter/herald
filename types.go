@@ -4,16 +4,17 @@ import "time"
 
 // EngineConfig configures the Herald content engine.
 type EngineConfig struct {
-	DBPath            string
-	OllamaBaseURL     string
-	SecurityModel     string
-	CurationModel     string
-	InterestThreshold float64
-	SecurityThreshold float64
-	Keywords          []string // user interest keywords for curation scoring
-	UserID            int64    // primary user ID; DB preferences override CLI flags
-	ReadOnly          bool     // when true, skip AI processor and fetcher creation
-	MaxParallel       int      // max concurrent AI pipeline workers; 0 or 1 = serial
+	DBPath                  string
+	OllamaBaseURL           string
+	SecurityModel           string
+	CurationModel           string
+	InterestThreshold       float64
+	SecurityThreshold       float64
+	SecurityMediumThreshold float64  // lower bound for medium path (default 4.0); articles below SecurityThreshold but above this pass without AI processing, flagged for audit
+	Keywords                []string // user interest keywords for curation scoring
+	UserID                  int64    // primary user ID; DB preferences override CLI flags
+	ReadOnly                bool     // when true, skip AI processor and fetcher creation
+	MaxParallel             int      // max concurrent AI pipeline workers; 0 or 1 = serial
 }
 
 // User represents a registered household member.
@@ -26,18 +27,19 @@ type User struct {
 
 // Article represents a feed article.
 type Article struct {
-	ID            int64      `json:"id"`
-	FeedID        int64      `json:"feed_id"`
-	Title         string     `json:"title"`
-	URL           string     `json:"url"`
-	Content       string     `json:"content"`
-	Summary       string     `json:"summary"`
-	AISummary     string     `json:"ai_summary,omitempty"`
-	Author        string     `json:"author"`
-	PublishedDate *time.Time `json:"published_date,omitempty"`
-	FetchedDate   time.Time  `json:"fetched_date"`
-	LinkedURL     string     `json:"linked_url,omitempty"`
-	LinkedContent string     `json:"linked_content,omitempty"`
+	ID              int64      `json:"id"`
+	FeedID          int64      `json:"feed_id"`
+	Title           string     `json:"title"`
+	URL             string     `json:"url"`
+	Content         string     `json:"content"`
+	Summary         string     `json:"summary"`
+	AISummary       string     `json:"ai_summary,omitempty"`
+	Author          string     `json:"author"`
+	PublishedDate   *time.Time `json:"published_date,omitempty"`
+	FetchedDate     time.Time  `json:"fetched_date"`
+	LinkedURL       string     `json:"linked_url,omitempty"`
+	LinkedContent   string     `json:"linked_content,omitempty"`
+	SecurityFlagged bool       `json:"security_flagged,omitempty"`
 }
 
 // Feed represents an RSS/Atom feed subscription.

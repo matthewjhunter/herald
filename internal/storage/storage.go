@@ -37,18 +37,19 @@ type Feed struct {
 }
 
 type Article struct {
-	ID            int64
-	FeedID        int64
-	GUID          string
-	Title         string
-	URL           string
-	Content       string
-	Summary       string
-	Author        string
-	PublishedDate *time.Time
-	FetchedDate   time.Time
-	LinkedURL     string // outbound link extracted from a link-blog post
-	LinkedContent string // readability content fetched from LinkedURL
+	ID              int64
+	FeedID          int64
+	GUID            string
+	Title           string
+	URL             string
+	Content         string
+	Summary         string
+	Author          string
+	PublishedDate   *time.Time
+	FetchedDate     time.Time
+	LinkedURL       string // outbound link extracted from a link-blog post
+	LinkedContent   string // readability content fetched from LinkedURL
+	SecurityFlagged bool   // true when article passed the medium security threshold but not the full threshold
 }
 
 type ArticleSummary struct {
@@ -313,6 +314,9 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		END`,
 		// Rebuild FTS index to backfill existing articles.
 		"INSERT INTO articles_fts(articles_fts) VALUES('rebuild')",
+		// Security medium path: flag articles that passed the lower threshold
+		// but not the full threshold, for audit without AI summarization.
+		"ALTER TABLE read_state ADD COLUMN security_flagged BOOLEAN NOT NULL DEFAULT 0",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -991,19 +995,25 @@ func (s *SQLiteStore) MarkArticleFullTextFetched(articleID int64) error {
 // and marks the article as AI-scored without touching the user's read flag.
 // When interestScore is nil this is a user read/unread action: it updates
 // only the read flag and read_date without touching scores or ai_scored.
-func (s *SQLiteStore) UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64, securityReason *string) error {
+func (s *SQLiteStore) UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64, securityReason *string, securityFlagged *bool) error {
 	var err error
 	if interestScore != nil {
 		// AI pipeline: record scores, mark ai_scored=1, do not overwrite user's read flag.
+		// security_flagged uses COALESCE so a nil caller arg preserves the existing value.
+		var flagVal interface{}
+		if securityFlagged != nil {
+			flagVal = *securityFlagged
+		}
 		_, err = s.db.Exec(
-			`INSERT INTO read_state (user_id, article_id, read, interest_score, security_score, security_reason, ai_scored)
-			 VALUES (?, ?, 0, ?, ?, ?, 1)
+			`INSERT INTO read_state (user_id, article_id, read, interest_score, security_score, security_reason, security_flagged, ai_scored)
+			 VALUES (?, ?, 0, ?, ?, ?, COALESCE(?, 0), 1)
 			 ON CONFLICT(user_id, article_id) DO UPDATE SET
 			   interest_score = excluded.interest_score,
 			   security_score = excluded.security_score,
 			   security_reason = excluded.security_reason,
+			   security_flagged = COALESCE(excluded.security_flagged, read_state.security_flagged),
 			   ai_scored = 1`,
-			userID, articleID, interestScore, securityScore, securityReason,
+			userID, articleID, interestScore, securityScore, securityReason, flagVal,
 		)
 	} else {
 		// User action: update only read flag, do not touch scores or ai_scored.
@@ -1914,7 +1924,8 @@ func (s *SQLiteStore) GetUnreadArticlesForUser(userID int64, limit, offset int, 
 	filterSQL, filterArgs := filterScoreClause(userID, filterThreshold)
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date
+		       a.author, a.published_date, a.fetched_date,
+		       COALESCE(rs.security_flagged, 0) AS security_flagged
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
@@ -1941,7 +1952,8 @@ func (s *SQLiteStore) GetUnreadArticlesForUser(userID int64, limit, offset int, 
 	for rows.Next() {
 		var a Article
 		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
-			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate); err != nil {
+			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate,
+			&a.SecurityFlagged); err != nil {
 			return nil, fmt.Errorf("failed to scan article: %w", err)
 		}
 		articles = append(articles, a)
@@ -1954,7 +1966,8 @@ func (s *SQLiteStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, offse
 	filterSQL, filterArgs := filterScoreClause(userID, filterThreshold)
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date
+		       a.author, a.published_date, a.fetched_date,
+		       COALESCE(rs.security_flagged, 0) AS security_flagged
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
@@ -1981,7 +1994,8 @@ func (s *SQLiteStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, offse
 	for rows.Next() {
 		var a Article
 		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
-			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate); err != nil {
+			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate,
+			&a.SecurityFlagged); err != nil {
 			return nil, fmt.Errorf("failed to scan article: %w", err)
 		}
 		articles = append(articles, a)

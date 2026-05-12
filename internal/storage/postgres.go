@@ -67,6 +67,8 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 		"ALTER TABLE article_embeddings ADD COLUMN IF NOT EXISTS error_message TEXT",
 		// Time-based retry eligibility — see EmbedRetryCooldown.
 		"ALTER TABLE article_embeddings ADD COLUMN IF NOT EXISTS last_attempted_at TIMESTAMPTZ",
+		// Security medium path flag — see SecurityMediumScore threshold.
+		"ALTER TABLE read_state ADD COLUMN IF NOT EXISTS security_flagged BOOLEAN NOT NULL DEFAULT FALSE",
 		// Reclassify legacy 1-byte sentinels (see SQLite migration for rationale).
 		`UPDATE article_embeddings
 		 SET status = 1
@@ -446,18 +448,25 @@ func (s *PostgresStore) UpdateStarred(userID, articleID int64, starred bool) err
 	return nil
 }
 
-func (s *PostgresStore) UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64, securityReason *string) error {
+func (s *PostgresStore) UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64, securityReason *string, securityFlagged *bool) error {
 	var err error
 	if interestScore != nil {
+		// AI pipeline: record scores, mark ai_scored=TRUE, do not overwrite user's read flag.
+		// security_flagged uses COALESCE so a nil caller arg preserves the existing value.
+		var flagVal interface{}
+		if securityFlagged != nil {
+			flagVal = *securityFlagged
+		}
 		_, err = s.db.Exec(
-			`INSERT INTO read_state (user_id, article_id, read, interest_score, security_score, security_reason, ai_scored)
-			 VALUES (?, ?, FALSE, ?, ?, ?, TRUE)
+			`INSERT INTO read_state (user_id, article_id, read, interest_score, security_score, security_reason, security_flagged, ai_scored)
+			 VALUES (?, ?, FALSE, ?, ?, ?, COALESCE(?, FALSE), TRUE)
 			 ON CONFLICT(user_id, article_id) DO UPDATE SET
 			   interest_score = excluded.interest_score,
 			   security_score = excluded.security_score,
 			   security_reason = excluded.security_reason,
+			   security_flagged = COALESCE(excluded.security_flagged, read_state.security_flagged),
 			   ai_scored = TRUE`,
-			userID, articleID, interestScore, securityScore, securityReason,
+			userID, articleID, interestScore, securityScore, securityReason, flagVal,
 		)
 	} else {
 		_, err = s.db.Exec(
@@ -820,7 +829,8 @@ func (s *PostgresStore) GetUnreadArticlesForUser(userID int64, limit, offset int
 	filterSQL, filterArgs := filterScoreClausePG(userID, filterThreshold)
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date
+		       a.author, a.published_date, a.fetched_date,
+		       COALESCE(rs.security_flagged, FALSE) AS security_flagged
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
@@ -841,14 +851,15 @@ func (s *PostgresStore) GetUnreadArticlesForUser(userID int64, limit, offset int
 		return nil, fmt.Errorf("failed to get unread articles for user: %w", err)
 	}
 	defer rows.Close()
-	return scanArticles(rows)
+	return scanArticlesWithFlags(rows)
 }
 
 func (s *PostgresStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int, filterThreshold *int) ([]Article, error) {
 	filterSQL, filterArgs := filterScoreClausePG(userID, filterThreshold)
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date
+		       a.author, a.published_date, a.fetched_date,
+		       COALESCE(rs.security_flagged, FALSE) AS security_flagged
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
@@ -869,7 +880,7 @@ func (s *PostgresStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, off
 		return nil, fmt.Errorf("failed to get unread articles by feed: %w", err)
 	}
 	defer rows.Close()
-	return scanArticles(rows)
+	return scanArticlesWithFlags(rows)
 }
 
 func (s *PostgresStore) GetUnscoredArticlesForUser(userID int64, limit int) ([]Article, error) {
@@ -2691,6 +2702,21 @@ func scanArticles(rows *sql.Rows) ([]Article, error) {
 		var a Article
 		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
 			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate); err != nil {
+			return nil, fmt.Errorf("scan article: %w", err)
+		}
+		articles = append(articles, a)
+	}
+	return articles, rows.Err()
+}
+
+// scanArticlesWithFlags scans rows that include a security_flagged column after the standard article fields.
+func scanArticlesWithFlags(rows *sql.Rows) ([]Article, error) {
+	var articles []Article
+	for rows.Next() {
+		var a Article
+		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
+			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate,
+			&a.SecurityFlagged); err != nil {
 			return nil, fmt.Errorf("scan article: %w", err)
 		}
 		articles = append(articles, a)

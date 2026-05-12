@@ -52,15 +52,16 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS read_state (
-    user_id        BIGINT NOT NULL DEFAULT 1,
-    article_id     BIGINT NOT NULL,
-    read           BOOLEAN NOT NULL DEFAULT FALSE,
-    starred        BOOLEAN NOT NULL DEFAULT FALSE,
-    interest_score DOUBLE PRECISION,
-    security_score DOUBLE PRECISION,
-    read_date      TIMESTAMPTZ,
-    ai_scored      BOOLEAN NOT NULL DEFAULT FALSE,
-    ai_retries     INTEGER NOT NULL DEFAULT 0,
+    user_id          BIGINT NOT NULL DEFAULT 1,
+    article_id       BIGINT NOT NULL,
+    read             BOOLEAN NOT NULL DEFAULT FALSE,
+    starred          BOOLEAN NOT NULL DEFAULT FALSE,
+    interest_score   DOUBLE PRECISION,
+    security_score   DOUBLE PRECISION,
+    read_date        TIMESTAMPTZ,
+    ai_scored        BOOLEAN NOT NULL DEFAULT FALSE,
+    ai_retries       INTEGER NOT NULL DEFAULT 0,
+    security_flagged BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (user_id, article_id),
     FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
 );

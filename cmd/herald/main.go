@@ -98,7 +98,7 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 					// article doesn't re-enter the queue but doesn't pollute security metrics.
 					zeroInterest := 0.0
 					reason := "no content"
-					store.UpdateReadState(userID, article.ID, false, &zeroInterest, nil, &reason) //nolint:errcheck
+					store.UpdateReadState(userID, article.ID, false, &zeroInterest, nil, &reason, nil) //nolint:errcheck
 					return
 				}
 				if article.LinkedContent != "" {
@@ -113,7 +113,7 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 					formatter.Warning("skipping article %d: content too short (%d < %d)", article.ID, len(content), minLen)
 					zeroInterest := 0.0
 					reason := fmt.Sprintf("content too short (%d < %d)", len(content), minLen)
-					store.UpdateReadState(userID, article.ID, false, &zeroInterest, nil, &reason) //nolint:errcheck
+					store.UpdateReadState(userID, article.ID, false, &zeroInterest, nil, &reason, nil) //nolint:errcheck
 					return
 				}
 
@@ -165,10 +165,27 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 					return
 				}
 
-				if !secResult.Safe || secResult.Score < appCfg.Thresholds.SecurityScore {
+				mediumScore := appCfg.Thresholds.SecurityMediumScore
+				if mediumScore == 0 {
+					mediumScore = 4.0
+				}
+
+				if !secResult.Safe || secResult.Score < mediumScore {
+					// Hard block: below the lower threshold entirely.
 					secScore := secResult.Score
 					interestScore := 0.0
-					store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning) //nolint:errcheck
+					store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning, nil) //nolint:errcheck
+					formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, false)
+					return
+				}
+
+				if secResult.Score < appCfg.Thresholds.SecurityScore {
+					// Medium path: passes lower threshold but not full threshold.
+					// Let through without AI processing; flag for audit.
+					secScore := secResult.Score
+					interestScore := 0.0
+					flagged := true
+					store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning, &flagged) //nolint:errcheck
 					formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, false)
 					return
 				}
@@ -182,7 +199,7 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 
 				secScore := secResult.Score
 				interestScore := curResult.InterestScore
-				store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning) //nolint:errcheck
+				store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning, nil) //nolint:errcheck
 				formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, true)
 
 				// 4. Vector-based group matching
@@ -1026,7 +1043,7 @@ func readCmd() *cobra.Command {
 			}
 			defer store.Close()
 
-			if err := store.UpdateReadState(userID, articleID, true, nil, nil, nil); err != nil {
+			if err := store.UpdateReadState(userID, articleID, true, nil, nil, nil, nil); err != nil {
 				return fmt.Errorf("failed to mark article as read: %w", err)
 			}
 

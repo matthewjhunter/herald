@@ -50,6 +50,9 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	if cfg.SecurityThreshold == 0 {
 		cfg.SecurityThreshold = 7.0
 	}
+	if cfg.SecurityMediumThreshold == 0 {
+		cfg.SecurityMediumThreshold = 4.0
+	}
 
 	store, err := storage.NewStore(cfg.DBPath)
 	if err != nil {
@@ -64,6 +67,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	storeCfg.Ollama.CurationModel = cfg.CurationModel
 	storeCfg.Thresholds.InterestScore = cfg.InterestThreshold
 	storeCfg.Thresholds.SecurityScore = cfg.SecurityThreshold
+	storeCfg.Thresholds.SecurityMediumScore = cfg.SecurityMediumThreshold
 	storeCfg.Preferences.Keywords = cfg.Keywords
 
 	// Fetcher is always created; it is a stateless HTTP client wrapper with no
@@ -205,7 +209,7 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 					log.Printf("herald: skipping AI pipeline for article %d: content too short (%d < %d)", article.ID, len(content), minLen)
 					zero := 0.0
 					reason := fmt.Sprintf("content too short (%d < %d)", len(content), minLen)
-					e.store.UpdateReadState(userID, article.ID, false, &zero, &zero, &reason) //nolint:errcheck
+					e.store.UpdateReadState(userID, article.ID, false, &zero, &zero, &reason, nil) //nolint:errcheck
 					return
 				}
 
@@ -219,10 +223,26 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 					return
 				}
 
-				if !secResult.Safe || secResult.Score < e.config.Thresholds.SecurityScore {
+				mediumScore := e.config.Thresholds.SecurityMediumScore
+				if mediumScore == 0 {
+					mediumScore = 4.0
+				}
+
+				if !secResult.Safe || secResult.Score < mediumScore {
+					// Hard block: below the lower threshold entirely.
 					secScore := secResult.Score
 					zero := 0.0
-					e.store.UpdateReadState(userID, article.ID, false, &zero, &secScore, &secResult.Reasoning) //nolint:errcheck
+					e.store.UpdateReadState(userID, article.ID, false, &zero, &secScore, &secResult.Reasoning, nil) //nolint:errcheck
+					return
+				}
+
+				if secResult.Score < e.config.Thresholds.SecurityScore {
+					// Medium path: passes lower threshold but not full threshold.
+					// Let through without AI processing; flag for audit.
+					secScore := secResult.Score
+					zero := 0.0
+					flagged := true
+					e.store.UpdateReadState(userID, article.ID, false, &zero, &secScore, &secResult.Reasoning, &flagged) //nolint:errcheck
 					return
 				}
 
@@ -253,7 +273,7 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 
 				secScore := secResult.Score
 				interestScore := curResult.InterestScore
-				e.store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning) //nolint:errcheck
+				e.store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning, nil) //nolint:errcheck
 
 				// Group management: embed article, use similarity as pre-filter,
 				// then call LLM only when embedding suggests a possible match.
@@ -290,7 +310,7 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 						}
 						// If the group is muted, immediately mark the article as read
 						if muted, err := e.store.IsGroupMuted(gID); err == nil && muted {
-							e.store.UpdateReadState(userID, article.ID, true, nil, nil, nil) //nolint:errcheck
+							e.store.UpdateReadState(userID, article.ID, true, nil, nil, nil, nil) //nolint:errcheck
 						}
 					} else if groupResult != nil && groupResult.CreateGroup {
 						topic := article.Title
@@ -620,13 +640,13 @@ func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, er
 
 // MarkArticleRead marks an article as read.
 func (e *Engine) MarkArticleRead(userID, articleID int64) error {
-	return e.store.UpdateReadState(userID, articleID, true, nil, nil, nil)
+	return e.store.UpdateReadState(userID, articleID, true, nil, nil, nil, nil)
 }
 
 // MarkArticlesRead marks a list of articles as read.
 func (e *Engine) MarkArticlesRead(userID int64, articleIDs []int64) error {
 	for _, id := range articleIDs {
-		if err := e.store.UpdateReadState(userID, id, true, nil, nil, nil); err != nil {
+		if err := e.store.UpdateReadState(userID, id, true, nil, nil, nil, nil); err != nil {
 			return err
 		}
 	}
@@ -1686,17 +1706,18 @@ func (e *Engine) Close() error {
 
 func articleFromInternal(a storage.Article) Article {
 	return Article{
-		ID:            a.ID,
-		FeedID:        a.FeedID,
-		Title:         a.Title,
-		URL:           a.URL,
-		Content:       a.Content,
-		Summary:       a.Summary,
-		Author:        a.Author,
-		PublishedDate: a.PublishedDate,
-		FetchedDate:   a.FetchedDate,
-		LinkedURL:     a.LinkedURL,
-		LinkedContent: a.LinkedContent,
+		ID:              a.ID,
+		FeedID:          a.FeedID,
+		Title:           a.Title,
+		URL:             a.URL,
+		Content:         a.Content,
+		Summary:         a.Summary,
+		Author:          a.Author,
+		PublishedDate:   a.PublishedDate,
+		FetchedDate:     a.FetchedDate,
+		LinkedURL:       a.LinkedURL,
+		LinkedContent:   a.LinkedContent,
+		SecurityFlagged: a.SecurityFlagged,
 	}
 }
 

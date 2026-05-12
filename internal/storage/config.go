@@ -19,8 +19,9 @@ type Config struct {
 	} `yaml:"ollama"`
 
 	Thresholds struct {
-		InterestScore float64 `yaml:"interest_score"`
-		SecurityScore float64 `yaml:"security_score"`
+		InterestScore       float64 `yaml:"interest_score"`
+		SecurityScore       float64 `yaml:"security_score"`
+		SecurityMediumScore float64 `yaml:"security_medium_score"`
 	} `yaml:"thresholds"`
 
 	Preferences struct {
@@ -81,6 +82,7 @@ func DefaultConfig() *Config {
 	cfg.Grouping.PreFilterThreshold = 0.3
 	cfg.Thresholds.InterestScore = 8.0
 	cfg.Thresholds.SecurityScore = 7.0
+	cfg.Thresholds.SecurityMediumScore = 4.0
 	// Default temperatures (can be overridden in config)
 	cfg.Temperatures.Security = 0.3
 	cfg.Temperatures.Curation = 0.5
