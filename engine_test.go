@@ -797,3 +797,31 @@ func TestLooksLikeGarbage(t *testing.T) {
 		}
 	}
 }
+
+func TestFeedURLCandidates(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"https://example.com/feed", []string{"https://example.com/feed"}},
+		{"http://example.com/feed", []string{"http://example.com/feed"}},
+		{"feed://example.com/feed", []string{"feed://example.com/feed"}},
+		{"example.com", []string{"https://example.com", "http://example.com"}},
+		{"example.com/feed.xml", []string{"https://example.com/feed.xml", "http://example.com/feed.xml"}},
+		{"  example.com  ", []string{"https://example.com", "http://example.com"}},
+		{"", nil},
+		{"   ", nil},
+	}
+	for _, c := range cases {
+		got := feedURLCandidates(c.in)
+		if len(got) != len(c.want) {
+			t.Errorf("feedURLCandidates(%q) = %v, want %v", c.in, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("feedURLCandidates(%q)[%d] = %q, want %q", c.in, i, got[i], c.want[i])
+			}
+		}
+	}
+}

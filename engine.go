@@ -672,18 +672,52 @@ func (e *Engine) GetUserFeeds(userID int64) ([]Feed, error) {
 	return feedsFromInternal(feeds), nil
 }
 
+// feedURLCandidates returns the URLs to attempt for a user-supplied feed
+// input. If the input already contains a scheme it's returned as-is;
+// otherwise https:// is tried first and http:// as a fallback, so a user
+// pasting "example.com/feed.xml" still works.
+func feedURLCandidates(input string) []string {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return nil
+	}
+	if strings.Contains(input, "://") {
+		return []string{input}
+	}
+	return []string{"https://" + input, "http://" + input}
+}
+
 // SubscribeFeed adds a feed and subscribes the user to it.
 // Validates the URL by fetching the feed first; returns an error if the URL
-// is unreachable or not a valid RSS/Atom feed.
-func (e *Engine) SubscribeFeed(userID int64, url, title string) error {
+// is unreachable or not a valid RSS/Atom feed. If the URL has no scheme,
+// https:// and http:// are tried in turn.
+func (e *Engine) SubscribeFeed(userID int64, rawURL, title string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	candidates := feedURLCandidates(rawURL)
+	if len(candidates) == 0 {
+		return fmt.Errorf("validate feed: empty url")
+	}
+
 	// Validate by fetching — catches bad URLs, non-feed pages, timeouts.
 	// No cache headers for a brand-new subscription.
-	result, err := e.fetcher.FetchFeed(ctx, storage.Feed{URL: url})
-	if err != nil {
-		return fmt.Errorf("validate feed: %w", err)
+	var (
+		result  *feeds.FetchResult
+		url     string
+		lastErr error
+	)
+	for _, candidate := range candidates {
+		r, err := e.fetcher.FetchFeed(ctx, storage.Feed{URL: candidate})
+		if err == nil {
+			result = r
+			url = candidate
+			break
+		}
+		lastErr = err
+	}
+	if result == nil {
+		return fmt.Errorf("validate feed: %w", lastErr)
 	}
 
 	// Use the feed's own title if none provided
@@ -722,11 +756,29 @@ func (e *Engine) SubscribeFeed(userID int64, url, title string) error {
 // DiscoverFeeds fetches pageURL and returns any feeds found via standard
 // autodiscovery (<link rel="alternate"> in HTML <head>). If pageURL is
 // itself a valid feed it is returned as the sole result. Returns an empty
-// slice (not an error) when no feeds are found.
+// slice (not an error) when no feeds are found. If pageURL has no scheme,
+// https:// and http:// are tried in turn.
 func (e *Engine) DiscoverFeeds(ctx context.Context, pageURL string) ([]DiscoveredFeed, error) {
-	internal, err := e.fetcher.DiscoverFeeds(ctx, pageURL)
-	if err != nil {
-		return nil, err
+	candidates := feedURLCandidates(pageURL)
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("empty url")
+	}
+	var (
+		internal []feeds.DiscoveredFeed
+		lastErr  error
+		ok       bool
+	)
+	for _, candidate := range candidates {
+		res, err := e.fetcher.DiscoverFeeds(ctx, candidate)
+		if err == nil {
+			internal = res
+			ok = true
+			break
+		}
+		lastErr = err
+	}
+	if !ok {
+		return nil, lastErr
 	}
 	out := make([]DiscoveredFeed, len(internal))
 	for i, f := range internal {
