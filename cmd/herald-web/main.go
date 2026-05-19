@@ -91,11 +91,16 @@ func main() {
 		CookieName:  cookie,
 		WebauthURL:  webauthBaseURL,
 		ClientID:    clientID,
+		ClientName:  "Herald",
 		CallbackURL: callbackURL,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "herald-web: %v\n", err)
 		os.Exit(1)
+	}
+	if validator.ClientID() != clientID {
+		log.Printf("herald-web: registered with IdP as client_id=%s (configured=%s ignored — provider supports RFC 7591 dynamic registration)",
+			validator.ClientID(), clientID)
 	}
 
 	engine, err := herald.NewEngine(herald.EngineConfig{
