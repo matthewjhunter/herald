@@ -14,12 +14,32 @@ import (
 	"github.com/mmcdole/gofeed"
 )
 
-// sanitizeText strips null bytes and invalid UTF-8 sequences from feed/web
-// content. PostgreSQL rejects text containing 0x00 even though it is a valid
-// UTF-8 byte; SQLite accepts it silently, so the problem only surfaces on PG.
+// sanitizeText normalizes feed/web content at the ingest trust boundary:
+// it drops invalid UTF-8 and all C0/C1 control characters (including DEL),
+// keeping only tab, newline, and carriage return.
+//
+// Two reasons this lives here rather than at each output path:
+//   - PostgreSQL rejects text containing 0x00 even though it is a valid UTF-8
+//     byte; SQLite accepts it silently, so the storage problem only surfaces
+//     on PG.
+//   - An embedded ESC (0x1B) or other control byte lets a hostile feed inject
+//     ANSI terminal sequences that execute when the text is later printed to a
+//     terminal or handed to a downstream text consumer (CLI output, the MCP
+//     server). Article text has no legitimate use for these characters, so
+//     stripping once at ingest protects every consumer — including any added
+//     later — without the lossiness that makes HTML sanitization output-time.
 func sanitizeText(s string) string {
 	s = strings.ToValidUTF8(s, "")
-	return strings.ReplaceAll(s, "\x00", "")
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '\t', '\n', '\r':
+			return r
+		}
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return -1 // drop control character
+		}
+		return r
+	}, s)
 }
 
 type Fetcher struct {
