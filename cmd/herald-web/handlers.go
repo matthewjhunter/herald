@@ -20,7 +20,6 @@ import (
 	"github.com/infodancer/oidclient"
 	herald "github.com/matthewjhunter/herald"
 	"github.com/matthewjhunter/herald/internal/storage"
-	"github.com/microcosm-cc/bluemonday"
 )
 
 // handlers holds dependencies for all HTTP handler methods.
@@ -28,9 +27,8 @@ type handlers struct {
 	engine     *herald.Engine
 	validator  *oidclient.Client
 	pages      map[string]*template.Template // per-page template sets
-	policy     *bluemonday.Policy
-	adminRole  string   // JWT role value that grants admin access (default: "admin")
-	adminUsers []string // fallback email list when the IdP does not issue role claims
+	adminRole  string                        // JWT role value that grants admin access (default: "admin")
+	adminUsers []string                      // fallback email list when the IdP does not issue role claims
 }
 
 // isAdminCtx reports whether the request context carries admin privileges.
@@ -163,8 +161,6 @@ func (h *handlers) init() {
 		t := template.Must(template.New("").Funcs(funcMap).ParseFS(tmplFS, files...))
 		h.pages[page] = t
 	}
-
-	h.policy = bluemonday.UGCPolicy()
 }
 
 // --- Template data types ---
@@ -758,7 +754,7 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 	}
 	seenImages := make(map[string]bool)
 	imageMap, _ := h.engine.GetArticleImageMap(article.ID)
-	sanitized := normalizeContentWithSeen(h.policy.Sanitize(content), seenImages)
+	sanitized := normalizeContentWithSeen(sanitizeHTML(content), seenImages)
 	if len(imageMap) > 0 {
 		sanitized = rewriteImageURLs(sanitized, imageMap)
 	}
@@ -791,7 +787,7 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 			data.LinkedDomain = u.Hostname()
 		}
 		if article.LinkedContent != "" {
-			sanitizedLinked := normalizeContentWithSeen(h.policy.Sanitize(article.LinkedContent), seenImages)
+			sanitizedLinked := normalizeContentWithSeen(sanitizeHTML(article.LinkedContent), seenImages)
 			if len(imageMap) > 0 {
 				sanitizedLinked = rewriteImageURLs(sanitizedLinked, imageMap)
 			}
@@ -992,7 +988,7 @@ func (h *handlers) handleNewsletterView(w http.ResponseWriter, r *http.Request) 
 
 	if issue, err := h.engine.GetLatestNewsletterIssue(newsletterID); err == nil {
 		data.LatestIssue = issue
-		data.SanitizedHTML = template.HTML(h.policy.Sanitize(issue.ContentHTML)) //nolint:gosec
+		data.SanitizedHTML = template.HTML(sanitizeHTML(issue.ContentHTML)) //nolint:gosec
 		data.GeneratedFmt = formatDate(&issue.GeneratedAt)
 		if issue.SentAt != nil {
 			data.SentFmt = formatDate(issue.SentAt)
@@ -1111,7 +1107,7 @@ func (h *handlers) handleNewsletterIssueView(w http.ResponseWriter, r *http.Requ
 			EmailRecipient: nl.EmailRecipient, Enabled: nl.Enabled,
 		},
 		LatestIssue:   issue,
-		SanitizedHTML: template.HTML(h.policy.Sanitize(issue.ContentHTML)), //nolint:gosec
+		SanitizedHTML: template.HTML(sanitizeHTML(issue.ContentHTML)), //nolint:gosec
 		GeneratedFmt:  formatDate(&issue.GeneratedAt),
 	}
 	if issue.SentAt != nil {

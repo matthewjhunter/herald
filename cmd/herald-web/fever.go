@@ -278,6 +278,7 @@ func (h *handlers) feverAddItems(userID int64, r *http.Request, resp map[string]
 		if html == "" {
 			html = row.Summary
 		}
+		html = sanitizeHTML(html)
 
 		items[i] = feverItem{
 			ID:            row.ID,
