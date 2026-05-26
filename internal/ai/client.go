@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -17,6 +18,14 @@ import (
 // debugAI enables verbose logging of all model calls when HERALD_DEBUG_AI=1.
 var debugAI = os.Getenv("HERALD_DEBUG_AI") == "1"
 
+// ErrBackendUnavailable marks errors where the AI backend never produced a
+// verdict: the circuit breaker was open, the request never connected, or the
+// server returned a non-200 status. These failures are infrastructure-transient
+// and not specific to the content being scored, so callers must not count them
+// against a per-article retry budget — doing so lets a brief backend outage
+// permanently orphan whatever was in flight (#100).
+var ErrBackendUnavailable = errors.New("ai backend unavailable")
+
 const (
 	// clientBreakerThreshold is the number of consecutive 4xx errors before the
 	// circuit breaker trips.
@@ -29,6 +38,8 @@ const (
 )
 
 // ClientError represents an HTTP client error (4xx) that should not be retried.
+// StatusCode 0 is the synthetic status used for a circuit-breaker-open
+// rejection, where no request was sent at all.
 type ClientError struct {
 	StatusCode int
 	Body       string
@@ -36,6 +47,14 @@ type ClientError struct {
 
 func (e *ClientError) Error() string {
 	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.Body)
+}
+
+// Is reports every ClientError as ErrBackendUnavailable. A 4xx (auth,
+// bad request, model-not-found) or the breaker-open status (0) means the
+// backend returned no usable verdict for the content — not that this specific
+// article failed scoring — so it must not consume the article's retry budget.
+func (e *ClientError) Is(target error) bool {
+	return target == ErrBackendUnavailable
 }
 
 // openAIClient is a minimal OpenAI-compatible HTTP client for LLM inference.
@@ -193,7 +212,9 @@ func (c *openAIClient) generate(ctx context.Context, model, prompt string, tempe
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", err
+		// Transport-level failure (connection refused, DNS, timeout): the
+		// request never reached the model, so this is backend-unavailable.
+		return "", fmt.Errorf("%w: %v", ErrBackendUnavailable, err)
 	}
 	defer resp.Body.Close()
 
@@ -208,7 +229,8 @@ func (c *openAIClient) generate(ctx context.Context, model, prompt string, tempe
 			c.tripBreaker(resp.StatusCode)
 			return "", &ClientError{StatusCode: resp.StatusCode, Body: string(respBody)}
 		}
-		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, respBody)
+		// 5xx: the server failed to produce a response — backend-unavailable.
+		return "", fmt.Errorf("%w: HTTP %d: %s", ErrBackendUnavailable, resp.StatusCode, respBody)
 	}
 
 	// Successful call — reset the breaker.

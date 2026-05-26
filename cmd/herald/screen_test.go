@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"sync"
@@ -217,7 +218,9 @@ func TestScreenAndScore_MediumFlagSkipsDownstream(t *testing.T) {
 
 // A failed security check re-queues the article and runs nothing downstream.
 func TestScreenAndScore_SecurityErrorRetriesAndSkips(t *testing.T) {
-	f := &fakeAI{secErr: errors.New("model unreachable")}
+	// A genuine model-response failure (the model answered but the verdict was
+	// unparseable) counts against the retry budget.
+	f := &fakeAI{secErr: errors.New("security check returned malformed JSON")}
 	s := &fakeStore{}
 
 	out := runScreen(f, s)
@@ -233,6 +236,31 @@ func TestScreenAndScore_SecurityErrorRetriesAndSkips(t *testing.T) {
 	}
 	if len(s.readStates) != 0 {
 		t.Errorf("no read-state write on transient security error; got %+v", s.readStates)
+	}
+}
+
+// A backend-unavailable error (circuit breaker open, transport failure, non-200)
+// means no verdict was produced for this article, so it must NOT consume the
+// retry budget — otherwise a transient backend outage permanently orphans
+// whatever was in flight (#100).
+func TestScreenAndScore_BackendUnavailableDoesNotBurnRetries(t *testing.T) {
+	// Wrapped exactly as ollama.go propagates a client error.
+	f := &fakeAI{secErr: fmt.Errorf("ollama security check failed: %w", ai.ErrBackendUnavailable)}
+	s := &fakeStore{}
+
+	out := runScreen(f, s)
+
+	if out.scored {
+		t.Error("article must not be scored when the security check errors")
+	}
+	if f.called("SummarizeArticle") || f.called("CurateArticle") {
+		t.Errorf("no downstream model calls on security error; calls=%v", f.calls)
+	}
+	if s.retries != 0 {
+		t.Errorf("backend-unavailable error must not increment retries, got %d", s.retries)
+	}
+	if len(s.readStates) != 0 {
+		t.Errorf("no read-state write on backend-unavailable error; got %+v", s.readStates)
 	}
 }
 
