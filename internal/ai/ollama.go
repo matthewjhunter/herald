@@ -191,8 +191,9 @@ func (p *AIProcessor) ListModels(ctx context.Context) ([]string, error) {
 // truncateText truncates text to maxLen characters.
 // maxPromptContentLen is the maximum number of characters of article content
 // sent to any AI model. All prompt stages (security, summarization, curation)
-// must use the same limit so the security check screens everything downstream
-// models will see.
+// use the same limit, and the article-processing pipeline runs the security
+// check before the summarizer and curator (see screenAndScoreArticle), so the
+// security screen always sees everything those downstream models will see.
 const maxPromptContentLen = 3000
 
 func truncateText(text string, maxLen int) string {

@@ -15,7 +15,6 @@ import (
 	"github.com/matthewjhunter/herald/internal/output"
 	"github.com/matthewjhunter/herald/internal/storage"
 	"github.com/spf13/cobra"
-	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
 )
 
@@ -105,7 +104,7 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 				// Skip entire AI pipeline for articles too short to process meaningfully.
 				// Mark as scored with NULL security score — not a security failure, just
 				// insufficient content.
-				minLen := cfg.Summarization.MinArticleLength
+				minLen := appCfg.Summarization.MinArticleLength
 				if minLen > 0 && len(content) < minLen {
 					formatter.Warning("skipping article %d: content too short (%d < %d)", article.ID, len(content), minLen)
 					zeroInterest := 0.0
@@ -114,93 +113,14 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 					return
 				}
 
-				// 1+2. Summarize and security check concurrently — they are independent.
-				var (
-					aiSummary string
-					secResult *ai.SecurityResult
-					secErr    error
-				)
-				g, gctx := errgroup.WithContext(ctx)
-
-				g.Go(func() error {
-					existing, err := store.GetArticleSummary(userID, article.ID)
-					if err != nil {
-						formatter.Warning("failed to check article summary for %d: %v", article.ID, err)
-						return nil // non-fatal
-					}
-					if existing != nil {
-						aiSummary = existing.AISummary
-						return nil
-					}
-					aiSummary, err = processor.SummarizeArticle(gctx, userID, article.Title, content, cfg.Summarization.MaxSummaryLength)
-					if err != nil {
-						formatter.Warning("summarization failed for article %d: %v", article.ID, err)
-						return nil // non-fatal: scoring can proceed without summary
-					}
-					if herald.LooksLikeGarbage(aiSummary) {
-						formatter.Warning("discarding garbled summary for article %d", article.ID)
-						aiSummary = ""
-					} else if err := store.UpdateArticleAISummary(userID, article.ID, aiSummary); err != nil {
-						formatter.Warning("failed to cache AI summary for %d: %v", article.ID, err)
-					}
-					return nil
-				})
-
-				g.Go(func() error {
-					secResult, secErr = processor.SecurityCheck(gctx, userID, article.Title, content)
-					return nil
-				})
-
-				g.Wait() //nolint:errcheck
-
-				if secErr != nil {
-					formatter.Warning("security check failed for article %d: %v", article.ID, secErr)
-					// Increment retry counter so the article is re-queued on the next
-					// cycle. After 3 failures it falls out of GetUnscoredArticlesForUser
-					// and won't be retried further.
-					store.IncrementAIRetries(userID, article.ID) //nolint:errcheck
+				// 1-3. Security screen gates summarization and interest scoring.
+				outcome := screenAndScoreArticle(ctx, processor, store, formatter, appCfg, userID, article, content)
+				if !outcome.scored {
 					return
 				}
-
-				mediumScore := appCfg.Thresholds.SecurityMediumScore
-				if mediumScore == 0 {
-					mediumScore = 4.0
-				}
-
-				if !secResult.Safe || secResult.Score < mediumScore {
-					// Hard block: below the lower threshold entirely.
-					secScore := secResult.Score
-					interestScore := 0.0
-					store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning, nil) //nolint:errcheck
-					formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, false)
-					return
-				}
-
-				if secResult.Score < appCfg.Thresholds.SecurityScore {
-					// Medium path: passes lower threshold but not full threshold.
-					// Let through without AI processing; flag for audit.
-					secScore := secResult.Score
-					interestScore := 0.0
-					flagged := true
-					store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning, &flagged) //nolint:errcheck
-					formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, false)
-					return
-				}
-
-				// 3. Interest scoring
-				curResult, err := processor.CurateArticle(ctx, userID, article.Title, content, appCfg.Preferences.Keywords)
-				if err != nil {
-					formatter.Warning("curation failed for article %d: %v", article.ID, err)
-					return
-				}
-
-				secScore := secResult.Score
-				interestScore := curResult.InterestScore
-				store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning, nil) //nolint:errcheck
-				formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, true)
 
 				// 4. Vector-based group matching
-				matchedGroupID, articleEmb, err := groupMatcher.MatchArticleToGroup(ctx, userID, article.Title, aiSummary)
+				matchedGroupID, articleEmb, err := groupMatcher.MatchArticleToGroup(ctx, userID, article.Title, outcome.aiSummary)
 				if err != nil {
 					formatter.Warning("vector group match failed: %v", err)
 				}
