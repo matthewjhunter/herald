@@ -55,7 +55,7 @@ func TestExtractImageURLs_Deduplicates(t *testing.T) {
 
 func TestExtractImageURLs_MaxCap(t *testing.T) {
 	var html string
-	for i := 0; i < maxImagesPerArticle+5; i++ {
+	for i := range maxImagesPerArticle + 5 {
 		html += fmt.Sprintf(`<img src="https://example.com/img%d.jpg">`, i)
 	}
 	urls := extractImageURLs(html, nil)
@@ -366,8 +366,8 @@ func TestResolveTwitterPics_ResolvesToImage(t *testing.T) {
 func makeJPEG(t *testing.T, w, h int) []byte {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			img.Set(x, y, color.RGBA{R: 200, G: 100, B: 50, A: 255})
 		}
 	}

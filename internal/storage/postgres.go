@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -154,7 +154,7 @@ func (s *PostgresStore) computeFeedBaseInterval(feedID int64) time.Duration {
 	}
 	var medianGap time.Duration
 	if len(gaps) > 0 {
-		sort.Slice(gaps, func(i, j int) bool { return gaps[i] < gaps[j] })
+		slices.Sort(gaps)
 		medianGap = gaps[len(gaps)/2]
 	}
 	return pickFetchIntervalPG(lastPostAge, medianGap)
@@ -453,7 +453,7 @@ func (s *PostgresStore) UpdateReadState(userID, articleID int64, read bool, inte
 	if interestScore != nil {
 		// AI pipeline: record scores, mark ai_scored=TRUE, do not overwrite user's read flag.
 		// security_flagged uses COALESCE so a nil caller arg preserves the existing value.
-		var flagVal interface{}
+		var flagVal any
 		if securityFlagged != nil {
 			flagVal = *securityFlagged
 		}
@@ -801,7 +801,7 @@ func (s *PostgresStore) GetArticlesByInterestScore(userID int64, threshold float
 		` + filterSQL + `
 		ORDER BY decayed_score DESC
 		LIMIT ? OFFSET ?`
-	args := []interface{}{userID, threshold}
+	args := []any{userID, threshold}
 	args = append(args, filterArgs...)
 	args = append(args, limit, offset)
 	rows, err := s.db.Query(query, args...)
@@ -843,7 +843,7 @@ func (s *PostgresStore) GetUnreadArticlesForUser(userID int64, limit, offset int
 		` + filterSQL + `
 		ORDER BY a.published_date DESC
 		LIMIT ? OFFSET ?`
-	args := []interface{}{userID, userID, userID}
+	args := []any{userID, userID, userID}
 	args = append(args, filterArgs...)
 	args = append(args, limit, offset)
 	rows, err := s.db.Query(query, args...)
@@ -872,7 +872,7 @@ func (s *PostgresStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, off
 		` + filterSQL + `
 		ORDER BY a.published_date DESC
 		LIMIT ? OFFSET ?`
-	args := []interface{}{userID, userID, feedID, userID}
+	args := []any{userID, userID, feedID, userID}
 	args = append(args, filterArgs...)
 	args = append(args, limit, offset)
 	rows, err := s.db.Query(query, args...)
@@ -1000,7 +1000,7 @@ func (s *PostgresStore) GetStarredArticles(userID int64, limit, offset int, filt
 		` + filterSQL + `
 		ORDER BY a.published_date DESC
 		LIMIT ? OFFSET ?`
-	args := []interface{}{userID, userID}
+	args := []any{userID, userID}
 	args = append(args, filterArgs...)
 	args = append(args, limit, offset)
 	rows, err := s.db.Query(query, args...)
@@ -1221,16 +1221,16 @@ func (s *PostgresStore) AddFilterRule(rule *FilterRule) (int64, error) {
 
 func (s *PostgresStore) GetFilterRules(userID int64, feedID *int64) ([]FilterRule, error) {
 	var query string
-	var args []interface{}
+	var args []any
 	if feedID != nil {
 		query = `SELECT id, user_id, feed_id, axis, value, score, created_at
 				 FROM filter_rules WHERE user_id = ? AND (feed_id IS NULL OR feed_id = ?)
 				 ORDER BY axis, value`
-		args = []interface{}{userID, *feedID}
+		args = []any{userID, *feedID}
 	} else {
 		query = `SELECT id, user_id, feed_id, axis, value, score, created_at
 				 FROM filter_rules WHERE user_id = ? ORDER BY axis, value`
-		args = []interface{}{userID}
+		args = []any{userID}
 	}
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -1538,7 +1538,7 @@ func (s *PostgresStore) GetUnreadGroupArticles(userID, groupID int64, limit, off
 		` + filterSQL + `
 		ORDER BY a.published_date DESC
 		LIMIT ? OFFSET ?`
-	args := []interface{}{userID, groupID, userID}
+	args := []any{userID, groupID, userID}
 	args = append(args, filterArgs...)
 	args = append(args, limit, offset)
 	rows, err := s.db.Query(query, args...)
@@ -2726,7 +2726,7 @@ func scanArticlesWithFlags(rows *sql.Rows) ([]Article, error) {
 
 // filterScoreClausePG is identical in logic to filterScoreClause but named
 // distinctly to avoid a duplicate-declaration collision with the SQLite version.
-func filterScoreClausePG(userID int64, threshold *int) (string, []interface{}) {
+func filterScoreClausePG(userID int64, threshold *int) (string, []any) {
 	if threshold == nil {
 		return "", nil
 	}
@@ -2749,5 +2749,5 @@ func filterScoreClausePG(userID int64, threshold *int) (string, []interface{}) {
 			  )
 		) >= ?
 	)`
-	return sql, []interface{}{userID, userID, *threshold}
+	return sql, []any{userID, userID, *threshold}
 }

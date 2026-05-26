@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -40,18 +41,14 @@ func (h *handlers) isAdminCtx(ctx context.Context) bool {
 		role = "admin"
 	}
 	if claims := claimsFromContext(ctx); claims != nil {
-		for _, r := range claims.Roles {
-			if r == role {
-				return true
-			}
+		if slices.Contains(claims.Roles, role) {
+			return true
 		}
 	}
 	// Fallback: check the config email list.
 	if user := userFromContext(ctx); user != nil {
-		for _, email := range h.adminUsers {
-			if email == user.Email {
-				return true
-			}
+		if slices.Contains(h.adminUsers, user.Email) {
+			return true
 		}
 	}
 	return false

@@ -215,7 +215,7 @@ func (f *Formatter) OutputHighInterestNotification(articles []storage.Article, s
 func (f *Formatter) OutputProcessingStatus(articleID int64, title string, interestScore, securityScore float64, safe bool) {
 	switch f.format {
 	case FormatJSON:
-		json.NewEncoder(f.out).Encode(map[string]interface{}{
+		json.NewEncoder(f.out).Encode(map[string]any{
 			"event":          "article_processed",
 			"article_id":     articleID,
 			"title":          title,
@@ -241,12 +241,12 @@ func (f *Formatter) OutputProcessingStatus(articleID int64, title string, intere
 }
 
 // Error outputs an error message to stderr
-func (f *Formatter) Error(format string, args ...interface{}) {
+func (f *Formatter) Error(format string, args ...any) {
 	fmt.Fprintf(f.err, format+"\n", args...)
 }
 
 // Warning outputs a warning message to stderr
-func (f *Formatter) Warning(format string, args ...interface{}) {
+func (f *Formatter) Warning(format string, args ...any) {
 	fmt.Fprintf(f.err, "Warning: "+format+"\n", args...)
 }
 

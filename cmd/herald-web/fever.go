@@ -237,7 +237,7 @@ func (h *handlers) feverAddItems(userID int64, r *http.Request, resp map[string]
 
 	var withIDs []int64
 	if raw := r.FormValue("with_ids"); raw != "" {
-		for _, s := range strings.Split(raw, ",") {
+		for s := range strings.SplitSeq(raw, ",") {
 			if id, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64); err == nil {
 				withIDs = append(withIDs, id)
 			}

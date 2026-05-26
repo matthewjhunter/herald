@@ -258,7 +258,7 @@ func TestGetArticlesByInterestScore(t *testing.T) {
 
 	// Add 3 articles with different interest scores: 6.0, 8.0, 9.0
 	scores := []float64{6.0, 8.0, 9.0}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		article := &Article{
 			FeedID:        feedID,
 			GUID:          string(rune('a' + i)),
@@ -1661,7 +1661,7 @@ func TestAIRetryLimit(t *testing.T) {
 	}
 
 	// Increment retries up to the limit (3).
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := store.IncrementAIRetries(1, articleID); err != nil {
 			t.Fatalf("IncrementAIRetries call %d: %v", i+1, err)
 		}

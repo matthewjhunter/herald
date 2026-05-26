@@ -87,10 +87,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		}
 	}
 
-	maxParallel := cfg.MaxParallel
-	if maxParallel < 1 {
-		maxParallel = 1
-	}
+	maxParallel := max(cfg.MaxParallel, 1)
 
 	var groupMatcher *ai.GroupMatcher
 	if !cfg.ReadOnly && cfg.OllamaBaseURL != "" {
@@ -468,10 +465,7 @@ func (e *Engine) Search(ctx context.Context, userID int64, query string, limit, 
 				})
 
 				// Take top N and merge.
-				n := limit
-				if n > len(candidates) {
-					n = len(candidates)
-				}
+				n := min(limit, len(candidates))
 				// Fetch full articles for semantic hits not already in FTS results.
 				for _, c := range candidates[:n] {
 					if existing, ok := resultMap[c.articleID]; ok {
