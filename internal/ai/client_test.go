@@ -13,6 +13,67 @@ import (
 	"time"
 )
 
+// Every path where generate fails to obtain a model verdict must report
+// ErrBackendUnavailable so the daemon does not burn an article's retry budget
+// on a transient backend problem (#100).
+func TestGenerateReportsBackendUnavailable(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("4xx client error", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotFound) // model-not-found, as in the Olla outage
+			w.Write([]byte(`{"error":"model not found"}`))
+		}))
+		defer srv.Close()
+		_, err := newOpenAIClient(srv.URL, "k").generate(ctx, "m", "hi", 0.7)
+		if !errors.Is(err, ErrBackendUnavailable) {
+			t.Fatalf("4xx: errors.Is(ErrBackendUnavailable) = false; err=%T %v", err, err)
+		}
+	})
+
+	t.Run("5xx server error", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadGateway)
+			w.Write([]byte("upstream down"))
+		}))
+		defer srv.Close()
+		_, err := newOpenAIClient(srv.URL, "k").generate(ctx, "m", "hi", 0.7)
+		if !errors.Is(err, ErrBackendUnavailable) {
+			t.Fatalf("5xx: errors.Is(ErrBackendUnavailable) = false; err=%T %v", err, err)
+		}
+	})
+
+	t.Run("transport failure", func(t *testing.T) {
+		// Point at a closed server so the dial fails (connection refused).
+		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		url := srv.URL
+		srv.Close()
+		_, err := newOpenAIClient(url, "k").generate(ctx, "m", "hi", 0.7)
+		if !errors.Is(err, ErrBackendUnavailable) {
+			t.Fatalf("transport: errors.Is(ErrBackendUnavailable) = false; err=%T %v", err, err)
+		}
+	})
+
+	t.Run("open circuit breaker", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"error":"unauthorized"}`))
+		}))
+		defer srv.Close()
+		c := newOpenAIClient(srv.URL, "bad")
+		for range clientBreakerThreshold {
+			c.generate(ctx, "m", "hi", 0.7) //nolint:errcheck
+		}
+		if !c.isOpen() {
+			t.Fatal("expected breaker open after threshold 4xx")
+		}
+		_, err := c.generate(ctx, "m", "hi", 0.7)
+		if !errors.Is(err, ErrBackendUnavailable) {
+			t.Fatalf("breaker-open: errors.Is(ErrBackendUnavailable) = false; err=%T %v", err, err)
+		}
+	})
+}
+
 func TestCircuitBreakerTripsAfterConsecutive4xx(t *testing.T) {
 	// Server that always returns 401.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

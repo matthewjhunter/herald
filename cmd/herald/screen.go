@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 
 	herald "github.com/matthewjhunter/herald"
 	"github.com/matthewjhunter/herald/internal/ai"
@@ -49,9 +50,14 @@ func screenAndScoreArticle(ctx context.Context, aiProc articleAI, store articleS
 	secResult, err := aiProc.SecurityCheck(ctx, userID, article.Title, content)
 	if err != nil {
 		formatter.Warning("security check failed for article %d: %v", article.ID, err)
-		// Re-queue; after 3 failures the article falls out of the unscored query
-		// and is not retried further.
-		store.IncrementAIRetries(userID, article.ID) //nolint:errcheck
+		// Only a genuine model-response failure (unparseable verdict) counts
+		// against the retry budget; after 3 the article falls out of the unscored
+		// query and is not retried. A backend-unavailable error means we never got
+		// a verdict — re-queue without incrementing so a later cycle retries once
+		// the backend recovers, rather than orphaning it on a transient outage (#100).
+		if !errors.Is(err, ai.ErrBackendUnavailable) {
+			store.IncrementAIRetries(userID, article.ID) //nolint:errcheck
+		}
 		return screenOutcome{}
 	}
 
