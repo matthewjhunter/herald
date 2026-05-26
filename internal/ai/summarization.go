@@ -17,11 +17,11 @@ func (p *AIProcessor) SummarizeArticle(ctx context.Context, userID int64, title,
 		return "", fmt.Errorf("failed to load summarization prompt: %w", err)
 	}
 
-	data := map[string]any{
-		"Title":            title,
-		"Content":          truncateText(content, maxPromptContentLen),
-		"MaxSummaryLength": maxSummaryLength,
+	data, err := fencedArticleData(title, content)
+	if err != nil {
+		return "", fmt.Errorf("failed to prepare summarization prompt content: %w", err)
 	}
+	data["MaxSummaryLength"] = maxSummaryLength
 	prompt, err := ExecutePrompt(promptTemplate, data)
 	if err != nil {
 		return "", fmt.Errorf("failed to render summarization prompt: %w", err)
@@ -74,9 +74,14 @@ func (p *AIProcessor) GenerateGroupSummary(ctx context.Context, userID int64, to
 		return nil, fmt.Errorf("failed to load group summary prompt: %w", err)
 	}
 
+	nonce, err := newFenceNonce()
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare group summary prompt content: %w", err)
+	}
 	data := map[string]any{
-		"Topic":    topic,
-		"Articles": strings.Join(articleList, "\n\n"),
+		"Nonce":    nonce,
+		"Topic":    neutralizeFence(topic),
+		"Articles": neutralizeFence(strings.Join(articleList, "\n\n")),
 	}
 	prompt, err := ExecutePrompt(promptTemplate, data)
 	if err != nil {
@@ -164,14 +169,19 @@ func (p *AIProcessor) GenerateNewsletterContent(ctx context.Context, userID int6
 		articleList = append(articleList, entry)
 	}
 
+	nonce, err := newFenceNonce()
+	if err != nil {
+		return nil, fmt.Errorf("prepare newsletter prompt content: %w", err)
+	}
+	data := map[string]any{
+		"Nonce":              nonce,
+		"NewsletterName":     newsletterName,
+		"CustomInstructions": "",
+		"Articles":           neutralizeFence(strings.Join(articleList, "\n\n")),
+	}
+
 	var prompt string
 	if customPrompt != "" {
-		data := map[string]any{
-			"NewsletterName":     newsletterName,
-			"CustomInstructions": "",
-			"Articles":           strings.Join(articleList, "\n\n"),
-		}
-		var err error
 		prompt, err = ExecutePrompt(customPrompt, data)
 		if err != nil {
 			return nil, fmt.Errorf("render custom newsletter prompt: %w", err)
@@ -180,11 +190,6 @@ func (p *AIProcessor) GenerateNewsletterContent(ctx context.Context, userID int6
 		promptTemplate, err := p.promptLoader.GetPrompt(userID, PromptTypeNewsletter)
 		if err != nil {
 			return nil, fmt.Errorf("load newsletter prompt: %w", err)
-		}
-		data := map[string]any{
-			"NewsletterName":     newsletterName,
-			"CustomInstructions": "",
-			"Articles":           strings.Join(articleList, "\n\n"),
 		}
 		prompt, err = ExecutePrompt(promptTemplate, data)
 		if err != nil {
@@ -259,10 +264,15 @@ func (p *AIProcessor) FindRelatedGroups(ctx context.Context, userID int64, newAr
 	if len(groupDescs) > 0 {
 		groupsText = strings.Join(groupDescs, "\n\n")
 	}
+	nonce, err := newFenceNonce()
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare related groups prompt content: %w", err)
+	}
 	data := map[string]any{
-		"Title":   newArticle.Title,
-		"Summary": truncateText(newArticle.Summary, 500),
-		"Groups":  groupsText,
+		"Nonce":   nonce,
+		"Title":   neutralizeFence(newArticle.Title),
+		"Summary": neutralizeFence(truncateText(newArticle.Summary, 500)),
+		"Groups":  neutralizeFence(groupsText),
 	}
 	prompt, err := ExecutePrompt(promptTemplate, data)
 	if err != nil {
