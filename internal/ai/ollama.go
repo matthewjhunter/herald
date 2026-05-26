@@ -81,9 +81,9 @@ func (p *AIProcessor) SecurityCheck(ctx context.Context, userID int64, title, co
 		return nil, fmt.Errorf("failed to load security prompt: %w", err)
 	}
 
-	data := map[string]any{
-		"Title":   title,
-		"Content": truncateText(content, maxPromptContentLen),
+	data, err := fencedArticleData(title, content)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare security prompt content: %w", err)
 	}
 	prompt, err := ExecutePrompt(promptTemplate, data)
 	if err != nil {
@@ -140,11 +140,11 @@ func (p *AIProcessor) CurateArticle(ctx context.Context, userID int64, title, co
 		return nil, fmt.Errorf("failed to load curation prompt: %w", err)
 	}
 
-	data := map[string]any{
-		"Title":    title,
-		"Content":  truncateText(content, maxPromptContentLen),
-		"Keywords": keywordStr,
+	data, err := fencedArticleData(title, content)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare curation prompt content: %w", err)
 	}
+	data["Keywords"] = keywordStr
 	prompt, err := ExecutePrompt(promptTemplate, data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to render curation prompt: %w", err)
