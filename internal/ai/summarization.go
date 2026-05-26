@@ -17,7 +17,7 @@ func (p *AIProcessor) SummarizeArticle(ctx context.Context, userID int64, title,
 		return "", fmt.Errorf("failed to load summarization prompt: %w", err)
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Title":            title,
 		"Content":          truncateText(content, maxPromptContentLen),
 		"MaxSummaryLength": maxSummaryLength,
@@ -232,10 +232,7 @@ func (p *AIProcessor) FindRelatedGroups(ctx context.Context, userID int64, newAr
 			continue
 		}
 
-		sampleCount := len(articles)
-		if sampleCount > 3 {
-			sampleCount = 3
-		}
+		sampleCount := min(len(articles), 3)
 
 		var sampleTitles []string
 		for i := 0; i < sampleCount; i++ {

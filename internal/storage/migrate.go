@@ -857,7 +857,7 @@ func migrateArticleImages(ctx context.Context, src *tracedDB, dst Store, article
 }
 
 // nullableTime converts a sql.NullTime to a *time.Time for use as a bind arg.
-func nullableTime(nt sql.NullTime) interface{} {
+func nullableTime(nt sql.NullTime) any {
 	if nt.Valid {
 		return nt.Time
 	}

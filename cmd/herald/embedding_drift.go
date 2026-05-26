@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"sort"
+	"strings"
 
 	embedding "github.com/matthewjhunter/go-embedding"
 	herald "github.com/matthewjhunter/herald"
@@ -205,11 +206,11 @@ func printDriftSummary(rs []driftResult) {
 				count++
 			}
 		}
-		bar := ""
+		var bar strings.Builder
 		for i := 0; i < count; i++ {
-			bar += "#"
+			bar.WriteString("#")
 		}
-		fmt.Printf("  %-22s %3d  %s\n", b.label, count, bar)
+		fmt.Printf("  %-22s %3d  %s\n", b.label, count, bar.String())
 	}
 
 	sort.Slice(rs, func(i, j int) bool { return rs[i].Cosine < rs[j].Cosine })

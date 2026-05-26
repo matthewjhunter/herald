@@ -357,8 +357,8 @@ func drawNearest(dst *image.RGBA, src image.Image, srcBounds image.Rectangle) {
 	dh := dst.Bounds().Dy()
 	sw := srcBounds.Dx()
 	sh := srcBounds.Dy()
-	for y := 0; y < dh; y++ {
-		for x := 0; x < dw; x++ {
+	for y := range dh {
+		for x := range dw {
 			sx := x * sw / dw
 			sy := y * sh / dh
 			dst.Set(x, y, src.At(srcBounds.Min.X+sx, srcBounds.Min.Y+sy))

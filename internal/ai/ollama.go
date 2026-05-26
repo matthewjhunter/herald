@@ -38,7 +38,7 @@ type CurationResult struct {
 
 // NewAIProcessor creates a new AI processor backed by an OpenAI-compatible
 // endpoint (LiteLLM, OpenAI, Ollama with --api-key, etc.).
-func NewAIProcessor(baseURL, securityModel, curationModel string, store interface{}, config interface{}) (*AIProcessor, error) {
+func NewAIProcessor(baseURL, securityModel, curationModel string, store any, config any) (*AIProcessor, error) {
 	if baseURL == "" {
 		baseURL = "http://localhost:11434"
 	}
@@ -66,7 +66,7 @@ func NewAIProcessor(baseURL, securityModel, curationModel string, store interfac
 }
 
 // newPromptLoaderSafe creates a PromptLoader with nil-safe type assertions.
-func newPromptLoaderSafe(store, config interface{}) *PromptLoader {
+func newPromptLoaderSafe(store, config any) *PromptLoader {
 	return &PromptLoader{
 		store:  store,
 		config: config,
@@ -81,7 +81,7 @@ func (p *AIProcessor) SecurityCheck(ctx context.Context, userID int64, title, co
 		return nil, fmt.Errorf("failed to load security prompt: %w", err)
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Title":   title,
 		"Content": truncateText(content, maxPromptContentLen),
 	}
@@ -140,7 +140,7 @@ func (p *AIProcessor) CurateArticle(ctx context.Context, userID int64, title, co
 		return nil, fmt.Errorf("failed to load curation prompt: %w", err)
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Title":    title,
 		"Content":  truncateText(content, maxPromptContentLen),
 		"Keywords": keywordStr,

@@ -647,7 +647,7 @@ func newFullTextTestStore(t *testing.T) *storage.SQLiteStore {
 
 func repeatStr(s string, n int) string {
 	var b string
-	for i := 0; i < n; i++ {
+	for range n {
 		b += s
 	}
 	return b

@@ -302,7 +302,7 @@ func TestExtractJSON_StripsMarkdownFences(t *testing.T) {
 			}
 			// Verify the output is parseable — the whole point of
 			// extractJSON is to feed json.Unmarshal something valid.
-			var v map[string]interface{}
+			var v map[string]any
 			if err := json.Unmarshal([]byte(got), &v); err != nil {
 				t.Errorf("extracted JSON did not parse: %v (got %q)", err, got)
 			}

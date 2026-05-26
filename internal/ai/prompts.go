@@ -44,14 +44,14 @@ const (
 
 // PromptLoader handles 3-tier prompt loading: embedded -> config -> database
 type PromptLoader struct {
-	store  interface{}       // storage.Store
-	config interface{}       // *storage.Config
+	store  any               // storage.Store
+	config any               // *storage.Config
 	mu     sync.RWMutex      // protects cache
 	cache  map[string]string // cache of loaded prompts per user
 }
 
 // NewPromptLoader creates a new prompt loader
-func NewPromptLoader(store, config interface{}) *PromptLoader {
+func NewPromptLoader(store, config any) *PromptLoader {
 	return &PromptLoader{
 		store:  store,
 		config: config,
@@ -261,7 +261,7 @@ func (pl *PromptLoader) GetModel(userID int64, promptType PromptType) string {
 }
 
 // ExecutePrompt renders a prompt template with the given data
-func ExecutePrompt(promptTemplate string, data interface{}) (string, error) {
+func ExecutePrompt(promptTemplate string, data any) (string, error) {
 	tmpl, err := template.New("prompt").Parse(promptTemplate)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse prompt template: %w", err)

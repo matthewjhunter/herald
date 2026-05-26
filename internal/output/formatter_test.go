@@ -157,7 +157,7 @@ func TestOutputProcessingStatus_JSON(t *testing.T) {
 
 			f.OutputProcessingStatus(42, "Test Article", 7.5, 8.0, tt.safe)
 
-			var decoded map[string]interface{}
+			var decoded map[string]any
 			if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
 				t.Fatalf("failed to decode JSON: %v", err)
 			}
@@ -188,7 +188,7 @@ func TestOutputHighInterestNotification_JSON(t *testing.T) {
 		t.Fatalf("OutputHighInterestNotification failed: %v", err)
 	}
 
-	var decoded map[string]interface{}
+	var decoded map[string]any
 	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
 		t.Fatalf("failed to decode JSON: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestOutputHighInterestNotification_JSON(t *testing.T) {
 	if decoded["type"] != "high_interest" {
 		t.Errorf("type = %v, want high_interest", decoded["type"])
 	}
-	decodedArticles, ok := decoded["articles"].([]interface{})
+	decodedArticles, ok := decoded["articles"].([]any)
 	if !ok || len(decodedArticles) != 1 {
 		t.Fatalf("expected 1 article in notification, got %v", decoded["articles"])
 	}

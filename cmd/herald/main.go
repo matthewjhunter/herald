@@ -54,10 +54,7 @@ func newGroupMatcher(store storage.Store, appCfg *storage.Config) (*ai.GroupMatc
 // Articles are processed in batches of 100 until the queue is empty.
 // Group summary updates are deferred until all batches complete.
 func processArticlesForUser(ctx context.Context, store storage.Store, processor *ai.AIProcessor, groupMatcher *ai.GroupMatcher, formatter *output.Formatter, appCfg *storage.Config, userID int64) (int, error) {
-	maxParallel := appCfg.Ollama.MaxParallel
-	if maxParallel < 1 {
-		maxParallel = 1
-	}
+	maxParallel := max(appCfg.Ollama.MaxParallel, 1)
 
 	var (
 		mu            sync.Mutex
@@ -249,10 +246,7 @@ func processArticlesForUser(ctx context.Context, store storage.Store, processor 
 // output) from previous cycles. Rejections (garbled, too-long) are logged but
 // not retry-bounded — systematic failures will be re-attempted each cycle.
 func backfillSummariesForUser(ctx context.Context, store storage.Store, processor *ai.AIProcessor, formatter *output.Formatter, appCfg *storage.Config, userID int64) (int, error) {
-	maxParallel := appCfg.Ollama.MaxParallel
-	if maxParallel < 1 {
-		maxParallel = 1
-	}
+	maxParallel := max(appCfg.Ollama.MaxParallel, 1)
 
 	var (
 		mu        sync.Mutex
@@ -334,10 +328,7 @@ func backfillSummariesForUser(ctx context.Context, store storage.Store, processo
 // for articles that error or are too short to embed, matching the engine
 // behavior — prevents infinite retries.
 func backfillEmbeddingsInCycle(ctx context.Context, store storage.Store, groupMatcher *ai.GroupMatcher, formatter *output.Formatter) (int, error) {
-	maxParallel := cfg.Ollama.MaxParallel
-	if maxParallel < 1 {
-		maxParallel = 1
-	}
+	maxParallel := max(cfg.Ollama.MaxParallel, 1)
 
 	model := groupMatcher.Model()
 

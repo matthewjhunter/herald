@@ -40,7 +40,7 @@ func main() {
 
 	var kwList []string
 	if *keywords != "" {
-		for _, kw := range strings.Split(*keywords, ",") {
+		for kw := range strings.SplitSeq(*keywords, ",") {
 			if trimmed := strings.TrimSpace(kw); trimmed != "" {
 				kwList = append(kwList, trimmed)
 			}

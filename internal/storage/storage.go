@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -433,7 +433,7 @@ func (s *SQLiteStore) computeFeedBaseInterval(feedID int64) time.Duration {
 	}
 	var medianGap time.Duration
 	if len(gaps) > 0 {
-		sort.Slice(gaps, func(i, j int) bool { return gaps[i] < gaps[j] })
+		slices.Sort(gaps)
 		medianGap = gaps[len(gaps)/2]
 	}
 
@@ -475,10 +475,9 @@ func applyErrorBackoff(base time.Duration, consecutiveErrors int) time.Duration 
 	if consecutiveErrors <= 0 {
 		return base
 	}
-	n := consecutiveErrors
-	if n > 6 {
-		n = 6 // cap multiplier at 64×
-	}
+	n := min(consecutiveErrors,
+		// cap multiplier at 64×
+		6)
 	backoff := base * time.Duration(1<<n)
 	if max := 30 * 24 * time.Hour; backoff > max {
 		return max
@@ -1000,7 +999,7 @@ func (s *SQLiteStore) UpdateReadState(userID, articleID int64, read bool, intere
 	if interestScore != nil {
 		// AI pipeline: record scores, mark ai_scored=1, do not overwrite user's read flag.
 		// security_flagged uses COALESCE so a nil caller arg preserves the existing value.
-		var flagVal interface{}
+		var flagVal any
 		if securityFlagged != nil {
 			flagVal = *securityFlagged
 		}
@@ -1147,7 +1146,7 @@ func (s *SQLiteStore) GetArticlesByInterestScore(userID int64, threshold float64
 		ORDER BY decayed_score DESC
 		LIMIT ? OFFSET ?
 	`
-	args := []interface{}{userID, threshold}
+	args := []any{userID, threshold}
 	args = append(args, filterArgs...)
 	args = append(args, limit, offset)
 	rows, err := s.db.Query(query, args...)
@@ -1496,7 +1495,7 @@ func (s *SQLiteStore) GetUnreadGroupArticles(userID, groupID int64, limit, offse
 		ORDER BY a.published_date DESC
 		LIMIT ? OFFSET ?
 	`
-	args := []interface{}{userID, groupID, userID}
+	args := []any{userID, groupID, userID}
 	args = append(args, filterArgs...)
 	args = append(args, limit, offset)
 	rows, err := s.db.Query(query, args...)
@@ -1939,7 +1938,7 @@ func (s *SQLiteStore) GetUnreadArticlesForUser(userID int64, limit, offset int, 
 		ORDER BY a.published_date DESC
 		LIMIT ? OFFSET ?
 	`
-	args := []interface{}{userID, userID, userID}
+	args := []any{userID, userID, userID}
 	args = append(args, filterArgs...)
 	args = append(args, limit, offset)
 	rows, err := s.db.Query(query, args...)
@@ -1981,7 +1980,7 @@ func (s *SQLiteStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, offse
 		ORDER BY a.published_date DESC
 		LIMIT ? OFFSET ?
 	`
-	args := []interface{}{userID, userID, feedID, userID}
+	args := []any{userID, userID, feedID, userID}
 	args = append(args, filterArgs...)
 	args = append(args, limit, offset)
 	rows, err := s.db.Query(query, args...)
@@ -2091,7 +2090,7 @@ func (s *SQLiteStore) GetStarredArticles(userID int64, limit, offset int, filter
 		ORDER BY a.published_date DESC
 		LIMIT ? OFFSET ?
 	`
-	args := []interface{}{userID, userID}
+	args := []any{userID, userID}
 	args = append(args, filterArgs...)
 	args = append(args, limit, offset)
 	rows, err := s.db.Query(query, args...)
@@ -2117,7 +2116,7 @@ func (s *SQLiteStore) GetStarredArticles(userID int64, limit, offset int, filter
 // filterScoreClause returns an SQL fragment and bind args that filter articles
 // by additive filter rule scoring. Returns ("", nil) when threshold is nil
 // (no filtering). The caller's query must alias the articles table as "a".
-func filterScoreClause(userID int64, threshold *int) (string, []interface{}) {
+func filterScoreClause(userID int64, threshold *int) (string, []any) {
 	if threshold == nil {
 		return "", nil
 	}
@@ -2140,7 +2139,7 @@ func filterScoreClause(userID int64, threshold *int) (string, []interface{}) {
 			  )
 		) >= ?
 	)`
-	return sql, []interface{}{userID, userID, *threshold}
+	return sql, []any{userID, userID, *threshold}
 }
 
 // --- Article metadata methods ---
@@ -2290,18 +2289,18 @@ func (s *SQLiteStore) AddFilterRule(rule *FilterRule) (int64, error) {
 // returns only rules scoped to that feed plus global rules. If nil, returns all.
 func (s *SQLiteStore) GetFilterRules(userID int64, feedID *int64) ([]FilterRule, error) {
 	var query string
-	var args []interface{}
+	var args []any
 
 	if feedID != nil {
 		query = `SELECT id, user_id, feed_id, axis, value, score, created_at
 				 FROM filter_rules WHERE user_id = ? AND (feed_id IS NULL OR feed_id = ?)
 				 ORDER BY axis, value`
-		args = []interface{}{userID, *feedID}
+		args = []any{userID, *feedID}
 	} else {
 		query = `SELECT id, user_id, feed_id, axis, value, score, created_at
 				 FROM filter_rules WHERE user_id = ?
 				 ORDER BY axis, value`
-		args = []interface{}{userID}
+		args = []any{userID}
 	}
 
 	rows, err := s.db.Query(query, args...)
