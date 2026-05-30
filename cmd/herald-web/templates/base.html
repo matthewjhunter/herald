@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{block "title" .}}Herald{{end}}</title>
-    <link rel="stylesheet" href="/static/pico.min.css?v={{assetVersion}}">
+    <!-- Pico CSS v2.1.1. Regenerate integrity when bumping the file:
+         printf 'sha384-%s\n' "$(openssl dgst -sha384 -binary static/pico.min.css | openssl base64 -A)" -->
+    <link rel="stylesheet" href="/static/pico.min.css?v={{assetVersion}}" integrity="sha384-L1dWfspMTHU/ApYnFiMz2QID/PlP1xCW9visvBdbEkOLkSSWsP6ZJWhPw6apiXxU" crossorigin="anonymous">
     <link rel="stylesheet" href="/static/herald.css?v={{assetVersion}}">
     <script>
         (function() {
@@ -29,7 +31,9 @@
         <button id="theme-toggle" class="theme-toggle outline" aria-label="Toggle theme">☀</button>
     </header>
     {{block "content" .}}{{end}}
-    <script src="/static/htmx.min.js?v={{assetVersion}}"></script>
+    <!-- htmx 2.0.4. Regenerate integrity when bumping the file:
+         printf 'sha384-%s\n' "$(openssl dgst -sha384 -binary static/htmx.min.js | openssl base64 -A)" -->
+    <script src="/static/htmx.min.js?v={{assetVersion}}" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
     <script src="/static/herald.js?v={{assetVersion}}"></script>
 </body>
 </html>
