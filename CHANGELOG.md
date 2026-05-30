@@ -7,188 +7,257 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
+## [0.2.0] - 2026-05-30
 
-- **Embedding sentinel rows now distinguish transient errors from
-  deterministic skips.** Earlier behavior: every failed embed wrote
-  the same `[]byte{0}` sentinel, and `GetArticlesWithoutEmbeddings`
-  treated all sentinels as "row exists, skip forever." A 2026-05-09
-  03:30/03:53 UTC backend-saturation burst sentineled ~15,062
-  articles that should have valid embeddings — those rows were then
-  permanent skip-records that no future cycle would retry.
-
-  Now: `article_embeddings` gains `status SMALLINT`, `attempts INTEGER`,
-  and `error_message TEXT` columns. Three terminal states:
-  - `EmbedStatusOK` (0) — real vector stored, normal case
-  - `EmbedStatusTooShort` (1) — content below minimum length, never retried
-  - `EmbedStatusError` (2) — transient failure, retried while
-    `attempts < EmbedMaxAttempts` (5)
-
-  New storage methods `MarkArticleEmbeddingSkipped` and
-  `MarkArticleEmbeddingFailed` write the appropriate state; the
-  failed-path's `ON CONFLICT DO UPDATE` increments attempts on each
-  retry. `GetArticlesWithoutEmbeddings` returns rows that are
-  missing OR in error state with retries remaining.
-
-  Migration is idempotent: `ALTER TABLE` adds the columns with safe
-  defaults, then two `UPDATE` statements reclassify existing 1-byte
-  legacy sentinels — articles whose body is genuinely too short land
-  in `status=1` (permanent skip), everything else lands in `status=2`
-  (eligible for retry on the next backfill cycle).
-
-  `error_message` is the bonus the original incident motivated. Had
-  this column existed during the 03:30/03:53 burst, we'd have known
-  exactly what the cube/quad backends were saying. Going forward,
-  every error sentinel carries a diagnostic trail.
-
-- **AI calls now send `max_tokens` so reasoning models can finish.**
-  Reasoning-style chat models (Gemma 4, Qwen 3) burn 1500-2000
-  output tokens on a chain-of-thought trace before emitting any
-  response content. Without an explicit `max_tokens`, server-side
-  defaults (typically ~400) get fully consumed by reasoning, and
-  the JSON arrives empty. Herald previously labeled the empty
-  response `"Security response did not match expected JSON format
-  -- possible prompt injection"` and rejected the article — a
-  silent prompt-injection false alarm caused entirely by output
-  truncation. Now sends `max_tokens=2048` on every chat request,
-  which leaves room for reasoning plus a concise JSON object.
-  Empty-response is also given its own distinct error reason
-  (`"... returned no content (likely max_tokens exhausted by
-  model reasoning) -- not scored"`) so future regressions can be
-  diagnosed without conflating with injection signals.
-
-- **AI prompts updated to explicitly forbid markdown code fences
-  around JSON output.** Newer reasoning models tend to wrap their
-  JSON in ```` ```json ```` blocks even when the prompt asks for
-  raw JSON. herald's existing first-`{` to last-`}` extractor
-  tolerates the fences, but the explicit "do NOT wrap in code
-  fences" instruction reduces the failure surface and matches the
-  guidance already present in the newsletter and group_summary
-  prompts. Affected: security, curation, related_groups.
-
-- **CLI no longer silently falls back to a default config when the
-  config file is missing.** Earlier behavior: if `--config` pointed at
-  a nonexistent file (or the default `./config/config.yaml` didn't
-  exist), `loadConfig` quietly used `storage.DefaultConfig`. The result
-  was that an interactive `herald reset embeddings` invoked from `/`
-  inside the container — without the `--config /etc/herald/config.yaml`
-  flag the daemon passes — opened the default SQLite path instead of
-  the production Postgres, talked to an empty DB, and reported
-  nonsense like "no users with subscriptions" against a corpus of
-  19,000 articles.
-
-  Now: missing config is a hard error with a clear remediation hint
-  (run `herald init-config` or pass `--config <path>`). The
-  `init-config` subcommand carries a new `herald.skip-config-load`
-  cobra annotation so it can still bootstrap before any config exists.
+Roughly three months of work since v0.1.0: a PostgreSQL backend, full-text
+and semantic search, AI-generated email digests, and a sustained pass over
+the AI pipeline's reliability and the feed-ingest / rendering security
+boundary. Many of the fixes came directly out of running Herald against a
+~19,000-article production corpus.
 
 ### Added
 
-- **`herald reset embeddings` CLI.** Pure DB state mutator: clears
-  every `article_embeddings` row and sets `article_groups.embedding`
-  to NULL. Used after an embed-format change (e.g. switching from
-  title+content to a metadata-enriched record) when every existing
-  vector becomes incompatible with new ones. Group memberships are
-  preserved; centroids rebuild gradually as articles rejoin groups
-  via the scoring pipeline. The daemon's per-cycle embedding backfill
-  repopulates article embeddings (~16 min for ~19k articles at
-  MaxParallel=8). Confirmation prompt by default; `--yes` for
-  non-interactive. Backed by new `Store.ResetAllArticleEmbeddings`
-  and `Store.ResetAllGroupEmbeddings`.
+- **PostgreSQL storage backend.** Herald now runs on PostgreSQL as well as
+  SQLite, selected at runtime via `NewStore`. A new `migrate-db` command and
+  `MigrateStore` copy a full database — feeds, articles, read state, scores,
+  embeddings — between SQLite and PostgreSQL in either direction.
+
+- **Full-text and semantic search.** A hybrid search engine combines
+  database full-text matching with per-article vector similarity. Exposed
+  through the web UI, a `herald` CLI path, and a new MCP search tool. Article
+  embeddings are persisted by the scoring pipeline rather than recomputed per
+  query.
+
+- **AI-generated email newsletters (#57).** Opt-in digests summarize
+  high-interest articles and topic clusters and deliver them by email.
+
+- **AI score statistics page.** Per-feed donut charts break down interest and
+  security score distributions across the corpus.
+
+- **AI circuit breaker with half-open recovery (#67).** Consecutive backend
+  failures trip a breaker that fails fast without hammering the model; a
+  half-open probe restores traffic once the backend recovers.
+
+- **Operational CLIs for pipeline maintenance:**
+  - `backfill-embeddings` — generate missing per-article embeddings, with a
+    `--reset-errors` flag (#82) to re-queue stuck error rows.
+  - `embedding-drift` — measure cosine distance between stored vectors and
+    what the current pipeline would produce, to detect format drift.
+  - `reset embeddings` — pure DB state mutator: clears every
+    `article_embeddings` row and sets `article_groups.embedding` to NULL.
+    Used after an embed-format change when every existing vector becomes
+    incompatible. Group memberships are preserved; centroids rebuild as
+    articles rejoin groups. Confirmation prompt by default; `--yes` for
+    non-interactive use. Backed by `Store.ResetAllArticleEmbeddings` and
+    `Store.ResetAllGroupEmbeddings`.
+  - `reset-scores` — clear AI scores so articles are re-screened after
+    prompt retuning.
 
 - **Daemon now backfills missing AI summaries.** Articles that pass the
   security check but lose their summary to a transient failure (Ollama
   timeout, garbled output) are re-summarized on the next daemon cycle.
-  Previously these articles were marked `ai_scored=true` and never
-  retried. The pass runs every cycle, regardless of whether new
-  articles were fetched.
+  Previously these were marked `ai_scored=true` and never retried. The pass
+  runs every cycle, regardless of whether new articles were fetched.
 
-- **Daemon now backfills missing per-article embeddings.** Articles
-  fetched before embedding storage was wired up (or that errored at
-  embed time) are filled in each cycle. Previously per-article
-  embeddings were only generated by the `backfill-embeddings` CLI;
-  the scoring pipeline only stored group-centroid embeddings. Runs
-  with bounded parallelism (Ollama.MaxParallel), stores a sentinel
-  on error / too-short content to prevent infinite retries.
+- **Daemon now backfills missing per-article embeddings.** Articles fetched
+  before embedding storage was wired up (or that errored at embed time) are
+  filled in each cycle. Previously per-article embeddings were only generated
+  by the `backfill-embeddings` CLI; the scoring pipeline only stored
+  group-centroid embeddings. Runs with bounded parallelism
+  (Ollama.MaxParallel).
 
-- **Summary backfill now distinguishes deterministic rejections.**
-  When the model returns a summary longer than the original content
-  (too-short content) or longer than `MaxSummaryLength + 15%` (model
-  rambling), the article is marked with a `skip_reason` and dropped
-  from the backfill set — no more retrying these every cycle.
-  Transient errors (Ollama timeout, garbled output that
-  `LooksLikeGarbage` matches) continue to retry as before.
-
-### Fixed
-
-- **Daemon AI passes ran only on cycles with at least one feed due
-  to fetch.** With adaptive fetch scheduling, `next_fetch_at`
-  staggers across feeds, so it's common for an individual cycle to
-  have zero due. The early-return on `len(subscribedFeeds) == 0`
-  bypassed AI processing entirely on those cycles — the
-  unscored-articles loop, summary backfill, and embedding backfill
-  never ran. Removed the early return; the fetch loop is naturally
-  a no-op when no feeds are due, but the AI passes downstream now
-  drain pending work as designed.
+- **Per-feed web management.** Per-user feed rename on the manage-feeds page,
+  an "Unscored" backlog column, a security-flagged warning indicator on
+  articles, and AI-generated headlines on group-summary banners.
 
 ### Changed
 
-- **`article_summaries` schema gains nullable `skip_reason TEXT`
-  column.** A non-null value with empty `ai_summary` marks a
-  sentinel row (deterministic rejection). A successful re-summary
-  via `UpdateArticleAISummary` clears the skip_reason. Migration is
-  idempotent ALTER TABLE — no data conversion needed.
+- **AI client switched from the Ollama SDK to OpenAI-compatible HTTP.**
+  Herald now talks to any OpenAI-compatible inference endpoint, with a
+  per-call timeout on every generate request.
 
-- **Embeddings include article metadata, not just title + content.**
-  Each article's embed text now includes the feed title, author,
-  comma-joined categories, and article title as labeled `key: value`
-  lines, plus the body. Stable structured fields give the embedder a
-  basis to learn metadata as features — articles from "Schneier on
-  Security" cluster differently from articles on the same topic from
-  "Hacker News" because the source itself is part of the vector.
-  Implementation uses go-embedding v0.4.1's `FormatRecordForTask`
-  with `TaskClustering`, which also wraps the text in the model's
-  task-specific prompt prefix (`clustering:\n` for nomic,
-  `task: clustering | query:\n` for EmbeddingGemma — v0.4.1 places
-  field labels at column 0 below the prefix line).
+- **Authentication moved to `infodancer/oidclient`** with RFC 7591 dynamic
+  client registration, replacing the bespoke `internal/auth` package.
 
-  This invalidates every existing embedding — old vectors were built
-  from `title + content` only and are not directly comparable to the
-  new metadata-enriched vectors. Operators should clear
-  `article_embeddings` and `article_groups.embedding` after deploy;
-  the daemon's existing per-cycle backfill repopulates over the
-  following cycles.
+- **Embeddings include article metadata, not just title + content.** Each
+  article's embed text now includes the feed title, author, comma-joined
+  categories, and article title as labeled `key: value` lines, plus the body.
+  Stable structured fields give the embedder a basis to learn metadata as
+  features — articles from "Schneier on Security" cluster differently from
+  articles on the same topic from "Hacker News" because the source itself is
+  part of the vector. Implementation uses go-embedding v0.4.1's
+  `FormatRecordForTask` with `TaskClustering`, which also wraps the text in
+  the model's task-specific prompt prefix (`clustering:\n` for nomic,
+  `task: clustering | query:\n` for EmbeddingGemma).
+
+  This invalidates every existing embedding — old vectors were built from
+  `title + content` only and are not directly comparable to the new
+  metadata-enriched vectors. Operators should clear `article_embeddings` and
+  `article_groups.embedding` after deploy; the daemon's per-cycle backfill
+  repopulates over the following cycles.
+
+- **Embedding length enforcement delegated to go-embedding.** Bumped to
+  `go-embedding v0.4.x` and removed herald's local 7500-byte cap in
+  `internal/ai/grouping.go`. The library applies a per-model byte budget
+  (6000 for nomic-embed-text — empirically tighter than the prior 7500 for
+  dense English at ~3 bytes/token) with UTF-8-safe truncation, and fixes a
+  bug where tagged model names (e.g. `nomic-embed-text:latest`) silently
+  bypassed enforcement. Production was hitting this: ~14% of articles had
+  embed-error sentinels because oversized payloads cleared herald's byte cap
+  but exceeded the backend's token limit.
+
+- **Embedding configuration moved from YAML to environment variables.** The
+  embedder is now built from `EMBEDDING_BACKEND`, `EMBEDDING_BASE_URL`,
+  `EMBEDDING_MODEL`, `EMBEDDING_API_KEY`, and `EMBEDDING_STRICT`, with
+  `HERALD_EMBED_*` overrides for herald-specific tuning. One set of env vars
+  drives every app in the ecosystem (herald, memstore, …) without duplicating
+  values across config files. Backed by go-embedding v0.3.0+.
+
+- **AI scoring recalibrated.** Scoring prompts retuned; the security prompt
+  narrowed to technical threats only; linked article content is now included
+  in summarization and scoring; article bodies are stripped of URLs and
+  markup before embedding (#84).
+
+- **Whole AI pass per cycle.** All unscored articles are processed each cycle
+  (previously capped at the first 100), and the pipeline runs articles with
+  bounded parallelism.
+
+- **PostgreSQL connection pool capped (#66)** to prevent ephemeral-port
+  exhaustion under the per-cycle AI fan-out.
+
+- **AI calls now send `max_tokens=2048`** so reasoning models (Gemma 4,
+  Qwen 3) don't exhaust the server default on chain-of-thought and return
+  empty JSON.
+
+- **Schema state columns for retry classification.** `article_summaries`
+  gains a nullable `skip_reason TEXT` (a non-null value with empty
+  `ai_summary` marks a deterministic-rejection sentinel; a successful
+  re-summary clears it). `article_embeddings` gains `status SMALLINT`,
+  `attempts INTEGER`, and `error_message TEXT`. Both migrations are
+  idempotent `ALTER TABLE`s.
 
 - **`Store.GetFeed(id)` added.** Single-row feed lookup used by
-  `BuildArticleEmbedInput` to fetch the feed title at embed time.
-  Returns the row regardless of `enabled`/`status` (metadata
-  consumers need the title even for disabled feeds).
+  `BuildArticleEmbedInput` to fetch the feed title at embed time. Returns the
+  row regardless of `enabled`/`status` (metadata consumers need the title
+  even for disabled feeds).
 
-- **Embedding length enforcement delegated to go-embedding.** Bumped
-  to `go-embedding v0.4.1` and removed herald's local 7500-byte cap
-  in `internal/ai/grouping.go`. The library applies a per-model byte
-  budget (now 6000 for nomic-embed-text — empirically tighter than
-  the prior 7500 for dense English at ~3 bytes/token) with
-  UTF-8-safe truncation, and v0.3.1 fixes a bug where tagged model
-  names (e.g. `nomic-embed-text:latest`) silently bypassed
-  enforcement. Production was hitting this: ~14% of articles had
-  embed-error sentinels because oversized payloads cleared herald's
-  byte cap but exceeded the backend's token limit.
+### Fixed
 
-- **Embedding configuration moved from YAML to environment variables.**
-  The embedder is now built from `EMBEDDING_BACKEND`, `EMBEDDING_BASE_URL`,
-  `EMBEDDING_MODEL`, `EMBEDDING_API_KEY`, and `EMBEDDING_STRICT`, with
-  `HERALD_EMBED_*` overrides for herald-specific tuning. This lets a single
-  set of env vars drive every app in the ecosystem (herald, memstore, …)
-  without duplicating values across config files. Backed by
-  github.com/matthewjhunter/go-embedding v0.3.0.
+- **Backend-unavailable AI errors no longer burn the per-article retry
+  budget (#100, #107).** `GetUnscoredArticlesForUser` excludes articles with
+  `ai_retries >= 3`, and the screening path previously incremented
+  `ai_retries` on *any* error — including circuit-breaker-open rejections,
+  transport failures, and non-200 responses. A transient backend outage then
+  burned all three retries in a few cycles without a single genuine verdict,
+  permanently excluding whatever was in flight. A new `ai.ErrBackendUnavailable`
+  marks every no-verdict path; both the CLI screening path and the MCP poller
+  path now skip the increment for it, so the article stays eligible and a
+  later cycle retries once the backend recovers. Genuine model-response
+  failures (unparseable verdict) still count toward the give-up cap.
+
+- **Several infinite-reprocessing loops closed.** The daemon no longer loops
+  on articles with no content; backfill no longer retries un-embeddable
+  articles forever; and unbounded AI reprocessing is now capped at three
+  attempts before the article drops out of the unscored queue. Too-short
+  articles are marked scored rather than retried indefinitely.
+
+- **Embedding sentinel rows now distinguish transient errors from
+  deterministic skips.** Earlier behavior: every failed embed wrote the same
+  `[]byte{0}` sentinel, and `GetArticlesWithoutEmbeddings` treated all
+  sentinels as "row exists, skip forever." A 2026-05-09 03:30/03:53 UTC
+  backend-saturation burst sentineled ~15,062 articles that should have valid
+  embeddings — those rows were then permanent skip-records that no future
+  cycle would retry. Now the three terminal states (`EmbedStatusOK`,
+  `EmbedStatusTooShort`, `EmbedStatusError`) are tracked explicitly:
+  too-short content is a permanent skip, transient errors are retried while
+  `attempts < EmbedMaxAttempts` (5), and the migration reclassifies existing
+  1-byte legacy sentinels by body length. `error_message` now carries a
+  diagnostic trail for every error sentinel.
+
+- **Misleading security false-positives from `max_tokens` exhaustion.**
+  Reasoning-style models burn 1500-2000 output tokens on a chain-of-thought
+  trace before emitting content; without an explicit `max_tokens`, the
+  server-side default (~400) was fully consumed by reasoning and the JSON
+  arrived empty. Herald previously labeled the empty response a possible
+  prompt injection and rejected the article — a silent false alarm caused
+  entirely by output truncation. Empty responses now get their own distinct
+  error reason so future regressions aren't conflated with injection signals.
+
+- **AI passes skipped on cycles with no feed due to fetch (#74).** With
+  adaptive fetch scheduling, `next_fetch_at` staggers across feeds, so it's
+  common for a cycle to have zero due. The early-return on
+  `len(subscribedFeeds) == 0` bypassed AI processing entirely on those cycles —
+  the unscored loop, summary backfill, and embedding backfill never ran. The
+  early return is removed; the fetch loop is naturally a no-op when no feeds
+  are due, but the downstream AI passes now drain pending work as designed.
+
+- **CLI no longer silently falls back to a default config when the config
+  file is missing.** Earlier, a missing `--config` (or absent default
+  `./config/config.yaml`) quietly used `storage.DefaultConfig`, so an
+  interactive `herald reset embeddings` run inside the container without the
+  daemon's `--config` flag opened the default SQLite path instead of the
+  production Postgres and reported nonsense against an empty DB. Missing
+  config is now a hard error with a remediation hint; `init-config` carries a
+  `herald.skip-config-load` annotation so it can still bootstrap.
+
+- **Summary backfill distinguishes deterministic rejections.** A summary
+  longer than the original content (too-short content) or longer than
+  `MaxSummaryLength + 15%` (model rambling) is marked with a `skip_reason`
+  and dropped from the backfill set instead of being retried every cycle.
+  Transient errors still retry.
+
+- **AI scoring correctness.** Security scores are normalized when a model
+  emits a 0–1 scale instead of 0–10; the security check retries on
+  JSON-parse failure instead of hard-blocking; no `security_score=0` is
+  recorded for content-too-short / no-content skips; and a hardcoded interest
+  score in `updateGroupSummary` is fixed.
+
+- **Concurrent map-write crash in the `PromptLoader` cache.**
+
+- **Spread embedding retries across cycles** via time-based eligibility so a
+  large error backlog doesn't re-attempt all at once.
+
+- **Web UI fixes.** Sidebar active-state via out-of-band swap on article-list
+  requests; post-login redirect no longer lands on an HTMX partial URL;
+  donut-chart segment offsets and the 100%-single-segment case; misleading
+  relative dates for feeds without a time component (#56); per-user
+  feed-title overrides respected in the sidebar; article links forced to open
+  in a new tab.
+
+- **Readability / full-text extraction.** Rejects contact/sidebar
+  boilerplate and extractions that don't overlap the feed content; skips
+  image URLs and non-HTML responses in link detection; suppresses fetches for
+  YouTube Shorts and `youtu.be` URLs; doesn't replace intentional short posts
+  with readability boilerplate.
+
+### Security
+
+- **Security check runs before summarization and curation (#90).**
+  Prompt-injection content is screened before any model that might act on it
+  sees it, and the summarize/curate stages are gated on the verdict.
+
+- **Prompt hardening.** AI prompts hardened against injection; prompt fences
+  hardened against delimiter breakout (#89); the group-matching prompt
+  hardened against false positives; JSON-parse failures treated as security
+  failures.
+
+- **Output and ingest sanitization.** HTML is sanitized at every rendering
+  output path, not just the web view (#91); control characters (#98) and null
+  bytes are stripped from feed and full-text content at ingest.
+
+- **Third-party assets pinned with Subresource Integrity (#106).** htmx and
+  Pico CSS now carry SHA-384 `integrity` hashes with `crossorigin`, so a
+  tampered `/static` asset is rejected by the browser.
+
+- **Dependency security.** `go-jose/v4` bumped to v4.1.4 for GO-2026-4945;
+  the OIDC client updated to an RFC 7591-conformant release.
 
 ### Removed
 
-- **`ollama.embedding_model` YAML field.** Set `EMBEDDING_MODEL`
-  (or `HERALD_EMBED_MODEL`) instead. If unset, falls back to
-  `nomic-embed-text` via `embedding.DefaultConfig`. Existing YAML files
-  with this field continue to parse but the value is ignored.
+- **`ollama.embedding_model` YAML field.** Set `EMBEDDING_MODEL` (or
+  `HERALD_EMBED_MODEL`) instead. If unset, falls back to `nomic-embed-text`
+  via `embedding.DefaultConfig`. Existing YAML files with this field continue
+  to parse but the value is ignored.
 
 ## [1.0.0] - 2026-02-17
 
