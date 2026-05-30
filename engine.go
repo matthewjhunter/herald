@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -216,7 +217,14 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 
 				if secErr != nil {
 					log.Printf("herald: security check failed for article %d: %v", article.ID, secErr)
-					e.store.IncrementAIRetries(userID, article.ID) //nolint:errcheck
+					// A backend-unavailable error (breaker open, transport failure,
+					// non-200) means no verdict was produced for this article, so it
+					// must not consume the retry budget — otherwise a transient outage
+					// orphans whatever was in flight (#100). Genuine model-response
+					// failures still count toward the give-up cap.
+					if !errors.Is(secErr, ai.ErrBackendUnavailable) {
+						e.store.IncrementAIRetries(userID, article.ID) //nolint:errcheck
+					}
 					return
 				}
 
@@ -264,7 +272,11 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 				curResult, err := e.ai.CurateArticle(ctx, userID, article.Title, content, e.config.Preferences.Keywords)
 				if err != nil {
 					log.Printf("herald: curation failed for article %d: %v", article.ID, err)
-					e.store.IncrementAIRetries(userID, article.ID) //nolint:errcheck
+					// See the security-check branch above: don't burn the retry
+					// budget when the backend never produced a verdict (#100).
+					if !errors.Is(err, ai.ErrBackendUnavailable) {
+						e.store.IncrementAIRetries(userID, article.ID) //nolint:errcheck
+					}
 					return
 				}
 
