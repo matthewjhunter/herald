@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to FeedReader will be documented in this file.
+All notable changes to Herald will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -259,7 +259,7 @@ boundary. Many of the fixes came directly out of running Herald against a
   via `embedding.DefaultConfig`. Existing YAML files with this field continue
   to parse but the value is ignored.
 
-## [1.0.0] - 2026-02-17
+## [0.1.0] - 2026-03-03
 
 ### Added
 
@@ -322,33 +322,6 @@ boundary. Many of the fixes came directly out of running Herald against a
 - Efficient database queries with indexes
 - Deduplication at database level (GUID-based)
 - Optional cron-based automation
-
-### Future Enhancements (Planned)
-
-#### Phase 2
-- Multi-user support with per-user read states
-- Web interface for article browsing
-- Full-text article extraction from web pages
-- Learning mechanism based on reading patterns
-- Explicit feedback system (like/dislike)
-- Advanced analytics dashboard
-
-#### Phase 3
-- Mobile app integration
-- Browser extension
-- API for third-party integrations
-- Advanced filtering and categorization
-- Collaborative filtering recommendations
-- Feed discovery and suggestions
-
-## [0.1.0] - Development
-
-### Initial Development
-- Project scaffolding and Go module initialization
-- Database schema design
-- OPML parser implementation
-- Feed fetcher core logic
-- Basic CLI structure
 
 ---
 
