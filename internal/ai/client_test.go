@@ -74,6 +74,40 @@ func TestGenerateReportsBackendUnavailable(t *testing.T) {
 	})
 }
 
+// BackendAvailable is the staged pipeline's once-per-stage breaker probe. It
+// must mirror the breaker: true while closed, false once open, and true again
+// the moment the cooldown elapses (half-open allows probes).
+func TestBackendAvailableTracksBreaker(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"unauthorized"}`)) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	c := newOpenAIClient(srv.URL, "bad")
+	c.breakerCooldown = 10 * time.Millisecond
+	p := &AIProcessor{client: c}
+	ctx := context.Background()
+
+	if !p.BackendAvailable() {
+		t.Fatal("expected BackendAvailable true before any failures")
+	}
+
+	for range clientBreakerThreshold {
+		c.generate(ctx, "m", "hi", 0.7) //nolint:errcheck
+	}
+	if p.BackendAvailable() {
+		t.Fatal("expected BackendAvailable false once the breaker is open")
+	}
+
+	// After the cooldown the breaker goes half-open and probes are allowed, so
+	// the pipeline should attempt the stage again.
+	time.Sleep(15 * time.Millisecond)
+	if !p.BackendAvailable() {
+		t.Fatal("expected BackendAvailable true after cooldown (half-open)")
+	}
+}
+
 func TestCircuitBreakerTripsAfterConsecutive4xx(t *testing.T) {
 	// Server that always returns 401.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -24,6 +24,16 @@ func (p *AIProcessor) withCallTimeout(parent context.Context) (context.Context, 
 	return context.WithTimeout(parent, p.callTimeout)
 }
 
+// BackendAvailable reports whether the LLM backend is reachable right now —
+// i.e. the circuit breaker is not open. The staged pipeline checks this once at
+// the top of each stage so it can skip the whole stage with a single log line
+// instead of attempting (and logging) one blocked call per article while the
+// breaker is open. Probe requests are allowed through once the cooldown elapses,
+// so this returns true again as soon as the breaker transitions to half-open.
+func (p *AIProcessor) BackendAvailable() bool {
+	return !p.client.isOpen()
+}
+
 type SecurityResult struct {
 	Safe          bool    `json:"safe"`
 	Score         float64 `json:"score"`
