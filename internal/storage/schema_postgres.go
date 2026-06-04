@@ -250,4 +250,23 @@ CREATE TABLE IF NOT EXISTS newsletter_issues (
 );
 CREATE INDEX IF NOT EXISTS idx_newsletter_issues_newsletter ON newsletter_issues(newsletter_id);
 CREATE INDEX IF NOT EXISTS idx_newsletter_issues_generated ON newsletter_issues(generated_at DESC);
+
+CREATE TABLE IF NOT EXISTS ai_summaries (
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id          BIGINT NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'generating',
+    model            TEXT NOT NULL DEFAULT '',
+    prompt           TEXT NOT NULL DEFAULT '',
+    headline         TEXT NOT NULL DEFAULT '',
+    content_html     TEXT NOT NULL DEFAULT '',
+    article_ids_json TEXT NOT NULL DEFAULT '[]',
+    article_count    INTEGER NOT NULL DEFAULT 0,
+    input_tokens     INTEGER NOT NULL DEFAULT 0,
+    output_tokens    INTEGER NOT NULL DEFAULT 0,
+    error            TEXT NOT NULL DEFAULT '',
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    generated_at     TIMESTAMPTZ,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_ai_summaries_user ON ai_summaries(user_id, created_at DESC);
 `

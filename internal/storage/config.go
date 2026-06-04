@@ -35,6 +35,7 @@ type Config struct {
 		Summarization string `yaml:"summarization,omitempty"`
 		GroupSummary  string `yaml:"group_summary,omitempty"`
 		Newsletter    string `yaml:"newsletter,omitempty"`
+		Summary       string `yaml:"summary,omitempty"`
 	} `yaml:"prompts,omitempty"`
 
 	Summarization struct {
@@ -63,6 +64,7 @@ type Config struct {
 		Summarization float64 `yaml:"summarization"`
 		GroupSummary  float64 `yaml:"group_summary"`
 		Newsletter    float64 `yaml:"newsletter"`
+		Summary       float64 `yaml:"summary"`
 	} `yaml:"temperatures,omitempty"`
 
 	Email struct {
@@ -73,6 +75,21 @@ type Config struct {
 		FromAddress string `yaml:"from_address"`
 		FromName    string `yaml:"from_name"`
 	} `yaml:"email,omitempty"`
+
+	// Summary configures the AI Summary feature's cloud LLM (e.g. Claude via the
+	// Nenya gateway). BaseURL empty disables the feature. The API key is NOT read
+	// from config — it comes from the HERALD_SUMMARY_API_KEY environment variable
+	// so the secret is never committed.
+	Summary struct {
+		BaseURL          string        `yaml:"base_url"`           // OpenAI-compatible /v1 endpoint
+		Model            string        `yaml:"model"`              // e.g. claude-sonnet-4-6
+		MinInterestScore float64       `yaml:"min_interest_score"` // interest floor for included articles
+		MinSecurityScore float64       `yaml:"min_security_score"` // security floor (gate)
+		MaxInputTokens   int           `yaml:"max_input_tokens"`   // budget bound; trims oldest overflow
+		BodyCharCap      int           `yaml:"body_char_cap"`      // per-article body truncation
+		MaxOutputTokens  int           `yaml:"max_output_tokens"`  // completion cap
+		Timeout          time.Duration `yaml:"timeout"`
+	} `yaml:"summary,omitempty"`
 }
 
 // DefaultConfig returns a config with sensible defaults
@@ -98,5 +115,14 @@ func DefaultConfig() *Config {
 	cfg.Temperatures.Curation = 0.5
 	cfg.Temperatures.Summarization = 0.3
 	cfg.Temperatures.GroupSummary = 0.5
+	cfg.Temperatures.Summary = 0.6
+	// AI Summary feature: disabled until Summary.BaseURL is set.
+	cfg.Summary.Model = "claude-sonnet-4-6"
+	cfg.Summary.MinInterestScore = 7.0
+	cfg.Summary.MinSecurityScore = 7.0
+	cfg.Summary.MaxInputTokens = 170000
+	cfg.Summary.BodyCharCap = 6000
+	cfg.Summary.MaxOutputTokens = 16000
+	cfg.Summary.Timeout = 5 * time.Minute
 	return cfg
 }

@@ -106,6 +106,12 @@ func main() {
 	engine, err := herald.NewEngine(herald.EngineConfig{
 		DBPath:   db,
 		ReadOnly: true,
+		// AI Summary cloud backend — built even though the engine is read-only
+		// (it is one streaming HTTPS call, not the Olla pipeline). The key comes
+		// from the environment so it is never committed to config.
+		SummaryBaseURL: cfg.Summary.BaseURL,
+		SummaryModel:   cfg.Summary.Model,
+		SummaryAPIKey:  os.Getenv("HERALD_SUMMARY_API_KEY"),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "herald-web: %v\n", err)

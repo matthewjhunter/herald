@@ -7,6 +7,18 @@ db   = "/var/lib/herald/herald.db"
 # TCP address to listen on.
 addr = ":8080"
 
+# ── AI Summary ────────────────────────────────────────────────────────────────
+# Optional. Enables the "AI Summary" feature: an on-demand, long-context digest
+# of the user's high-interest unread articles, generated in one streaming call
+# to an OpenAI-compatible cloud gateway (e.g. Claude via Nenya). Omit the whole
+# [summary] block to leave the feature disabled.
+#
+# The API key is NOT configured here — it is read from the
+# HERALD_SUMMARY_API_KEY environment variable so the secret is never committed.
+# [summary]
+# base_url = "https://nenya.example.net/v1"   # OpenAI-compatible /v1 endpoint
+# model    = "claude-sonnet-4-6"
+
 [webauth]
 # OIDC issuer URL — enables autodiscovery of JWKS, authorize, and token
 # endpoints.  Set this and you can omit webauth_url, tenant_id, and jwks_url.

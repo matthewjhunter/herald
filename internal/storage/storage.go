@@ -151,6 +151,27 @@ type NewsletterStats struct {
 	IssueCount   int
 }
 
+// AISummary is a single on-demand digest of a user's high-interest unread
+// backlog, generated in one long-context cloud-model call. Status moves
+// generating → done | failed. ArticleIDs records exactly which articles the
+// digest covered, so "mark all as read" can mark precisely those.
+type AISummary struct {
+	ID           int64
+	UserID       int64
+	Status       string // "generating", "done", "failed"
+	Model        string
+	Prompt       string
+	Headline     string
+	ContentHTML  string
+	ArticleIDs   []int64
+	ArticleCount int
+	InputTokens  int
+	OutputTokens int
+	Error        string
+	CreatedAt    time.Time
+	GeneratedAt  *time.Time
+}
+
 type UserPrompt struct {
 	UserID         int64
 	PromptType     string

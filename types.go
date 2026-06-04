@@ -15,6 +15,13 @@ type EngineConfig struct {
 	UserID                  int64    // primary user ID; DB preferences override CLI flags
 	ReadOnly                bool     // when true, skip AI processor and fetcher creation
 	MaxParallel             int      // max concurrent AI pipeline workers; 0 or 1 = serial
+
+	// AI Summary cloud backend (independent of ReadOnly — the read-only web
+	// process still offers it). Empty SummaryBaseURL disables the feature. The
+	// API key comes from the environment, never config.
+	SummaryBaseURL string
+	SummaryModel   string // optional override; defaults to the config model
+	SummaryAPIKey  string
 }
 
 // User represents a registered household member.
@@ -103,6 +110,26 @@ type NewsletterStats struct {
 	NewsletterID int64  `json:"newsletter_id"`
 	Name         string `json:"name"`
 	IssueCount   int    `json:"issue_count"`
+}
+
+// AISummary is an on-demand, long-context digest of a user's high-interest
+// unread backlog. Status moves generating → done | failed; ArticleIDs records
+// exactly which articles the digest covered so "mark all as read" is precise.
+type AISummary struct {
+	ID           int64      `json:"id"`
+	UserID       int64      `json:"user_id"`
+	Status       string     `json:"status"`
+	Model        string     `json:"model,omitempty"`
+	Prompt       string     `json:"prompt,omitempty"`
+	Headline     string     `json:"headline,omitempty"`
+	ContentHTML  string     `json:"content_html,omitempty"`
+	ArticleIDs   []int64    `json:"article_ids,omitempty"`
+	ArticleCount int        `json:"article_count"`
+	InputTokens  int        `json:"input_tokens,omitempty"`
+	OutputTokens int        `json:"output_tokens,omitempty"`
+	Error        string     `json:"error,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	GeneratedAt  *time.Time `json:"generated_at,omitempty"`
 }
 
 // ArticleGroup represents a cluster of articles covering the same topic/event.

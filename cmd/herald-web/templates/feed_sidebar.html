@@ -11,6 +11,11 @@
        class="{{if .ActiveStarred}}active{{end}}">
         Starred
     </a>
+    <a href="#" hx-get="/summary" hx-target="#article-list" hx-swap="innerHTML"
+       hx-on:click="heraldClearReadingPane()"
+       class="{{if .ActiveSummary}}active{{end}}">
+        AI Summary
+    </a>
     {{if .Groups}}
     <hr>
     {{range .Groups}}
