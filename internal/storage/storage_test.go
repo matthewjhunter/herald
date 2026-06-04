@@ -2592,9 +2592,12 @@ func TestGetUngroupedEmbeddedArticles(t *testing.T) {
 		now := time.Now()
 		old := now.Add(-100 * time.Hour)
 		vec := []byte{1, 2, 3, 4}
+		// All articles are security-passed so the test isolates the embedding,
+		// grouping, and recency filters rather than the security gate.
 		mk := func(guid string, pub time.Time) int64 {
 			id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: guid, Title: guid,
 				URL: "https://example.com/" + guid, PublishedDate: &pub})
+			store.MarkSecurityScored(1, id, 9, "ok", false) //nolint:errcheck
 			return id
 		}
 
@@ -2619,8 +2622,17 @@ func TestGetUngroupedEmbeddedArticles(t *testing.T) {
 		errored := mk("errored", now)
 		store.MarkArticleEmbeddingFailed(errored, model, "boom") //nolint:errcheck
 
+		// Excluded: embedded + recent + ungrouped but NOT security-passed.
+		blocked := mk("blocked", now)
+		store.StoreArticleEmbedding(blocked, vec, model) //nolint:errcheck
+		// Overwrite the passing verdict with a failing one.
+		zero := 0.0
+		secScore := 2.0
+		reason := "blocked"
+		store.UpdateReadState(1, blocked, false, &zero, &secScore, &reason, nil) //nolint:errcheck
+
 		since := now.Add(-48 * time.Hour)
-		got, err := store.GetUngroupedEmbeddedArticles(1, model, since, 10)
+		got, err := store.GetUngroupedEmbeddedArticles(1, model, 7.0, since, 10)
 		if err != nil {
 			t.Fatalf("GetUngroupedEmbeddedArticles: %v", err)
 		}

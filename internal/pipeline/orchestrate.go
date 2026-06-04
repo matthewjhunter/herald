@@ -120,7 +120,7 @@ func (s *Stage) clusterRecent(ctx context.Context) error {
 		return nil
 	}
 	since := time.Now().Add(-s.recencyWindow())
-	cohort, err := s.Store.GetUngroupedEmbeddedArticles(s.UserID, s.Embedder.Model(), since, clusterCohortLimit)
+	cohort, err := s.Store.GetUngroupedEmbeddedArticles(s.UserID, s.Embedder.Model(), s.Cfg.Thresholds.SecurityScore, since, clusterCohortLimit)
 	if err != nil {
 		return err
 	}

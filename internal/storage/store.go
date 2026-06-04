@@ -82,7 +82,7 @@ type Store interface {
 	GetUnsummarizedArticleCount(userID int64) (int, error)
 	GetUnsummarizedScoredArticles(userID int64, securityThreshold float64, limit int) ([]Article, error)
 	GetUnscoredCurationArticles(userID int64, securityThreshold float64, limit int) ([]Article, error)
-	GetUngroupedEmbeddedArticles(userID int64, model string, since time.Time, limit int) ([]Article, error)
+	GetUngroupedEmbeddedArticles(userID int64, model string, securityThreshold float64, since time.Time, limit int) ([]Article, error)
 	GetArticlesNeedingFullText(limit int) ([]Article, error)
 	UpdateArticleContent(articleID int64, content string) error
 	UpdateArticleLinkedContent(articleID int64, linkedURL, linkedContent string) error

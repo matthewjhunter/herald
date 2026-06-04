@@ -998,18 +998,21 @@ func (s *PostgresStore) GetUnscoredCurationArticles(userID int64, securityThresh
 	return scanArticles(rows)
 }
 
-// GetUngroupedEmbeddedArticles returns embedded (status OK), still-ungrouped
-// articles published/fetched since the cutoff. The cluster stage's recency
-// window. See the SQLite implementation.
-func (s *PostgresStore) GetUngroupedEmbeddedArticles(userID int64, model string, since time.Time, limit int) ([]Article, error) {
+// GetUngroupedEmbeddedArticles returns security-passed, embedded (status OK),
+// still-ungrouped articles published/fetched since the cutoff. The cluster
+// stage's recency window. See the SQLite implementation.
+func (s *PostgresStore) GetUngroupedEmbeddedArticles(userID int64, model string, securityThreshold float64, since time.Time, limit int) ([]Article, error) {
 	rows, err := s.db.Query(`
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = uf.user_id
 		JOIN article_embeddings ae ON ae.article_id = a.id
 		    AND ae.embedding_model = ? AND ae.status = ?
 		WHERE uf.user_id = ?
+		  AND rs.ai_scored = TRUE
+		  AND rs.security_score >= ?
 		  AND COALESCE(a.published_date, a.fetched_date) >= ?
 		  AND NOT EXISTS (
 		      SELECT 1 FROM article_group_members agm
@@ -1017,7 +1020,7 @@ func (s *PostgresStore) GetUngroupedEmbeddedArticles(userID int64, model string,
 		      WHERE agm.article_id = a.id AND ag.user_id = uf.user_id
 		  )
 		ORDER BY COALESCE(a.published_date, a.fetched_date) DESC
-		LIMIT ?`, model, EmbedStatusOK, userID, since, limit)
+		LIMIT ?`, model, EmbedStatusOK, userID, securityThreshold, since, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get ungrouped embedded articles: %w", err)
 	}
