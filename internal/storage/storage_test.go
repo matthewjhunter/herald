@@ -2541,6 +2541,45 @@ func TestMarkSecurityScoredAndCurationQueue(t *testing.T) {
 	})
 }
 
+// SetInterestScore must record the interest score without disturbing the
+// security verdict the security stage already wrote — the two stages run
+// separately, so a naive UpdateReadState (which nulls security_score) is wrong.
+func TestSetInterestScorePreservesSecurity(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		feedID, _ := store.AddFeed("https://example.com/feed", "Feed", "")
+		if err := store.SubscribeUserToFeed(1, feedID); err != nil {
+			t.Fatalf("subscribe: %v", err)
+		}
+		now := time.Now()
+		id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "x", Title: "x",
+			URL: "https://example.com/x", PublishedDate: &now})
+
+		if err := store.MarkSecurityScored(1, id, 8.0, "ok", false); err != nil {
+			t.Fatalf("MarkSecurityScored: %v", err)
+		}
+		if err := store.SetInterestScore(1, id, 6.0); err != nil {
+			t.Fatalf("SetInterestScore: %v", err)
+		}
+
+		// Security score must survive (>= 7.0), so the article still qualifies as
+		// security-passed for the summary stage. If SetInterestScore had nulled it,
+		// this query would return nothing.
+		scored, err := store.GetUnsummarizedScoredArticles(1, 7.0, 10)
+		if err != nil {
+			t.Fatalf("GetUnsummarizedScoredArticles: %v", err)
+		}
+		if len(scored) != 1 || scored[0].ID != id {
+			t.Fatalf("security score not preserved after SetInterestScore; got %v", articleIDs(scored))
+		}
+
+		// And it has left the curation queue (interest_score now set).
+		cur, _ := store.GetUnscoredCurationArticles(1, 7.0, 10)
+		if len(cur) != 0 {
+			t.Fatalf("expected nothing awaiting curation, got %v", articleIDs(cur))
+		}
+	})
+}
+
 // GetUngroupedEmbeddedArticles is the cluster stage's recency window: only
 // articles with a usable embedding, in no group, published within the window.
 func TestGetUngroupedEmbeddedArticles(t *testing.T) {

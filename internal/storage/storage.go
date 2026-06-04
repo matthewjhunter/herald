@@ -1056,6 +1056,26 @@ func (s *SQLiteStore) MarkSecurityScored(userID, articleID int64, securityScore 
 	return nil
 }
 
+// SetInterestScore records the interest score from the curation stage WITHOUT
+// touching the security verdict the security stage already wrote. The staged
+// pipeline runs the two as separate passes, so security_score / security_reason
+// / security_flagged must be left untouched here — using UpdateReadState would
+// overwrite them with NULL. ai_scored stays set.
+func (s *SQLiteStore) SetInterestScore(userID, articleID int64, interestScore float64) error {
+	_, err := s.db.Exec(
+		`INSERT INTO read_state (user_id, article_id, read, interest_score, ai_scored)
+		 VALUES (?, ?, 0, ?, 1)
+		 ON CONFLICT(user_id, article_id) DO UPDATE SET
+		   interest_score = excluded.interest_score,
+		   ai_scored = 1`,
+		userID, articleID, interestScore,
+	)
+	if err != nil {
+		return fmt.Errorf("set interest score: %w", err)
+	}
+	return nil
+}
+
 // GetScoreStats returns AI scoring breakdown per feed for a user.
 func (s *SQLiteStore) GetScoreStats(userID int64) (*ScoreStatsResult, error) {
 	rows, err := s.db.Query(`

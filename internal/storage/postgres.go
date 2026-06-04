@@ -939,6 +939,23 @@ func (s *PostgresStore) GetUnsummarizedScoredArticles(userID int64, securityThre
 	return scanArticles(rows)
 }
 
+// SetInterestScore records the curation interest score without touching the
+// security verdict. See the SQLite implementation.
+func (s *PostgresStore) SetInterestScore(userID, articleID int64, interestScore float64) error {
+	_, err := s.db.Exec(
+		`INSERT INTO read_state (user_id, article_id, read, interest_score, ai_scored)
+		 VALUES (?, ?, FALSE, ?, TRUE)
+		 ON CONFLICT(user_id, article_id) DO UPDATE SET
+		   interest_score = excluded.interest_score,
+		   ai_scored = TRUE`,
+		userID, articleID, interestScore,
+	)
+	if err != nil {
+		return fmt.Errorf("set interest score: %w", err)
+	}
+	return nil
+}
+
 // MarkSecurityScored records the security verdict and marks ai_scored without
 // writing an interest score. See the SQLite implementation.
 func (s *PostgresStore) MarkSecurityScored(userID, articleID int64, securityScore float64, securityReason string, securityFlagged bool) error {

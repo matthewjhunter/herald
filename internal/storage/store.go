@@ -51,6 +51,7 @@ type Store interface {
 	UpdateStarred(userID, articleID int64, starred bool) error
 	UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64, securityReason *string, securityFlagged *bool) error
 	MarkSecurityScored(userID, articleID int64, securityScore float64, securityReason string, securityFlagged bool) error
+	SetInterestScore(userID, articleID int64, interestScore float64) error
 	IncrementAIRetries(userID, articleID int64) error
 	ResetScores(userID int64, securityOnly bool, belowScore float64) (int64, error)
 	GetScoreStats(userID int64) (*ScoreStatsResult, error)
