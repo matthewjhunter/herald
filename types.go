@@ -25,6 +25,11 @@ type EngineConfig struct {
 	// SummaryDisableThinking turns off the summary backend's reasoning pass
 	// (Qwen3 via Lemonade) so the completion is content, not reasoning_content.
 	SummaryDisableThinking bool
+	// SummaryMaxInputTokens caps the digest prompt's input budget so Herald trims
+	// oldest articles itself (newest-first, with a log line) instead of letting the
+	// backend silently context-shift them out. Must sit below the model's context
+	// window minus the output budget. 0 keeps the config/default value.
+	SummaryMaxInputTokens int
 }
 
 // User represents a registered household member.

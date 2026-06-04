@@ -113,6 +113,7 @@ func main() {
 		SummaryModel:           cfg.Summary.Model,
 		SummaryAPIKey:          os.Getenv("HERALD_SUMMARY_API_KEY"),
 		SummaryDisableThinking: cfg.Summary.DisableThinking,
+		SummaryMaxInputTokens:  cfg.Summary.MaxInputTokens,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "herald-web: %v\n", err)

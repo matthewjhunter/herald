@@ -513,6 +513,7 @@ func processNewsletters(ctx context.Context) error {
 		SummaryModel:           cfg.Summary.Model,
 		SummaryAPIKey:          os.Getenv("HERALD_SUMMARY_API_KEY"),
 		SummaryDisableThinking: cfg.Summary.DisableThinking,
+		SummaryMaxInputTokens:  cfg.Summary.MaxInputTokens,
 	})
 	if err != nil {
 		return fmt.Errorf("create engine for newsletters: %w", err)
