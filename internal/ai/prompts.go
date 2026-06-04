@@ -88,7 +88,7 @@ func (pl *PromptLoader) GetPrompt(userID int64, promptType PromptType) (string, 
 
 	// Tier 4: Check user-specific database entry (highest priority)
 	if pl.store != nil {
-		if store, ok := pl.store.(*storage.SQLiteStore); ok {
+		if store, ok := pl.store.(storage.Store); ok {
 			userPrompt, err := store.GetUserPrompt(userID, string(promptType))
 			if err == nil && userPrompt != "" {
 				pl.mu.Lock()
@@ -164,7 +164,7 @@ func (pl *PromptLoader) GetPrompt(userID int64, promptType PromptType) (string, 
 func (pl *PromptLoader) GetTemperature(userID int64, promptType PromptType) float64 {
 	// Tier 3: Check user database
 	if pl.store != nil {
-		if store, ok := pl.store.(*storage.SQLiteStore); ok {
+		if store, ok := pl.store.(storage.Store); ok {
 			temp, err := store.GetUserPromptTemperature(userID, string(promptType))
 			if err == nil && temp > 0 {
 				return temp
@@ -216,7 +216,7 @@ func (pl *PromptLoader) GetTemperature(userID int64, promptType PromptType) floa
 // Priority: user database -> global admin (user_id=0) -> config file -> empty string
 func (pl *PromptLoader) GetModel(userID int64, promptType PromptType) string {
 	if pl.store != nil {
-		if store, ok := pl.store.(*storage.SQLiteStore); ok {
+		if store, ok := pl.store.(storage.Store); ok {
 			model, err := store.GetUserPromptModel(userID, string(promptType))
 			if err == nil && model != "" {
 				return model
