@@ -211,9 +211,12 @@ func (f *Fetcher) importOPMLBytes(data []byte, userID int64) error {
 	return nil
 }
 
-// StoreArticles stores articles from a feed into the database
-func (f *Fetcher) StoreArticles(feedID int64, feed *gofeed.Feed) (int, error) {
-	stored := 0
+// StoreArticles stores articles from a feed into the database and returns the
+// newly-stored articles (with their assigned IDs). The staged pipeline's fresh
+// path threads this cycle's articles straight through the stages, so the caller
+// needs the article set, not just a count; len(result) is the previous count.
+func (f *Fetcher) StoreArticles(feedID int64, feed *gofeed.Feed) ([]storage.Article, error) {
+	var stored []storage.Article
 	for _, item := range feed.Items {
 		var author string
 		if item.Author != nil {
@@ -258,7 +261,8 @@ func (f *Fetcher) StoreArticles(feedID int64, feed *gofeed.Feed) (int, error) {
 		// Store article (ignore duplicates)
 		articleID, err := f.store.AddArticle(article)
 		if err == nil && articleID > 0 {
-			stored++
+			article.ID = articleID
+			stored = append(stored, *article)
 
 			// Store authors from gofeed (plural, non-deprecated)
 			if len(item.Authors) > 0 {
@@ -381,7 +385,7 @@ func (f *Fetcher) FetchAllFeeds(ctx context.Context) (*FetchStats, error) {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: error storing articles from %s: %v\n", feed.URL, err)
 		}
-		stats.NewArticles += stored
+		stats.NewArticles += len(stored)
 
 		// Persist cache headers for next conditional request
 		if result.ETag != "" || result.LastModified != "" {

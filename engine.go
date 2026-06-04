@@ -745,8 +745,8 @@ func (e *Engine) SubscribeFeed(userID int64, rawURL, title string) error {
 	}
 
 	// Store the initial articles we already fetched
-	if stored, err := e.fetcher.StoreArticles(feedID, result.Feed); err == nil && stored > 0 {
-		log.Printf("herald: stored %d initial articles from %s", stored, url)
+	if stored, err := e.fetcher.StoreArticles(feedID, result.Feed); err == nil && len(stored) > 0 {
+		log.Printf("herald: stored %d initial articles from %s", len(stored), url)
 	}
 
 	// Persist cache headers for next conditional request

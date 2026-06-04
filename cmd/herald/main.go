@@ -578,7 +578,7 @@ func fetchFeedsCmd() *cobra.Command {
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: error storing articles from %s: %v\n", feed.URL, err)
 				}
-				fetchResult.NewArticles += stored
+				fetchResult.NewArticles += len(stored)
 
 				// Persist cache headers for next conditional request
 				if result.ETag != "" || result.LastModified != "" {
@@ -719,7 +719,7 @@ func doFetch(ctx context.Context) error {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: error storing articles from %s: %v\n", feed.URL, err)
 		}
-		fetchResult.NewArticles += stored
+		fetchResult.NewArticles += len(stored)
 
 		// Persist cache headers for next conditional request
 		if result.ETag != "" || result.LastModified != "" {
