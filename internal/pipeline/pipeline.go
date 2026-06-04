@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	embedding "github.com/matthewjhunter/go-embedding"
 	"github.com/matthewjhunter/herald/internal/ai"
 	"github.com/matthewjhunter/herald/internal/output"
 	"github.com/matthewjhunter/herald/internal/storage"
@@ -21,15 +22,29 @@ type AI interface {
 	BackendAvailable() bool
 }
 
+// Embedder is the subset of *ai.GroupMatcher the embed stage calls. EmbedRecord
+// returns (nil, nil) — not an error — when the body is too short to embed
+// meaningfully; the embed stage treats that as a deterministic skip.
+type Embedder interface {
+	Model() string
+	EmbedRecord(ctx context.Context, fields []embedding.Field, body string) ([]float32, error)
+}
+
 // Stage runs the staged AI pipeline for a single user. Construct one per user
 // per cycle. Embedding is global (keyed by article + model, not per user), so
 // the embed stage is idempotent across users sharing a feed.
 type Stage struct {
 	Store     storage.Store
 	AI        AI
+	Embedder  Embedder // nil when embedding is not configured; embed/cluster stages no-op
 	Cfg       *storage.Config
 	Formatter *output.Formatter
 	UserID    int64
+
+	// BuildEmbedInput builds the (fields, body) record embedded for an article.
+	// Injected so the pipeline package does not import the root herald package
+	// (which imports pipeline) — set to herald.BuildArticleEmbedInput at wiring.
+	BuildEmbedInput func(storage.Article) ([]embedding.Field, string)
 }
 
 // maxParallel is the per-stage concurrency bound (Ollama.MaxParallel, floored
