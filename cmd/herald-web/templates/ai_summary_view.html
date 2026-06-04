@@ -1,0 +1,72 @@
+{{define "ai_summary_view"}}
+<div class="newsletter-view">
+    <div class="newsletter-header">
+        <h3>AI Summary</h3>
+        <div class="newsletter-actions">
+            <button class="outline" hx-post="/summary/generate"
+                    hx-target="#article-list" hx-swap="innerHTML"
+                    {{if not .Enabled}}disabled{{end}}>
+                Generate
+            </button>
+        </div>
+    </div>
+
+    {{if not .Enabled}}
+    <div class="empty-state">AI Summary is not configured on this server.</div>
+    {{else}}
+
+    <details class="summary-prompt">
+        <summary>Edit prompt</summary>
+        <form hx-post="/summary/prompt" hx-swap="none"
+              hx-on::after-request="if(event.detail.successful){var b=this.querySelector('[data-save-btn]');b.textContent='Saved!';setTimeout(()=>b.textContent='Save',2000);}">
+            <textarea name="template" rows="10" style="font-family:monospace;font-size:0.85em;width:100%;">{{.Prompt}}</textarea>
+            <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+                <button type="submit" data-save-btn style="margin:0;">Save</button>
+                {{if .PromptIsCustom}}
+                <button type="button" class="outline secondary" style="margin:0;"
+                        hx-delete="/summary/prompt" hx-target="#article-list" hx-swap="innerHTML"
+                        hx-confirm="Reset the summary prompt to the default?">
+                    Reset to Default
+                </button>
+                {{end}}
+            </div>
+        </form>
+    </details>
+
+    {{if eq .Status "generating"}}
+    <div hx-get="/summary" hx-trigger="every 3s" hx-target="#article-list" hx-swap="innerHTML"
+         class="summary-generating">
+        <progress></progress>
+        <p>Generating summary… this can take up to a minute.</p>
+    </div>
+    {{else if eq .Status "failed"}}
+    <div class="newsletter-issue">
+        <p class="error">Generation failed: {{.Error}}</p>
+        <p>Try again with the Generate button.</p>
+    </div>
+    {{else if eq .Status "done"}}
+    <div class="newsletter-issue">
+        {{if .Headline}}<h2>{{.Headline}}</h2>{{end}}
+        <div class="newsletter-meta">
+            Generated {{.GeneratedFmt}} &middot; {{.ArticleCount}} article{{if ne .ArticleCount 1}}s{{end}}
+            {{if .InputTokens}} &middot; {{.InputTokens}} in / {{.OutputTokens}} out tokens{{end}}
+        </div>
+        <div class="newsletter-content">
+            {{.SanitizedHTML}}
+        </div>
+        {{if .ArticleCount}}
+        <hr>
+        <button class="outline secondary" hx-post="/summary/mark-read" hx-swap="none"
+                hx-confirm="Mark all {{.ArticleCount}} summarized articles as read?"
+                hx-on::after-request="if(event.detail.successful){this.textContent='Marked read';this.disabled=true;}">
+            Mark all {{.ArticleCount}} as read
+        </button>
+        {{end}}
+    </div>
+    {{else}}
+    <div class="empty-state">No summary yet. Click "Generate" to digest your high-interest unread articles.</div>
+    {{end}}
+
+    {{end}}
+</div>
+{{end}}

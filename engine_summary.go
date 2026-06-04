@@ -35,29 +35,33 @@ func (e *Engine) resolveSummaryPrompt(userID int64) string {
 	return tmpl
 }
 
-// GenerateAISummary selects the user's high-interest unread backlog, calls the
-// cloud model in one streaming pass, and stores the digest with the exact
-// article IDs it covered. It is synchronous and meant to run in a background
-// goroutine — the call can take tens of seconds. Status moves
-// generating → done | failed; only one summary generates per user at a time.
-func (e *Engine) GenerateAISummary(ctx context.Context, userID int64) error {
+// BeginAISummary guards one in-flight summary per user and creates the
+// generating row synchronously, returning its id and the resolved prompt. The
+// web layer calls this (fast — a single insert), then runs FinishAISummary in a
+// background goroutine, so the poller sees the generating row immediately.
+func (e *Engine) BeginAISummary(userID int64) (id int64, prompt string, err error) {
 	if e.summarizer == nil {
-		return fmt.Errorf("AI summary not configured")
+		return 0, "", fmt.Errorf("AI summary not configured")
 	}
-	if inprog, err := e.store.GetInProgressAISummary(userID); err == nil && inprog != nil {
-		return fmt.Errorf("a summary is already generating")
+	if inprog, ierr := e.store.GetInProgressAISummary(userID); ierr == nil && inprog != nil {
+		return inprog.ID, "", fmt.Errorf("a summary is already generating")
 	}
-
-	prompt := e.resolveSummaryPrompt(userID)
-	id, err := e.store.CreateAISummary(&storage.AISummary{
+	prompt = e.resolveSummaryPrompt(userID)
+	id, err = e.store.CreateAISummary(&storage.AISummary{
 		UserID: userID,
 		Model:  e.summarizer.Model(),
 		Prompt: prompt,
 	})
 	if err != nil {
-		return fmt.Errorf("create summary: %w", err)
+		return 0, "", fmt.Errorf("create summary: %w", err)
 	}
+	return id, prompt, nil
+}
 
+// FinishAISummary does the slow work for an already-created generating row:
+// select articles, call the cloud model in one streaming pass, and record the
+// digest (or the failure). Safe to run in a background goroutine.
+func (e *Engine) FinishAISummary(ctx context.Context, userID, id int64, prompt string) error {
 	headline, body, ids, inTok, outTok, genErr := e.runAISummary(ctx, userID, prompt)
 	if genErr != nil {
 		log.Printf("herald: AI summary %d (user %d) failed: %v", id, userID, genErr)
@@ -67,6 +71,16 @@ func (e *Engine) GenerateAISummary(ctx context.Context, userID int64) error {
 		headline = "AI Summary"
 	}
 	return e.store.UpdateAISummaryDone(id, headline, body, ids, inTok, outTok)
+}
+
+// GenerateAISummary runs Begin then Finish synchronously. Used by tests and any
+// non-web caller; the web path splits the two around a goroutine.
+func (e *Engine) GenerateAISummary(ctx context.Context, userID int64) error {
+	id, prompt, err := e.BeginAISummary(userID)
+	if err != nil {
+		return err
+	}
+	return e.FinishAISummary(ctx, userID, id, prompt)
 }
 
 // runAISummary does the selection → budget → model → sanitize work.

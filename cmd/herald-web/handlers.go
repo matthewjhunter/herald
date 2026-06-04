@@ -149,7 +149,7 @@ func (h *handlers) init() {
 	tmplFS, _ := fs.Sub(embedded, "templates")
 
 	// Shared partials included in every page template.
-	shared := []string{"base.html", "nav.html", "settings_subnav.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "search_results.html", "newsletter_view.html", "error.html"}
+	shared := []string{"base.html", "nav.html", "settings_subnav.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "search_results.html", "newsletter_view.html", "ai_summary_view.html", "error.html"}
 
 	// Pages that get their own template tree.
 	pages := []string{"home.html", "feeds_manage.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_stats.html", "stats.html", "newsletters_manage.html"}
@@ -174,6 +174,7 @@ type homeData struct {
 	ActiveGroup      int64
 	ActiveNewsletter int64
 	ActiveStarred    bool
+	ActiveSummary    bool
 }
 
 type articleListData struct {

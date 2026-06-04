@@ -87,6 +87,13 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.Handle("POST /newsletters/{newsletterID}/send", auth(http.HandlerFunc(h.handleNewsletterSend)))
 	mux.Handle("GET /newsletters/{newsletterID}/issues/{issueID}", auth(http.HandlerFunc(h.handleNewsletterIssueView)))
 
+	// AI Summary routes.
+	mux.Handle("GET /summary", auth(http.HandlerFunc(h.handleSummaryView)))
+	mux.Handle("POST /summary/generate", auth(http.HandlerFunc(h.handleSummaryGenerate)))
+	mux.Handle("POST /summary/mark-read", auth(http.HandlerFunc(h.handleSummaryMarkRead)))
+	mux.Handle("POST /summary/prompt", auth(http.HandlerFunc(h.handleSummaryPromptSave)))
+	mux.Handle("DELETE /summary/prompt", auth(http.HandlerFunc(h.handleSummaryPromptReset)))
+
 	// Ollama model list (used by prompt settings pages).
 	mux.Handle("GET /api/ollama/models", auth(http.HandlerFunc(h.handleOllamaModels)))
 
