@@ -34,7 +34,6 @@ type Config struct {
 		Curation      string `yaml:"curation,omitempty"`
 		Summarization string `yaml:"summarization,omitempty"`
 		GroupSummary  string `yaml:"group_summary,omitempty"`
-		RelatedGroups string `yaml:"related_groups,omitempty"`
 		Newsletter    string `yaml:"newsletter,omitempty"`
 	} `yaml:"prompts,omitempty"`
 
@@ -63,7 +62,6 @@ type Config struct {
 		Curation      float64 `yaml:"curation"`
 		Summarization float64 `yaml:"summarization"`
 		GroupSummary  float64 `yaml:"group_summary"`
-		RelatedGroups float64 `yaml:"related_groups"`
 		Newsletter    float64 `yaml:"newsletter"`
 	} `yaml:"temperatures,omitempty"`
 
@@ -100,6 +98,5 @@ func DefaultConfig() *Config {
 	cfg.Temperatures.Curation = 0.5
 	cfg.Temperatures.Summarization = 0.3
 	cfg.Temperatures.GroupSummary = 0.5
-	cfg.Temperatures.RelatedGroups = 0.3
 	return cfg
 }

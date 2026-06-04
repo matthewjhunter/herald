@@ -178,7 +178,6 @@ The five prompt types are:
 | `curation` | Llama | Interest scoring with user keywords |
 | `summarization` | Llama | Single-article AI summary generation |
 | `group_summary` | Llama | Multi-article narrative synthesis |
-| `related_groups` | Llama | Determining if an article belongs to an existing group |
 
 Each prompt type also has a configurable temperature following the same 3-tier fallback.
 
@@ -219,7 +218,7 @@ All AI inference runs through Ollama on localhost. This means feed content never
 
 ### Vector Clustering over LLM-Based Grouping
 
-Persistent article grouping uses vector embeddings and cosine similarity rather than asking an LLM to group articles. The incremental centroid update formula keeps the cost of assigning each article to a group constant regardless of group size. LLM-based grouping is available for ad-hoc batch clustering (`herald list --cluster`) but is not used for the persistent group state, where it would require re-running the LLM over all articles on each fetch.
+Persistent article grouping uses vector embeddings and cosine similarity rather than asking an LLM to group articles. The staged cluster pass matches each article against a frozen snapshot of existing group centroids and links the remainder into new groups, using the LLM only to name a group once it forms. LLM-based grouping is available for ad-hoc batch clustering (`herald list --cluster`) but is not used for the persistent group state, where it would require re-running the LLM over all articles on each fetch.
 
 ### Config-Driven AI Prompts
 

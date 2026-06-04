@@ -77,7 +77,7 @@ func ptrStr(s *string) string {
 	return *s
 }
 
-// registerTools registers all 26 herald tools with the MCP server.
+// registerTools registers all herald tools with the MCP server.
 func registerTools(s *mcp.Server, hs *heraldServer) {
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -313,7 +313,7 @@ func registerTools(s *mcp.Server, hs *heraldServer) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "prompt_get",
-		Description: "Get the active prompt template and temperature for a given type. Prompt types: curation, summarization, group_summary, related_groups.",
+		Description: "Get the active prompt template and temperature for a given type. Prompt types: curation, summarization, group_summary.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input promptTypeInput) (*mcp.CallToolResult, any, error) {
 		if input.PromptType == "" {
 			return errResult("prompt_type parameter is required")
@@ -332,7 +332,7 @@ func registerTools(s *mcp.Server, hs *heraldServer) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "prompt_set",
-		Description: "Customize a prompt template and/or temperature. At least one of template or temperature must be provided. Prompt types: curation, summarization, group_summary, related_groups.",
+		Description: "Customize a prompt template and/or temperature. At least one of template or temperature must be provided. Prompt types: curation, summarization, group_summary.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input promptSetInput) (*mcp.CallToolResult, any, error) {
 		if input.PromptType == "" {
 			return errResult("prompt_type parameter is required")

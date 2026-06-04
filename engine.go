@@ -1157,10 +1157,9 @@ func (e *Engine) PendingCounts(userID int64) (unsummarized, unscored int, err er
 // allowedPromptTypes lists prompt types that can be read/written via MCP.
 // "security" is intentionally excluded — the LLM must not weaken content safety.
 var allowedPromptTypes = map[string]bool{
-	"curation":       true,
-	"summarization":  true,
-	"group_summary":  true,
-	"related_groups": true,
+	"curation":      true,
+	"summarization": true,
+	"group_summary": true,
 }
 
 // GetUserPreference returns a single raw preference value for a user.

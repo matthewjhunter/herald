@@ -47,12 +47,12 @@ type preferenceSetInput struct {
 }
 
 type promptTypeInput struct {
-	PromptType string  `json:"prompt_type"        jsonschema:"The prompt type. Valid types: curation, summarization, group_summary, related_groups"`
+	PromptType string  `json:"prompt_type"        jsonschema:"The prompt type. Valid types: curation, summarization, group_summary"`
 	Speaker    *string `json:"speaker,omitempty"   jsonschema:"Speaker name for multi-user resolution. If omitted uses the default user."`
 }
 
 type promptSetInput struct {
-	PromptType  string   `json:"prompt_type"            jsonschema:"The prompt type to customize. Valid types: curation, summarization, group_summary, related_groups"`
+	PromptType  string   `json:"prompt_type"            jsonschema:"The prompt type to customize. Valid types: curation, summarization, group_summary"`
 	Template    *string  `json:"template,omitempty"     jsonschema:"New prompt template text"`
 	Temperature *float64 `json:"temperature,omitempty"  jsonschema:"Temperature setting (0.0-2.0)"`
 	Speaker     *string  `json:"speaker,omitempty"      jsonschema:"Speaker name for multi-user resolution. If omitted uses the default user."`

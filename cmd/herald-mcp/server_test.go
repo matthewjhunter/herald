@@ -533,8 +533,8 @@ func TestPromptsListDefaults(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &prompts); err != nil {
 		t.Fatalf("unmarshal prompts: %v", err)
 	}
-	if len(prompts) != 4 {
-		t.Fatalf("got %d prompt types, want 4", len(prompts))
+	if len(prompts) != 3 {
+		t.Fatalf("got %d prompt types, want 3", len(prompts))
 	}
 
 	for _, p := range prompts {
