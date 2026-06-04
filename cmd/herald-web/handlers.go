@@ -117,6 +117,9 @@ func (h *handlers) init() {
 		"safeHTML": func(s string) template.HTML {
 			return template.HTML(s) //nolint:gosec // already sanitized by bluemonday
 		},
+		"int64in": func(haystack []int64, needle int64) bool {
+			return slices.Contains(haystack, needle)
+		},
 		"assetVersion": func() string { return version },
 		"buildVersion": func() string { return version },
 		"buildTime":    func() string { return buildTime },
@@ -149,7 +152,7 @@ func (h *handlers) init() {
 	tmplFS, _ := fs.Sub(embedded, "templates")
 
 	// Shared partials included in every page template.
-	shared := []string{"base.html", "nav.html", "settings_subnav.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "search_results.html", "newsletter_view.html", "ai_summary_list.html", "ai_summary_detail.html", "error.html"}
+	shared := []string{"base.html", "nav.html", "settings_subnav.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "search_results.html", "ai_summary_list.html", "ai_summary_detail.html", "error.html"}
 
 	// Pages that get their own template tree.
 	pages := []string{"home.html", "feeds_manage.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_stats.html", "stats.html", "newsletters_manage.html"}
@@ -906,33 +909,14 @@ func (h *handlers) handleGroupMarkRead(w http.ResponseWriter, r *http.Request) {
 
 // --- Newsletter handlers ---
 
-type newsletterViewData struct {
-	Newsletter    herald.Newsletter
-	LatestIssue   *herald.NewsletterIssue
-	SanitizedHTML template.HTML
-	GeneratedFmt  string
-	SentFmt       string
-	PastIssues    []newsletterIssueRow
-}
-
-type newsletterIssueRow struct {
-	ID           int64
-	Headline     string
-	GeneratedFmt string
-}
-
 type newslettersManageData struct {
 	Newsletters []storage.Newsletter
+	Feeds       []herald.Feed
 }
 
 func (h *handlers) handleNewslettersManage(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID
-	newsletters, err := h.engine.GetUserNewsletters(uid)
-	if err != nil {
-		h.renderError(w, http.StatusInternalServerError, "Failed to load newsletters")
-		return
-	}
-	h.renderPage(w, r, "newsletters_manage.html", newslettersManageData{Newsletters: newsletters})
+	h.renderPage(w, r, "newsletters_manage.html", h.digestManageData(uid))
 }
 
 func (h *handlers) handleNewsletterCreate(w http.ResponseWriter, r *http.Request) {
@@ -942,83 +926,38 @@ func (h *handlers) handleNewsletterCreate(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	minScore, _ := strconv.ParseFloat(r.FormValue("min_interest_score"), 64)
-	maxArticles, _ := strconv.Atoi(r.FormValue("max_articles"))
-	if maxArticles == 0 {
-		maxArticles = 20
-	}
-
-	config := storage.NewsletterConfig{
-		MinInterestScore: minScore,
-		MaxArticles:      maxArticles,
-	}
-
-	_, err := h.engine.CreateNewsletter(uid, r.FormValue("name"), r.FormValue("schedule"), r.FormValue("email_recipient"), config)
-	if err != nil {
-		h.renderError(w, http.StatusInternalServerError, "Failed to create newsletter")
+	name, schedule, email, prompt, config := parseDigestForm(r)
+	if name == "" {
+		h.renderError(w, http.StatusBadRequest, "Name is required")
 		return
 	}
-
-	// Re-render the newsletter list
-	newsletters, _ := h.engine.GetUserNewsletters(uid)
-	h.renderFragment(w, "newsletter_list_fragment", newslettersManageData{Newsletters: newsletters})
+	if _, err := h.engine.CreateNewsletter(uid, name, schedule, email, prompt, config); err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Failed to create digest")
+		return
+	}
+	h.renderFragment(w, "newsletter_list_fragment", h.digestManageData(uid))
 }
 
-func (h *handlers) handleNewsletterView(w http.ResponseWriter, r *http.Request) {
-	h.init()
-	uid := userFromContext(r.Context()).ID
-	newsletterID, err := strconv.ParseInt(r.PathValue("newsletterID"), 10, 64)
-	if err != nil {
-		h.renderError(w, http.StatusBadRequest, "Invalid newsletter ID")
-		return
-	}
-
-	nl, err := h.engine.GetNewsletter(newsletterID)
-	if err != nil {
-		h.renderError(w, http.StatusNotFound, "Newsletter not found")
-		return
-	}
-
-	data := newsletterViewData{
-		Newsletter: herald.Newsletter{
-			ID: nl.ID, UserID: nl.UserID, Name: nl.Name, Schedule: nl.Schedule,
-			EmailRecipient: nl.EmailRecipient, Enabled: nl.Enabled,
-		},
-	}
-
-	if issue, err := h.engine.GetLatestNewsletterIssue(newsletterID); err == nil {
-		data.LatestIssue = issue
-		data.SanitizedHTML = template.HTML(sanitizeHTML(issue.ContentHTML)) //nolint:gosec
-		data.GeneratedFmt = formatDate(&issue.GeneratedAt)
-		if issue.SentAt != nil {
-			data.SentFmt = formatDate(issue.SentAt)
+// parseDigestForm reads the shared digest-config form (name, schedule, prompt,
+// filters, and the feed multi-select → Config.IncludeFeeds).
+func parseDigestForm(r *http.Request) (name, schedule, email, prompt string, config storage.NewsletterConfig) {
+	minScore, _ := strconv.ParseFloat(r.FormValue("min_interest_score"), 64)
+	maxArticles, _ := strconv.Atoi(r.FormValue("max_articles"))
+	var feeds []int64
+	for _, s := range r.Form["feed_ids"] {
+		if id, err := strconv.ParseInt(s, 10, 64); err == nil {
+			feeds = append(feeds, id)
 		}
 	}
+	config = storage.NewsletterConfig{MinInterestScore: minScore, MaxArticles: maxArticles, IncludeFeeds: feeds}
+	return r.FormValue("name"), r.FormValue("schedule"), r.FormValue("email_recipient"), strings.TrimSpace(r.FormValue("prompt")), config
+}
 
-	// Load past issues (skip the latest).
-	if issues, err := h.engine.GetNewsletterIssues(newsletterID, 10, 1); err == nil {
-		for _, i := range issues {
-			data.PastIssues = append(data.PastIssues, newsletterIssueRow{
-				ID: i.ID, Headline: i.Headline, GeneratedFmt: formatDate(&i.GeneratedAt),
-			})
-		}
-	}
-
-	h.renderFragment(w, "newsletter_view", data)
-
-	// OOB sidebar update.
-	sidebarData := homeData{ActiveNewsletter: newsletterID}
-	if stats, err := h.engine.GetFeedStats(uid); err == nil && stats != nil {
-		sidebarData.Feeds = stats.Feeds
-		sidebarData.TotalUnread = stats.Total.UnreadArticles
-	}
-	if groups, err := h.engine.GetGroupStats(uid); err == nil {
-		sidebarData.Groups = groups
-	}
-	if newsletters, err := h.engine.GetNewsletterStats(uid); err == nil {
-		sidebarData.Newsletters = newsletters
-	}
-	h.renderFragment(w, "feed_sidebar_oob", sidebarData)
+// digestManageData loads the config list plus the user's feeds for the form.
+func (h *handlers) digestManageData(uid int64) newslettersManageData {
+	configs, _ := h.engine.GetUserNewsletters(uid)
+	feeds, _ := h.engine.GetUserFeeds(uid)
+	return newslettersManageData{Newsletters: configs, Feeds: feeds}
 }
 
 func (h *handlers) handleNewsletterDelete(w http.ResponseWriter, r *http.Request) {
@@ -1028,93 +967,57 @@ func (h *handlers) handleNewsletterDelete(w http.ResponseWriter, r *http.Request
 		http.Error(w, "invalid newsletter ID", http.StatusBadRequest)
 		return
 	}
-	if err := h.engine.DeleteNewsletter(uid, newsletterID); err != nil {
-		http.Error(w, "failed to delete newsletter", http.StatusInternalServerError)
-		return
-	}
-	// Re-render the newsletter list.
-	newsletters, _ := h.engine.GetUserNewsletters(uid)
-	h.renderFragment(w, "newsletter_list_fragment", newslettersManageData{Newsletters: newsletters})
+	h.engine.DeleteNewsletter(uid, newsletterID) //nolint:errcheck
+	h.renderFragment(w, "newsletter_list_fragment", h.digestManageData(uid))
 }
 
-func (h *handlers) handleNewsletterGenerate(w http.ResponseWriter, r *http.Request) {
-	h.init()
+// handleNewsletterUpdate edits an existing digest config (prompt, feeds, schedule, …).
+func (h *handlers) handleNewsletterUpdate(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID
-	newsletterID, err := strconv.ParseInt(r.PathValue("newsletterID"), 10, 64)
+	id, err := strconv.ParseInt(r.PathValue("newsletterID"), 10, 64)
 	if err != nil {
-		h.renderError(w, http.StatusBadRequest, "Invalid newsletter ID")
+		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-
-	if _, err := h.engine.GenerateNewsletterIssue(r.Context(), uid, newsletterID); err != nil {
-		h.renderError(w, http.StatusInternalServerError, "Generation failed: "+err.Error())
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-
-	// Re-render the newsletter view with the new issue.
-	h.handleNewsletterView(w, r)
+	nl, err := h.engine.GetNewsletter(id)
+	if err != nil || nl.UserID != uid {
+		h.renderError(w, http.StatusNotFound, "Digest not found")
+		return
+	}
+	nl.Name, nl.Schedule, nl.EmailRecipient, nl.PromptTemplate, nl.Config = parseDigestForm(r)
+	if err := h.engine.UpdateNewsletter(nl); err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Failed to update digest")
+		return
+	}
+	h.renderFragment(w, "newsletter_list_fragment", h.digestManageData(uid))
 }
 
-func (h *handlers) handleNewsletterSend(w http.ResponseWriter, r *http.Request) {
-	newsletterID, err := strconv.ParseInt(r.PathValue("newsletterID"), 10, 64)
+// handleNewsletterGenerate runs a config-scoped digest in the background; the
+// result lands in the AI Summaries list, linked to this config.
+func (h *handlers) handleNewsletterGenerate(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	id, err := strconv.ParseInt(r.PathValue("newsletterID"), 10, 64)
 	if err != nil {
-		http.Error(w, "invalid newsletter ID", http.StatusBadRequest)
+		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-
-	issue, err := h.engine.GetLatestNewsletterIssue(newsletterID)
-	if err != nil {
-		fmt.Fprint(w, `<span style="color:var(--pico-del-color)">No issue to send</span>`)
+	if !h.engine.AISummaryEnabled() {
+		fmt.Fprint(w, `<span class="secondary">AI summary not configured.</span>`)
 		return
 	}
-
-	if err := h.engine.SendNewsletterIssue(issue.ID); err != nil {
-		fmt.Fprintf(w, `<span style="color:var(--pico-del-color)">Send failed: %s</span>`, template.HTMLEscapeString(err.Error()))
-		return
+	if sid, prompt, err := h.engine.BeginAISummary(uid, &id); err == nil {
+		nlID := id
+		go func() {
+			if ferr := h.engine.FinishAISummary(context.Background(), uid, sid, &nlID, prompt); ferr != nil {
+				log.Printf("herald-web: digest %d (config %d): %v", sid, nlID, ferr)
+			}
+		}()
 	}
-
-	fmt.Fprint(w, `<span style="color:var(--pico-ins-color)">Sent!</span>`)
-}
-
-func (h *handlers) handleNewsletterIssueView(w http.ResponseWriter, r *http.Request) {
-	h.init()
-	newsletterID, err := strconv.ParseInt(r.PathValue("newsletterID"), 10, 64)
-	if err != nil {
-		h.renderError(w, http.StatusBadRequest, "Invalid newsletter ID")
-		return
-	}
-	issueID, err := strconv.ParseInt(r.PathValue("issueID"), 10, 64)
-	if err != nil {
-		h.renderError(w, http.StatusBadRequest, "Invalid issue ID")
-		return
-	}
-
-	nl, err := h.engine.GetNewsletter(newsletterID)
-	if err != nil {
-		h.renderError(w, http.StatusNotFound, "Newsletter not found")
-		return
-	}
-
-	issue, err := h.engine.GetNewsletterIssue(issueID)
-	if err != nil {
-		h.renderError(w, http.StatusNotFound, "Issue not found")
-		return
-	}
-
-	data := newsletterViewData{
-		Newsletter: herald.Newsletter{
-			ID: nl.ID, UserID: nl.UserID, Name: nl.Name, Schedule: nl.Schedule,
-			EmailRecipient: nl.EmailRecipient, Enabled: nl.Enabled,
-		},
-		LatestIssue:   issue,
-		SanitizedHTML: template.HTML(sanitizeHTML(issue.ContentHTML)), //nolint:gosec
-		GeneratedFmt:  formatDate(&issue.GeneratedAt),
-	}
-	if issue.SentAt != nil {
-		data.SentFmt = formatDate(issue.SentAt)
-	}
-
-	h.renderFragment(w, "newsletter_view", data)
+	fmt.Fprint(w, `<span class="secondary">Generating… it will appear under AI Summary.</span>`)
 }
 
 func (h *handlers) handleStarToggle(w http.ResponseWriter, r *http.Request) {

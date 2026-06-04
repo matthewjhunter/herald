@@ -896,7 +896,7 @@ func (e *Engine) DisbandGroup(userID, groupID int64) error {
 // --- Newsletter methods ---
 
 // CreateNewsletter creates a new newsletter definition for a user.
-func (e *Engine) CreateNewsletter(userID int64, name, schedule, emailRecipient string, config storage.NewsletterConfig) (int64, error) {
+func (e *Engine) CreateNewsletter(userID int64, name, schedule, emailRecipient, promptTemplate string, config storage.NewsletterConfig) (int64, error) {
 	if config.MaxArticles == 0 {
 		config.MaxArticles = 20
 	}
@@ -905,6 +905,7 @@ func (e *Engine) CreateNewsletter(userID int64, name, schedule, emailRecipient s
 		Name:           name,
 		Schedule:       schedule,
 		EmailRecipient: emailRecipient,
+		PromptTemplate: promptTemplate,
 		Config:         config,
 		Enabled:        true,
 	})
