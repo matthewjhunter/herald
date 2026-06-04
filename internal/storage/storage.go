@@ -1425,6 +1425,41 @@ func (s *SQLiteStore) GetArticleInterestScores(userID int64, articleIDs []int64)
 	return scores, rows.Err()
 }
 
+// GetSecurityScores returns the persisted security_score for each of the given
+// articles (user-scoped), skipping any with a NULL score. The curate stage uses
+// it to report the verdict the security stage wrote, since that score is not
+// carried on the in-memory Article (#119).
+func (s *SQLiteStore) GetSecurityScores(userID int64, articleIDs []int64) (map[int64]float64, error) {
+	if len(articleIDs) == 0 {
+		return map[int64]float64{}, nil
+	}
+	placeholders := make([]string, len(articleIDs))
+	args := make([]any, 0, len(articleIDs)+1)
+	args = append(args, userID)
+	for i, id := range articleIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	query := `SELECT article_id, security_score FROM read_state
+		WHERE user_id = ? AND article_id IN (` + strings.Join(placeholders, ",") + `)
+		AND security_score IS NOT NULL`
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get security scores: %w", err)
+	}
+	defer rows.Close()
+	scores := make(map[int64]float64, len(articleIDs))
+	for rows.Next() {
+		var id int64
+		var score float64
+		if err := rows.Scan(&id, &score); err != nil {
+			return nil, fmt.Errorf("scan security score: %w", err)
+		}
+		scores[id] = score
+	}
+	return scores, rows.Err()
+}
+
 // UpdateGroupSummary stores or updates the summary for a group
 func (s *SQLiteStore) UpdateGroupSummary(groupID int64, headline, summary string, articleCount int, maxInterestScore *float64) error {
 	_, err := s.db.Exec(
