@@ -25,6 +25,16 @@ func (e *Engine) GetInProgressAISummary(userID int64) (*storage.AISummary, error
 	return e.store.GetInProgressAISummary(userID)
 }
 
+// GetAISummary returns one of the user's summaries by id (nil if not found).
+func (e *Engine) GetAISummary(userID, id int64) (*storage.AISummary, error) {
+	return e.store.GetAISummary(userID, id)
+}
+
+// GetAISummaries lists the user's summaries, newest first.
+func (e *Engine) GetAISummaries(userID int64, limit int) ([]storage.AISummary, error) {
+	return e.store.GetAISummaries(userID, limit)
+}
+
 // resolveSummaryPrompt returns the user's summary prompt with the standard
 // 4-tier fallback (user → admin → config → embedded default).
 func (e *Engine) resolveSummaryPrompt(userID int64) string {

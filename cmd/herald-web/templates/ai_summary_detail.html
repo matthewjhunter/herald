@@ -1,0 +1,29 @@
+{{define "ai_summary_detail"}}
+<div class="summary-detail" style="padding:1rem;">
+    {{if eq .Status "generating"}}
+    <div hx-get="/summary/{{.ID}}" hx-trigger="every 3s" hx-target="#reading-pane" hx-swap="innerHTML">
+        <progress></progress>
+        <p>Generating summary… this can take up to a minute.</p>
+    </div>
+    {{else if eq .Status "failed"}}
+    <p class="error">Generation failed: {{.Error}}</p>
+    {{else}}
+    {{if .Headline}}<h2>{{.Headline}}</h2>{{end}}
+    <div class="newsletter-meta">
+        Generated {{.GeneratedFmt}} &middot; {{.ArticleCount}} article{{if ne .ArticleCount 1}}s{{end}}
+        {{if .InputTokens}} &middot; {{.InputTokens}} in / {{.OutputTokens}} out tokens{{end}}
+    </div>
+    <div class="newsletter-content">
+        {{.SanitizedHTML}}
+    </div>
+    {{if .ArticleCount}}
+    <hr>
+    <button class="outline secondary" hx-post="/summary/{{.ID}}/mark-read" hx-swap="none"
+            hx-confirm="Mark all {{.ArticleCount}} summarized articles as read?"
+            hx-on::after-request="if(event.detail.successful){this.textContent='Marked read';this.disabled=true;}">
+        Mark all {{.ArticleCount}} as read
+    </button>
+    {{end}}
+    {{end}}
+</div>
+{{end}}

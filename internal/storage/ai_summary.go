@@ -15,20 +15,27 @@ import (
 const aiSummaryCols = `id, user_id, status, model, prompt, headline, content_html,
 	article_ids_json, article_count, input_tokens, output_tokens, error, created_at, generated_at`
 
-func scanAISummaryRow(row *sql.Row) (*AISummary, error) {
+// scannable is satisfied by both *sql.Row and *sql.Rows.
+type scannable interface{ Scan(...any) error }
+
+func scanAISummaryCols(sc scannable) (*AISummary, error) {
 	var s AISummary
 	var idsJSON string
-	err := row.Scan(&s.ID, &s.UserID, &s.Status, &s.Model, &s.Prompt, &s.Headline,
+	if err := sc.Scan(&s.ID, &s.UserID, &s.Status, &s.Model, &s.Prompt, &s.Headline,
 		&s.ContentHTML, &idsJSON, &s.ArticleCount, &s.InputTokens, &s.OutputTokens,
-		&s.Error, &s.CreatedAt, &s.GeneratedAt)
-	if err == sql.ErrNoRows {
-		return nil, nil // no summary yet — not an error
-	}
-	if err != nil {
+		&s.Error, &s.CreatedAt, &s.GeneratedAt); err != nil {
 		return nil, err
 	}
 	json.Unmarshal([]byte(idsJSON), &s.ArticleIDs) //nolint:errcheck
 	return &s, nil
+}
+
+func scanAISummaryRow(row *sql.Row) (*AISummary, error) {
+	s, err := scanAISummaryCols(row)
+	if err == sql.ErrNoRows {
+		return nil, nil // no summary yet — not an error
+	}
+	return s, err
 }
 
 func createAISummary(db *tracedDB, s *AISummary) (int64, error) {
@@ -80,6 +87,30 @@ func getInProgressAISummary(db *tracedDB, userID int64) (*AISummary, error) {
 		 WHERE user_id=? AND status='generating' ORDER BY created_at DESC, id DESC LIMIT 1`, userID))
 }
 
+func getAISummary(db *tracedDB, userID, id int64) (*AISummary, error) {
+	return scanAISummaryRow(db.QueryRow(
+		`SELECT `+aiSummaryCols+` FROM ai_summaries WHERE user_id=? AND id=?`, userID, id))
+}
+
+func getAISummaries(db *tracedDB, userID int64, limit int) ([]AISummary, error) {
+	rows, err := db.Query(
+		`SELECT `+aiSummaryCols+` FROM ai_summaries
+		 WHERE user_id=? ORDER BY created_at DESC, id DESC LIMIT ?`, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get ai summaries: %w", err)
+	}
+	defer rows.Close()
+	var out []AISummary
+	for rows.Next() {
+		s, err := scanAISummaryCols(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *s)
+	}
+	return out, rows.Err()
+}
+
 func getUnreadArticlesForSummary(db *tracedDB, userID int64, minSecurity, minInterest float64, limit int) ([]Article, error) {
 	rows, err := db.Query(`
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
@@ -115,6 +146,12 @@ func (s *SQLiteStore) GetLatestAISummary(userID int64) (*AISummary, error) {
 func (s *SQLiteStore) GetInProgressAISummary(userID int64) (*AISummary, error) {
 	return getInProgressAISummary(s.db, userID)
 }
+func (s *SQLiteStore) GetAISummary(userID, id int64) (*AISummary, error) {
+	return getAISummary(s.db, userID, id)
+}
+func (s *SQLiteStore) GetAISummaries(userID int64, limit int) ([]AISummary, error) {
+	return getAISummaries(s.db, userID, limit)
+}
 func (s *SQLiteStore) GetUnreadArticlesForSummary(userID int64, minSecurity, minInterest float64, limit int) ([]Article, error) {
 	return getUnreadArticlesForSummary(s.db, userID, minSecurity, minInterest, limit)
 }
@@ -133,6 +170,12 @@ func (s *PostgresStore) GetLatestAISummary(userID int64) (*AISummary, error) {
 }
 func (s *PostgresStore) GetInProgressAISummary(userID int64) (*AISummary, error) {
 	return getInProgressAISummary(s.db, userID)
+}
+func (s *PostgresStore) GetAISummary(userID, id int64) (*AISummary, error) {
+	return getAISummary(s.db, userID, id)
+}
+func (s *PostgresStore) GetAISummaries(userID int64, limit int) ([]AISummary, error) {
+	return getAISummaries(s.db, userID, limit)
 }
 func (s *PostgresStore) GetUnreadArticlesForSummary(userID int64, minSecurity, minInterest float64, limit int) ([]Article, error) {
 	return getUnreadArticlesForSummary(s.db, userID, minSecurity, minInterest, limit)

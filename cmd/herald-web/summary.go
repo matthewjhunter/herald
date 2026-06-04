@@ -6,50 +6,95 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 )
 
-// summaryViewData drives the AI Summary fragment.
-type summaryViewData struct {
-	Enabled        bool
-	Status         string // "", "generating", "done", "failed"
-	Headline       string
-	SanitizedHTML  template.HTML
-	GeneratedFmt   string
-	ArticleCount   int
-	InputTokens    int
-	OutputTokens   int
-	Error          string
-	Prompt         string
-	PromptIsCustom bool
+// summaryRow is one entry in the AI Summary list pane.
+type summaryRow struct {
+	ID           int64
+	Label        string // date/time label, e.g. "Jun 4, 2026 · 2:30 PM"
+	Status       string // "generating", "done", "failed"
+	ArticleCount int
 }
 
-// handleSummaryView renders the AI Summary fragment (latest digest, or the
-// generating/empty state) plus an OOB sidebar update marking the item active.
+// summaryListData drives the top (list) pane.
+type summaryListData struct {
+	Enabled        bool
+	Prompt         string
+	PromptIsCustom bool
+	Generating     bool // any row generating → poll the list
+	Rows           []summaryRow
+}
+
+// summaryDetailData drives the bottom (reading) pane for one summary.
+type summaryDetailData struct {
+	ID            int64
+	Status        string
+	Headline      string
+	SanitizedHTML template.HTML
+	GeneratedFmt  string
+	ArticleCount  int
+	InputTokens   int
+	OutputTokens  int
+	Error         string
+}
+
+func summaryLabel(created time.Time) string {
+	return created.Local().Format("Jan 2, 2006 · 3:04 PM")
+}
+
+// handleSummaryView renders the list of summaries into the top pane.
 func (h *handlers) handleSummaryView(w http.ResponseWriter, r *http.Request) {
 	h.init()
 	uid := userFromContext(r.Context()).ID
 
-	data := summaryViewData{Enabled: h.engine.AISummaryEnabled()}
+	data := summaryListData{Enabled: h.engine.AISummaryEnabled()}
 	if detail, err := h.engine.GetPrompt(uid, "summary"); err == nil {
 		data.Prompt = detail.Template
 		data.PromptIsCustom = detail.IsCustom
 	}
-	if latest, err := h.engine.GetLatestAISummary(uid); err == nil && latest != nil {
-		data.Status = latest.Status
-		data.Headline = latest.Headline
-		// Stored content is already sanitized at generation; re-sanitize on the
-		// way out as defense in depth.
-		data.SanitizedHTML = template.HTML(sanitizeHTML(latest.ContentHTML)) //nolint:gosec
-		data.GeneratedFmt = formatDate(latest.GeneratedAt)
-		data.ArticleCount = latest.ArticleCount
-		data.InputTokens = latest.InputTokens
-		data.OutputTokens = latest.OutputTokens
-		data.Error = latest.Error
+	if summaries, err := h.engine.GetAISummaries(uid, 50); err == nil {
+		for _, s := range summaries {
+			if s.Status == "generating" {
+				data.Generating = true
+			}
+			data.Rows = append(data.Rows, summaryRow{
+				ID: s.ID, Label: summaryLabel(s.CreatedAt), Status: s.Status, ArticleCount: s.ArticleCount,
+			})
+		}
 	}
 
-	h.renderFragment(w, "ai_summary_view", data)
+	h.renderFragment(w, "ai_summary_list", data)
 	h.renderSummarySidebar(w, uid)
+}
+
+// handleSummaryDetail renders one summary's digest into the reading pane.
+func (h *handlers) handleSummaryDetail(w http.ResponseWriter, r *http.Request) {
+	h.init()
+	uid := userFromContext(r.Context()).ID
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		h.renderError(w, http.StatusBadRequest, "Invalid summary ID")
+		return
+	}
+	s, err := h.engine.GetAISummary(uid, id)
+	if err != nil || s == nil {
+		h.renderError(w, http.StatusNotFound, "Summary not found")
+		return
+	}
+	h.renderFragment(w, "ai_summary_detail", summaryDetailData{
+		ID:            s.ID,
+		Status:        s.Status,
+		Headline:      s.Headline,
+		SanitizedHTML: template.HTML(sanitizeHTML(s.ContentHTML)), //nolint:gosec // re-sanitized defense in depth
+		GeneratedFmt:  formatDate(s.GeneratedAt),
+		ArticleCount:  s.ArticleCount,
+		InputTokens:   s.InputTokens,
+		OutputTokens:  s.OutputTokens,
+		Error:         s.Error,
+	})
 }
 
 // renderSummarySidebar emits the OOB sidebar with the AI Summary item active.
@@ -68,8 +113,8 @@ func (h *handlers) renderSummarySidebar(w http.ResponseWriter, uid int64) {
 	h.renderFragment(w, "feed_sidebar_oob", sidebar)
 }
 
-// handleSummaryGenerate starts a background generation (one in-flight per user)
-// and re-renders the view, which then polls until the digest is ready.
+// handleSummaryGenerate starts a background generation and re-renders the list,
+// which then polls until the new row finishes.
 func (h *handlers) handleSummaryGenerate(w http.ResponseWriter, r *http.Request) {
 	h.init()
 	uid := userFromContext(r.Context()).ID
@@ -77,8 +122,6 @@ func (h *handlers) handleSummaryGenerate(w http.ResponseWriter, r *http.Request)
 		h.renderError(w, http.StatusServiceUnavailable, "AI Summary is not configured on this server.")
 		return
 	}
-	// Begin synchronously (creates the generating row), then run the slow part in
-	// the background. "already generating" is fine — just render current state.
 	if id, prompt, err := h.engine.BeginAISummary(uid); err == nil {
 		go func() {
 			if ferr := h.engine.FinishAISummary(context.Background(), uid, id, prompt); ferr != nil {
@@ -89,16 +132,20 @@ func (h *handlers) handleSummaryGenerate(w http.ResponseWriter, r *http.Request)
 	h.handleSummaryView(w, r)
 }
 
-// handleSummaryMarkRead marks exactly the articles covered by the latest summary
-// as read.
+// handleSummaryMarkRead marks the articles covered by one summary as read.
 func (h *handlers) handleSummaryMarkRead(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID
-	latest, err := h.engine.GetLatestAISummary(uid)
-	if err != nil || latest == nil || len(latest.ArticleIDs) == 0 {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid summary ID", http.StatusBadRequest)
+		return
+	}
+	s, err := h.engine.GetAISummary(uid, id)
+	if err != nil || s == nil || len(s.ArticleIDs) == 0 {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if err := h.engine.MarkArticlesRead(uid, latest.ArticleIDs); err != nil {
+	if err := h.engine.MarkArticlesRead(uid, s.ArticleIDs); err != nil {
 		http.Error(w, "failed to mark read", http.StatusInternalServerError)
 		return
 	}

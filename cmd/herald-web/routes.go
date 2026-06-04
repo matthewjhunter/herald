@@ -87,10 +87,11 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.Handle("POST /newsletters/{newsletterID}/send", auth(http.HandlerFunc(h.handleNewsletterSend)))
 	mux.Handle("GET /newsletters/{newsletterID}/issues/{issueID}", auth(http.HandlerFunc(h.handleNewsletterIssueView)))
 
-	// AI Summary routes.
+	// AI Summary routes — list in the top pane, a selected digest in the reading pane.
 	mux.Handle("GET /summary", auth(http.HandlerFunc(h.handleSummaryView)))
+	mux.Handle("GET /summary/{id}", auth(http.HandlerFunc(h.handleSummaryDetail)))
 	mux.Handle("POST /summary/generate", auth(http.HandlerFunc(h.handleSummaryGenerate)))
-	mux.Handle("POST /summary/mark-read", auth(http.HandlerFunc(h.handleSummaryMarkRead)))
+	mux.Handle("POST /summary/{id}/mark-read", auth(http.HandlerFunc(h.handleSummaryMarkRead)))
 	mux.Handle("POST /summary/prompt", auth(http.HandlerFunc(h.handleSummaryPromptSave)))
 	mux.Handle("DELETE /summary/prompt", auth(http.HandlerFunc(h.handleSummaryPromptReset)))
 

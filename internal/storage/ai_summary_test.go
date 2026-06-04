@@ -100,6 +100,39 @@ func TestAISummaryLifecycle(t *testing.T) {
 	}
 }
 
+func TestGetAISummaries(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+	uid, _ := store.CreateUser("u")
+	other, _ := store.CreateUser("other")
+
+	id1, _ := store.CreateAISummary(&AISummary{UserID: uid, Model: "m"})
+	store.UpdateAISummaryDone(id1, "First", "<p>1</p>", []int64{1, 2}, 100, 10) //nolint:errcheck
+	id2, _ := store.CreateAISummary(&AISummary{UserID: uid, Model: "m"})        // newest, still generating
+	store.CreateAISummary(&AISummary{UserID: other, Model: "m"})                //nolint:errcheck // other user
+
+	list, err := store.GetAISummaries(uid, 50)
+	if err != nil {
+		t.Fatalf("GetAISummaries: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("expected 2 summaries for user, got %d", len(list))
+	}
+	// Newest first.
+	if list[0].ID != id2 || list[1].ID != id1 {
+		t.Fatalf("wrong order: %d, %d (want %d, %d)", list[0].ID, list[1].ID, id2, id1)
+	}
+
+	// GetAISummary is user-scoped and round-trips fields.
+	got, err := store.GetAISummary(uid, id1)
+	if err != nil || got == nil || got.Headline != "First" || len(got.ArticleIDs) != 2 {
+		t.Fatalf("GetAISummary(%d) = %+v err=%v", id1, got, err)
+	}
+	if other2, _ := store.GetAISummary(other, id1); other2 != nil {
+		t.Fatalf("GetAISummary must be user-scoped, leaked id1 to other user")
+	}
+}
+
 func TestAISummaryFailed(t *testing.T) {
 	store, cleanup := newTestStore(t)
 	defer cleanup()
