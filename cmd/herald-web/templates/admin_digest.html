@@ -1,0 +1,19 @@
+{{define "title"}}Herald - Digest Header/Footer{{end}}
+{{define "nav"}}{{template "shared-nav" "settings"}}{{end}}
+{{define "content"}}
+<main class="container">
+    {{template "settings-subnav" .}}
+    <h2>Digest Header &amp; Footer</h2>
+    <p>Admin-only HTML wrapped around every generated digest at render and email time (e.g. a mandatory unsubscribe footer). Changes apply to existing digests without regenerating. Sanitized on output.</p>
+    <form hx-post="/admin/digest" hx-swap="none"
+          hx-on::after-request="if(event.detail.successful){var b=this.querySelector('[data-save-btn]');b.textContent='Saved!';setTimeout(()=>b.textContent='Save',2000);}">
+        <label>Header HTML
+            <textarea name="header" rows="6" style="font-family:monospace;font-size:0.85em;">{{.Header}}</textarea>
+        </label>
+        <label>Footer HTML
+            <textarea name="footer" rows="6" style="font-family:monospace;font-size:0.85em;">{{.Footer}}</textarea>
+        </label>
+        <button type="submit" data-save-btn>Save</button>
+    </form>
+</main>
+{{end}}

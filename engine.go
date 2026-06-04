@@ -896,7 +896,7 @@ func (e *Engine) DisbandGroup(userID, groupID int64) error {
 // --- Newsletter methods ---
 
 // CreateNewsletter creates a new newsletter definition for a user.
-func (e *Engine) CreateNewsletter(userID int64, name, schedule, emailRecipient string, config storage.NewsletterConfig) (int64, error) {
+func (e *Engine) CreateNewsletter(userID int64, name, schedule, emailRecipient, promptTemplate string, config storage.NewsletterConfig) (int64, error) {
 	if config.MaxArticles == 0 {
 		config.MaxArticles = 20
 	}
@@ -905,6 +905,7 @@ func (e *Engine) CreateNewsletter(userID int64, name, schedule, emailRecipient s
 		Name:           name,
 		Schedule:       schedule,
 		EmailRecipient: emailRecipient,
+		PromptTemplate: promptTemplate,
 		Config:         config,
 		Enabled:        true,
 	})
@@ -1123,16 +1124,12 @@ func (e *Engine) ProcessDueNewsletters(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			log.Printf("generating %s newsletter %q (id=%d)", schedule, nl.Name, nl.ID)
-			issue, err := e.GenerateNewsletterIssue(ctx, nl.UserID, nl.ID)
-			if err != nil {
-				log.Printf("newsletter %d generation failed: %v", nl.ID, err)
+			log.Printf("generating %s digest %q (id=%d)", schedule, nl.Name, nl.ID)
+			// GenerateForConfig produces an AI digest and (if a recipient is set)
+			// emails it wrapped in the admin header/footer.
+			if err := e.GenerateForConfig(ctx, nl.UserID, nl.ID); err != nil {
+				log.Printf("digest %d generation failed: %v", nl.ID, err)
 				continue
-			}
-			if nl.EmailRecipient != "" && e.config.Email.SMTPHost != "" {
-				if err := e.SendNewsletterIssue(issue.ID); err != nil {
-					log.Printf("newsletter %d email failed: %v", nl.ID, err)
-				}
 			}
 		}
 	}

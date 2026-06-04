@@ -182,6 +182,7 @@ type Store interface {
 	GetInProgressAISummary(userID int64) (*AISummary, error)
 	GetAISummary(userID, id int64) (*AISummary, error)
 	GetAISummaries(userID int64, limit int) ([]AISummary, error)
+	GetAISummariesForNewsletter(userID, newsletterID int64, limit int) ([]AISummary, error)
 	GetUnreadArticlesForSummary(userID int64, minSecurity, minInterest float64, limit int) ([]Article, error)
 
 	// Embedding-based group operations

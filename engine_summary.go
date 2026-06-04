@@ -8,12 +8,37 @@ import (
 	"strings"
 
 	"github.com/matthewjhunter/herald/internal/ai"
+	emailpkg "github.com/matthewjhunter/herald/internal/email"
 	"github.com/matthewjhunter/herald/internal/sanitize"
 	"github.com/matthewjhunter/herald/internal/storage"
 )
 
 // AISummaryEnabled reports whether the cloud summarizer is configured.
 func (e *Engine) AISummaryEnabled() bool { return e.summarizer != nil }
+
+// Global (user_id=0) preference keys for the admin-configured digest chrome —
+// HTML prepended/appended to every digest at render/email time (e.g. an
+// unsubscribe footer), editable without regenerating.
+const (
+	digestHeaderKey = "digest_header"
+	digestFooterKey = "digest_footer"
+)
+
+// GetDigestChrome returns the admin-configured header and footer HTML.
+func (e *Engine) GetDigestChrome() (header, footer string) {
+	header, _ = e.store.GetUserPreference(0, digestHeaderKey)
+	footer, _ = e.store.GetUserPreference(0, digestFooterKey)
+	return header, footer
+}
+
+// SetDigestChrome stores the global digest header/footer. The caller must
+// enforce admin authorization.
+func (e *Engine) SetDigestChrome(header, footer string) error {
+	if err := e.store.SetUserPreference(0, digestHeaderKey, header); err != nil {
+		return err
+	}
+	return e.store.SetUserPreference(0, digestFooterKey, footer)
+}
 
 // GetLatestAISummary returns the user's most recent summary, or nil if none.
 func (e *Engine) GetLatestAISummary(userID int64) (*storage.AISummary, error) {
@@ -45,22 +70,55 @@ func (e *Engine) resolveSummaryPrompt(userID int64) string {
 	return tmpl
 }
 
+// resolveDigestPrompt returns the prompt for a digest: a config's PromptTemplate
+// when present, else the default summary prompt.
+func (e *Engine) resolveDigestPrompt(userID int64, newsletterID *int64) string {
+	if newsletterID != nil {
+		if nl, err := e.store.GetNewsletter(*newsletterID); err == nil && strings.TrimSpace(nl.PromptTemplate) != "" {
+			return nl.PromptTemplate
+		}
+	}
+	return e.resolveSummaryPrompt(userID)
+}
+
+// selectDigestArticles picks the articles for a digest: a config's scoped set
+// (its feed/score filters, new since its last run) when newsletterID is set,
+// else the ad-hoc unread set above the global floor.
+func (e *Engine) selectDigestArticles(userID int64, newsletterID *int64) ([]storage.Article, error) {
+	if newsletterID != nil {
+		nl, err := e.store.GetNewsletter(*newsletterID)
+		if err != nil {
+			return nil, err
+		}
+		limit := nl.Config.MaxArticles
+		if limit <= 0 {
+			limit = 1000
+		}
+		articles, _, err := e.store.GetNewsletterArticles(userID, &nl.Config, nl.LastGeneratedAt, limit)
+		return articles, err
+	}
+	sum := e.config.Summary
+	return e.store.GetUnreadArticlesForSummary(userID, sum.MinSecurityScore, sum.MinInterestScore, 1000)
+}
+
 // BeginAISummary guards one in-flight summary per user and creates the
-// generating row synchronously, returning its id and the resolved prompt. The
-// web layer calls this (fast — a single insert), then runs FinishAISummary in a
-// background goroutine, so the poller sees the generating row immediately.
-func (e *Engine) BeginAISummary(userID int64) (id int64, prompt string, err error) {
+// generating row synchronously, returning its id and the resolved prompt.
+// newsletterID links the digest to a config (nil = ad-hoc). The web layer calls
+// this (fast — a single insert), then runs FinishAISummary in a goroutine so the
+// poller sees the generating row immediately.
+func (e *Engine) BeginAISummary(userID int64, newsletterID *int64) (id int64, prompt string, err error) {
 	if e.summarizer == nil {
 		return 0, "", fmt.Errorf("AI summary not configured")
 	}
 	if inprog, ierr := e.store.GetInProgressAISummary(userID); ierr == nil && inprog != nil {
 		return inprog.ID, "", fmt.Errorf("a summary is already generating")
 	}
-	prompt = e.resolveSummaryPrompt(userID)
+	prompt = e.resolveDigestPrompt(userID, newsletterID)
 	id, err = e.store.CreateAISummary(&storage.AISummary{
-		UserID: userID,
-		Model:  e.summarizer.Model(),
-		Prompt: prompt,
+		UserID:       userID,
+		NewsletterID: newsletterID,
+		Model:        e.summarizer.Model(),
+		Prompt:       prompt,
 	})
 	if err != nil {
 		return 0, "", fmt.Errorf("create summary: %w", err)
@@ -69,38 +127,95 @@ func (e *Engine) BeginAISummary(userID int64) (id int64, prompt string, err erro
 }
 
 // FinishAISummary does the slow work for an already-created generating row:
-// select articles, call the cloud model in one streaming pass, and record the
-// digest (or the failure). Safe to run in a background goroutine.
-func (e *Engine) FinishAISummary(ctx context.Context, userID, id int64, prompt string) error {
-	headline, body, ids, inTok, outTok, genErr := e.runAISummary(ctx, userID, prompt)
+// select articles, call the cloud model in one streaming pass, record the digest
+// (or the failure), and — for a config-driven digest — advance LastGeneratedAt
+// and email it. Safe to run in a background goroutine.
+func (e *Engine) FinishAISummary(ctx context.Context, userID, id int64, newsletterID *int64, prompt string) error {
+	articles, selErr := e.selectDigestArticles(userID, newsletterID)
+	if selErr != nil {
+		return e.store.UpdateAISummaryFailed(id, fmt.Sprintf("select articles: %v", selErr))
+	}
+	headline, body, ids, inTok, outTok, genErr := e.runAISummary(ctx, userID, articles, prompt)
 	if genErr != nil {
 		log.Printf("herald: AI summary %d (user %d) failed: %v", id, userID, genErr)
 		return e.store.UpdateAISummaryFailed(id, genErr.Error())
 	}
-	// headline is empty by default — the digest's own leading <h2> is the title;
-	// it is only set if a custom prompt returns a {headline, body} object.
-	return e.store.UpdateAISummaryDone(id, headline, body, ids, inTok, outTok)
+	if err := e.store.UpdateAISummaryDone(id, headline, body, ids, inTok, outTok); err != nil {
+		return err
+	}
+	if newsletterID != nil {
+		e.store.UpdateNewsletterLastGenerated(*newsletterID) //nolint:errcheck
+		if nl, err := e.store.GetNewsletter(*newsletterID); err == nil && nl.EmailRecipient != "" && e.config.Email.SMTPHost != "" {
+			if mailErr := e.emailDigest(nl, headline, body); mailErr != nil {
+				log.Printf("herald: digest %d email to %s failed: %v", id, nl.EmailRecipient, mailErr)
+			}
+		}
+	}
+	return nil
 }
 
-// GenerateAISummary runs Begin then Finish synchronously. Used by tests and any
-// non-web caller; the web path splits the two around a goroutine.
+// GenerateAISummary runs an ad-hoc digest (Begin+Finish) synchronously. Used by
+// tests and any non-web caller; the web path splits the two around a goroutine.
 func (e *Engine) GenerateAISummary(ctx context.Context, userID int64) error {
-	id, prompt, err := e.BeginAISummary(userID)
+	id, prompt, err := e.BeginAISummary(userID, nil)
 	if err != nil {
 		return err
 	}
-	return e.FinishAISummary(ctx, userID, id, prompt)
+	return e.FinishAISummary(ctx, userID, id, nil, prompt)
 }
 
-// runAISummary does the selection → budget → model → sanitize work.
-func (e *Engine) runAISummary(ctx context.Context, userID int64, prompt string) (headline, body string, ids []int64, inTok, outTok int, err error) {
-	sum := e.config.Summary
-	articles, err := e.store.GetUnreadArticlesForSummary(userID, sum.MinSecurityScore, sum.MinInterestScore, 1000)
+// GenerateForConfig runs a config-scoped digest synchronously (the daemon's
+// scheduled path).
+func (e *Engine) GenerateForConfig(ctx context.Context, userID, newsletterID int64) error {
+	id, prompt, err := e.BeginAISummary(userID, &newsletterID)
 	if err != nil {
-		return "", "", nil, 0, 0, fmt.Errorf("select articles: %w", err)
+		return err
 	}
+	return e.FinishAISummary(ctx, userID, id, &newsletterID, prompt)
+}
+
+// WrapDigestChrome wraps a (sanitized) digest body in the admin-configured
+// header/footer, applied at render/email time so admins can change it without
+// regenerating.
+func (e *Engine) WrapDigestChrome(body string) string {
+	header, footer := e.GetDigestChrome()
+	var b strings.Builder
+	if h := strings.TrimSpace(header); h != "" {
+		b.WriteString(sanitize.HTML(h))
+		b.WriteString("\n")
+	}
+	b.WriteString(body)
+	if f := strings.TrimSpace(footer); f != "" {
+		b.WriteString("\n")
+		b.WriteString(sanitize.HTML(f))
+	}
+	return b.String()
+}
+
+// emailDigest sends a generated digest to a config's recipient, wrapped in the
+// admin header/footer.
+func (e *Engine) emailDigest(nl *storage.Newsletter, headline, body string) error {
+	sender := &emailpkg.Sender{
+		Host:     e.config.Email.SMTPHost,
+		Port:     e.config.Email.SMTPPort,
+		Username: e.config.Email.Username,
+		Password: e.config.Email.Password,
+		From:     e.config.Email.FromAddress,
+		FromName: e.config.Email.FromName,
+	}
+	subject := nl.Name
+	if headline != "" {
+		subject = nl.Name + ": " + headline
+	}
+	return sender.Send(nl.EmailRecipient, subject, e.WrapDigestChrome(body), "")
+}
+
+// runAISummary does the budget → model → sanitize work over a pre-selected set
+// of articles. Selection (ad-hoc unread vs config-scoped) is the caller's job.
+func (e *Engine) runAISummary(ctx context.Context, userID int64, articles []storage.Article, prompt string) (headline, body string, ids []int64, inTok, outTok int, err error) {
+	sum := e.config.Summary
 	if len(articles) == 0 {
-		return "", "", nil, 0, 0, fmt.Errorf("no unread articles above the interest floor to summarize")
+		return "", "", nil, 0, 0, fmt.Errorf("no articles to summarize")
 	}
 
 	feedTitles := map[int64]string{}

@@ -81,19 +81,15 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	// Newsletter routes.
 	mux.Handle("GET /newsletters", auth(http.HandlerFunc(h.handleNewslettersManage)))
 	mux.Handle("POST /newsletters", auth(http.HandlerFunc(h.handleNewsletterCreate)))
-	mux.Handle("GET /newsletters/{newsletterID}", auth(http.HandlerFunc(h.handleNewsletterView)))
+	mux.Handle("PATCH /newsletters/{newsletterID}", auth(http.HandlerFunc(h.handleNewsletterUpdate)))
 	mux.Handle("DELETE /newsletters/{newsletterID}", auth(http.HandlerFunc(h.handleNewsletterDelete)))
 	mux.Handle("POST /newsletters/{newsletterID}/generate", auth(http.HandlerFunc(h.handleNewsletterGenerate)))
-	mux.Handle("POST /newsletters/{newsletterID}/send", auth(http.HandlerFunc(h.handleNewsletterSend)))
-	mux.Handle("GET /newsletters/{newsletterID}/issues/{issueID}", auth(http.HandlerFunc(h.handleNewsletterIssueView)))
 
 	// AI Summary routes — list in the top pane, a selected digest in the reading pane.
 	mux.Handle("GET /summary", auth(http.HandlerFunc(h.handleSummaryView)))
 	mux.Handle("GET /summary/{id}", auth(http.HandlerFunc(h.handleSummaryDetail)))
 	mux.Handle("POST /summary/generate", auth(http.HandlerFunc(h.handleSummaryGenerate)))
 	mux.Handle("POST /summary/{id}/mark-read", auth(http.HandlerFunc(h.handleSummaryMarkRead)))
-	mux.Handle("POST /summary/prompt", auth(http.HandlerFunc(h.handleSummaryPromptSave)))
-	mux.Handle("DELETE /summary/prompt", auth(http.HandlerFunc(h.handleSummaryPromptReset)))
 
 	// Ollama model list (used by prompt settings pages).
 	mux.Handle("GET /api/ollama/models", auth(http.HandlerFunc(h.handleOllamaModels)))
@@ -109,6 +105,8 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.Handle("GET /admin/prompts", auth(adminAuth(http.HandlerFunc(h.handleAdminPrompts))))
 	mux.Handle("POST /admin/prompts/{promptType}", auth(adminAuth(http.HandlerFunc(h.handleAdminPromptSave))))
 	mux.Handle("DELETE /admin/prompts/{promptType}", auth(adminAuth(http.HandlerFunc(h.handleAdminPromptReset))))
+	mux.Handle("GET /admin/digest", auth(adminAuth(http.HandlerFunc(h.handleAdminDigest))))
+	mux.Handle("POST /admin/digest", auth(adminAuth(http.HandlerFunc(h.handleAdminDigest))))
 
 	return mux
 }

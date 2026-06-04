@@ -254,6 +254,7 @@ CREATE INDEX IF NOT EXISTS idx_newsletter_issues_generated ON newsletter_issues(
 CREATE TABLE IF NOT EXISTS ai_summaries (
     id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     user_id          BIGINT NOT NULL,
+    newsletter_id    BIGINT,
     status           TEXT NOT NULL DEFAULT 'generating',
     model            TEXT NOT NULL DEFAULT '',
     prompt           TEXT NOT NULL DEFAULT '',
@@ -266,7 +267,8 @@ CREATE TABLE IF NOT EXISTS ai_summaries (
     error            TEXT NOT NULL DEFAULT '',
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     generated_at     TIMESTAMPTZ,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (newsletter_id) REFERENCES newsletters(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_ai_summaries_user ON ai_summaries(user_id, created_at DESC);
 `

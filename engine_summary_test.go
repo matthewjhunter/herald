@@ -117,3 +117,82 @@ func TestGenerateAISummary(t *testing.T) {
 		t.Errorf("expected no in-progress summary, got %+v", inprog)
 	}
 }
+
+func digestServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "data: %s\n\n", sseContentFrame("<h2>Digest</h2><p>body</p>"))
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+}
+
+func TestGenerateForConfig(t *testing.T) {
+	srv := digestServer(t)
+	defer srv.Close()
+	store, err := storage.NewSQLiteStore(filepath.Join(t.TempDir(), "h.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	uid, _ := store.CreateUser("u")
+	feedA, _ := store.AddFeed("https://a.example/feed", "A", "")
+	feedB, _ := store.AddFeed("https://b.example/feed", "B", "")
+	store.SubscribeUserToFeed(uid, feedA) //nolint:errcheck
+	store.SubscribeUserToFeed(uid, feedB) //nolint:errcheck
+
+	now := time.Now()
+	mk := func(feedID int64, guid string) int64 {
+		id, _ := store.AddArticle(&storage.Article{FeedID: feedID, GUID: guid, Title: guid,
+			URL: "https://example.com/" + guid, Content: "<p>body " + guid + "</p>", PublishedDate: &now})
+		i, s := 8.0, 9.0
+		store.UpdateReadState(uid, id, false, &i, &s, nil, nil) //nolint:errcheck
+		return id
+	}
+	a1 := mk(feedA, "a1")
+	a2 := mk(feedA, "a2")
+	mk(feedB, "b1") // different feed — must be excluded by the config
+
+	nlID, err := store.CreateNewsletter(&storage.Newsletter{
+		UserID: uid, Name: "A digest", Schedule: "manual",
+		Config: storage.NewsletterConfig{IncludeFeeds: []int64{feedA}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := &Engine{
+		store:      store,
+		summarizer: ai.NewCloudSummarizer(srv.URL, "", "m", time.Minute),
+		config:     storage.DefaultConfig(),
+	}
+	if err := e.SetDigestChrome("<p>HEADER</p>", "<p>FOOTER</p>"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := e.GenerateForConfig(context.Background(), uid, nlID); err != nil {
+		t.Fatalf("GenerateForConfig: %v", err)
+	}
+
+	latest, _ := e.GetLatestAISummary(uid)
+	if latest == nil || latest.Status != "done" {
+		t.Fatalf("expected a done summary, got %+v", latest)
+	}
+	if latest.NewsletterID == nil || *latest.NewsletterID != nlID {
+		t.Fatalf("summary not linked to config: %+v", latest.NewsletterID)
+	}
+	// Covered exactly the two feed-A articles; feed-B excluded by IncludeFeeds.
+	covered := map[int64]bool{}
+	for _, id := range latest.ArticleIDs {
+		covered[id] = true
+	}
+	if len(latest.ArticleIDs) != 2 || !covered[a1] || !covered[a2] {
+		t.Fatalf("config should scope to feed A (a1=%d,a2=%d), got %v", a1, a2, latest.ArticleIDs)
+	}
+	// Chrome wraps at render time.
+	wrapped := e.WrapDigestChrome(latest.ContentHTML)
+	if !strings.Contains(wrapped, "HEADER") || !strings.Contains(wrapped, "FOOTER") ||
+		!strings.Contains(wrapped, "body") {
+		t.Fatalf("chrome not wrapped: %s", wrapped)
+	}
+}

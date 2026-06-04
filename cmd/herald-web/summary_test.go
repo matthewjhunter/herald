@@ -23,11 +23,14 @@ func TestAISummaryListTemplate(t *testing.T) {
 		}
 	})
 	t.Run("empty", func(t *testing.T) {
-		body := render(t, "ai_summary_list", summaryListData{Enabled: true, Prompt: "do it"})
-		for _, w := range []string{"No summaries yet", "do it", "Edit prompt", "/summary/generate"} {
+		body := render(t, "ai_summary_list", summaryListData{Enabled: true})
+		for _, w := range []string{"No summaries yet", "/summary/generate"} {
 			if !strings.Contains(body, w) {
 				t.Errorf("missing %q:\n%s", w, body)
 			}
+		}
+		if strings.Contains(body, "Edit prompt") {
+			t.Errorf("inline prompt editor should be gone:\n%s", body)
 		}
 	})
 	t.Run("rows: done is clickable into reading pane, generating polls", func(t *testing.T) {

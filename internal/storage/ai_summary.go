@@ -12,7 +12,7 @@ import (
 // SQLiteStore/PostgresStore methods below just delegate. The only backend
 // difference — INSERT id retrieval — keys off tracedDB.useRebind.
 
-const aiSummaryCols = `id, user_id, status, model, prompt, headline, content_html,
+const aiSummaryCols = `id, user_id, newsletter_id, status, model, prompt, headline, content_html,
 	article_ids_json, article_count, input_tokens, output_tokens, error, created_at, generated_at`
 
 // scannable is satisfied by both *sql.Row and *sql.Rows.
@@ -21,7 +21,7 @@ type scannable interface{ Scan(...any) error }
 func scanAISummaryCols(sc scannable) (*AISummary, error) {
 	var s AISummary
 	var idsJSON string
-	if err := sc.Scan(&s.ID, &s.UserID, &s.Status, &s.Model, &s.Prompt, &s.Headline,
+	if err := sc.Scan(&s.ID, &s.UserID, &s.NewsletterID, &s.Status, &s.Model, &s.Prompt, &s.Headline,
 		&s.ContentHTML, &idsJSON, &s.ArticleCount, &s.InputTokens, &s.OutputTokens,
 		&s.Error, &s.CreatedAt, &s.GeneratedAt); err != nil {
 		return nil, err
@@ -42,15 +42,15 @@ func createAISummary(db *tracedDB, s *AISummary) (int64, error) {
 	if db.useRebind {
 		var id int64
 		err := db.QueryRow(
-			`INSERT INTO ai_summaries (user_id, status, model, prompt)
-			 VALUES (?, 'generating', ?, ?) RETURNING id`,
-			s.UserID, s.Model, s.Prompt).Scan(&id)
+			`INSERT INTO ai_summaries (user_id, newsletter_id, status, model, prompt)
+			 VALUES (?, ?, 'generating', ?, ?) RETURNING id`,
+			s.UserID, s.NewsletterID, s.Model, s.Prompt).Scan(&id)
 		return id, err
 	}
 	res, err := db.Exec(
-		`INSERT INTO ai_summaries (user_id, status, model, prompt)
-		 VALUES (?, 'generating', ?, ?)`,
-		s.UserID, s.Model, s.Prompt)
+		`INSERT INTO ai_summaries (user_id, newsletter_id, status, model, prompt)
+		 VALUES (?, ?, 'generating', ?, ?)`,
+		s.UserID, s.NewsletterID, s.Model, s.Prompt)
 	if err != nil {
 		return 0, err
 	}
@@ -111,6 +111,26 @@ func getAISummaries(db *tracedDB, userID int64, limit int) ([]AISummary, error) 
 	return out, rows.Err()
 }
 
+func getAISummariesForNewsletter(db *tracedDB, userID, newsletterID int64, limit int) ([]AISummary, error) {
+	rows, err := db.Query(
+		`SELECT `+aiSummaryCols+` FROM ai_summaries
+		 WHERE user_id=? AND newsletter_id=? ORDER BY created_at DESC, id DESC LIMIT ?`,
+		userID, newsletterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get ai summaries for newsletter: %w", err)
+	}
+	defer rows.Close()
+	var out []AISummary
+	for rows.Next() {
+		s, err := scanAISummaryCols(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *s)
+	}
+	return out, rows.Err()
+}
+
 func getUnreadArticlesForSummary(db *tracedDB, userID int64, minSecurity, minInterest float64, limit int) ([]Article, error) {
 	rows, err := db.Query(`
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
@@ -152,6 +172,9 @@ func (s *SQLiteStore) GetAISummary(userID, id int64) (*AISummary, error) {
 func (s *SQLiteStore) GetAISummaries(userID int64, limit int) ([]AISummary, error) {
 	return getAISummaries(s.db, userID, limit)
 }
+func (s *SQLiteStore) GetAISummariesForNewsletter(userID, newsletterID int64, limit int) ([]AISummary, error) {
+	return getAISummariesForNewsletter(s.db, userID, newsletterID, limit)
+}
 func (s *SQLiteStore) GetUnreadArticlesForSummary(userID int64, minSecurity, minInterest float64, limit int) ([]Article, error) {
 	return getUnreadArticlesForSummary(s.db, userID, minSecurity, minInterest, limit)
 }
@@ -176,6 +199,9 @@ func (s *PostgresStore) GetAISummary(userID, id int64) (*AISummary, error) {
 }
 func (s *PostgresStore) GetAISummaries(userID int64, limit int) ([]AISummary, error) {
 	return getAISummaries(s.db, userID, limit)
+}
+func (s *PostgresStore) GetAISummariesForNewsletter(userID, newsletterID int64, limit int) ([]AISummary, error) {
+	return getAISummariesForNewsletter(s.db, userID, newsletterID, limit)
 }
 func (s *PostgresStore) GetUnreadArticlesForSummary(userID int64, minSecurity, minInterest float64, limit int) ([]Article, error) {
 	return getUnreadArticlesForSummary(s.db, userID, minSecurity, minInterest, limit)

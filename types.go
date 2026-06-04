@@ -118,6 +118,7 @@ type NewsletterStats struct {
 type AISummary struct {
 	ID           int64      `json:"id"`
 	UserID       int64      `json:"user_id"`
+	NewsletterID *int64     `json:"newsletter_id,omitempty"`
 	Status       string     `json:"status"`
 	Model        string     `json:"model,omitempty"`
 	Prompt       string     `json:"prompt,omitempty"`

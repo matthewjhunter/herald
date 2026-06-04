@@ -1,17 +1,15 @@
-{{define "title"}}Herald - Newsletters{{end}}
+{{define "title"}}Herald - Digests{{end}}
 {{define "nav"}}{{template "shared-nav" "newsletters"}}{{end}}
 {{define "content"}}
 <main class="container">
-    <h2>Newsletters</h2>
-    <p>Create digest newsletters from your feeds. Each newsletter filters articles by score, feed, and category, then uses AI to generate a formatted edition.</p>
+    <h2>Digests</h2>
+    <p>A digest is a saved AI-summary configuration: pick feeds, a prompt, filters, and a schedule. Generated digests appear under <strong>AI Summary</strong>; scheduled ones can also be emailed.</p>
 
     <details open>
-        <summary><strong>Create Newsletter</strong></summary>
+        <summary><strong>Create Digest</strong></summary>
         <form hx-post="/newsletters" hx-target="#newsletter-list" hx-swap="innerHTML">
             <div class="grid">
-                <label>Name
-                    <input type="text" name="name" required placeholder="Daily Cyber Briefing">
-                </label>
+                <label>Name<input type="text" name="name" required placeholder="Daily Cyber Briefing"></label>
                 <label>Schedule
                     <select name="schedule">
                         <option value="manual">Manual</option>
@@ -21,47 +19,80 @@
                 </label>
             </div>
             <div class="grid">
-                <label>Min Interest Score
-                    <input type="number" name="min_interest_score" value="7" min="0" max="10" step="0.5">
-                </label>
-                <label>Max Articles
-                    <input type="number" name="max_articles" value="20" min="1" max="100">
-                </label>
+                <label>Min Interest Score<input type="number" name="min_interest_score" value="0" min="0" max="10" step="0.5"></label>
+                <label>Max Articles<input type="number" name="max_articles" value="100" min="1" max="500"></label>
             </div>
-            <label>Email Recipient (optional)
-                <input type="email" name="email_recipient" placeholder="you@example.com">
+            <label>Feeds to include (none = all feeds)
+                <select multiple name="feed_ids" size="6">
+                    {{range .Feeds}}<option value="{{.ID}}">{{.Title}}</option>{{end}}
+                </select>
             </label>
+            <label>Prompt (leave blank for the default summary prompt)
+                <textarea name="prompt" rows="6" style="font-family:monospace;font-size:0.85em;"></textarea>
+            </label>
+            <label>Email Recipient (optional)<input type="email" name="email_recipient" placeholder="you@example.com"></label>
             <button type="submit">Create</button>
         </form>
     </details>
 
     <div id="newsletter-list">
-    {{if .Newsletters}}
-    {{range .Newsletters}}
-    <article>
-        <header>
-            <strong>{{.Name}}</strong>
-            <span class="meta">Schedule: {{.Schedule}} &middot; Max: {{.Config.MaxArticles}} articles</span>
-        </header>
-        <div class="grid">
-            <div>
-                <small>Min Interest: {{printf "%.1f" .Config.MinInterestScore}}</small>
-                {{if .EmailRecipient}}<br><small>Email: {{.EmailRecipient}}</small>{{end}}
-            </div>
-            <div style="text-align:right;">
-                <button class="outline" hx-delete="/newsletters/{{.ID}}"
-                        hx-target="#newsletter-list" hx-swap="innerHTML"
-                        hx-confirm="Delete newsletter '{{.Name}}'?"
-                        style="color:var(--pico-del-color);border-color:var(--pico-del-color);padding:0.25rem 0.75rem;font-size:0.85rem;">
-                    Delete
-                </button>
-            </div>
-        </div>
-    </article>
-    {{end}}
-    {{else}}
-    <p class="empty-state">No newsletters yet.</p>
-    {{end}}
+        {{template "newsletter_list_fragment" .}}
     </div>
 </main>
+{{end}}
+
+{{define "newsletter_list_fragment"}}
+{{$feeds := .Feeds}}
+{{if .Newsletters}}
+{{range .Newsletters}}
+<article>
+    <header style="display:flex;justify-content:space-between;align-items:center;">
+        <strong>{{.Name}}</strong>
+        <span class="meta">{{.Schedule}} &middot; min {{printf "%.1f" .Config.MinInterestScore}} &middot; max {{.Config.MaxArticles}}
+            {{if .Config.IncludeFeeds}}&middot; {{len .Config.IncludeFeeds}} feed(s){{else}}&middot; all feeds{{end}}
+            {{if .EmailRecipient}}&middot; ✉ {{.EmailRecipient}}{{end}}</span>
+    </header>
+    <div style="display:flex;gap:0.5rem;align-items:center;">
+        <button class="outline" hx-post="/newsletters/{{.ID}}/generate" hx-target="#gen-status-{{.ID}}" hx-swap="innerHTML"
+                style="padding:0.25rem 0.75rem;font-size:0.85rem;">Generate now</button>
+        <span id="gen-status-{{.ID}}" class="secondary" style="font-size:0.85rem;"></span>
+        <button class="outline secondary" hx-delete="/newsletters/{{.ID}}"
+                hx-target="#newsletter-list" hx-swap="innerHTML" hx-confirm="Delete digest '{{.Name}}'?"
+                style="margin-left:auto;padding:0.25rem 0.75rem;font-size:0.85rem;">Delete</button>
+    </div>
+    <details style="margin-top:0.5rem;">
+        <summary style="cursor:pointer;font-size:0.9rem;">Edit</summary>
+        <form hx-patch="/newsletters/{{.ID}}" hx-target="#newsletter-list" hx-swap="innerHTML">
+            <div class="grid">
+                <label>Name<input type="text" name="name" required value="{{.Name}}"></label>
+                <label>Schedule
+                    <select name="schedule">
+                        <option value="manual" {{if eq .Schedule "manual"}}selected{{end}}>Manual</option>
+                        <option value="daily" {{if eq .Schedule "daily"}}selected{{end}}>Daily</option>
+                        <option value="hourly" {{if eq .Schedule "hourly"}}selected{{end}}>Hourly</option>
+                    </select>
+                </label>
+            </div>
+            <div class="grid">
+                <label>Min Interest Score<input type="number" name="min_interest_score" min="0" max="10" step="0.5" value="{{printf "%.1f" .Config.MinInterestScore}}"></label>
+                <label>Max Articles<input type="number" name="max_articles" min="1" max="500" value="{{.Config.MaxArticles}}"></label>
+            </div>
+            <label>Feeds to include (none = all feeds)
+                <select multiple name="feed_ids" size="6">
+                    {{$nl := .}}
+                    {{range $feeds}}<option value="{{.ID}}" {{if int64in $nl.Config.IncludeFeeds .ID}}selected{{end}}>{{.Title}}</option>{{end}}
+                </select>
+            </label>
+            <label>Prompt (leave blank for the default summary prompt)
+                <textarea name="prompt" rows="6" style="font-family:monospace;font-size:0.85em;">{{.PromptTemplate}}</textarea>
+            </label>
+            <label>Email Recipient (optional)<input type="email" name="email_recipient" value="{{.EmailRecipient}}"></label>
+            <button type="submit">Save</button>
+        </form>
+    </details>
+</article>
+{{end}}
+{{else}}
+<p class="empty-state">No digests yet.</p>
+{{end}}
 {{end}}
