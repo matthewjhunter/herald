@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"strings"
 
 	embedding "github.com/matthewjhunter/go-embedding"
 	"github.com/matthewjhunter/herald/internal/ai"
@@ -207,8 +208,10 @@ func (s *Stage) nameGroup(ctx context.Context, groupID int64) {
 		s.Formatter.Warning("failed to store summary for group %d: %v", groupID, err)
 		return
 	}
-	// Refine the topic label once the group is substantial.
-	if len(arts) >= 3 {
+	// Refine the topic label once the group is substantial — but only from a
+	// real summary. An empty summary (degenerate/over-large cluster) would make
+	// the refiner reply conversationally; skip it and keep the seed topic.
+	if len(arts) >= 3 && strings.TrimSpace(res.Summary) != "" {
 		if refined, err := s.AI.RefineGroupTopic(ctx, s.UserID, res.Summary); err == nil && refined != "" {
 			s.Store.UpdateGroupTopic(groupID, refined) //nolint:errcheck
 		}

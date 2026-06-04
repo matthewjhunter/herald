@@ -125,10 +125,38 @@ Summary:
 	}
 
 	topic = strings.TrimSpace(topic)
-	if len(topic) > 200 {
-		topic = topic[:200]
+	// A degenerate group summary (e.g. an over-large, incoherent cluster) makes
+	// the model reply conversationally — "Please provide the summary…" — instead
+	// of a label. Reject anything that doesn't look like a topic label so the
+	// caller keeps the group's existing (article-title) topic rather than storing
+	// the model's chatter as the name.
+	if !looksLikeTopicLabel(topic) {
+		return "", nil
 	}
 	return topic, nil
+}
+
+// looksLikeTopicLabel reports whether s is a plausible short topic label rather
+// than a conversational reply, refusal, or request for more input.
+func looksLikeTopicLabel(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" || len(s) > 100 {
+		return false
+	}
+	if strings.HasSuffix(s, "?") || strings.HasSuffix(s, ":") {
+		return false
+	}
+	lower := strings.ToLower(s)
+	for _, marker := range []string{
+		"please provide", "provide the", "topic label", "i can ", "i need",
+		"i am ", "i'm ", "as an ai", "sorry", "cannot", "can't", "unable",
+		"no articles", "no summary", "could you", "can you",
+	} {
+		if strings.Contains(lower, marker) {
+			return false
+		}
+	}
+	return true
 }
 
 // NewsletterInput represents an article for newsletter content generation.
