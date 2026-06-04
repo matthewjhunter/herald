@@ -2541,38 +2541,6 @@ func TestMarkSecurityScoredAndCurationQueue(t *testing.T) {
 	})
 }
 
-// GetArticlesByIDs re-reads specific articles by ID — the daemon's fresh path
-// uses it to pick up enriched content. Unknown IDs are simply absent.
-func TestGetArticlesByIDs(t *testing.T) {
-	eachStore(t, func(t *testing.T, store Store) {
-		feedID, _ := store.AddFeed("https://example.com/feed", "Feed", "")
-		now := time.Now()
-		a, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "a", Title: "A",
-			URL: "https://example.com/a", Content: "body a", PublishedDate: &now})
-		b, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "b", Title: "B",
-			URL: "https://example.com/b", Content: "body b", PublishedDate: &now})
-
-		got, err := store.GetArticlesByIDs([]int64{a, b, 999999})
-		if err != nil {
-			t.Fatalf("GetArticlesByIDs: %v", err)
-		}
-		if len(got) != 2 {
-			t.Fatalf("expected 2 articles (unknown id dropped), got %v", articleIDs(got))
-		}
-		byID := map[int64]Article{}
-		for _, art := range got {
-			byID[art.ID] = art
-		}
-		if byID[a].Content != "body a" || byID[b].Title != "B" {
-			t.Fatalf("articles not read back correctly: %+v", got)
-		}
-
-		if empty, err := store.GetArticlesByIDs(nil); err != nil || empty != nil {
-			t.Fatalf("empty id set should return (nil, nil), got %v / %v", empty, err)
-		}
-	})
-}
-
 // SetInterestScore must record the interest score without disturbing the
 // security verdict the security stage already wrote — the two stages run
 // separately, so a naive UpdateReadState (which nulls security_score) is wrong.

@@ -975,27 +975,6 @@ func (s *PostgresStore) MarkSecurityScored(userID, articleID int64, securityScor
 	return nil
 }
 
-// GetArticlesByIDs returns the named articles. See the SQLite implementation.
-func (s *PostgresStore) GetArticlesByIDs(articleIDs []int64) ([]Article, error) {
-	if len(articleIDs) == 0 {
-		return nil, nil
-	}
-	placeholders := make([]string, len(articleIDs))
-	args := make([]any, len(articleIDs))
-	for i, id := range articleIDs {
-		placeholders[i] = "?"
-		args[i] = id
-	}
-	rows, err := s.db.Query(
-		`SELECT id, feed_id, guid, title, url, content, summary, author, published_date, fetched_date
-		 FROM articles WHERE id IN (`+strings.Join(placeholders, ",")+`)`, args...)
-	if err != nil {
-		return nil, fmt.Errorf("get articles by ids: %w", err)
-	}
-	defer rows.Close()
-	return scanArticles(rows)
-}
-
 // GetUnscoredCurationArticles returns articles that passed the security screen
 // but have not yet been interest-scored (interest_score IS NULL). Backfill input
 // for the staged pipeline's curation stage. See the SQLite implementation.

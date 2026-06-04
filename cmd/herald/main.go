@@ -298,10 +298,10 @@ func processCmd() *cobra.Command {
 				return err
 			}
 
-			// The `process` command operates on the existing backlog (no freshly
-			// fetched set), so it runs the backfill path of the staged pipeline.
+			// The `process` command runs the staged pipeline over the user's
+			// pending articles.
 			stage := newPipelineStage(store, processor, groupMatcher, formatter, userID)
-			if err := stage.RunBackfill(ctx); err != nil {
+			if _, err := stage.Run(ctx); err != nil {
 				return err
 			}
 
@@ -364,7 +364,6 @@ func doFetch(ctx context.Context) error {
 	// Fetch each feed once (efficient)
 	fetcher := feeds.NewFetcher(store)
 	fetchResult := &output.FetchResult{FeedsTotal: len(subscribedFeeds)}
-	var freshIDs []int64 // articles stored this cycle, for the pipeline's fresh path
 	for _, feed := range subscribedFeeds {
 		feedCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		result, err := fetcher.FetchFeed(feedCtx, feed)
@@ -391,9 +390,6 @@ func doFetch(ctx context.Context) error {
 			fmt.Fprintf(os.Stderr, "Warning: error storing articles from %s: %v\n", feed.URL, err)
 		}
 		fetchResult.NewArticles += len(stored)
-		for _, a := range stored {
-			freshIDs = append(freshIDs, a.ID)
-		}
 
 		// Persist cache headers for next conditional request
 		if result.ETag != "" || result.LastModified != "" {
@@ -455,53 +451,19 @@ func doFetch(ctx context.Context) error {
 		formatter.Warning("skipping embedding backfill and group matching")
 	}
 
-	// Re-read this cycle's stored articles after the full-text and image
-	// enrichment passes, so the pipeline scores the enriched content rather than
-	// the raw feed content captured at store time. Group by feed for per-user
-	// scoping below.
-	freshByFeed := make(map[int64][]storage.Article)
-	if len(freshIDs) > 0 {
-		if freshArticles, err := store.GetArticlesByIDs(freshIDs); err != nil {
-			formatter.Warning("failed to re-read fresh articles: %v", err)
-		} else {
-			for _, a := range freshArticles {
-				freshByFeed[a.FeedID] = append(freshByFeed[a.FeedID], a)
-			}
-		}
-	}
-
+	// Run the staged pipeline for each subscribing user. It drives every stage
+	// from its own state-driven, newest-first query, so this cycle's freshly
+	// fetched articles (now enriched with full text and cached images) are
+	// processed ahead of older backlog, and anything left pending from prior
+	// cycles drains the same way. Self-skips when the AI backend is unavailable.
 	totalProcessed := 0
-
-	// Run the staged pipeline for each subscribing user: the fresh path threads
-	// this cycle's articles (from feeds the user subscribes to) through every
-	// stage, then the backfill path drains anything left pending from prior
-	// cycles. Both self-skip when the AI backend is unavailable.
 	for _, userID := range allUserIDs {
 		stage := newPipelineStage(store, processor, groupMatcher, formatter, userID)
-
-		var userFresh []storage.Article
-		if len(freshByFeed) > 0 {
-			if userFeeds, err := store.GetUserFeeds(userID); err != nil {
-				formatter.Warning("failed to get feeds for user %d: %v", userID, err)
-			} else {
-				for _, f := range userFeeds {
-					userFresh = append(userFresh, freshByFeed[f.ID]...)
-				}
-			}
+		processed, err := stage.Run(ctx)
+		if err != nil {
+			formatter.Warning("pipeline failed for user %d: %v", userID, err)
 		}
-
-		if len(userFresh) > 0 {
-			processed, err := stage.RunFresh(ctx, userFresh)
-			if err != nil {
-				formatter.Warning("fresh pipeline failed for user %d: %v", userID, err)
-			} else {
-				totalProcessed += processed
-			}
-		}
-
-		if err := stage.RunBackfill(ctx); err != nil {
-			formatter.Warning("backfill pipeline failed for user %d: %v", userID, err)
-		}
+		totalProcessed += processed
 	}
 
 	fetchResult.ProcessedCount = totalProcessed

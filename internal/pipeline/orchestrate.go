@@ -11,44 +11,32 @@ import (
 // considers in one pass. Newest-first, so fresh breaking news is never starved.
 const clusterCohortLimit = 500
 
-// drainBatch is how many articles each backfill stage pulls per query.
+// drainBatch is how many articles each stage pulls per query.
 const drainBatch = 100
 
-// RunFresh processes the articles fetched this cycle through every stage, in
-// order, threading each stage's output into the next. The set is naturally
-// bounded by the fetch size, so there is no per-stage limit. An article that
-// cannot advance a stage (blocked, failed, skipped) is simply left in its
-// current database state and picked up later by RunBackfill — there is no
-// separate bookkeeping. Curation runs on every security-passed article
-// (it does not need a summary); embedding runs on the summarized set so the
-// cluster cohort is fully prepared.
-// It returns the number of articles that passed the security screen this cycle
-// (the daemon's "processed" metric).
-func (s *Stage) RunFresh(ctx context.Context, fresh []storage.Article) (int, error) {
-	passed := s.Security(ctx, fresh)
-	summarized := s.Summarize(ctx, passed)
-	s.Curate(ctx, passed)
-	s.Embed(ctx, summarized)
-	return len(passed), s.clusterRecent(ctx)
-}
-
-// RunBackfill drains pending work left by prior cycles — articles stranded
-// between stages by transient failures or a backend that was down when they
-// were fetched. Each stage pulls its own state-driven query in batches,
-// newest-first. The whole backfill is skipped when the LLM backend is
-// unavailable; the fresh path's per-stage skips and this top-level check keep an
-// outage from spinning.
-func (s *Stage) RunBackfill(ctx context.Context) error {
+// Run executes the full staged pipeline for the user: it drives each stage from
+// its own state-driven query, in order, so any pending article advances one
+// stage at a time. An article fetched this cycle flows through all five stages
+// in a single call — security marks it scored, the summarize query then sees it,
+// then curate, then embed, then cluster — and every query is newest-first, so
+// fresh articles are processed ahead of older backlog. Work left by prior cycles
+// (stranded by a transient failure or a backend that was down) drains the same
+// way. The whole run is skipped when the LLM backend is unavailable; that check
+// plus the per-stage skips keep an outage from spinning.
+// Run returns the number of articles that newly passed the security screen this
+// call — the daemon's "processed" metric.
+func (s *Stage) Run(ctx context.Context) (int, error) {
 	if !s.AI.BackendAvailable() {
-		s.Formatter.Warning("pipeline: skipping backfill for user %d — AI backend unavailable (breaker open)", s.UserID)
-		return nil
+		s.Formatter.Warning("pipeline: skipping run for user %d — AI backend unavailable (breaker open)", s.UserID)
+		return 0, nil
 	}
 
+	processed := 0
 	if err := s.drain(
 		func(limit int) ([]storage.Article, error) { return s.Store.GetUnscoredArticlesForUser(s.UserID, limit) },
-		func(arts []storage.Article) { s.Security(ctx, arts) },
+		func(arts []storage.Article) { processed += len(s.Security(ctx, arts)) },
 	); err != nil {
-		return err
+		return processed, err
 	}
 	if err := s.drain(
 		func(limit int) ([]storage.Article, error) {
@@ -56,7 +44,7 @@ func (s *Stage) RunBackfill(ctx context.Context) error {
 		},
 		func(arts []storage.Article) { s.Summarize(ctx, arts) },
 	); err != nil {
-		return err
+		return processed, err
 	}
 	if err := s.drain(
 		func(limit int) ([]storage.Article, error) {
@@ -64,7 +52,7 @@ func (s *Stage) RunBackfill(ctx context.Context) error {
 		},
 		func(arts []storage.Article) { s.Curate(ctx, arts) },
 	); err != nil {
-		return err
+		return processed, err
 	}
 	if s.Embedder != nil {
 		if err := s.drain(
@@ -73,11 +61,11 @@ func (s *Stage) RunBackfill(ctx context.Context) error {
 			},
 			func(arts []storage.Article) { s.Embed(ctx, arts) },
 		); err != nil {
-			return err
+			return processed, err
 		}
 	}
 
-	return s.clusterRecent(ctx)
+	return processed, s.clusterRecent(ctx)
 }
 
 // drain repeatedly fetches a batch and processes the articles it has not yet

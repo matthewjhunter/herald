@@ -212,9 +212,8 @@ func (f *Fetcher) importOPMLBytes(data []byte, userID int64) error {
 }
 
 // StoreArticles stores articles from a feed into the database and returns the
-// newly-stored articles (with their assigned IDs). The staged pipeline's fresh
-// path threads this cycle's articles straight through the stages, so the caller
-// needs the article set, not just a count; len(result) is the previous count.
+// newly-stored articles, each with its assigned ID; len(result) is the number
+// stored this call.
 func (f *Fetcher) StoreArticles(feedID int64, feed *gofeed.Feed) ([]storage.Article, error) {
 	var stored []storage.Article
 	for _, item := range feed.Items {

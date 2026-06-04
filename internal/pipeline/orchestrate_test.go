@@ -27,16 +27,17 @@ func withRealEmbed(st *Stage) {
 	st.BuildEmbedInput = func(a storage.Article) ([]embedding.Field, string) { return nil, a.Content }
 }
 
-func TestRunFreshEndToEnd(t *testing.T) {
+func TestRunEndToEnd(t *testing.T) {
 	st, store, feedID := clusterHarness(t, happyAI())
 	withRealEmbed(st)
 
 	a := seed(t, store, feedID, "a", strings.Repeat("x", 500))
 	b := seed(t, store, feedID, "b", strings.Repeat("y", 500))
 
-	processed, err := st.RunFresh(context.Background(), []storage.Article{a, b})
+	// Two unscored articles flow through every stage in a single Run call.
+	processed, err := st.Run(context.Background())
 	if err != nil {
-		t.Fatalf("RunFresh: %v", err)
+		t.Fatalf("Run: %v", err)
 	}
 	if processed != 2 {
 		t.Fatalf("expected 2 articles processed, got %d", processed)
@@ -61,7 +62,7 @@ func TestRunFreshEndToEnd(t *testing.T) {
 	}
 }
 
-func TestRunBackfillDrainsBacklog(t *testing.T) {
+func TestRunDrainsBacklog(t *testing.T) {
 	st, store, feedID := clusterHarness(t, happyAI())
 	withRealEmbed(st)
 
@@ -70,8 +71,8 @@ func TestRunBackfillDrainsBacklog(t *testing.T) {
 		arts = append(arts, seed(t, store, feedID, fmt.Sprintf("a%d", i), strings.Repeat("x", 500)))
 	}
 
-	if err := st.RunBackfill(context.Background()); err != nil {
-		t.Fatalf("RunBackfill: %v", err)
+	if _, err := st.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
 
 	if unscored, _ := store.GetUnscoredArticlesForUser(1, 10); len(unscored) != 0 {
@@ -84,7 +85,7 @@ func TestRunBackfillDrainsBacklog(t *testing.T) {
 	}
 }
 
-func TestRunBackfillTerminatesOnPersistentFailure(t *testing.T) {
+func TestRunTerminatesOnPersistentFailure(t *testing.T) {
 	// Summarization always returns garbage, so no article ever advances out of
 	// the unsummarized queue. The drain must still terminate (no infinite loop).
 	fake := happyAI()
@@ -98,29 +99,29 @@ func TestRunBackfillTerminatesOnPersistentFailure(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- st.RunBackfill(context.Background()) }()
+	go func() { _, err := st.Run(context.Background()); done <- err }()
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("RunBackfill: %v", err)
+			t.Fatalf("Run: %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("RunBackfill hung on a persistently-failing stage")
+		t.Fatal("Run hung on a persistently-failing stage")
 	}
 	if sum, _ := store.GetArticleSummary(1, a.ID); sum != nil {
 		t.Fatal("garbage summary must not be cached")
 	}
 }
 
-func TestRunBackfillSkipsWhenBreakerOpen(t *testing.T) {
+func TestRunSkipsWhenBreakerOpen(t *testing.T) {
 	fake := happyAI()
 	fake.available = false
 	st, store, feedID := clusterHarness(t, fake)
 	withRealEmbed(st)
 
 	seed(t, store, feedID, "a", strings.Repeat("x", 500))
-	if err := st.RunBackfill(context.Background()); err != nil {
-		t.Fatalf("RunBackfill: %v", err)
+	if _, err := st.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
 	if unscored, _ := store.GetUnscoredArticlesForUser(1, 10); len(unscored) != 1 {
 		t.Fatalf("breaker open should leave the article untouched, got %v", ids(unscored))
