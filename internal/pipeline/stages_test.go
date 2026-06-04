@@ -23,11 +23,28 @@ type fakeAI struct {
 	summarizeFn func(title, content string) (string, error)
 	curateFn    func(title, content string) (*ai.CurationResult, error)
 
+	groupSummaryFn func(topic string, articles []ai.GroupSummaryInput) (*ai.GroupSummaryResult, error)
+	refineTopicFn  func(summary string) (string, error)
+
 	mu                           sync.Mutex
 	secCalls, sumCalls, curCalls int
 }
 
 func (f *fakeAI) BackendAvailable() bool { return f.available }
+
+func (f *fakeAI) GenerateGroupSummary(_ context.Context, _ int64, topic string, articles []ai.GroupSummaryInput) (*ai.GroupSummaryResult, error) {
+	if f.groupSummaryFn != nil {
+		return f.groupSummaryFn(topic, articles)
+	}
+	return &ai.GroupSummaryResult{Headline: "Headline", Summary: "Summary of the group"}, nil
+}
+
+func (f *fakeAI) RefineGroupTopic(_ context.Context, _ int64, summary string) (string, error) {
+	if f.refineTopicFn != nil {
+		return f.refineTopicFn(summary)
+	}
+	return "refined topic", nil
+}
 
 func (f *fakeAI) SecurityCheck(_ context.Context, _ int64, title, content string) (*ai.SecurityResult, error) {
 	f.mu.Lock()

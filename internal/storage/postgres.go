@@ -2439,6 +2439,38 @@ func (s *PostgresStore) ResetAllArticleEmbeddings() (int64, error) {
 	return r.RowsAffected()
 }
 
+// GetArticleEmbeddingsByIDs returns usable (status OK) embeddings for the given
+// article IDs and model. See the SQLite implementation.
+func (s *PostgresStore) GetArticleEmbeddingsByIDs(articleIDs []int64, model string) ([]ArticleEmbeddingRow, error) {
+	if len(articleIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(articleIDs))
+	args := make([]any, 0, len(articleIDs)+2)
+	for i, id := range articleIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	args = append(args, model, EmbedStatusOK)
+	rows, err := s.db.Query(
+		`SELECT article_id, embedding FROM article_embeddings
+		 WHERE article_id IN (`+strings.Join(placeholders, ",")+`)
+		   AND embedding_model = ? AND status = ?`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get article embeddings by ids: %w", err)
+	}
+	defer rows.Close()
+	var result []ArticleEmbeddingRow
+	for rows.Next() {
+		var r ArticleEmbeddingRow
+		if err := rows.Scan(&r.ArticleID, &r.Embedding); err != nil {
+			return nil, err
+		}
+		result = append(result, r)
+	}
+	return result, rows.Err()
+}
+
 // ResetAllGroupEmbeddings clears the centroid and embedding_model on
 // every article_groups row. See SQLiteStore.ResetAllGroupEmbeddings.
 func (s *PostgresStore) ResetAllGroupEmbeddings() (int64, error) {

@@ -46,6 +46,17 @@ type Config struct {
 	Grouping struct {
 		SimilarityThreshold float64 `yaml:"similarity_threshold"`
 		PreFilterThreshold  float64 `yaml:"pre_filter_threshold"`
+		// ClusterThreshold is the cosine similarity at which the staged
+		// pipeline's cluster stage joins an article to a group or links two
+		// articles into a new one. Defaults to SimilarityThreshold when unset.
+		ClusterThreshold float64 `yaml:"cluster_threshold"`
+		// MinClusterSize is the smallest number of articles that forms a new
+		// breaking-news group; smaller components stay ungrouped. Default 2.
+		MinClusterSize int `yaml:"min_cluster_size"`
+		// RecencyWindowHours bounds how far back the cluster stage reaches for
+		// already-embedded, still-ungrouped articles, so a story that broke a
+		// few cycles ago still gathers its late-arriving siblings. Default 48.
+		RecencyWindowHours int `yaml:"recency_window_hours"`
 	} `yaml:"grouping"`
 
 	Temperatures struct {
@@ -80,6 +91,9 @@ func DefaultConfig() *Config {
 	cfg.Summarization.MaxSummaryLength = 500
 	cfg.Grouping.SimilarityThreshold = 0.75
 	cfg.Grouping.PreFilterThreshold = 0.3
+	cfg.Grouping.ClusterThreshold = 0.75
+	cfg.Grouping.MinClusterSize = 2
+	cfg.Grouping.RecencyWindowHours = 48
 	cfg.Thresholds.InterestScore = 8.0
 	cfg.Thresholds.SecurityScore = 7.0
 	cfg.Thresholds.SecurityMediumScore = 4.0

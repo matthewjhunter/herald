@@ -2761,6 +2761,40 @@ func (s *SQLiteStore) GetArticleEmbeddings(userID int64, model string) ([]Articl
 	return result, rows.Err()
 }
 
+// GetArticleEmbeddingsByIDs returns the usable (status OK) embeddings for the
+// given article IDs and model, as raw blobs for the caller to decode. The
+// cluster stage uses it to load the cohort's vectors in one query rather than
+// every embedding the user has. Returns nil for an empty ID set.
+func (s *SQLiteStore) GetArticleEmbeddingsByIDs(articleIDs []int64, model string) ([]ArticleEmbeddingRow, error) {
+	if len(articleIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(articleIDs))
+	args := make([]any, 0, len(articleIDs)+2)
+	for i, id := range articleIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	args = append(args, model, EmbedStatusOK)
+	rows, err := s.db.Query(
+		`SELECT article_id, embedding FROM article_embeddings
+		 WHERE article_id IN (`+strings.Join(placeholders, ",")+`)
+		   AND embedding_model = ? AND status = ?`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get article embeddings by ids: %w", err)
+	}
+	defer rows.Close()
+	var result []ArticleEmbeddingRow
+	for rows.Next() {
+		var r ArticleEmbeddingRow
+		if err := rows.Scan(&r.ArticleID, &r.Embedding); err != nil {
+			return nil, err
+		}
+		result = append(result, r)
+	}
+	return result, rows.Err()
+}
+
 // ResetAllArticleEmbeddings deletes every row in article_embeddings.
 // Returns the number of rows deleted. The daemon's per-cycle backfill
 // repopulates from articles missing an embedding for the current model.

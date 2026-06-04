@@ -147,6 +147,7 @@ type Store interface {
 	MarkArticleEmbeddingSkipped(articleID int64, model string) error
 	MarkArticleEmbeddingFailed(articleID int64, model, errMsg string) error
 	GetArticleEmbeddings(userID int64, model string) ([]ArticleEmbeddingRow, error)
+	GetArticleEmbeddingsByIDs(articleIDs []int64, model string) ([]ArticleEmbeddingRow, error)
 	GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error)
 	ResetAllArticleEmbeddings() (int64, error)
 	ResetAllGroupEmbeddings() (int64, error)
