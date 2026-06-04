@@ -1031,6 +1031,31 @@ func (s *SQLiteStore) UpdateReadState(userID, articleID int64, read bool, intere
 	return nil
 }
 
+// MarkSecurityScored records the security verdict for an article and marks it
+// ai_scored, WITHOUT writing an interest score. The staged pipeline runs the
+// security screen and interest scoring as separate passes: a passing article is
+// marked here (interest_score stays NULL) so the curation stage can pick it up
+// via GetUnscoredCurationArticles. interest_score is never touched on conflict,
+// so re-running the security stage cannot clobber a score the curator already
+// wrote. (Hard-blocked and medium-flagged articles are terminal and still go
+// through UpdateReadState with interest_score=0.)
+func (s *SQLiteStore) MarkSecurityScored(userID, articleID int64, securityScore float64, securityReason string, securityFlagged bool) error {
+	_, err := s.db.Exec(
+		`INSERT INTO read_state (user_id, article_id, read, security_score, security_reason, security_flagged, ai_scored)
+		 VALUES (?, ?, 0, ?, ?, ?, 1)
+		 ON CONFLICT(user_id, article_id) DO UPDATE SET
+		   security_score = excluded.security_score,
+		   security_reason = excluded.security_reason,
+		   security_flagged = excluded.security_flagged,
+		   ai_scored = 1`,
+		userID, articleID, securityScore, securityReason, securityFlagged,
+	)
+	if err != nil {
+		return fmt.Errorf("mark security scored: %w", err)
+	}
+	return nil
+}
+
 // GetScoreStats returns AI scoring breakdown per feed for a user.
 func (s *SQLiteStore) GetScoreStats(userID int64) (*ScoreStatsResult, error) {
 	rows, err := s.db.Query(`
@@ -1916,6 +1941,61 @@ func (s *SQLiteStore) GetUnsummarizedScoredArticles(userID int64, securityThresh
 		articles = append(articles, a)
 	}
 	return articles, rows.Err()
+}
+
+// GetUnscoredCurationArticles returns articles that passed the security screen
+// (ai_scored, security_score >= threshold) but have not yet been interest-scored
+// (interest_score IS NULL). The staged pipeline runs security and curation as
+// separate passes, so this is the backfill input for the curation stage —
+// articles stranded between the two when a prior cycle stopped early.
+func (s *SQLiteStore) GetUnscoredCurationArticles(userID int64, securityThreshold float64, limit int) ([]Article, error) {
+	rows, err := s.db.Query(`
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date
+		FROM articles a
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
+		WHERE uf.user_id = ?
+		  AND rs.ai_scored = 1
+		  AND rs.security_score >= ?
+		  AND rs.interest_score IS NULL
+		ORDER BY a.published_date DESC
+		LIMIT ?`, userID, securityThreshold, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get unscored curation articles: %w", err)
+	}
+	defer rows.Close()
+	return scanArticles(rows)
+}
+
+// GetUngroupedEmbeddedArticles returns articles that have a usable embedding
+// (status OK) for the given model, belong to no group owned by the user, and
+// were published/fetched since the cutoff. It is the cluster stage's recency
+// window: breaking news spans fetch cycles, so a story that arrived with a lone
+// (then-ungrouped) article last cycle can still be pulled into a group as
+// siblings arrive now. Newest-first, limited.
+func (s *SQLiteStore) GetUngroupedEmbeddedArticles(userID int64, model string, since time.Time, limit int) ([]Article, error) {
+	rows, err := s.db.Query(`
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date
+		FROM articles a
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		JOIN article_embeddings ae ON ae.article_id = a.id
+		    AND ae.embedding_model = ? AND ae.status = ?
+		WHERE uf.user_id = ?
+		  AND COALESCE(a.published_date, a.fetched_date) >= ?
+		  AND NOT EXISTS (
+		      SELECT 1 FROM article_group_members agm
+		      JOIN article_groups ag ON agm.group_id = ag.id
+		      WHERE agm.article_id = a.id AND ag.user_id = uf.user_id
+		  )
+		ORDER BY COALESCE(a.published_date, a.fetched_date) DESC
+		LIMIT ?`, model, EmbedStatusOK, userID, since, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get ungrouped embedded articles: %w", err)
+	}
+	defer rows.Close()
+	return scanArticles(rows)
 }
 
 // GetUnreadArticlesForUser returns unread articles from feeds the user subscribes to

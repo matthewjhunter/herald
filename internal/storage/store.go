@@ -50,6 +50,7 @@ type Store interface {
 	// Read state
 	UpdateStarred(userID, articleID int64, starred bool) error
 	UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64, securityReason *string, securityFlagged *bool) error
+	MarkSecurityScored(userID, articleID int64, securityScore float64, securityReason string, securityFlagged bool) error
 	IncrementAIRetries(userID, articleID int64) error
 	ResetScores(userID int64, securityOnly bool, belowScore float64) (int64, error)
 	GetScoreStats(userID int64) (*ScoreStatsResult, error)
@@ -79,6 +80,8 @@ type Store interface {
 	GetUnscoredArticleCount(userID int64) (int, error)
 	GetUnsummarizedArticleCount(userID int64) (int, error)
 	GetUnsummarizedScoredArticles(userID int64, securityThreshold float64, limit int) ([]Article, error)
+	GetUnscoredCurationArticles(userID int64, securityThreshold float64, limit int) ([]Article, error)
+	GetUngroupedEmbeddedArticles(userID int64, model string, since time.Time, limit int) ([]Article, error)
 	GetArticlesNeedingFullText(limit int) ([]Article, error)
 	UpdateArticleContent(articleID int64, content string) error
 	UpdateArticleLinkedContent(articleID int64, linkedURL, linkedContent string) error
