@@ -105,6 +105,26 @@ type NewsletterStats struct {
 	IssueCount   int    `json:"issue_count"`
 }
 
+// AISummary is an on-demand, long-context digest of a user's high-interest
+// unread backlog. Status moves generating → done | failed; ArticleIDs records
+// exactly which articles the digest covered so "mark all as read" is precise.
+type AISummary struct {
+	ID           int64      `json:"id"`
+	UserID       int64      `json:"user_id"`
+	Status       string     `json:"status"`
+	Model        string     `json:"model,omitempty"`
+	Prompt       string     `json:"prompt,omitempty"`
+	Headline     string     `json:"headline,omitempty"`
+	ContentHTML  string     `json:"content_html,omitempty"`
+	ArticleIDs   []int64    `json:"article_ids,omitempty"`
+	ArticleCount int        `json:"article_count"`
+	InputTokens  int        `json:"input_tokens,omitempty"`
+	OutputTokens int        `json:"output_tokens,omitempty"`
+	Error        string     `json:"error,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	GeneratedAt  *time.Time `json:"generated_at,omitempty"`
+}
+
 // ArticleGroup represents a cluster of articles covering the same topic/event.
 type ArticleGroup struct {
 	ID          int64     `json:"id"`

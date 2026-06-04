@@ -174,6 +174,14 @@ type Store interface {
 	// Newsletter article selection
 	GetNewsletterArticles(userID int64, config *NewsletterConfig, since *time.Time, limit int) ([]Article, []float64, error)
 
+	// AI summaries
+	CreateAISummary(s *AISummary) (int64, error)
+	UpdateAISummaryDone(id int64, headline, contentHTML string, articleIDs []int64, inputTokens, outputTokens int) error
+	UpdateAISummaryFailed(id int64, errMsg string) error
+	GetLatestAISummary(userID int64) (*AISummary, error)
+	GetInProgressAISummary(userID int64) (*AISummary, error)
+	GetUnreadArticlesForSummary(userID int64, minSecurity, minInterest float64, limit int) ([]Article, error)
+
 	// Embedding-based group operations
 	UpdateGroupEmbedding(groupID int64, embedding []byte, model string) error
 	GetGroupsWithEmbeddings(userID int64, model string) ([]ArticleGroupWithEmbedding, error)
