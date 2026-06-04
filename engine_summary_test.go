@@ -118,6 +118,38 @@ func TestGenerateAISummary(t *testing.T) {
 	}
 }
 
+func TestNewEngineSummaryOverrides(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "h.db")
+	e, err := NewEngine(EngineConfig{
+		DBPath:                 dbPath,
+		ReadOnly:               true,
+		SummaryBaseURL:         "http://example.invalid/v1",
+		SummaryDisableThinking: true,
+		SummaryMaxInputTokens:  100000,
+	})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer e.Close()
+
+	if got := e.config.Summary.MaxInputTokens; got != 100000 {
+		t.Errorf("MaxInputTokens = %d, want 100000 (override)", got)
+	}
+	if !e.config.Summary.DisableThinking {
+		t.Error("DisableThinking should be true")
+	}
+
+	// 0 must leave the default untouched, not zero the budget.
+	e2, err := NewEngine(EngineConfig{DBPath: filepath.Join(t.TempDir(), "h2.db"), ReadOnly: true})
+	if err != nil {
+		t.Fatalf("NewEngine 2: %v", err)
+	}
+	defer e2.Close()
+	if got := e2.config.Summary.MaxInputTokens; got != 170000 {
+		t.Errorf("default MaxInputTokens = %d, want 170000", got)
+	}
+}
+
 func digestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

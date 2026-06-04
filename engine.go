@@ -99,6 +99,9 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		storeCfg.Summary.Model = cfg.SummaryModel
 	}
 	storeCfg.Summary.DisableThinking = cfg.SummaryDisableThinking
+	if cfg.SummaryMaxInputTokens > 0 {
+		storeCfg.Summary.MaxInputTokens = cfg.SummaryMaxInputTokens
+	}
 	var summarizer *ai.CloudSummarizer
 	if storeCfg.Summary.BaseURL != "" {
 		summarizer = ai.NewCloudSummarizer(

@@ -36,6 +36,10 @@ type SummaryConfig struct {
 	// DisableThinking turns off a reasoning backend's thinking pass (Qwen3 via
 	// Lemonade) so the digest is real content, not an unfinished reasoning_content.
 	DisableThinking bool `toml:"disable_thinking"`
+	// MaxInputTokens caps the digest prompt's input budget. Set it below the
+	// model's context window minus the output budget so Herald trims oldest
+	// articles itself instead of the backend silently dropping them. 0 = default.
+	MaxInputTokens int `toml:"max_input_tokens"`
 }
 
 // WebauthConfig holds webauth OIDC settings.
