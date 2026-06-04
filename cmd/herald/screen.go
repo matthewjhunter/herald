@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 
-	herald "github.com/matthewjhunter/herald"
 	"github.com/matthewjhunter/herald/internal/ai"
 	"github.com/matthewjhunter/herald/internal/output"
 	"github.com/matthewjhunter/herald/internal/storage"
@@ -133,7 +132,7 @@ func summarizeArticle(ctx context.Context, aiProc articleAI, store articleScoreS
 		formatter.Warning("summarization failed for article %d: %v", article.ID, err)
 		return ""
 	}
-	if herald.LooksLikeGarbage(summary) {
+	if ai.LooksLikeGarbage(summary) {
 		formatter.Warning("discarding garbled summary for article %d", article.ID)
 		return ""
 	}

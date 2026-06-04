@@ -208,7 +208,7 @@ func backfillSummariesForUser(ctx context.Context, store storage.Store, processo
 					formatter.Warning("backfill summarization failed for article %d: %v", article.ID, err)
 					return
 				}
-				if herald.LooksLikeGarbage(summary) {
+				if ai.LooksLikeGarbage(summary) {
 					// Mostly load-related, sometimes recovers under lower load — retry.
 					formatter.Warning("discarding garbled backfill summary for article %d", article.ID)
 					return

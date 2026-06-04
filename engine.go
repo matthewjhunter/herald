@@ -258,7 +258,7 @@ func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]Scored
 					summary, err := e.ai.SummarizeArticle(ctx, userID, article.Title, content, maxLen)
 					if err != nil {
 						log.Printf("herald: summarization failed for article %d: %v", article.ID, err)
-					} else if LooksLikeGarbage(summary) {
+					} else if ai.LooksLikeGarbage(summary) {
 						log.Printf("herald: discarding garbled summary for article %d", article.ID)
 					} else if len(summary) > len(content) {
 						log.Printf("herald: discarding summary for article %d: summary longer than content (%d > %d)", article.ID, len(summary), len(content))
@@ -1802,29 +1802,6 @@ func (e *Engine) GetArticleImageMap(articleID int64) (map[string]int64, error) {
 // GetArticleImage returns a cached image by its ID.
 func (e *Engine) GetArticleImage(imageID int64) (*storage.ArticleImage, error) {
 	return e.store.GetArticleImage(imageID)
-}
-
-// LooksLikeGarbage detects model output that contains training-data artifacts
-// or prompt injection patterns rather than a real summary. Small models under
-// load sometimes produce this kind of garbled output.
-func LooksLikeGarbage(summary string) bool {
-	lower := strings.ToLower(summary)
-	for _, pattern := range []string{
-		"### user:",
-		"### assistant:",
-		"### instruction:",
-		"### promotee",
-		"rgb-gpt",
-		"beating_json",
-		"followeddit.com",
-		"your assistant to solve",
-		"write an extensive researcher",
-	} {
-		if strings.Contains(lower, pattern) {
-			return true
-		}
-	}
-	return false
 }
 
 func feedFromInternal(f storage.Feed) Feed {
