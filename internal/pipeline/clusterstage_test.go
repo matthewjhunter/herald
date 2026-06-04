@@ -125,6 +125,40 @@ func TestClusterSkipsTopicRefineOnEmptySummary(t *testing.T) {
 	}
 }
 
+// The grouping toggle (Cfg.Grouping.Enabled) gates the orchestrator's cluster
+// pass: enabled groups the recent cohort, disabled leaves it ungrouped.
+func TestClusterRecentRespectsToggle(t *testing.T) {
+	run := func(enabled bool) (storage.Store, int64) {
+		st, store, feedID := clusterHarness(t, &fakeAI{available: true})
+		st.Cfg.Grouping.Enabled = enabled
+		a := seed(t, store, feedID, "a", "body a")
+		b := seed(t, store, feedID, "b", "body b")
+		embedArt(t, store, a, []float32{1, 0, 0})
+		embedArt(t, store, b, []float32{0.99, 0.05, 0})
+		for _, art := range []storage.Article{a, b} {
+			if err := store.MarkSecurityScored(1, art.ID, 9, "ok", false); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.SetInterestScore(1, art.ID, 8); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := st.clusterRecent(context.Background()); err != nil {
+			t.Fatalf("clusterRecent: %v", err)
+		}
+		return store, a.ID
+	}
+
+	// Positive control: enabled groups the cohort (also proves the setup is valid).
+	if store, id := run(true); groupOf(t, store, id) == nil {
+		t.Fatal("grouping enabled: expected the cohort to be grouped")
+	}
+	// Toggle off: no group forms.
+	if store, id := run(false); groupOf(t, store, id) != nil {
+		t.Fatal("grouping disabled: expected the cohort to stay ungrouped")
+	}
+}
+
 func TestClusterJoinsExistingGroup(t *testing.T) {
 	st, store, feedID := clusterHarness(t, &fakeAI{available: true})
 

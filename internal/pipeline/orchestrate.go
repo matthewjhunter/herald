@@ -106,7 +106,7 @@ func (s *Stage) drain(fetch func(limit int) ([]storage.Article, error), process 
 // freshly-embedded articles cluster alongside late-arriving siblings from
 // earlier cycles. No-op when embedding is unconfigured.
 func (s *Stage) clusterRecent(ctx context.Context) error {
-	if s.Embedder == nil {
+	if s.Embedder == nil || !s.Cfg.Grouping.Enabled {
 		return nil
 	}
 	since := time.Now().Add(-s.recencyWindow())
