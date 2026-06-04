@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	embedding "github.com/matthewjhunter/go-embedding"
@@ -71,6 +72,56 @@ func TestClusterFormsNewGroupFromSiblings(t *testing.T) {
 	// The new group was named via the LLM.
 	if sum, err := store.GetGroupSummary(*ga); err != nil || sum == nil || sum.Headline == "" {
 		t.Fatalf("expected the new group to be named, got %+v (err %v)", sum, err)
+	}
+}
+
+// An empty group summary (degenerate/over-large cluster) must not trigger topic
+// refinement — otherwise the model replies conversationally and the chatter is
+// stored as the group name (the "Please provide the summary…" prod bug).
+func TestClusterSkipsTopicRefineOnEmptySummary(t *testing.T) {
+	fake := &fakeAI{available: true}
+	fake.groupSummaryFn = func(string, []ai.GroupSummaryInput) (*ai.GroupSummaryResult, error) {
+		return &ai.GroupSummaryResult{Headline: "Headline", Summary: ""}, nil // degenerate
+	}
+	refineCalled := false
+	fake.refineTopicFn = func(string) (string, error) {
+		refineCalled = true
+		return "Please provide the summary of related news articles so I can generate the topic label.", nil
+	}
+	st, store, feedID := clusterHarness(t, fake)
+
+	a := seed(t, store, feedID, "a", "body a")
+	b := seed(t, store, feedID, "b", "body b")
+	c := seed(t, store, feedID, "c", "body c")
+	embedArt(t, store, a, []float32{1, 0, 0})
+	embedArt(t, store, b, []float32{0.99, 0.05, 0})
+	embedArt(t, store, c, []float32{0.98, 0.1, 0}) // all three cluster together (>=3 → refine path)
+	for _, art := range []storage.Article{a, b, c} {
+		if err := store.UpdateArticleAISummary(1, art.ID, "summary of "+art.GUID); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetInterestScore(1, art.ID, 8); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := st.Cluster(context.Background(), []storage.Article{a, b, c}); err != nil {
+		t.Fatalf("Cluster: %v", err)
+	}
+
+	gid := groupOf(t, store, a.ID)
+	if gid == nil {
+		t.Fatal("expected a group to form")
+	}
+	g, err := store.GetGroup(*gid)
+	if err != nil || g == nil {
+		t.Fatalf("GetGroup: %v", err)
+	}
+	if refineCalled {
+		t.Error("RefineGroupTopic must not be called when the group summary is empty")
+	}
+	if strings.Contains(g.Topic, "Please provide") {
+		t.Fatalf("conversational reply leaked into group topic: %q", g.Topic)
 	}
 }
 
