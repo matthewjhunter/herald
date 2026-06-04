@@ -22,6 +22,17 @@ type Config struct {
 	Addr    string        `toml:"addr"`
 	Webauth WebauthConfig `toml:"webauth"`
 	Admin   AdminConfig   `toml:"admin"`
+	Summary SummaryConfig `toml:"summary"`
+}
+
+// SummaryConfig configures the AI Summary cloud backend (e.g. Claude via the
+// Nenya gateway). The API key is intentionally absent — it is read from the
+// HERALD_SUMMARY_API_KEY environment variable so the secret is never committed.
+type SummaryConfig struct {
+	// BaseURL is the OpenAI-compatible /v1 endpoint. Empty disables the feature.
+	BaseURL string `toml:"base_url"`
+	// Model is the cloud model name (defaults to claude-sonnet-4-6 when empty).
+	Model string `toml:"model"`
 }
 
 // WebauthConfig holds webauth OIDC settings.
