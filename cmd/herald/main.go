@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	embedding "github.com/matthewjhunter/go-embedding"
@@ -13,6 +12,7 @@ import (
 	"github.com/matthewjhunter/herald/internal/ai"
 	"github.com/matthewjhunter/herald/internal/feeds"
 	"github.com/matthewjhunter/herald/internal/output"
+	"github.com/matthewjhunter/herald/internal/pipeline"
 	"github.com/matthewjhunter/herald/internal/storage"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -38,355 +38,26 @@ func newGroupMatcher(store storage.Store, appCfg *storage.Config) (*ai.GroupMatc
 	return ai.NewGroupMatcher(embedder, store, embCfg.Model, appCfg.Grouping.SimilarityThreshold), nil
 }
 
-// processArticlesForUser runs the AI pipeline (summarize, security check,
-// interest scoring, grouping) for a single user's unscored articles. Returns
-// the number of articles processed. This is the shared core used by both
-// the `process` and `fetch` commands.
-//
-// Only articles with no read_state entry are processed — once scored, an
-// article is never re-scored. This avoids redundant AI calls on articles
-// that were fetched in a previous cycle but haven't been read yet.
-//
-// Up to appCfg.Ollama.MaxParallel articles are processed concurrently.
-// Within each article, summarization and security check run in parallel
-// since they are independent; curation and group matching run after.
-// Articles are processed in batches of 100 until the queue is empty.
-// Group summary updates are deferred until all batches complete.
-func processArticlesForUser(ctx context.Context, store storage.Store, processor *ai.AIProcessor, groupMatcher *ai.GroupMatcher, formatter *output.Formatter, appCfg *storage.Config, userID int64) (int, error) {
-	maxParallel := max(appCfg.Ollama.MaxParallel, 1)
-
-	var (
-		mu            sync.Mutex
-		processed     int
-		updatedGroups = make(map[int64]bool)
-	)
-
-	sem := make(chan struct{}, maxParallel)
-	var wg sync.WaitGroup
-
-	for ctx.Err() == nil { //nolint:staticcheck // QF1006: batch-fetch-then-check pattern is intentional
-		unscoredArticles, err := store.GetUnscoredArticlesForUser(userID, 100)
-		if err != nil {
-			return processed, fmt.Errorf("failed to get unscored articles for user %d: %w", userID, err)
-		}
-		if len(unscoredArticles) == 0 {
-			break
-		}
-
-		for _, article := range unscoredArticles {
-			if ctx.Err() != nil {
-				break
-			}
-
-			sem <- struct{}{}
-			wg.Add(1)
-
-			go func(article storage.Article) {
-				defer func() { <-sem; wg.Done() }()
-
-				content := article.Content
-				if content == "" {
-					content = article.Summary
-				}
-				if content == "" {
-					formatter.Warning("skipping article %d %q: no content", article.ID, article.Title)
-					// Mark as scored (ai_scored=1) with NULL security/interest scores so the
-					// article doesn't re-enter the queue but doesn't pollute security metrics.
-					zeroInterest := 0.0
-					reason := "no content"
-					store.UpdateReadState(userID, article.ID, false, &zeroInterest, nil, &reason, nil) //nolint:errcheck
-					return
-				}
-				if article.LinkedContent != "" {
-					content = content + "\n\n" + article.LinkedContent
-				}
-
-				// Skip entire AI pipeline for articles too short to process meaningfully.
-				// Mark as scored with NULL security score — not a security failure, just
-				// insufficient content.
-				minLen := appCfg.Summarization.MinArticleLength
-				if minLen > 0 && len(content) < minLen {
-					formatter.Warning("skipping article %d: content too short (%d < %d)", article.ID, len(content), minLen)
-					zeroInterest := 0.0
-					reason := fmt.Sprintf("content too short (%d < %d)", len(content), minLen)
-					store.UpdateReadState(userID, article.ID, false, &zeroInterest, nil, &reason, nil) //nolint:errcheck
-					return
-				}
-
-				// 1-3. Security screen gates summarization and interest scoring.
-				outcome := screenAndScoreArticle(ctx, processor, store, formatter, appCfg, userID, article, content)
-				if !outcome.scored {
-					return
-				}
-
-				// 4. Vector-based group matching
-				matchedGroupID, articleEmb, err := groupMatcher.MatchArticleToGroup(ctx, userID, article.Title, outcome.aiSummary)
-				if err != nil {
-					formatter.Warning("vector group match failed: %v", err)
-				}
-
-				mu.Lock()
-				defer mu.Unlock()
-
-				processed++
-				if matchedGroupID != nil {
-					if err := store.AddArticleToGroup(*matchedGroupID, article.ID); err != nil {
-						formatter.Warning("failed to add article to group: %v", err)
-					} else {
-						updatedGroups[*matchedGroupID] = true
-						if articleEmb != nil {
-							if err := groupMatcher.UpdateGroupCentroid(ctx, *matchedGroupID, articleEmb); err != nil {
-								formatter.Warning("failed to update group centroid: %v", err)
-							}
-						}
-					}
-				}
-				// No group matched — article remains ungrouped.
-				// Groups are only created when the LLM (engine pipeline)
-				// explicitly identifies a significant developing story.
-			}(article)
-		}
-
-		wg.Wait()
+// newPipelineStage builds the staged AI pipeline for one user, wiring the AI
+// processor, the (possibly nil) embedder, and BuildArticleEmbedInput. The
+// groupMatcher must only be assigned to the Embedder interface when non-nil —
+// a typed nil pointer stored in an interface is not == nil, which would defeat
+// the embed/cluster stages' "embedding unconfigured" guards.
+func newPipelineStage(store storage.Store, processor *ai.AIProcessor, groupMatcher *ai.GroupMatcher, formatter *output.Formatter, userID int64) *pipeline.Stage {
+	st := &pipeline.Stage{
+		Store:     store,
+		AI:        processor,
+		Cfg:       cfg,
+		Formatter: formatter,
+		UserID:    userID,
+		BuildEmbedInput: func(a storage.Article) ([]embedding.Field, string) {
+			return herald.BuildArticleEmbedInput(store, a)
+		},
 	}
-
-	// 5. Update group summaries for changed groups — sequential, after all batches.
-	for groupID := range updatedGroups {
-		if err := updateGroupSummary(ctx, store, processor, groupID, userID); err != nil {
-			formatter.Warning("failed to update group summary for group %d: %v", groupID, err)
-		}
+	if groupMatcher != nil {
+		st.Embedder = groupMatcher
 	}
-
-	return processed, nil
-}
-
-// backfillSummariesForUser re-attempts AI summarization for articles that have
-// been scored with a passing security score but lack a cached summary. This
-// catches transient summarization failures (e.g., Ollama timeouts, garbled
-// output) from previous cycles. Rejections (garbled, too-long) are logged but
-// not retry-bounded — systematic failures will be re-attempted each cycle.
-func backfillSummariesForUser(ctx context.Context, store storage.Store, processor *ai.AIProcessor, formatter *output.Formatter, appCfg *storage.Config, userID int64) (int, error) {
-	maxParallel := max(appCfg.Ollama.MaxParallel, 1)
-
-	var (
-		mu        sync.Mutex
-		succeeded int
-	)
-	sem := make(chan struct{}, maxParallel)
-	var wg sync.WaitGroup
-
-	for ctx.Err() == nil { //nolint:staticcheck // QF1006: batch-fetch-then-check pattern is intentional
-		articles, err := store.GetUnsummarizedScoredArticles(userID, appCfg.Thresholds.SecurityScore, 100)
-		if err != nil {
-			return succeeded, fmt.Errorf("failed to get unsummarized scored articles: %w", err)
-		}
-		if len(articles) == 0 {
-			break
-		}
-
-		for _, article := range articles {
-			if ctx.Err() != nil {
-				break
-			}
-			sem <- struct{}{}
-			wg.Add(1)
-			go func(article storage.Article) {
-				defer func() { <-sem; wg.Done() }()
-
-				content := article.Content
-				if content == "" {
-					content = article.Summary
-				}
-				if article.LinkedContent != "" {
-					content = content + "\n\n" + article.LinkedContent
-				}
-
-				maxLen := appCfg.Summarization.MaxSummaryLength
-				summary, err := processor.SummarizeArticle(ctx, userID, article.Title, content, maxLen)
-				if err != nil {
-					// Transient — leave unsummarized, retry next cycle.
-					formatter.Warning("backfill summarization failed for article %d: %v", article.ID, err)
-					return
-				}
-				if ai.LooksLikeGarbage(summary) {
-					// Mostly load-related, sometimes recovers under lower load — retry.
-					formatter.Warning("discarding garbled backfill summary for article %d", article.ID)
-					return
-				}
-				// Deterministic rejections: the model can't compress this content
-				// any more than its existing form. Mark skipped so we stop retrying.
-				if len(summary) > len(content) {
-					reason := fmt.Sprintf("summary longer than content (%d > %d)", len(summary), len(content))
-					formatter.Warning("marking article %d summarization skipped: %s", article.ID, reason)
-					store.MarkSummarizationSkipped(userID, article.ID, reason) //nolint:errcheck
-					return
-				}
-				if maxLen > 0 && len(summary) > maxLen+maxLen*15/100 {
-					reason := fmt.Sprintf("summary exceeds max length by >15%% (%d > %d)", len(summary), maxLen)
-					formatter.Warning("marking article %d summarization skipped: %s", article.ID, reason)
-					store.MarkSummarizationSkipped(userID, article.ID, reason) //nolint:errcheck
-					return
-				}
-				if err := store.UpdateArticleAISummary(userID, article.ID, summary); err != nil {
-					formatter.Warning("failed to cache backfill summary for %d: %v", article.ID, err)
-					return
-				}
-				mu.Lock()
-				succeeded++
-				mu.Unlock()
-			}(article)
-		}
-		wg.Wait()
-	}
-	return succeeded, nil
-}
-
-// backfillEmbeddingsInCycle generates per-article embedding vectors for any
-// articles missing them. Mirrors engine.BackfillEmbeddings but runs with
-// bounded parallelism (Ollama.MaxParallel) so the daemon can drain a large
-// initial backlog without blocking the cycle for too long. Stores a sentinel
-// for articles that error or are too short to embed, matching the engine
-// behavior — prevents infinite retries.
-func backfillEmbeddingsInCycle(ctx context.Context, store storage.Store, groupMatcher *ai.GroupMatcher, formatter *output.Formatter) (int, error) {
-	maxParallel := max(cfg.Ollama.MaxParallel, 1)
-
-	model := groupMatcher.Model()
-
-	var (
-		mu        sync.Mutex
-		succeeded int
-	)
-	sem := make(chan struct{}, maxParallel)
-	var wg sync.WaitGroup
-
-	for ctx.Err() == nil { //nolint:staticcheck // QF1006: batch-fetch-then-check pattern is intentional
-		articles, err := store.GetArticlesWithoutEmbeddings(model, 100)
-		if err != nil {
-			return succeeded, fmt.Errorf("get articles without embeddings: %w", err)
-		}
-		if len(articles) == 0 {
-			break
-		}
-
-		for _, a := range articles {
-			if ctx.Err() != nil {
-				break
-			}
-			sem <- struct{}{}
-			wg.Add(1)
-			go func(a storage.Article) {
-				defer func() { <-sem; wg.Done() }()
-
-				fields, body := herald.BuildArticleEmbedInput(store, a)
-				emb, err := groupMatcher.EmbedRecord(ctx, fields, body)
-				if err != nil {
-					formatter.Warning("backfill embed article %d: %v", a.ID, err)
-					store.MarkArticleEmbeddingFailed(a.ID, model, err.Error()) //nolint:errcheck
-					return
-				}
-				if emb == nil {
-					// Body too short to embed meaningfully — deterministic skip.
-					store.MarkArticleEmbeddingSkipped(a.ID, model) //nolint:errcheck
-					return
-				}
-				if err := store.StoreArticleEmbedding(a.ID, embedding.EncodeFloat32s(emb), model); err != nil {
-					formatter.Warning("backfill store embedding %d: %v", a.ID, err)
-					return
-				}
-				mu.Lock()
-				succeeded++
-				mu.Unlock()
-			}(a)
-		}
-		wg.Wait()
-	}
-	return succeeded, nil
-}
-
-// updateGroupSummary regenerates the summary for a group
-func updateGroupSummary(ctx context.Context, store storage.Store, processor *ai.AIProcessor, groupID, userID int64) error {
-	// Get all articles in the group
-	articles, err := store.GetGroupArticles(groupID)
-	if err != nil {
-		return fmt.Errorf("failed to get group articles: %w", err)
-	}
-
-	if len(articles) == 0 {
-		return nil
-	}
-
-	// Get first article group to get topic
-	userGroups, err := store.GetUserGroups(userID)
-	if err != nil {
-		return err
-	}
-
-	var topic string
-	for _, g := range userGroups {
-		if g.ID == groupID {
-			topic = g.Topic
-			break
-		}
-	}
-
-	// Fetch real interest scores for all articles in one query.
-	articleIDs := make([]int64, len(articles))
-	for i, a := range articles {
-		articleIDs[i] = a.ID
-	}
-	interestScores, err := store.GetArticleInterestScores(userID, articleIDs)
-	if err != nil {
-		return fmt.Errorf("failed to get interest scores for group %d: %w", groupID, err)
-	}
-
-	var summaryInputs []ai.GroupSummaryInput
-	var maxScore float64
-
-	for _, article := range articles {
-		summary, err := store.GetArticleSummary(userID, article.ID)
-		if err != nil || summary == nil {
-			continue
-		}
-
-		score := interestScores[article.ID] // 0.0 if not scored yet
-
-		summaryInputs = append(summaryInputs, ai.GroupSummaryInput{
-			Title:     article.Title,
-			AISummary: summary.AISummary,
-			Score:     score,
-		})
-
-		if score > maxScore {
-			maxScore = score
-		}
-	}
-
-	if len(summaryInputs) == 0 {
-		return nil
-	}
-
-	// Generate group summary
-	groupResult, err := processor.GenerateGroupSummary(ctx, userID, topic, summaryInputs)
-	if err != nil {
-		return fmt.Errorf("failed to generate group summary: %w", err)
-	}
-
-	// Store group summary
-	maxScorePtr := &maxScore
-	if err := store.UpdateGroupSummary(groupID, groupResult.Headline, groupResult.Summary, len(articles), maxScorePtr); err != nil {
-		return err
-	}
-
-	// Phase 6: Refine topic label when group has 3+ articles.
-	// Use the LLM to generate a concise topic from the group summary.
-	if len(articles) >= 3 {
-		refinedTopic, err := processor.RefineGroupTopic(ctx, userID, groupResult.Summary)
-		if err == nil && refinedTopic != "" {
-			store.UpdateGroupTopic(groupID, refinedTopic)
-		}
-	}
-
-	return nil
+	return st
 }
 
 // annotationSkipConfigLoad marks a subcommand that bootstraps its own
@@ -627,14 +298,14 @@ func processCmd() *cobra.Command {
 				return err
 			}
 
-			processed, err := processArticlesForUser(ctx, store, processor, groupMatcher, formatter, cfg, userID)
-			if err != nil {
+			// The `process` command operates on the existing backlog (no freshly
+			// fetched set), so it runs the backfill path of the staged pipeline.
+			stage := newPipelineStage(store, processor, groupMatcher, formatter, userID)
+			if err := stage.RunBackfill(ctx); err != nil {
 				return err
 			}
 
-			result := &output.FetchResult{
-				ProcessedCount: processed,
-			}
+			result := &output.FetchResult{}
 
 			// Get and output high-interest articles
 			highInterestArticles, scores, err := store.GetArticlesByInterestScore(userID, cfg.Thresholds.InterestScore, 10, 0, nil)
@@ -643,7 +314,6 @@ func processCmd() *cobra.Command {
 			}
 
 			result.HighInterest = len(highInterestArticles)
-			result.NewArticles = processed
 
 			// Use Majordomo format for JSON output, traditional format for others
 			if outputFormat == "json" {
@@ -694,6 +364,7 @@ func doFetch(ctx context.Context) error {
 	// Fetch each feed once (efficient)
 	fetcher := feeds.NewFetcher(store)
 	fetchResult := &output.FetchResult{FeedsTotal: len(subscribedFeeds)}
+	var freshIDs []int64 // articles stored this cycle, for the pipeline's fresh path
 	for _, feed := range subscribedFeeds {
 		feedCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		result, err := fetcher.FetchFeed(feedCtx, feed)
@@ -720,6 +391,9 @@ func doFetch(ctx context.Context) error {
 			fmt.Fprintf(os.Stderr, "Warning: error storing articles from %s: %v\n", feed.URL, err)
 		}
 		fetchResult.NewArticles += len(stored)
+		for _, a := range stored {
+			freshIDs = append(freshIDs, a.ID)
+		}
 
 		// Persist cache headers for next conditional request
 		if result.ETag != "" || result.LastModified != "" {
@@ -781,42 +455,56 @@ func doFetch(ctx context.Context) error {
 		formatter.Warning("skipping embedding backfill and group matching")
 	}
 
-	totalProcessed := 0
-	totalSummariesBackfilled := 0
+	// Re-read this cycle's stored articles after the full-text and image
+	// enrichment passes, so the pipeline scores the enriched content rather than
+	// the raw feed content captured at store time. Group by feed for per-user
+	// scoping below.
+	freshByFeed := make(map[int64][]storage.Article)
+	if len(freshIDs) > 0 {
+		if freshArticles, err := store.GetArticlesByIDs(freshIDs); err != nil {
+			formatter.Warning("failed to re-read fresh articles: %v", err)
+		} else {
+			for _, a := range freshArticles {
+				freshByFeed[a.FeedID] = append(freshByFeed[a.FeedID], a)
+			}
+		}
+	}
 
-	// Process articles for each subscribing user. The unscored scoring loop
-	// uses the group matcher; if embedder construction failed we skip it but
-	// still run the summary backfill (which only needs the AI processor).
+	totalProcessed := 0
+
+	// Run the staged pipeline for each subscribing user: the fresh path threads
+	// this cycle's articles (from feeds the user subscribes to) through every
+	// stage, then the backfill path drains anything left pending from prior
+	// cycles. Both self-skip when the AI backend is unavailable.
 	for _, userID := range allUserIDs {
-		if groupMatcher != nil {
-			processed, err := processArticlesForUser(ctx, store, processor, groupMatcher, formatter, cfg, userID)
+		stage := newPipelineStage(store, processor, groupMatcher, formatter, userID)
+
+		var userFresh []storage.Article
+		if len(freshByFeed) > 0 {
+			if userFeeds, err := store.GetUserFeeds(userID); err != nil {
+				formatter.Warning("failed to get feeds for user %d: %v", userID, err)
+			} else {
+				for _, f := range userFeeds {
+					userFresh = append(userFresh, freshByFeed[f.ID]...)
+				}
+			}
+		}
+
+		if len(userFresh) > 0 {
+			processed, err := stage.RunFresh(ctx, userFresh)
 			if err != nil {
-				formatter.Warning("failed to process articles for user %d: %v", userID, err)
+				formatter.Warning("fresh pipeline failed for user %d: %v", userID, err)
 			} else {
 				totalProcessed += processed
 			}
 		}
 
-		summarized, err := backfillSummariesForUser(ctx, store, processor, formatter, cfg, userID)
-		if err != nil {
-			formatter.Warning("failed to backfill summaries for user %d: %v", userID, err)
+		if err := stage.RunBackfill(ctx); err != nil {
+			formatter.Warning("backfill pipeline failed for user %d: %v", userID, err)
 		}
-		totalSummariesBackfilled += summarized
 	}
 
 	fetchResult.ProcessedCount = totalProcessed
-	if totalSummariesBackfilled > 0 {
-		fmt.Fprintf(os.Stdout, "Backfilled %d missing AI summaries\n", totalSummariesBackfilled)
-	}
-
-	// Embedding backfill is global (not per-user) and runs once per cycle.
-	if groupMatcher != nil {
-		if embedded, err := backfillEmbeddingsInCycle(ctx, store, groupMatcher, formatter); err != nil {
-			formatter.Warning("embedding backfill error: %v", err)
-		} else if embedded > 0 {
-			fmt.Fprintf(os.Stdout, "Backfilled %d article embeddings\n", embedded)
-		}
-	}
 
 	// Get and output high-interest articles
 	// Show high-interest articles for the first subscribing user.

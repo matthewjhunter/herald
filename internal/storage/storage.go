@@ -1963,6 +1963,31 @@ func (s *SQLiteStore) GetUnsummarizedScoredArticles(userID int64, securityThresh
 	return articles, rows.Err()
 }
 
+// GetArticlesByIDs returns the named articles (10 standard columns), in no
+// particular order. The daemon's fresh path re-reads this cycle's stored
+// articles by ID after the full-text/image enrichment passes, so the staged
+// pipeline scores the enriched content, not the raw feed content captured at
+// store time. Returns nil for an empty ID set.
+func (s *SQLiteStore) GetArticlesByIDs(articleIDs []int64) ([]Article, error) {
+	if len(articleIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(articleIDs))
+	args := make([]any, len(articleIDs))
+	for i, id := range articleIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	rows, err := s.db.Query(
+		`SELECT id, feed_id, guid, title, url, content, summary, author, published_date, fetched_date
+		 FROM articles WHERE id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get articles by ids: %w", err)
+	}
+	defer rows.Close()
+	return scanArticles(rows)
+}
+
 // GetUnscoredCurationArticles returns articles that passed the security screen
 // (ai_scored, security_score >= threshold) but have not yet been interest-scored
 // (interest_score IS NULL). The staged pipeline runs security and curation as

@@ -22,12 +22,14 @@ const drainBatch = 100
 // separate bookkeeping. Curation runs on every security-passed article
 // (it does not need a summary); embedding runs on the summarized set so the
 // cluster cohort is fully prepared.
-func (s *Stage) RunFresh(ctx context.Context, fresh []storage.Article) error {
+// It returns the number of articles that passed the security screen this cycle
+// (the daemon's "processed" metric).
+func (s *Stage) RunFresh(ctx context.Context, fresh []storage.Article) (int, error) {
 	passed := s.Security(ctx, fresh)
 	summarized := s.Summarize(ctx, passed)
 	s.Curate(ctx, passed)
 	s.Embed(ctx, summarized)
-	return s.clusterRecent(ctx)
+	return len(passed), s.clusterRecent(ctx)
 }
 
 // RunBackfill drains pending work left by prior cycles — articles stranded

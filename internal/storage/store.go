@@ -78,6 +78,7 @@ type Store interface {
 	GetUnreadArticlesForUser(userID int64, limit, offset int, filterThreshold *int) ([]Article, error)
 	GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int, filterThreshold *int) ([]Article, error)
 	GetUnscoredArticlesForUser(userID int64, limit int) ([]Article, error)
+	GetArticlesByIDs(articleIDs []int64) ([]Article, error)
 	GetUnscoredArticleCount(userID int64) (int, error)
 	GetUnsummarizedArticleCount(userID int64) (int, error)
 	GetUnsummarizedScoredArticles(userID int64, securityThreshold float64, limit int) ([]Article, error)

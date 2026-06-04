@@ -34,8 +34,12 @@ func TestRunFreshEndToEnd(t *testing.T) {
 	a := seed(t, store, feedID, "a", strings.Repeat("x", 500))
 	b := seed(t, store, feedID, "b", strings.Repeat("y", 500))
 
-	if err := st.RunFresh(context.Background(), []storage.Article{a, b}); err != nil {
+	processed, err := st.RunFresh(context.Background(), []storage.Article{a, b})
+	if err != nil {
 		t.Fatalf("RunFresh: %v", err)
+	}
+	if processed != 2 {
+		t.Fatalf("expected 2 articles processed, got %d", processed)
 	}
 
 	// Everything advanced: scored, summarized, embedded, and (identical default
