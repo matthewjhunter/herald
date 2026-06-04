@@ -217,6 +217,46 @@ func TestSecurityStageSkipsWhenBreakerOpen(t *testing.T) {
 	}
 }
 
+func TestArticleContentSanitizes(t *testing.T) {
+	a := storage.Article{
+		Content:       `<p>Breaking news body.</p><script>steal()</script>`,
+		LinkedContent: `<a href="https://example.com" onclick="x()">more</a>`,
+	}
+	got := articleContent(a)
+	for _, bad := range []string{"<script", "steal()", "onclick", "x()"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("articleContent should strip %q, got: %s", bad, got)
+		}
+	}
+	for _, want := range []string{"Breaking news body.", "https://example.com", "more"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("articleContent should keep %q, got: %s", want, got)
+		}
+	}
+}
+
+func TestSecurityStageScansSanitizedContent(t *testing.T) {
+	// The security model must judge the sanitized, user-visible content — not raw
+	// feed HTML — so embedded widget scripts don't read as malicious code (#121).
+	var seen string
+	fake := &fakeAI{available: true, securityFn: func(_, content string) (*ai.SecurityResult, error) {
+		seen = content
+		return &ai.SecurityResult{Safe: true, Score: 9}, nil
+	}}
+	st, store, feedID := newHarness(t, fake)
+	body := `<script src="https://rumble.com/widgets.js"></script><p>` + strings.Repeat("real news ", 60) + `</p>`
+	a := seed(t, store, feedID, "x", body)
+
+	st.Security(context.Background(), []storage.Article{a})
+
+	if strings.Contains(seen, "<script") || strings.Contains(seen, "widgets.js") {
+		t.Errorf("security model received unsanitized content: %s", seen)
+	}
+	if !strings.Contains(seen, "real news") {
+		t.Errorf("security model should still see the visible prose, got: %s", seen)
+	}
+}
+
 func TestSummarizeStage(t *testing.T) {
 	st, store, feedID := newHarness(t, &fakeAI{available: true})
 	mustPass := func(a storage.Article) {
