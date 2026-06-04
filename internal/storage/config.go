@@ -44,6 +44,10 @@ type Config struct {
 	} `yaml:"summarization"`
 
 	Grouping struct {
+		// Enabled toggles the staged cluster stage (breaking-news grouping).
+		// Default true; set false to disable auto-grouping entirely (articles
+		// stay ungrouped, still embedded so semantic search keeps working).
+		Enabled             bool    `yaml:"enabled"`
 		SimilarityThreshold float64 `yaml:"similarity_threshold"`
 		// ClusterThreshold is the cosine similarity at which the staged
 		// pipeline's cluster stage joins an article to a group or links two
@@ -103,6 +107,7 @@ func DefaultConfig() *Config {
 	cfg.Ollama.Timeout = 2 * time.Minute
 	cfg.Summarization.MinArticleLength = 200
 	cfg.Summarization.MaxSummaryLength = 500
+	cfg.Grouping.Enabled = true
 	cfg.Grouping.SimilarityThreshold = 0.75
 	cfg.Grouping.ClusterThreshold = 0.75
 	cfg.Grouping.MinClusterSize = 2
