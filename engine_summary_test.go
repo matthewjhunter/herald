@@ -76,7 +76,7 @@ func TestGenerateAISummary(t *testing.T) {
 	cfg.Summary.MinSecurityScore = 7
 	e := &Engine{
 		store:      store,
-		summarizer: ai.NewCloudSummarizer(srv.URL, "", "test-model", time.Minute),
+		summarizer: ai.NewCloudSummarizer(srv.URL, "", "test-model", time.Minute, false),
 		config:     cfg,
 	}
 
@@ -163,7 +163,7 @@ func TestGenerateForConfig(t *testing.T) {
 
 	e := &Engine{
 		store:      store,
-		summarizer: ai.NewCloudSummarizer(srv.URL, "", "m", time.Minute),
+		summarizer: ai.NewCloudSummarizer(srv.URL, "", "m", time.Minute, false),
 		config:     storage.DefaultConfig(),
 	}
 	if err := e.SetDigestChrome("<p>HEADER</p>", "<p>FOOTER</p>"); err != nil {

@@ -509,9 +509,10 @@ func processNewsletters(ctx context.Context) error {
 		UserID:        cfg.DefaultUserID,
 		// Scheduled AI digests need the summarizer in the daemon (built only when
 		// a summary backend is configured). Same fields herald-web passes.
-		SummaryBaseURL: cfg.Summary.BaseURL,
-		SummaryModel:   cfg.Summary.Model,
-		SummaryAPIKey:  os.Getenv("HERALD_SUMMARY_API_KEY"),
+		SummaryBaseURL:         cfg.Summary.BaseURL,
+		SummaryModel:           cfg.Summary.Model,
+		SummaryAPIKey:          os.Getenv("HERALD_SUMMARY_API_KEY"),
+		SummaryDisableThinking: cfg.Summary.DisableThinking,
 	})
 	if err != nil {
 		return fmt.Errorf("create engine for newsletters: %w", err)

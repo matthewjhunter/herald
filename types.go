@@ -22,6 +22,9 @@ type EngineConfig struct {
 	SummaryBaseURL string
 	SummaryModel   string // optional override; defaults to the config model
 	SummaryAPIKey  string
+	// SummaryDisableThinking turns off the summary backend's reasoning pass
+	// (Qwen3 via Lemonade) so the completion is content, not reasoning_content.
+	SummaryDisableThinking bool
 }
 
 // User represents a registered household member.

@@ -21,16 +21,22 @@ type cloudClient struct {
 	baseURL    string // includes the /v1 prefix; "/chat/completions" is appended
 	apiKey     string
 	httpClient *http.Client
+	// disableThinking sends chat_template_kwargs.enable_thinking=false so a
+	// reasoning backend (Qwen3 via Lemonade) emits its answer as content instead
+	// of spending the token budget on a reasoning_content pass that never
+	// finishes — the failure mode that surfaced as "stream ended with no content".
+	disableThinking bool
 }
 
-func newCloudClient(baseURL, apiKey string, timeout time.Duration) *cloudClient {
+func newCloudClient(baseURL, apiKey string, timeout time.Duration, disableThinking bool) *cloudClient {
 	if timeout <= 0 {
 		timeout = 5 * time.Minute
 	}
 	return &cloudClient{
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		apiKey:     apiKey,
-		httpClient: &http.Client{Timeout: timeout},
+		baseURL:         strings.TrimRight(baseURL, "/"),
+		apiKey:          apiKey,
+		httpClient:      &http.Client{Timeout: timeout},
+		disableThinking: disableThinking,
 	}
 }
 
@@ -62,6 +68,9 @@ func (c *cloudClient) generateStream(ctx context.Context, model, prompt string, 
 		Temperature: temperature,
 		MaxTokens:   maxTokens,
 		Stream:      true,
+	}
+	if c.disableThinking {
+		body.ChatTemplateKwargs = map[string]any{"enable_thinking": false}
 	}
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -166,11 +175,11 @@ type CloudSummarizer struct {
 
 // NewCloudSummarizer returns a summarizer, or nil if baseURL is empty (feature
 // disabled).
-func NewCloudSummarizer(baseURL, apiKey, model string, timeout time.Duration) *CloudSummarizer {
+func NewCloudSummarizer(baseURL, apiKey, model string, timeout time.Duration, disableThinking bool) *CloudSummarizer {
 	if strings.TrimSpace(baseURL) == "" {
 		return nil
 	}
-	return &CloudSummarizer{client: newCloudClient(baseURL, apiKey, timeout), model: model}
+	return &CloudSummarizer{client: newCloudClient(baseURL, apiKey, timeout, disableThinking), model: model}
 }
 
 // Model returns the configured cloud model name.
