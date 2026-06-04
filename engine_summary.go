@@ -15,6 +15,30 @@ import (
 // AISummaryEnabled reports whether the cloud summarizer is configured.
 func (e *Engine) AISummaryEnabled() bool { return e.summarizer != nil }
 
+// Global (user_id=0) preference keys for the admin-configured digest chrome —
+// HTML prepended/appended to every digest at render/email time (e.g. an
+// unsubscribe footer), editable without regenerating.
+const (
+	digestHeaderKey = "digest_header"
+	digestFooterKey = "digest_footer"
+)
+
+// GetDigestChrome returns the admin-configured header and footer HTML.
+func (e *Engine) GetDigestChrome() (header, footer string) {
+	header, _ = e.store.GetUserPreference(0, digestHeaderKey)
+	footer, _ = e.store.GetUserPreference(0, digestFooterKey)
+	return header, footer
+}
+
+// SetDigestChrome stores the global digest header/footer. The caller must
+// enforce admin authorization.
+func (e *Engine) SetDigestChrome(header, footer string) error {
+	if err := e.store.SetUserPreference(0, digestHeaderKey, header); err != nil {
+		return err
+	}
+	return e.store.SetUserPreference(0, digestFooterKey, footer)
+}
+
 // GetLatestAISummary returns the user's most recent summary, or nil if none.
 func (e *Engine) GetLatestAISummary(userID int64) (*storage.AISummary, error) {
 	return e.store.GetLatestAISummary(userID)

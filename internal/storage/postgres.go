@@ -107,6 +107,8 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 			setweight(to_tsvector('english', COALESCE(content, '')), 'C') ||
 			setweight(to_tsvector('english', COALESCE(linked_content, '')), 'D')
 		WHERE search_vector IS NULL`,
+		// Link a generated AI digest to the config (newsletter) that produced it.
+		"ALTER TABLE ai_summaries ADD COLUMN IF NOT EXISTS newsletter_id BIGINT REFERENCES newsletters(id) ON DELETE SET NULL",
 	}
 	for _, m := range pgMigrations {
 		if _, err := db.Exec(m); err != nil {

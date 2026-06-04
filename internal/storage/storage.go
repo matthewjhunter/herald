@@ -158,6 +158,7 @@ type NewsletterStats struct {
 type AISummary struct {
 	ID           int64
 	UserID       int64
+	NewsletterID *int64 // config that produced it; nil = ad-hoc
 	Status       string // "generating", "done", "failed"
 	Model        string
 	Prompt       string
@@ -338,6 +339,10 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		// Security medium path: flag articles that passed the lower threshold
 		// but not the full threshold, for audit without AI summarization.
 		"ALTER TABLE read_state ADD COLUMN security_flagged BOOLEAN NOT NULL DEFAULT 0",
+		// Link a generated AI digest to the config (newsletter) that produced it;
+		// NULL = ad-hoc. SQLite can't add a FK via ALTER — fresh DBs get it from
+		// the CREATE TABLE; existing rows just carry the plain column.
+		"ALTER TABLE ai_summaries ADD COLUMN newsletter_id INTEGER",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors

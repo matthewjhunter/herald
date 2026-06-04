@@ -133,6 +133,38 @@ func TestGetAISummaries(t *testing.T) {
 	}
 }
 
+func TestAISummaryNewsletterLink(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+	uid, _ := store.CreateUser("u")
+	nlID, err := store.CreateNewsletter(&Newsletter{UserID: uid, Name: "Cyber", Schedule: "manual"})
+	if err != nil {
+		t.Fatalf("CreateNewsletter: %v", err)
+	}
+
+	// One ad-hoc summary, one linked to the config.
+	store.CreateAISummary(&AISummary{UserID: uid, Model: "m"}) //nolint:errcheck
+	linkedID, _ := store.CreateAISummary(&AISummary{UserID: uid, NewsletterID: &nlID, Model: "m"})
+
+	// Round-trips the link.
+	got, _ := store.GetAISummary(uid, linkedID)
+	if got == nil || got.NewsletterID == nil || *got.NewsletterID != nlID {
+		t.Fatalf("newsletter_id not round-tripped: %+v", got)
+	}
+	// List-by-config returns only the linked one.
+	forNl, err := store.GetAISummariesForNewsletter(uid, nlID, 50)
+	if err != nil {
+		t.Fatalf("GetAISummariesForNewsletter: %v", err)
+	}
+	if len(forNl) != 1 || forNl[0].ID != linkedID {
+		t.Fatalf("expected only the linked summary, got %d rows", len(forNl))
+	}
+	// Full list still has both.
+	if all, _ := store.GetAISummaries(uid, 50); len(all) != 2 {
+		t.Fatalf("expected 2 summaries total, got %d", len(all))
+	}
+}
+
 func TestAISummaryFailed(t *testing.T) {
 	store, cleanup := newTestStore(t)
 	defer cleanup()
