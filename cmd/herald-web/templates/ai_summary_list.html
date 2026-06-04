@@ -1,0 +1,56 @@
+{{define "ai_summary_list"}}
+<div class="summary-list">
+    <div class="article-list-header" style="display:flex;justify-content:space-between;align-items:center;padding:0.5rem;">
+        <strong>AI Summaries</strong>
+        <button class="outline" style="margin:0;padding:0.2rem 0.6rem;font-size:0.85rem;"
+                hx-post="/summary/generate" hx-target="#article-list" hx-swap="innerHTML"
+                {{if not .Enabled}}disabled{{end}}>
+            Generate
+        </button>
+    </div>
+
+    {{if not .Enabled}}
+    <div class="empty-state">AI Summary is not configured on this server.</div>
+    {{else}}
+
+    <details class="summary-prompt" style="padding:0 0.5rem 0.5rem;">
+        <summary style="cursor:pointer;font-size:0.85rem;">Edit prompt</summary>
+        <form hx-post="/summary/prompt" hx-swap="none"
+              hx-on::after-request="if(event.detail.successful){var b=this.querySelector('[data-save-btn]');b.textContent='Saved!';setTimeout(()=>b.textContent='Save',2000);}">
+            <textarea name="template" rows="8" style="font-family:monospace;font-size:0.8em;width:100%;">{{.Prompt}}</textarea>
+            <div style="display:flex;gap:0.5rem;margin-top:0.4rem;">
+                <button type="submit" data-save-btn style="margin:0;padding:0.2rem 0.6rem;">Save</button>
+                {{if .PromptIsCustom}}
+                <button type="button" class="outline secondary" style="margin:0;padding:0.2rem 0.6rem;"
+                        hx-delete="/summary/prompt" hx-target="#article-list" hx-swap="innerHTML"
+                        hx-confirm="Reset the summary prompt to the default?">
+                    Reset
+                </button>
+                {{end}}
+            </div>
+        </form>
+    </details>
+
+    <div id="summary-rows"
+         {{if .Generating}}hx-get="/summary" hx-trigger="every 3s" hx-target="#article-list" hx-swap="innerHTML"{{end}}>
+        {{range .Rows}}
+        <div class="article-row{{if ne .Status "done"}} read{{end}}" data-summary-id="{{.ID}}"
+             {{if eq .Status "done"}}
+             hx-get="/summary/{{.ID}}" hx-target="#reading-pane" hx-swap="innerHTML"
+             hx-on::after-request="document.querySelectorAll('.article-row').forEach(r => r.classList.remove('active')); this.classList.add('active');"
+             {{end}}>
+            <h4>AI Summary &mdash; {{.Label}}</h4>
+            <div class="meta">
+                {{if eq .Status "generating"}}<progress style="width:6rem;height:0.5rem;"></progress> generating…
+                {{else if eq .Status "failed"}}generation failed
+                {{else}}{{.ArticleCount}} article{{if ne .ArticleCount 1}}s{{end}}{{end}}
+            </div>
+        </div>
+        {{else}}
+        <div class="empty-state">No summaries yet. Click &ldquo;Generate&rdquo; to digest your high-interest unread articles.</div>
+        {{end}}
+    </div>
+
+    {{end}}
+</div>
+{{end}}

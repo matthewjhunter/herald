@@ -180,6 +180,8 @@ type Store interface {
 	UpdateAISummaryFailed(id int64, errMsg string) error
 	GetLatestAISummary(userID int64) (*AISummary, error)
 	GetInProgressAISummary(userID int64) (*AISummary, error)
+	GetAISummary(userID, id int64) (*AISummary, error)
+	GetAISummaries(userID int64, limit int) ([]AISummary, error)
 	GetUnreadArticlesForSummary(userID int64, minSecurity, minInterest float64, limit int) ([]Article, error)
 
 	// Embedding-based group operations
