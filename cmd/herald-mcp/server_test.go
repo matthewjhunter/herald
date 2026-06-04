@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/matthewjhunter/herald"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -158,7 +157,7 @@ func TestToolsList(t *testing.T) {
 	expected := []string{
 		"articles_unread", "articles_get", "articles_mark_read",
 		"feeds_list", "feed_subscribe", "feed_unsubscribe", "feed_rename",
-		"article_groups", "article_group_get", "feed_stats", "poll_now",
+		"article_groups", "article_group_get", "feed_stats",
 		"preferences_get", "preference_set",
 		"prompts_list", "prompt_get", "prompt_set", "prompt_reset",
 		"briefing", "article_star",
@@ -415,48 +414,6 @@ func TestUnknownTool(t *testing.T) {
 	}
 }
 
-func TestPollNowDisabled(t *testing.T) {
-	_, session := newTestSession(t)
-	// poller is nil — poll_now should return an error
-	result := mustCallTool(t, session, "poll_now", map[string]any{})
-	if !result.IsError {
-		t.Fatal("expected error when polling is disabled")
-	}
-	text := resultText(t, result)
-	if text == "" {
-		t.Fatal("expected error message")
-	}
-}
-
-func TestPollNowEnabled(t *testing.T) {
-	hs, session := newTestSession(t)
-	ts := feedServer(t)
-
-	// Subscribe to a feed so poll has something to fetch
-	subscribeFeed(t, session, ts.URL+"/feed.xml")
-
-	// Attach a poller
-	p := newPoller(hs.engine, hs.userID, 10*time.Minute, 8.0)
-	hs.poller = p
-
-	result := mustCallTool(t, session, "poll_now", map[string]any{})
-	if result.IsError {
-		t.Fatalf("poll_now error: %s", resultText(t, result))
-	}
-
-	text := resultText(t, result)
-	var pollResult struct {
-		FeedsTotal      int `json:"feeds_total"`
-		FeedsDownloaded int `json:"feeds_downloaded"`
-	}
-	if err := json.Unmarshal([]byte(text), &pollResult); err != nil {
-		t.Fatalf("unmarshal poll result: %v", err)
-	}
-	if pollResult.FeedsTotal == 0 {
-		t.Error("expected non-zero feeds_total")
-	}
-}
-
 func TestFeedUnsubscribeMissingID(t *testing.T) {
 	_, session := newTestSession(t)
 	expectError(t, session, "feed_unsubscribe", map[string]any{})
@@ -576,8 +533,8 @@ func TestPromptsListDefaults(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &prompts); err != nil {
 		t.Fatalf("unmarshal prompts: %v", err)
 	}
-	if len(prompts) != 4 {
-		t.Fatalf("got %d prompt types, want 4", len(prompts))
+	if len(prompts) != 3 {
+		t.Fatalf("got %d prompt types, want 3", len(prompts))
 	}
 
 	for _, p := range prompts {

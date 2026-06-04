@@ -186,8 +186,8 @@ func TestStoreArticles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StoreArticles failed: %v", err)
 	}
-	if stored != 2 {
-		t.Errorf("expected 2 stored, got %d", stored)
+	if len(stored) != 2 {
+		t.Errorf("expected 2 stored, got %d", len(stored))
 	}
 
 	articles, err := store.GetUnreadArticles(10)
@@ -196,6 +196,22 @@ func TestStoreArticles(t *testing.T) {
 	}
 	if len(articles) != 2 {
 		t.Fatalf("expected 2 articles in DB, got %d", len(articles))
+	}
+
+	// The staged pipeline's fresh path threads the returned articles straight
+	// into processing, so each must carry the ID AddArticle assigned and match
+	// a persisted row.
+	persisted := make(map[int64]bool, len(articles))
+	for _, a := range articles {
+		persisted[a.ID] = true
+	}
+	for _, a := range stored {
+		if a.ID == 0 {
+			t.Errorf("returned article %q has zero ID", a.Title)
+		}
+		if !persisted[a.ID] {
+			t.Errorf("returned article ID %d (%q) not found in DB", a.ID, a.Title)
+		}
 	}
 }
 
@@ -214,8 +230,8 @@ func TestStoreArticles_Duplicates(t *testing.T) {
 	fetcher := NewFetcher(store)
 
 	stored1, _ := fetcher.StoreArticles(feedID, feed)
-	if stored1 != 1 {
-		t.Errorf("first store: expected 1, got %d", stored1)
+	if len(stored1) != 1 {
+		t.Errorf("first store: expected 1, got %d", len(stored1))
 	}
 
 	// StoreArticles may report >0 on duplicates because SQLite's
@@ -253,8 +269,8 @@ func TestStoreArticles_NilAuthor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StoreArticles with nil author failed: %v", err)
 	}
-	if stored != 1 {
-		t.Errorf("expected 1 stored, got %d", stored)
+	if len(stored) != 1 {
+		t.Errorf("expected 1 stored, got %d", len(stored))
 	}
 }
 
@@ -465,8 +481,8 @@ func TestStoreArticles_YouTubeMediaGroup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StoreArticles: %v", err)
 	}
-	if stored != 1 {
-		t.Fatalf("expected 1 stored, got %d", stored)
+	if len(stored) != 1 {
+		t.Fatalf("expected 1 stored, got %d", len(stored))
 	}
 
 	articles, err := store.GetUnreadArticles(10)

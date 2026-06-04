@@ -25,7 +25,6 @@ func TestGetPrompt_EmbeddedDefault(t *testing.T) {
 		PromptTypeCuration,
 		PromptTypeSummarization,
 		PromptTypeGroupSummary,
-		PromptTypeRelatedGroups,
 	}
 
 	for _, pt := range promptTypes {
@@ -127,7 +126,6 @@ func TestGetTemperature_Defaults(t *testing.T) {
 		{PromptTypeCuration, 0.5},
 		{PromptTypeSummarization, 0.3},
 		{PromptTypeGroupSummary, 0.5},
-		{PromptTypeRelatedGroups, 0.3},
 	}
 
 	for _, tt := range tests {

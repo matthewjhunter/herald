@@ -180,12 +180,6 @@ func TestListPromptsResistBreakout(t *testing.T) {
 			"CustomInstructions": "",
 			"Articles":           neutralizeFence(payload),
 		}},
-		{PromptTypeRelatedGroups, map[string]any{
-			"Nonce":   nonce,
-			"Title":   neutralizeFence(payload),
-			"Summary": neutralizeFence(payload),
-			"Groups":  neutralizeFence(payload),
-		}},
 	}
 
 	for _, tc := range cases {

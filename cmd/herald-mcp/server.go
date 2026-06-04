@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"time"
 
 	"github.com/matthewjhunter/herald"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -15,7 +14,6 @@ import (
 type heraldServer struct {
 	engine *herald.Engine
 	userID int64
-	poller *poller // non-nil when --poll is enabled
 }
 
 func newHeraldServer(engine *herald.Engine, userID int64) *heraldServer {
@@ -79,7 +77,7 @@ func ptrStr(s *string) string {
 	return *s
 }
 
-// registerTools registers all 26 herald tools with the MCP server.
+// registerTools registers all herald tools with the MCP server.
 func registerTools(s *mcp.Server, hs *heraldServer) {
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -270,25 +268,6 @@ func registerTools(s *mcp.Server, hs *heraldServer) {
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "poll_now",
-		Description: "Trigger an immediate feed poll cycle: fetch all feeds, score new articles through the AI pipeline, and return results. Only available when the server is running with --poll. Use this when the user asks to check for new articles right now.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input emptyInput) (*mcp.CallToolResult, any, error) {
-		if hs.poller == nil {
-			return errResult("polling is not enabled (start with --poll)")
-		}
-		pollCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		defer cancel()
-		result, err := hs.poller.poll(pollCtx)
-		if err != nil {
-			return errResult("poll failed: %v", err)
-		}
-		log.Printf("poll_now: %d/%d feeds, %d new, %d scored, %d high-interest",
-			result.FeedsDownloaded, result.FeedsTotal,
-			result.NewArticles, result.ProcessedCount, result.HighInterest)
-		return jsonResult(result)
-	})
-
-	mcp.AddTool(s, &mcp.Tool{
 		Name:        "preferences_get",
 		Description: "Get all user preferences as structured JSON. Returns keywords, interest threshold, and notification settings.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input speakerOnlyInput) (*mcp.CallToolResult, any, error) {
@@ -334,7 +313,7 @@ func registerTools(s *mcp.Server, hs *heraldServer) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "prompt_get",
-		Description: "Get the active prompt template and temperature for a given type. Prompt types: curation, summarization, group_summary, related_groups.",
+		Description: "Get the active prompt template and temperature for a given type. Prompt types: curation, summarization, group_summary.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input promptTypeInput) (*mcp.CallToolResult, any, error) {
 		if input.PromptType == "" {
 			return errResult("prompt_type parameter is required")
@@ -353,7 +332,7 @@ func registerTools(s *mcp.Server, hs *heraldServer) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "prompt_set",
-		Description: "Customize a prompt template and/or temperature. At least one of template or temperature must be provided. Prompt types: curation, summarization, group_summary, related_groups.",
+		Description: "Customize a prompt template and/or temperature. At least one of template or temperature must be provided. Prompt types: curation, summarization, group_summary.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input promptSetInput) (*mcp.CallToolResult, any, error) {
 		if input.PromptType == "" {
 			return errResult("prompt_type parameter is required")

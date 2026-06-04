@@ -25,7 +25,6 @@ Feedreader uses five different AI prompts:
 | `curation` | Score articles for interest and relevance | 0.5 | `{{.Title}}`, `{{.Content}}`, `{{.Keywords}}` |
 | `summarization` | Generate concise article summaries | 0.3 | `{{.Title}}`, `{{.Content}}` |
 | `group_summary` | Create narratives from related articles | 0.5 | `{{.Topic}}`, `{{.Articles}}` |
-| `related_groups` | Determine if article relates to existing groups | 0.3 | `{{.Title}}`, `{{.Summary}}`, `{{.Groups}}` |
 
 ## Configuration
 
@@ -37,7 +36,7 @@ View embedded prompts:
 ```bash
 # They're in the source tree
 ls internal/ai/prompts/
-# security.txt, curation.txt, summarization.txt, group_summary.txt, related_groups.txt
+# security.txt, curation.txt, summarization.txt, group_summary.txt, newsletter.txt
 ```
 
 ### Tier 2: Config File Overrides (System-Wide)
@@ -68,7 +67,6 @@ temperatures:
   curation: 0.7      # More creative
   summarization: 0.3
   group_summary: 0.5
-  related_groups: 0.3
 ```
 
 **Template Syntax:**

@@ -939,6 +939,95 @@ func (s *PostgresStore) GetUnsummarizedScoredArticles(userID int64, securityThre
 	return scanArticles(rows)
 }
 
+// SetInterestScore records the curation interest score without touching the
+// security verdict. See the SQLite implementation.
+func (s *PostgresStore) SetInterestScore(userID, articleID int64, interestScore float64) error {
+	_, err := s.db.Exec(
+		`INSERT INTO read_state (user_id, article_id, read, interest_score, ai_scored)
+		 VALUES (?, ?, FALSE, ?, TRUE)
+		 ON CONFLICT(user_id, article_id) DO UPDATE SET
+		   interest_score = excluded.interest_score,
+		   ai_scored = TRUE`,
+		userID, articleID, interestScore,
+	)
+	if err != nil {
+		return fmt.Errorf("set interest score: %w", err)
+	}
+	return nil
+}
+
+// MarkSecurityScored records the security verdict and marks ai_scored without
+// writing an interest score. See the SQLite implementation.
+func (s *PostgresStore) MarkSecurityScored(userID, articleID int64, securityScore float64, securityReason string, securityFlagged bool) error {
+	_, err := s.db.Exec(
+		`INSERT INTO read_state (user_id, article_id, read, security_score, security_reason, security_flagged, ai_scored)
+		 VALUES (?, ?, FALSE, ?, ?, ?, TRUE)
+		 ON CONFLICT(user_id, article_id) DO UPDATE SET
+		   security_score = excluded.security_score,
+		   security_reason = excluded.security_reason,
+		   security_flagged = excluded.security_flagged,
+		   ai_scored = TRUE`,
+		userID, articleID, securityScore, securityReason, securityFlagged,
+	)
+	if err != nil {
+		return fmt.Errorf("mark security scored: %w", err)
+	}
+	return nil
+}
+
+// GetUnscoredCurationArticles returns articles that passed the security screen
+// but have not yet been interest-scored (interest_score IS NULL). Backfill input
+// for the staged pipeline's curation stage. See the SQLite implementation.
+func (s *PostgresStore) GetUnscoredCurationArticles(userID int64, securityThreshold float64, limit int) ([]Article, error) {
+	rows, err := s.db.Query(`
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date
+		FROM articles a
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
+		WHERE uf.user_id = ?
+		  AND rs.ai_scored = TRUE
+		  AND rs.security_score >= ?
+		  AND rs.interest_score IS NULL
+		ORDER BY a.published_date DESC
+		LIMIT ?`, userID, securityThreshold, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get unscored curation articles: %w", err)
+	}
+	defer rows.Close()
+	return scanArticles(rows)
+}
+
+// GetUngroupedEmbeddedArticles returns security-passed, embedded (status OK),
+// still-ungrouped articles published/fetched since the cutoff. The cluster
+// stage's recency window. See the SQLite implementation.
+func (s *PostgresStore) GetUngroupedEmbeddedArticles(userID int64, model string, securityThreshold float64, since time.Time, limit int) ([]Article, error) {
+	rows, err := s.db.Query(`
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date
+		FROM articles a
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = uf.user_id
+		JOIN article_embeddings ae ON ae.article_id = a.id
+		    AND ae.embedding_model = ? AND ae.status = ?
+		WHERE uf.user_id = ?
+		  AND rs.ai_scored = TRUE
+		  AND rs.security_score >= ?
+		  AND COALESCE(a.published_date, a.fetched_date) >= ?
+		  AND NOT EXISTS (
+		      SELECT 1 FROM article_group_members agm
+		      JOIN article_groups ag ON agm.group_id = ag.id
+		      WHERE agm.article_id = a.id AND ag.user_id = uf.user_id
+		  )
+		ORDER BY COALESCE(a.published_date, a.fetched_date) DESC
+		LIMIT ?`, model, EmbedStatusOK, userID, securityThreshold, since, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get ungrouped embedded articles: %w", err)
+	}
+	defer rows.Close()
+	return scanArticles(rows)
+}
+
 func (s *PostgresStore) GetUnsummarizedArticleCount(userID int64) (int, error) {
 	var count int
 	err := s.db.QueryRow(`
@@ -2351,6 +2440,38 @@ func (s *PostgresStore) ResetAllArticleEmbeddings() (int64, error) {
 		return 0, fmt.Errorf("reset article embeddings: %w", err)
 	}
 	return r.RowsAffected()
+}
+
+// GetArticleEmbeddingsByIDs returns usable (status OK) embeddings for the given
+// article IDs and model. See the SQLite implementation.
+func (s *PostgresStore) GetArticleEmbeddingsByIDs(articleIDs []int64, model string) ([]ArticleEmbeddingRow, error) {
+	if len(articleIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(articleIDs))
+	args := make([]any, 0, len(articleIDs)+2)
+	for i, id := range articleIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	args = append(args, model, EmbedStatusOK)
+	rows, err := s.db.Query(
+		`SELECT article_id, embedding FROM article_embeddings
+		 WHERE article_id IN (`+strings.Join(placeholders, ",")+`)
+		   AND embedding_model = ? AND status = ?`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get article embeddings by ids: %w", err)
+	}
+	defer rows.Close()
+	var result []ArticleEmbeddingRow
+	for rows.Next() {
+		var r ArticleEmbeddingRow
+		if err := rows.Scan(&r.ArticleID, &r.Embedding); err != nil {
+			return nil, err
+		}
+		result = append(result, r)
+	}
+	return result, rows.Err()
 }
 
 // ResetAllGroupEmbeddings clears the centroid and embedding_model on

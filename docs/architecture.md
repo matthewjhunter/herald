@@ -178,7 +178,6 @@ The five prompt types are:
 | `curation` | Llama | Interest scoring with user keywords |
 | `summarization` | Llama | Single-article AI summary generation |
 | `group_summary` | Llama | Multi-article narrative synthesis |
-| `related_groups` | Llama | Determining if an article belongs to an existing group |
 
 Each prompt type also has a configurable temperature following the same 3-tier fallback.
 
@@ -186,7 +185,7 @@ The `security` prompt type is intentionally excluded from MCP access — it cann
 
 ## MCP Integration
 
-`herald-mcp` exposes 26 tools over stdio using the [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk). All tools accept an optional `speaker` parameter that resolves to a registered user ID, enabling multi-user access from a single MCP server instance.
+`herald-mcp` is a read-only MCP server: it serves article, feed, and preference tools over stdio using the [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk), reading the database that the `herald daemon` populates. It does no feed fetching or AI processing of its own. All tools accept an optional `speaker` parameter that resolves to a registered user ID, enabling multi-user access from a single MCP server instance.
 
 Tool categories:
 
@@ -195,7 +194,6 @@ Tool categories:
 | Articles | `articles_unread`, `articles_get`, `articles_mark_read`, `article_star` |
 | Feeds | `feeds_list`, `feed_subscribe`, `feed_unsubscribe`, `feed_rename`, `feed_stats`, `feed_metadata` |
 | Groups | `article_groups`, `article_group_get` |
-| Polling | `poll_now` (requires `--poll` flag) |
 | Preferences | `preferences_get`, `preference_set` |
 | Prompts | `prompts_list`, `prompt_get`, `prompt_set`, `prompt_reset` |
 | Filter rules | `filter_rules_list`, `filter_rule_add`, `filter_rule_update`, `filter_rule_delete` |
@@ -204,7 +202,7 @@ Tool categories:
 
 The `briefing` tool generates a formatted markdown digest of high-interest unread articles, intended for delivery as a voice briefing through Majordomo.
 
-When started with `--poll`, the server runs a background polling loop at a configurable interval. The `poll_now` tool triggers an immediate poll cycle.
+Feed fetching and AI processing are the `herald daemon`'s responsibility; `herald-mcp` reads the results. Run a daemon (or `herald fetch`) against the same database to keep it populated.
 
 See [docs/majordomo-integration.md](majordomo-integration.md) for Majordomo-specific setup.
 
@@ -220,7 +218,7 @@ All AI inference runs through Ollama on localhost. This means feed content never
 
 ### Vector Clustering over LLM-Based Grouping
 
-Persistent article grouping uses vector embeddings and cosine similarity rather than asking an LLM to group articles. The incremental centroid update formula keeps the cost of assigning each article to a group constant regardless of group size. LLM-based grouping is available for ad-hoc batch clustering (`herald list --cluster`) but is not used for the persistent group state, where it would require re-running the LLM over all articles on each fetch.
+Persistent article grouping uses vector embeddings and cosine similarity rather than asking an LLM to group articles. The staged cluster pass matches each article against a frozen snapshot of existing group centroids and links the remainder into new groups, using the LLM only to name a group once it forms. LLM-based grouping is available for ad-hoc batch clustering (`herald list --cluster`) but is not used for the persistent group state, where it would require re-running the LLM over all articles on each fetch.
 
 ### Config-Driven AI Prompts
 

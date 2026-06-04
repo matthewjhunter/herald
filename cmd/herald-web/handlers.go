@@ -74,14 +74,13 @@ type promptUIEntry struct {
 }
 
 // promptTypeOrder defines the display order for prompt types in the UI.
-var promptTypeOrder = []string{"curation", "summarization", "group_summary", "related_groups", "newsletter"}
+var promptTypeOrder = []string{"curation", "summarization", "group_summary", "newsletter"}
 
 var promptLabels = map[string]string{
-	"curation":       "Article Curation",
-	"summarization":  "Article Summarization",
-	"group_summary":  "Group Summary",
-	"related_groups": "Related Groups",
-	"newsletter":     "Newsletter",
+	"curation":      "Article Curation",
+	"summarization": "Article Summarization",
+	"group_summary": "Group Summary",
+	"newsletter":    "Newsletter",
 }
 
 // loadPromptEntries builds the UI entry list for a given userID.

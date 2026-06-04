@@ -2452,3 +2452,192 @@ func TestNewsletterCRUD(t *testing.T) {
 		t.Errorf("expected 0 newsletters after delete, got %d", len(list))
 	}
 }
+
+// eachStore runs fn against both backends: SQLite always, and Postgres when
+// HERALD_TEST_DB_DSN is set (otherwise that subtest skips). The staged
+// pipeline's new queries must behave identically on both.
+func eachStore(t *testing.T, fn func(t *testing.T, store Store)) {
+	t.Helper()
+	t.Run("sqlite", func(t *testing.T) {
+		store, cleanup := newTestStore(t)
+		defer cleanup()
+		fn(t, store)
+	})
+	t.Run("postgres", func(t *testing.T) {
+		store, cleanup := newPGTestStore(t)
+		defer cleanup()
+		fn(t, store)
+	})
+}
+
+func articleIDs(arts []Article) []int64 {
+	out := make([]int64, len(arts))
+	for i, a := range arts {
+		out[i] = a.ID
+	}
+	return out
+}
+
+// MarkSecurityScored marks an article ai_scored with a security verdict but no
+// interest score, so the curation stage can find it via
+// GetUnscoredCurationArticles — and re-screening must not clobber a score the
+// curator later writes.
+func TestMarkSecurityScoredAndCurationQueue(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		feedID, _ := store.AddFeed("https://example.com/feed", "Test Feed", "")
+		if err := store.SubscribeUserToFeed(1, feedID); err != nil {
+			t.Fatalf("subscribe: %v", err)
+		}
+		now := time.Now()
+		mk := func(guid string) int64 {
+			id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: guid, Title: guid,
+				URL: "https://example.com/" + guid, PublishedDate: &now})
+			return id
+		}
+
+		passed := mk("passed") // security-passed, awaiting curation → appears
+		lowSec := mk("lowsec") // passed security stage but below threshold → excluded
+		scored := mk("scored") // fully scored (interest set) → excluded
+		_ = mk("unscored")     // no read_state at all → excluded
+
+		if err := store.MarkSecurityScored(1, passed, 8.0, "fine", false); err != nil {
+			t.Fatalf("MarkSecurityScored: %v", err)
+		}
+		if err := store.MarkSecurityScored(1, lowSec, 5.0, "borderline", false); err != nil {
+			t.Fatalf("MarkSecurityScored low: %v", err)
+		}
+		interest, sec := 6.0, 8.0
+		if err := store.UpdateReadState(1, scored, false, &interest, &sec, nil, nil); err != nil {
+			t.Fatalf("UpdateReadState: %v", err)
+		}
+
+		got, err := store.GetUnscoredCurationArticles(1, 7.0, 10)
+		if err != nil {
+			t.Fatalf("GetUnscoredCurationArticles: %v", err)
+		}
+		if len(got) != 1 || got[0].ID != passed {
+			t.Fatalf("expected only article %d awaiting curation, got %v", passed, articleIDs(got))
+		}
+
+		// Security-scored article must have left the unscored (security) queue.
+		unscored, _ := store.GetUnscoredArticlesForUser(1, 10)
+		for _, a := range unscored {
+			if a.ID == passed {
+				t.Fatal("security-scored article should not be in the unscored queue")
+			}
+		}
+
+		// Curate it, then re-screen: the interest score must survive (ON CONFLICT
+		// does not touch interest_score) and it must drop out of the curation queue.
+		curScore := 7.5
+		store.UpdateReadState(1, passed, false, &curScore, &sec, nil, nil) //nolint:errcheck
+		if err := store.MarkSecurityScored(1, passed, 8.0, "re-screened", false); err != nil {
+			t.Fatalf("MarkSecurityScored re-run: %v", err)
+		}
+		after, _ := store.GetUnscoredCurationArticles(1, 7.0, 10)
+		if len(after) != 0 {
+			t.Fatalf("curated article should not reappear in curation queue, got %v", articleIDs(after))
+		}
+	})
+}
+
+// SetInterestScore must record the interest score without disturbing the
+// security verdict the security stage already wrote — the two stages run
+// separately, so a naive UpdateReadState (which nulls security_score) is wrong.
+func TestSetInterestScorePreservesSecurity(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		feedID, _ := store.AddFeed("https://example.com/feed", "Feed", "")
+		if err := store.SubscribeUserToFeed(1, feedID); err != nil {
+			t.Fatalf("subscribe: %v", err)
+		}
+		now := time.Now()
+		id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "x", Title: "x",
+			URL: "https://example.com/x", PublishedDate: &now})
+
+		if err := store.MarkSecurityScored(1, id, 8.0, "ok", false); err != nil {
+			t.Fatalf("MarkSecurityScored: %v", err)
+		}
+		if err := store.SetInterestScore(1, id, 6.0); err != nil {
+			t.Fatalf("SetInterestScore: %v", err)
+		}
+
+		// Security score must survive (>= 7.0), so the article still qualifies as
+		// security-passed for the summary stage. If SetInterestScore had nulled it,
+		// this query would return nothing.
+		scored, err := store.GetUnsummarizedScoredArticles(1, 7.0, 10)
+		if err != nil {
+			t.Fatalf("GetUnsummarizedScoredArticles: %v", err)
+		}
+		if len(scored) != 1 || scored[0].ID != id {
+			t.Fatalf("security score not preserved after SetInterestScore; got %v", articleIDs(scored))
+		}
+
+		// And it has left the curation queue (interest_score now set).
+		cur, _ := store.GetUnscoredCurationArticles(1, 7.0, 10)
+		if len(cur) != 0 {
+			t.Fatalf("expected nothing awaiting curation, got %v", articleIDs(cur))
+		}
+	})
+}
+
+// GetUngroupedEmbeddedArticles is the cluster stage's recency window: only
+// articles with a usable embedding, in no group, published within the window.
+func TestGetUngroupedEmbeddedArticles(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		const model = "nomic-test"
+		feedID, _ := store.AddFeed("https://example.com/feed", "Feed", "")
+		if err := store.SubscribeUserToFeed(1, feedID); err != nil {
+			t.Fatalf("subscribe: %v", err)
+		}
+		now := time.Now()
+		old := now.Add(-100 * time.Hour)
+		vec := []byte{1, 2, 3, 4}
+		// All articles are security-passed so the test isolates the embedding,
+		// grouping, and recency filters rather than the security gate.
+		mk := func(guid string, pub time.Time) int64 {
+			id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: guid, Title: guid,
+				URL: "https://example.com/" + guid, PublishedDate: &pub})
+			store.MarkSecurityScored(1, id, 9, "ok", false) //nolint:errcheck
+			return id
+		}
+
+		// Eligible: embedded (status OK), ungrouped, recent.
+		good := mk("good", now)
+		store.StoreArticleEmbedding(good, vec, model) //nolint:errcheck
+
+		// Excluded: embedded + recent but already in a group.
+		grouped := mk("grouped", now)
+		store.StoreArticleEmbedding(grouped, vec, model) //nolint:errcheck
+		gid, _ := store.CreateArticleGroup(1, "topic")
+		store.AddArticleToGroup(gid, grouped) //nolint:errcheck
+
+		// Excluded: no embedding.
+		mk("noembed", now)
+
+		// Excluded: embedded but published before the window.
+		stale := mk("stale", old)
+		store.StoreArticleEmbedding(stale, vec, model) //nolint:errcheck
+
+		// Excluded: embedding attempt failed (status != OK).
+		errored := mk("errored", now)
+		store.MarkArticleEmbeddingFailed(errored, model, "boom") //nolint:errcheck
+
+		// Excluded: embedded + recent + ungrouped but NOT security-passed.
+		blocked := mk("blocked", now)
+		store.StoreArticleEmbedding(blocked, vec, model) //nolint:errcheck
+		// Overwrite the passing verdict with a failing one.
+		zero := 0.0
+		secScore := 2.0
+		reason := "blocked"
+		store.UpdateReadState(1, blocked, false, &zero, &secScore, &reason, nil) //nolint:errcheck
+
+		since := now.Add(-48 * time.Hour)
+		got, err := store.GetUngroupedEmbeddedArticles(1, model, 7.0, since, 10)
+		if err != nil {
+			t.Fatalf("GetUngroupedEmbeddedArticles: %v", err)
+		}
+		if len(got) != 1 || got[0].ID != good {
+			t.Fatalf("expected only article %d, got %v", good, articleIDs(got))
+		}
+	})
+}

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -102,7 +101,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 			store.Close()
 			return nil, fmt.Errorf("create embedder: %w", err)
 		}
-		groupMatcher = ai.NewGroupMatcher(embedder, store, embCfg.Model, storeCfg.Grouping.SimilarityThreshold)
+		groupMatcher = ai.NewGroupMatcher(embedder, embCfg.Model)
 	}
 
 	e := &Engine{
@@ -150,211 +149,6 @@ func (e *Engine) FetchAllFeeds(ctx context.Context) (*FetchResult, error) {
 		FeedsErrored:     stats.FeedsErrored,
 		NewArticles:      stats.NewArticles,
 	}, nil
-}
-
-// ProcessNewArticles runs the AI pipeline (summarize, security check, interest
-// scoring) on unscored articles for the given user. Returns scored articles.
-// Articles that fail individual AI steps are skipped, not fatal.
-//
-// Up to e.maxParallel articles are processed concurrently. Within each article,
-// summarization and security check run in parallel since they are independent;
-// curation runs only after security passes.
-func (e *Engine) ProcessNewArticles(ctx context.Context, userID int64) ([]ScoredArticle, error) {
-	if e.ai == nil {
-		return nil, nil
-	}
-
-	var (
-		mu     sync.Mutex
-		scored []ScoredArticle
-	)
-
-	// sem limits the number of concurrently running article pipelines.
-	sem := make(chan struct{}, e.maxParallel)
-	var wg sync.WaitGroup
-
-	for ctx.Err() == nil { //nolint:staticcheck // QF1006: batch-fetch-then-check pattern is intentional
-		articles, err := e.store.GetUnscoredArticlesForUser(userID, 100)
-		if err != nil {
-			return scored, fmt.Errorf("get unscored articles: %w", err)
-		}
-		if len(articles) == 0 {
-			break
-		}
-
-		for _, article := range articles {
-			if ctx.Err() != nil {
-				break
-			}
-
-			sem <- struct{}{}
-			wg.Add(1)
-			go func(article storage.Article) {
-				defer func() { <-sem; wg.Done() }()
-
-				content := article.Content
-				if content == "" {
-					content = article.Summary
-				}
-				if article.LinkedContent != "" {
-					content = content + "\n\n" + article.LinkedContent
-				}
-
-				// Skip entire AI pipeline for articles too short to process meaningfully.
-				// Mark as scored so they don't block the queue forever.
-				minLen := e.config.Summarization.MinArticleLength
-				if minLen > 0 && len(content) < minLen {
-					log.Printf("herald: skipping AI pipeline for article %d: content too short (%d < %d)", article.ID, len(content), minLen)
-					zero := 0.0
-					reason := fmt.Sprintf("content too short (%d < %d)", len(content), minLen)
-					e.store.UpdateReadState(userID, article.ID, false, &zero, &zero, &reason, nil) //nolint:errcheck
-					return
-				}
-
-				// Security check runs first — blocks summarization and curation
-				// of content that may contain prompt injection or adversarial text.
-				secResult, secErr := e.ai.SecurityCheck(ctx, userID, article.Title, content)
-
-				if secErr != nil {
-					log.Printf("herald: security check failed for article %d: %v", article.ID, secErr)
-					// A backend-unavailable error (breaker open, transport failure,
-					// non-200) means no verdict was produced for this article, so it
-					// must not consume the retry budget — otherwise a transient outage
-					// orphans whatever was in flight (#100). Genuine model-response
-					// failures still count toward the give-up cap.
-					if !errors.Is(secErr, ai.ErrBackendUnavailable) {
-						e.store.IncrementAIRetries(userID, article.ID) //nolint:errcheck
-					}
-					return
-				}
-
-				mediumScore := e.config.Thresholds.SecurityMediumScore
-				if mediumScore == 0 {
-					mediumScore = 4.0
-				}
-
-				if !secResult.Safe || secResult.Score < mediumScore {
-					// Hard block: below the lower threshold entirely.
-					secScore := secResult.Score
-					zero := 0.0
-					e.store.UpdateReadState(userID, article.ID, false, &zero, &secScore, &secResult.Reasoning, nil) //nolint:errcheck
-					return
-				}
-
-				if secResult.Score < e.config.Thresholds.SecurityScore {
-					// Medium path: passes lower threshold but not full threshold.
-					// Let through without AI processing; flag for audit.
-					secScore := secResult.Score
-					zero := 0.0
-					flagged := true
-					e.store.UpdateReadState(userID, article.ID, false, &zero, &secScore, &secResult.Reasoning, &flagged) //nolint:errcheck
-					return
-				}
-
-				// Summarization and curation run after security passes.
-				existing, _ := e.store.GetArticleSummary(userID, article.ID)
-				if existing == nil {
-					maxLen := e.config.Summarization.MaxSummaryLength
-					summary, err := e.ai.SummarizeArticle(ctx, userID, article.Title, content, maxLen)
-					if err != nil {
-						log.Printf("herald: summarization failed for article %d: %v", article.ID, err)
-					} else if LooksLikeGarbage(summary) {
-						log.Printf("herald: discarding garbled summary for article %d", article.ID)
-					} else if len(summary) > len(content) {
-						log.Printf("herald: discarding summary for article %d: summary longer than content (%d > %d)", article.ID, len(summary), len(content))
-					} else if maxLen > 0 && len(summary) > maxLen+maxLen*15/100 {
-						log.Printf("herald: discarding summary for article %d: exceeds max length by >15%% (%d > %d)", article.ID, len(summary), maxLen)
-					} else {
-						e.store.UpdateArticleAISummary(userID, article.ID, summary) //nolint:errcheck
-					}
-				}
-
-				curResult, err := e.ai.CurateArticle(ctx, userID, article.Title, content, e.config.Preferences.Keywords)
-				if err != nil {
-					log.Printf("herald: curation failed for article %d: %v", article.ID, err)
-					// See the security-check branch above: don't burn the retry
-					// budget when the backend never produced a verdict (#100).
-					if !errors.Is(err, ai.ErrBackendUnavailable) {
-						e.store.IncrementAIRetries(userID, article.ID) //nolint:errcheck
-					}
-					return
-				}
-
-				secScore := secResult.Score
-				interestScore := curResult.InterestScore
-				e.store.UpdateReadState(userID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning, nil) //nolint:errcheck
-
-				// Group management: embed article, use similarity as pre-filter,
-				// then call LLM only when embedding suggests a possible match.
-				var articleEmb []float32
-				if e.groupMatcher != nil {
-					fields, body := BuildArticleEmbedInput(e.store, article)
-					articleEmb, _ = e.groupMatcher.EmbedRecord(ctx, fields, body)
-				}
-
-				// Persist the article embedding for semantic search.
-				if articleEmb != nil && e.groupMatcher != nil {
-					e.store.StoreArticleEmbedding(article.ID, embedding.EncodeFloat32s(articleEmb), e.groupMatcher.Model()) //nolint:errcheck
-				}
-
-				// Pre-filter: skip LLM grouping call if no existing group is
-				// even remotely similar. This prevents nonsensical matches.
-				skipLLM := false
-				if articleEmb != nil && e.groupMatcher != nil {
-					bestSim, _ := e.groupMatcher.BestGroupSimilarity(userID, articleEmb)
-					if bestSim < e.config.Grouping.PreFilterThreshold {
-						skipLLM = true
-					}
-				}
-
-				if !skipLLM {
-					userGroups, _ := e.store.GetUserGroups(userID)
-					groupResult, _ := e.ai.FindRelatedGroups(ctx, userID, article, userGroups, e.store)
-					if groupResult != nil && groupResult.IsRelated && len(groupResult.ExistingGroups) > 0 {
-						gID := groupResult.ExistingGroups[0]
-						e.store.AddArticleToGroup(gID, article.ID) //nolint:errcheck
-						// Update group centroid with this article's embedding
-						if articleEmb != nil && e.groupMatcher != nil {
-							e.groupMatcher.UpdateGroupCentroid(ctx, gID, articleEmb) //nolint:errcheck
-						}
-						// If the group is muted, immediately mark the article as read
-						if muted, err := e.store.IsGroupMuted(gID); err == nil && muted {
-							e.store.UpdateReadState(userID, article.ID, true, nil, nil, nil, nil) //nolint:errcheck
-						}
-					} else if groupResult != nil && groupResult.CreateGroup {
-						topic := article.Title
-						if len(topic) > 100 {
-							topic = topic[:100]
-						}
-						displayName := strings.Trim(groupResult.DisplayName, "\"'")
-						if newGroupID, err := e.store.CreateArticleGroup(userID, topic); err == nil {
-							e.store.AddArticleToGroup(newGroupID, article.ID) //nolint:errcheck
-							if displayName != "" {
-								e.store.UpdateGroupDisplayName(newGroupID, displayName) //nolint:errcheck
-							}
-							// Set initial centroid for the new group
-							if articleEmb != nil {
-								e.store.UpdateGroupEmbedding(newGroupID, embedding.EncodeFloat32s(articleEmb), e.groupMatcher.Model()) //nolint:errcheck
-							}
-						}
-					}
-				}
-
-				mu.Lock()
-				scored = append(scored, ScoredArticle{
-					Article:       articleFromInternal(article),
-					InterestScore: interestScore,
-					SecurityScore: secScore,
-					Safe:          true,
-				})
-				mu.Unlock()
-			}(article)
-		}
-
-		wg.Wait()
-	}
-
-	return scored, nil
 }
 
 // GetUnreadArticles returns unread articles for a user, up to limit starting at offset.
@@ -745,8 +539,8 @@ func (e *Engine) SubscribeFeed(userID int64, rawURL, title string) error {
 	}
 
 	// Store the initial articles we already fetched
-	if stored, err := e.fetcher.StoreArticles(feedID, result.Feed); err == nil && stored > 0 {
-		log.Printf("herald: stored %d initial articles from %s", stored, url)
+	if stored, err := e.fetcher.StoreArticles(feedID, result.Feed); err == nil && len(stored) > 0 {
+		log.Printf("herald: stored %d initial articles from %s", len(stored), url)
 	}
 
 	// Persist cache headers for next conditional request
@@ -1363,10 +1157,9 @@ func (e *Engine) PendingCounts(userID int64) (unsummarized, unscored int, err er
 // allowedPromptTypes lists prompt types that can be read/written via MCP.
 // "security" is intentionally excluded — the LLM must not weaken content safety.
 var allowedPromptTypes = map[string]bool{
-	"curation":       true,
-	"summarization":  true,
-	"group_summary":  true,
-	"related_groups": true,
+	"curation":      true,
+	"summarization": true,
+	"group_summary": true,
 }
 
 // GetUserPreference returns a single raw preference value for a user.
@@ -1802,29 +1595,6 @@ func (e *Engine) GetArticleImageMap(articleID int64) (map[string]int64, error) {
 // GetArticleImage returns a cached image by its ID.
 func (e *Engine) GetArticleImage(imageID int64) (*storage.ArticleImage, error) {
 	return e.store.GetArticleImage(imageID)
-}
-
-// LooksLikeGarbage detects model output that contains training-data artifacts
-// or prompt injection patterns rather than a real summary. Small models under
-// load sometimes produce this kind of garbled output.
-func LooksLikeGarbage(summary string) bool {
-	lower := strings.ToLower(summary)
-	for _, pattern := range []string{
-		"### user:",
-		"### assistant:",
-		"### instruction:",
-		"### promotee",
-		"rgb-gpt",
-		"beating_json",
-		"followeddit.com",
-		"your assistant to solve",
-		"write an extensive researcher",
-	} {
-		if strings.Contains(lower, pattern) {
-			return true
-		}
-	}
-	return false
 }
 
 func feedFromInternal(f storage.Feed) Feed {

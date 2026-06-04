@@ -1,11 +1,10 @@
-// herald-mcp is a standalone MCP server for the Herald content engine.
-// It connects directly to Herald's SQLite database, serving article and
-// feed tools over JSON-RPC stdio. Designed to run as a per-persona MCP
+// herald-mcp is a standalone, read-only MCP server for the Herald content
+// engine. It connects directly to Herald's SQLite database, serving article
+// and feed tools over JSON-RPC stdio. Designed to run as a per-persona MCP
 // server alongside majordomo-mcp.
 //
-// With --poll, it also runs a background goroutine that fetches feeds and
-// scores articles on a timer, replacing the polling loop previously
-// embedded in the majordomo daemon.
+// It does no feed fetching or AI processing — that is the `herald daemon`'s
+// job. herald-mcp only reads the database the daemon populates.
 package main
 
 import (
@@ -15,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/matthewjhunter/herald"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -28,8 +26,6 @@ func main() {
 	dbPath := flag.String("db", defaultDB, "path to herald database")
 	ollamaURL := flag.String("ollama", "http://localhost:11434", "Ollama base URL")
 	userID := flag.Int64("user", 1, "user ID for article operations")
-	poll := flag.Bool("poll", false, "enable background feed polling")
-	pollInterval := flag.Duration("poll-interval", 10*time.Minute, "polling frequency")
 	threshold := flag.Float64("threshold", 8.0, "high-interest score threshold")
 	securityModel := flag.String("security-model", "gemma4", "Ollama model for security scoring")
 	curationModel := flag.String("curation-model", "gemma4", "Ollama model for interest scoring")
@@ -69,18 +65,7 @@ func main() {
 
 	hs := newHeraldServer(engine, *userID)
 
-	if *poll {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		p := newPoller(engine, *userID, *pollInterval, *threshold)
-		p.start(ctx)
-		defer p.stop()
-
-		hs.poller = p
-	}
-
-	log.Printf("herald-mcp starting (user=%d)", hs.userID)
+	log.Printf("herald-mcp starting (user=%d, read-only)", hs.userID)
 
 	mcpSrv := newMCPServer(hs)
 	if err := mcpSrv.Run(context.Background(), &mcp.StdioTransport{}); err != nil {

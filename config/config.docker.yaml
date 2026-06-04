@@ -9,6 +9,9 @@ ollama:
   curation_model: gemma4
 grouping:
   similarity_threshold: 0.75
+  cluster_threshold: 0.75
+  min_cluster_size: 2
+  recency_window_hours: 48
 thresholds:
   interest_score: 8.0
   security_score: 7.0

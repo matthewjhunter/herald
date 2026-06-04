@@ -1031,6 +1031,51 @@ func (s *SQLiteStore) UpdateReadState(userID, articleID int64, read bool, intere
 	return nil
 }
 
+// MarkSecurityScored records the security verdict for an article and marks it
+// ai_scored, WITHOUT writing an interest score. The staged pipeline runs the
+// security screen and interest scoring as separate passes: a passing article is
+// marked here (interest_score stays NULL) so the curation stage can pick it up
+// via GetUnscoredCurationArticles. interest_score is never touched on conflict,
+// so re-running the security stage cannot clobber a score the curator already
+// wrote. (Hard-blocked and medium-flagged articles are terminal and still go
+// through UpdateReadState with interest_score=0.)
+func (s *SQLiteStore) MarkSecurityScored(userID, articleID int64, securityScore float64, securityReason string, securityFlagged bool) error {
+	_, err := s.db.Exec(
+		`INSERT INTO read_state (user_id, article_id, read, security_score, security_reason, security_flagged, ai_scored)
+		 VALUES (?, ?, 0, ?, ?, ?, 1)
+		 ON CONFLICT(user_id, article_id) DO UPDATE SET
+		   security_score = excluded.security_score,
+		   security_reason = excluded.security_reason,
+		   security_flagged = excluded.security_flagged,
+		   ai_scored = 1`,
+		userID, articleID, securityScore, securityReason, securityFlagged,
+	)
+	if err != nil {
+		return fmt.Errorf("mark security scored: %w", err)
+	}
+	return nil
+}
+
+// SetInterestScore records the interest score from the curation stage WITHOUT
+// touching the security verdict the security stage already wrote. The staged
+// pipeline runs the two as separate passes, so security_score / security_reason
+// / security_flagged must be left untouched here — using UpdateReadState would
+// overwrite them with NULL. ai_scored stays set.
+func (s *SQLiteStore) SetInterestScore(userID, articleID int64, interestScore float64) error {
+	_, err := s.db.Exec(
+		`INSERT INTO read_state (user_id, article_id, read, interest_score, ai_scored)
+		 VALUES (?, ?, 0, ?, 1)
+		 ON CONFLICT(user_id, article_id) DO UPDATE SET
+		   interest_score = excluded.interest_score,
+		   ai_scored = 1`,
+		userID, articleID, interestScore,
+	)
+	if err != nil {
+		return fmt.Errorf("set interest score: %w", err)
+	}
+	return nil
+}
+
 // GetScoreStats returns AI scoring breakdown per feed for a user.
 func (s *SQLiteStore) GetScoreStats(userID int64) (*ScoreStatsResult, error) {
 	rows, err := s.db.Query(`
@@ -1918,6 +1963,66 @@ func (s *SQLiteStore) GetUnsummarizedScoredArticles(userID int64, securityThresh
 	return articles, rows.Err()
 }
 
+// GetUnscoredCurationArticles returns articles that passed the security screen
+// (ai_scored, security_score >= threshold) but have not yet been interest-scored
+// (interest_score IS NULL). The staged pipeline runs security and curation as
+// separate passes, so this is the backfill input for the curation stage —
+// articles stranded between the two when a prior cycle stopped early.
+func (s *SQLiteStore) GetUnscoredCurationArticles(userID int64, securityThreshold float64, limit int) ([]Article, error) {
+	rows, err := s.db.Query(`
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date
+		FROM articles a
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
+		WHERE uf.user_id = ?
+		  AND rs.ai_scored = 1
+		  AND rs.security_score >= ?
+		  AND rs.interest_score IS NULL
+		ORDER BY a.published_date DESC
+		LIMIT ?`, userID, securityThreshold, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get unscored curation articles: %w", err)
+	}
+	defer rows.Close()
+	return scanArticles(rows)
+}
+
+// GetUngroupedEmbeddedArticles returns articles that passed the security screen
+// (ai_scored, security_score >= threshold), have a usable embedding (status OK)
+// for the given model, belong to no group owned by the user, and were
+// published/fetched since the cutoff. It is the cluster stage's recency window:
+// breaking news spans fetch cycles, so a story that arrived with a lone
+// (then-ungrouped) article last cycle can still be pulled into a group as
+// siblings arrive now. The security filter keeps blocked content — which may
+// still get embedded — out of clusters. Newest-first, limited.
+func (s *SQLiteStore) GetUngroupedEmbeddedArticles(userID int64, model string, securityThreshold float64, since time.Time, limit int) ([]Article, error) {
+	rows, err := s.db.Query(`
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date
+		FROM articles a
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = uf.user_id
+		JOIN article_embeddings ae ON ae.article_id = a.id
+		    AND ae.embedding_model = ? AND ae.status = ?
+		WHERE uf.user_id = ?
+		  AND rs.ai_scored = 1
+		  AND rs.security_score >= ?
+		  AND COALESCE(a.published_date, a.fetched_date) >= ?
+		  AND NOT EXISTS (
+		      SELECT 1 FROM article_group_members agm
+		      JOIN article_groups ag ON agm.group_id = ag.id
+		      WHERE agm.article_id = a.id AND ag.user_id = uf.user_id
+		  )
+		ORDER BY COALESCE(a.published_date, a.fetched_date) DESC
+		LIMIT ?`, model, EmbedStatusOK, userID, securityThreshold, since, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get ungrouped embedded articles: %w", err)
+	}
+	defer rows.Close()
+	return scanArticles(rows)
+}
+
 // GetUnreadArticlesForUser returns unread articles from feeds the user subscribes to
 func (s *SQLiteStore) GetUnreadArticlesForUser(userID int64, limit, offset int, filterThreshold *int) ([]Article, error) {
 	filterSQL, filterArgs := filterScoreClause(userID, filterThreshold)
@@ -2648,6 +2753,40 @@ func (s *SQLiteStore) GetArticleEmbeddings(userID int64, model string) ([]Articl
 		userID, model)
 	if err != nil {
 		return nil, fmt.Errorf("get article embeddings: %w", err)
+	}
+	defer rows.Close()
+	var result []ArticleEmbeddingRow
+	for rows.Next() {
+		var r ArticleEmbeddingRow
+		if err := rows.Scan(&r.ArticleID, &r.Embedding); err != nil {
+			return nil, err
+		}
+		result = append(result, r)
+	}
+	return result, rows.Err()
+}
+
+// GetArticleEmbeddingsByIDs returns the usable (status OK) embeddings for the
+// given article IDs and model, as raw blobs for the caller to decode. The
+// cluster stage uses it to load the cohort's vectors in one query rather than
+// every embedding the user has. Returns nil for an empty ID set.
+func (s *SQLiteStore) GetArticleEmbeddingsByIDs(articleIDs []int64, model string) ([]ArticleEmbeddingRow, error) {
+	if len(articleIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(articleIDs))
+	args := make([]any, 0, len(articleIDs)+2)
+	for i, id := range articleIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	args = append(args, model, EmbedStatusOK)
+	rows, err := s.db.Query(
+		`SELECT article_id, embedding FROM article_embeddings
+		 WHERE article_id IN (`+strings.Join(placeholders, ",")+`)
+		   AND embedding_model = ? AND status = ?`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get article embeddings by ids: %w", err)
 	}
 	defer rows.Close()
 	var result []ArticleEmbeddingRow

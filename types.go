@@ -62,14 +62,6 @@ type SearchResult struct {
 	Score     float64 `json:"score"`      // normalized relevance score (0-1)
 }
 
-// ScoredArticle is an article with its AI-generated scores.
-type ScoredArticle struct {
-	Article
-	InterestScore float64 `json:"interest_score"`
-	SecurityScore float64 `json:"security_score"`
-	Safe          bool    `json:"safe"`
-}
-
 // Newsletter represents a user-defined newsletter/digest configuration.
 type Newsletter struct {
 	ID              int64            `json:"id"`

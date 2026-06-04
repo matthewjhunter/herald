@@ -24,9 +24,6 @@ var defaultSummarizationPrompt string
 //go:embed prompts/group_summary.txt
 var defaultGroupSummaryPrompt string
 
-//go:embed prompts/related_groups.txt
-var defaultRelatedGroupsPrompt string
-
 //go:embed prompts/newsletter.txt
 var defaultNewsletterPrompt string
 
@@ -38,7 +35,6 @@ const (
 	PromptTypeCuration      PromptType = "curation"
 	PromptTypeSummarization PromptType = "summarization"
 	PromptTypeGroupSummary  PromptType = "group_summary"
-	PromptTypeRelatedGroups PromptType = "related_groups"
 	PromptTypeNewsletter    PromptType = "newsletter"
 )
 
@@ -70,8 +66,6 @@ func DefaultPrompt(pt PromptType) (string, error) {
 		return defaultSummarizationPrompt, nil
 	case PromptTypeGroupSummary:
 		return defaultGroupSummaryPrompt, nil
-	case PromptTypeRelatedGroups:
-		return defaultRelatedGroupsPrompt, nil
 	case PromptTypeNewsletter:
 		return defaultNewsletterPrompt, nil
 	default:
@@ -129,8 +123,6 @@ func (pl *PromptLoader) GetPrompt(userID int64, promptType PromptType) (string, 
 				configPrompt = config.Prompts.Summarization
 			case PromptTypeGroupSummary:
 				configPrompt = config.Prompts.GroupSummary
-			case PromptTypeRelatedGroups:
-				configPrompt = config.Prompts.RelatedGroups
 			case PromptTypeNewsletter:
 				configPrompt = config.Prompts.Newsletter
 			}
@@ -155,8 +147,6 @@ func (pl *PromptLoader) GetPrompt(userID int64, promptType PromptType) (string, 
 		defaultPrompt = defaultSummarizationPrompt
 	case PromptTypeGroupSummary:
 		defaultPrompt = defaultGroupSummaryPrompt
-	case PromptTypeRelatedGroups:
-		defaultPrompt = defaultRelatedGroupsPrompt
 	case PromptTypeNewsletter:
 		defaultPrompt = defaultNewsletterPrompt
 	default:
@@ -195,8 +185,6 @@ func (pl *PromptLoader) GetTemperature(userID int64, promptType PromptType) floa
 				configTemp = config.Temperatures.Summarization
 			case PromptTypeGroupSummary:
 				configTemp = config.Temperatures.GroupSummary
-			case PromptTypeRelatedGroups:
-				configTemp = config.Temperatures.RelatedGroups
 			case PromptTypeNewsletter:
 				configTemp = config.Temperatures.Newsletter
 			}
@@ -217,8 +205,6 @@ func (pl *PromptLoader) GetTemperature(userID int64, promptType PromptType) floa
 		return 0.3
 	case PromptTypeGroupSummary:
 		return 0.5
-	case PromptTypeRelatedGroups:
-		return 0.3
 	case PromptTypeNewsletter:
 		return 0.6
 	default:
