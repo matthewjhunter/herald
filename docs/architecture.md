@@ -186,7 +186,7 @@ The `security` prompt type is intentionally excluded from MCP access — it cann
 
 ## MCP Integration
 
-`herald-mcp` exposes 26 tools over stdio using the [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk). All tools accept an optional `speaker` parameter that resolves to a registered user ID, enabling multi-user access from a single MCP server instance.
+`herald-mcp` is a read-only MCP server: it serves article, feed, and preference tools over stdio using the [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk), reading the database that the `herald daemon` populates. It does no feed fetching or AI processing of its own. All tools accept an optional `speaker` parameter that resolves to a registered user ID, enabling multi-user access from a single MCP server instance.
 
 Tool categories:
 
@@ -195,7 +195,6 @@ Tool categories:
 | Articles | `articles_unread`, `articles_get`, `articles_mark_read`, `article_star` |
 | Feeds | `feeds_list`, `feed_subscribe`, `feed_unsubscribe`, `feed_rename`, `feed_stats`, `feed_metadata` |
 | Groups | `article_groups`, `article_group_get` |
-| Polling | `poll_now` (requires `--poll` flag) |
 | Preferences | `preferences_get`, `preference_set` |
 | Prompts | `prompts_list`, `prompt_get`, `prompt_set`, `prompt_reset` |
 | Filter rules | `filter_rules_list`, `filter_rule_add`, `filter_rule_update`, `filter_rule_delete` |
@@ -204,7 +203,7 @@ Tool categories:
 
 The `briefing` tool generates a formatted markdown digest of high-interest unread articles, intended for delivery as a voice briefing through Majordomo.
 
-When started with `--poll`, the server runs a background polling loop at a configurable interval. The `poll_now` tool triggers an immediate poll cycle.
+Feed fetching and AI processing are the `herald daemon`'s responsibility; `herald-mcp` reads the results. Run a daemon (or `herald fetch`) against the same database to keep it populated.
 
 See [docs/majordomo-integration.md](majordomo-integration.md) for Majordomo-specific setup.
 

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"time"
 
 	"github.com/matthewjhunter/herald"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -15,7 +14,6 @@ import (
 type heraldServer struct {
 	engine *herald.Engine
 	userID int64
-	poller *poller // non-nil when --poll is enabled
 }
 
 func newHeraldServer(engine *herald.Engine, userID int64) *heraldServer {
@@ -267,25 +265,6 @@ func registerTools(s *mcp.Server, hs *heraldServer) {
 		}
 		log.Printf("feed_stats")
 		return jsonResult(stats)
-	})
-
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "poll_now",
-		Description: "Trigger an immediate feed poll cycle: fetch all feeds, score new articles through the AI pipeline, and return results. Only available when the server is running with --poll. Use this when the user asks to check for new articles right now.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input emptyInput) (*mcp.CallToolResult, any, error) {
-		if hs.poller == nil {
-			return errResult("polling is not enabled (start with --poll)")
-		}
-		pollCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		defer cancel()
-		result, err := hs.poller.poll(pollCtx)
-		if err != nil {
-			return errResult("poll failed: %v", err)
-		}
-		log.Printf("poll_now: %d/%d feeds, %d new, %d scored, %d high-interest",
-			result.FeedsDownloaded, result.FeedsTotal,
-			result.NewArticles, result.ProcessedCount, result.HighInterest)
-		return jsonResult(result)
 	})
 
 	mcp.AddTool(s, &mcp.Tool{

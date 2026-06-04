@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"github.com/matthewjhunter/herald/internal/storage"
 )
 
 // SummarizeArticle generates an AI summary for a single article.
@@ -216,83 +214,4 @@ func (p *AIProcessor) GenerateNewsletterContent(ctx context.Context, userID int6
 	}
 
 	return &nr, nil
-}
-
-// RelatedArticlesResult represents the result of finding related articles.
-type RelatedArticlesResult struct {
-	IsRelated      bool    `json:"is_related"`
-	ExistingGroups []int64 `json:"existing_groups"`
-	CreateGroup    bool    `json:"create_group"`
-	DisplayName    string  `json:"display_name"`
-	Reasoning      string  `json:"reasoning"`
-}
-
-// FindRelatedGroups determines if a new article relates to existing groups.
-// Returns the full result struct so callers can access display_name for new groups.
-func (p *AIProcessor) FindRelatedGroups(ctx context.Context, userID int64, newArticle storage.Article, existingGroups []storage.ArticleGroup, store storage.Store) (*RelatedArticlesResult, error) {
-	var groupDescs []string
-	for _, group := range existingGroups {
-		articles, err := store.GetGroupArticles(group.ID)
-		if err != nil || len(articles) == 0 {
-			continue
-		}
-
-		sampleCount := min(len(articles), 3)
-
-		var sampleTitles []string
-		for i := 0; i < sampleCount; i++ {
-			sampleTitles = append(sampleTitles, articles[i].Title)
-		}
-
-		desc := fmt.Sprintf("Group %d - %s:\n  Articles:\n  - %s",
-			group.ID, group.Topic, strings.Join(sampleTitles, "\n  - "))
-
-		// Include group summary for better matching context
-		if gs, err := store.GetGroupSummary(group.ID); err == nil && gs != nil && gs.Summary != "" {
-			desc += fmt.Sprintf("\n  Summary: %s", truncateText(gs.Summary, 300))
-		}
-
-		groupDescs = append(groupDescs, desc)
-	}
-
-	promptTemplate, err := p.promptLoader.GetPrompt(userID, PromptTypeRelatedGroups)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load related groups prompt: %w", err)
-	}
-
-	groupsText := "(none)"
-	if len(groupDescs) > 0 {
-		groupsText = strings.Join(groupDescs, "\n\n")
-	}
-	nonce, err := newFenceNonce()
-	if err != nil {
-		return nil, fmt.Errorf("failed to prepare related groups prompt content: %w", err)
-	}
-	data := map[string]any{
-		"Nonce":   nonce,
-		"Title":   neutralizeFence(newArticle.Title),
-		"Summary": neutralizeFence(truncateText(newArticle.Summary, 500)),
-		"Groups":  neutralizeFence(groupsText),
-	}
-	prompt, err := ExecutePrompt(promptTemplate, data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to render related groups prompt: %w", err)
-	}
-
-	temperature := p.promptLoader.GetTemperature(userID, PromptTypeRelatedGroups)
-
-	callCtx, cancel := p.withCallTimeout(ctx)
-	defer cancel()
-
-	responseText, err := p.client.generate(callCtx, p.curationModel, prompt, temperature)
-	if err != nil {
-		return nil, fmt.Errorf("related groups check failed: %w", err)
-	}
-
-	var result RelatedArticlesResult
-	if err := json.Unmarshal([]byte(extractJSON(responseText)), &result); err != nil {
-		return &RelatedArticlesResult{}, nil
-	}
-
-	return &result, nil
 }

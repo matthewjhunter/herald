@@ -99,25 +99,6 @@ func (m *GroupMatcher) EmbedRecord(ctx context.Context, fields []embedding.Field
 	return emb, nil
 }
 
-// BestGroupSimilarity returns the highest cosine similarity between the given
-// embedding and any existing group centroid for this user. Returns 0 if there
-// are no groups with embeddings.
-func (m *GroupMatcher) BestGroupSimilarity(userID int64, articleEmb []float32) (float64, error) {
-	groups, err := m.store.GetGroupsWithEmbeddings(userID, m.model)
-	if err != nil {
-		return 0, fmt.Errorf("get groups: %w", err)
-	}
-	var best float64
-	for _, g := range groups {
-		centroid := embedding.DecodeFloat32s(g.Embedding)
-		sim := embedding.CosineSimilarity(articleEmb, centroid)
-		if sim > best {
-			best = sim
-		}
-	}
-	return best, nil
-}
-
 // UpdateGroupCentroid performs an incremental centroid update after adding an
 // article to a group. Given the current centroid C and article count N (before
 // adding this article), the new centroid is:
