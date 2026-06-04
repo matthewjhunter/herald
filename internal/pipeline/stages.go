@@ -166,10 +166,23 @@ func (s *Stage) Curate(ctx context.Context, in []storage.Article) []storage.Arti
 		s.Formatter.Warning("pipeline: skipping curation stage for user %d — AI backend unavailable (breaker open)", s.UserID)
 		return nil
 	}
-	return s.mapArticles(ctx, in, s.curateOne)
+	// The security verdict lives in read_state, not on the in-memory Article, so
+	// fetch it once for the batch to report alongside the interest score (#119).
+	batchIDs := make([]int64, len(in))
+	for i, a := range in {
+		batchIDs[i] = a.ID
+	}
+	secScores, err := s.Store.GetSecurityScores(s.UserID, batchIDs)
+	if err != nil {
+		s.Formatter.Warning("pipeline: could not load security scores for curation reporting: %v", err)
+		secScores = nil
+	}
+	return s.mapArticles(ctx, in, func(ctx context.Context, article storage.Article) *storage.Article {
+		return s.curateOne(ctx, article, secScores[article.ID])
+	})
 }
 
-func (s *Stage) curateOne(ctx context.Context, article storage.Article) *storage.Article {
+func (s *Stage) curateOne(ctx context.Context, article storage.Article, securityScore float64) *storage.Article {
 	content := articleContent(article)
 	curResult, err := s.AI.CurateArticle(ctx, s.UserID, article.Title, content, s.Cfg.Preferences.Keywords)
 	if err != nil {
@@ -179,6 +192,6 @@ func (s *Stage) curateOne(ctx context.Context, article storage.Article) *storage
 	// Record only the interest score; the security verdict was written by the
 	// security stage and must not be clobbered (SetInterestScore leaves it).
 	s.Store.SetInterestScore(s.UserID, article.ID, curResult.InterestScore) //nolint:errcheck
-	s.Formatter.OutputProcessingStatus(article.ID, article.Title, curResult.InterestScore, 0, true)
+	s.Formatter.OutputProcessingStatus(article.ID, article.Title, curResult.InterestScore, securityScore, true)
 	return &article
 }

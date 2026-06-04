@@ -1,7 +1,9 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"path/filepath"
@@ -308,6 +310,41 @@ func TestCurateStage(t *testing.T) {
 		scored, _ := store.GetUnsummarizedScoredArticles(1, 7.0, 10)
 		if len(scored) != 1 {
 			t.Fatalf("security score must survive curation, got %v", ids(scored))
+		}
+	})
+
+	t.Run("processed event reports the persisted security score, not zero", func(t *testing.T) {
+		fake := &fakeAI{available: true, curateFn: func(string, string) (*ai.CurationResult, error) {
+			return &ai.CurationResult{InterestScore: 8.0}, nil
+		}}
+		st, store, feedID := newHarness(t, fake)
+		var buf bytes.Buffer
+		st.Formatter = output.NewFormatterWithWriters(output.FormatJSON, &buf, io.Discard)
+		a := seed(t, store, feedID, "x", "body text")
+		if err := store.MarkSecurityScored(1, a.ID, 9, "ok", false); err != nil {
+			t.Fatal(err)
+		}
+
+		st.Curate(context.Background(), []storage.Article{a})
+
+		var ev struct {
+			Event         string  `json:"event"`
+			SecurityScore float64 `json:"security_score"`
+			InterestScore float64 `json:"interest_score"`
+		}
+		if err := json.Unmarshal(buf.Bytes(), &ev); err != nil {
+			t.Fatalf("decode processed event: %v (out=%q)", err, buf.String())
+		}
+		if ev.Event != "article_processed" {
+			t.Fatalf("event = %q, want article_processed", ev.Event)
+		}
+		// The curate stage must surface the verdict the security stage wrote,
+		// not a 0 placeholder — the event feeds logs and notifications (#119).
+		if ev.SecurityScore != 9 {
+			t.Errorf("security_score = %v, want 9 (persisted verdict)", ev.SecurityScore)
+		}
+		if ev.InterestScore != 8 {
+			t.Errorf("interest_score = %v, want 8", ev.InterestScore)
 		}
 	})
 
