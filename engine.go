@@ -29,6 +29,7 @@ type Engine struct {
 	ai           *ai.AIProcessor
 	groupMatcher *ai.GroupMatcher
 	summarizer   *ai.CloudSummarizer // AI Summary cloud backend; nil when unconfigured
+	reranker     embedding.Reranker  // search reranker (Jina/Cohere /v1/rerank); nil when unconfigured
 	config       *storage.Config
 	maxParallel  int          // max concurrent AI pipeline workers (1 = serial)
 	mu           sync.RWMutex // protects config fields modified at runtime
@@ -107,19 +108,39 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 
 	maxParallel := max(cfg.MaxParallel, 1)
 
+	// The embedder is built from the EMBEDDING_* env (independent of the Olla
+	// chat URL) and regardless of ReadOnly, so the read-only web process can run
+	// semantic search. A config/construction error is fatal for the daemon (it
+	// needs embeddings to cluster) but only disables semantic search in the
+	// read-only web — there it degrades to FTS rather than failing to start.
 	var groupMatcher *ai.GroupMatcher
-	if !cfg.ReadOnly && cfg.OllamaBaseURL != "" {
-		embCfg, err := embedding.ConfigFromEnvPrefix("HERALD_EMBED")
-		if err != nil {
+	if embCfg, err := embedding.ConfigFromEnvPrefix("HERALD_EMBED"); err != nil {
+		if !cfg.ReadOnly {
 			store.Close()
 			return nil, fmt.Errorf("embedder config: %w", err)
 		}
-		embedder, err := embedding.New(embCfg)
-		if err != nil {
+		log.Printf("herald: embedder config error, semantic search disabled: %v", err)
+	} else if embedder, err := embedding.New(embCfg); err != nil {
+		if !cfg.ReadOnly {
 			store.Close()
 			return nil, fmt.Errorf("create embedder: %w", err)
 		}
+		log.Printf("herald: embedder unavailable, semantic search disabled: %v", err)
+	} else {
 		groupMatcher = ai.NewGroupMatcher(embedder, embCfg.Model)
+	}
+
+	// Optional search reranker (Jina/Cohere /v1/rerank). Built when RERANK_* /
+	// HERALD_RERANK_* env is configured; otherwise nil and search keeps its
+	// first-stage (FTS + cosine) order. Construction never fails the engine — a
+	// missing/invalid reranker just disables reranking.
+	var reranker embedding.Reranker
+	if rcfg, err := embedding.RerankConfigFromEnvPrefix("HERALD_RERANK"); err == nil && rcfg.BaseURL != "" && rcfg.Model != "" {
+		if rr, err := embedding.NewReranker(rcfg); err == nil {
+			reranker = rr
+		} else {
+			log.Printf("herald: reranker unavailable, search reranking disabled: %v", err)
+		}
 	}
 
 	e := &Engine{
@@ -128,6 +149,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		ai:           processor,
 		groupMatcher: groupMatcher,
 		summarizer:   summarizer,
+		reranker:     reranker,
 		config:       storeCfg,
 		maxParallel:  maxParallel,
 	}
@@ -318,10 +340,61 @@ func (e *Engine) Search(ctx context.Context, userID int64, query string, limit, 
 		return results[i].Score > results[j].Score
 	})
 
+	// Rerank the merged candidate pool with the cross-encoder when configured;
+	// degrades to the first-stage (FTS + cosine) order if it is unavailable.
+	results = e.rerankSearchResults(ctx, query, results)
+
 	if len(results) > limit {
 		results = results[:limit]
 	}
 	return results, nil
+}
+
+// rerankSearchResults reorders the merged candidate pool with the configured
+// cross-encoder. It returns the input unchanged when no reranker is configured
+// or the backend is unavailable (graceful degradation — the consumer owns the
+// fallback per go-embedding's contract).
+func (e *Engine) rerankSearchResults(ctx context.Context, query string, results []SearchResult) []SearchResult {
+	if e.reranker == nil || len(results) < 2 {
+		return results
+	}
+	docs := make([]string, len(results))
+	for i, r := range results {
+		docs[i] = rerankDoc(r)
+	}
+	ranked, err := e.reranker.Rerank(ctx, embedding.RerankRequest{Query: query, Documents: docs})
+	if err != nil {
+		if embedding.IsRerankAvailable(err) {
+			// Backend reached but rejected the request (e.g. 4xx) — surface it in logs.
+			log.Printf("herald: rerank failed, keeping first-stage order: %v", err)
+		}
+		return results
+	}
+	reordered := make([]SearchResult, 0, len(results))
+	for _, item := range ranked {
+		if item.Index >= 0 && item.Index < len(results) {
+			reordered = append(reordered, results[item.Index])
+		}
+	}
+	if len(reordered) == 0 {
+		return results // defensive: never drop the whole pool on a reranker quirk
+	}
+	return reordered
+}
+
+// rerankDoc is the text the reranker scores against the query: title plus the
+// best available summary — concise and representative (the reranker truncates
+// to its model's byte budget).
+func rerankDoc(r SearchResult) string {
+	doc := r.Title
+	summary := r.AISummary
+	if summary == "" {
+		summary = r.Summary
+	}
+	if summary != "" {
+		doc += "\n" + summary
+	}
+	return doc
 }
 
 // BuildArticleEmbedInput assembles the metadata fields and body string for
