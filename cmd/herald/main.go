@@ -26,7 +26,7 @@ var (
 
 // newGroupMatcher constructs a GroupMatcher from HERALD_EMBED env vars and
 // the Grouping config. Used by both the daemon cycle and the `process` CLI.
-func newGroupMatcher(store storage.Store, appCfg *storage.Config) (*ai.GroupMatcher, error) {
+func newGroupMatcher() (*ai.GroupMatcher, error) {
 	embCfg, err := embedding.ConfigFromEnvPrefix("HERALD_EMBED")
 	if err != nil {
 		return nil, fmt.Errorf("embedder config: %w", err)
@@ -35,7 +35,7 @@ func newGroupMatcher(store storage.Store, appCfg *storage.Config) (*ai.GroupMatc
 	if err != nil {
 		return nil, fmt.Errorf("create embedder: %w", err)
 	}
-	return ai.NewGroupMatcher(embedder, store, embCfg.Model, appCfg.Grouping.SimilarityThreshold), nil
+	return ai.NewGroupMatcher(embedder, embCfg.Model), nil
 }
 
 // newPipelineStage builds the staged AI pipeline for one user, wiring the AI
@@ -293,7 +293,7 @@ func processCmd() *cobra.Command {
 				return nil
 			}
 
-			groupMatcher, err := newGroupMatcher(store, cfg)
+			groupMatcher, err := newGroupMatcher()
 			if err != nil {
 				return err
 			}
@@ -445,7 +445,7 @@ func doFetch(ctx context.Context) error {
 		return formatter.OutputFetchResult(fetchResult)
 	}
 
-	groupMatcher, err := newGroupMatcher(store, cfg)
+	groupMatcher, err := newGroupMatcher()
 	if err != nil {
 		formatter.Warning("failed to create group matcher: %v", err)
 		formatter.Warning("skipping embedding backfill and group matching")

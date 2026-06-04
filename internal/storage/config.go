@@ -45,7 +45,6 @@ type Config struct {
 
 	Grouping struct {
 		SimilarityThreshold float64 `yaml:"similarity_threshold"`
-		PreFilterThreshold  float64 `yaml:"pre_filter_threshold"`
 		// ClusterThreshold is the cosine similarity at which the staged
 		// pipeline's cluster stage joins an article to a group or links two
 		// articles into a new one. Defaults to SimilarityThreshold when unset.
@@ -90,7 +89,6 @@ func DefaultConfig() *Config {
 	cfg.Summarization.MinArticleLength = 200
 	cfg.Summarization.MaxSummaryLength = 500
 	cfg.Grouping.SimilarityThreshold = 0.75
-	cfg.Grouping.PreFilterThreshold = 0.3
 	cfg.Grouping.ClusterThreshold = 0.75
 	cfg.Grouping.MinClusterSize = 2
 	cfg.Grouping.RecencyWindowHours = 48

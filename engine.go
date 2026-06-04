@@ -101,7 +101,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 			store.Close()
 			return nil, fmt.Errorf("create embedder: %w", err)
 		}
-		groupMatcher = ai.NewGroupMatcher(embedder, store, embCfg.Model, storeCfg.Grouping.SimilarityThreshold)
+		groupMatcher = ai.NewGroupMatcher(embedder, embCfg.Model)
 	}
 
 	e := &Engine{
