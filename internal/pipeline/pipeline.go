@@ -7,6 +7,7 @@ import (
 	embedding "github.com/matthewjhunter/go-embedding"
 	"github.com/matthewjhunter/herald/internal/ai"
 	"github.com/matthewjhunter/herald/internal/output"
+	"github.com/matthewjhunter/herald/internal/sanitize"
 	"github.com/matthewjhunter/herald/internal/storage"
 )
 
@@ -101,5 +102,12 @@ func articleContent(a storage.Article) string {
 	if a.LinkedContent != "" {
 		content = content + "\n\n" + a.LinkedContent
 	}
-	return content
+	// Sanitize so every AI stage judges exactly what the web view renders:
+	// scripts and event handlers stripped — which also stops the security model
+	// from flagging legitimate embedded widgets (Rumble/Twitter players) as
+	// malicious — while links and visible prose are preserved (#121). The raw
+	// HTML stays in storage as the source of truth; this is a per-read view.
+	// May return "" when the body was nothing but markup, which the caller
+	// treats as a skip.
+	return sanitize.HTML(content)
 }
