@@ -27,6 +27,9 @@ var defaultGroupSummaryPrompt string
 //go:embed prompts/newsletter.txt
 var defaultNewsletterPrompt string
 
+//go:embed prompts/summary.txt
+var defaultSummaryPrompt string
+
 // PromptType represents the type of AI prompt
 type PromptType string
 
@@ -36,6 +39,7 @@ const (
 	PromptTypeSummarization PromptType = "summarization"
 	PromptTypeGroupSummary  PromptType = "group_summary"
 	PromptTypeNewsletter    PromptType = "newsletter"
+	PromptTypeSummary       PromptType = "summary"
 )
 
 // PromptLoader handles 3-tier prompt loading: embedded -> config -> database
@@ -68,6 +72,8 @@ func DefaultPrompt(pt PromptType) (string, error) {
 		return defaultGroupSummaryPrompt, nil
 	case PromptTypeNewsletter:
 		return defaultNewsletterPrompt, nil
+	case PromptTypeSummary:
+		return defaultSummaryPrompt, nil
 	default:
 		return "", fmt.Errorf("unknown prompt type: %s", pt)
 	}
@@ -125,6 +131,8 @@ func (pl *PromptLoader) GetPrompt(userID int64, promptType PromptType) (string, 
 				configPrompt = config.Prompts.GroupSummary
 			case PromptTypeNewsletter:
 				configPrompt = config.Prompts.Newsletter
+			case PromptTypeSummary:
+				configPrompt = config.Prompts.Summary
 			}
 
 			if configPrompt != "" {
@@ -149,6 +157,8 @@ func (pl *PromptLoader) GetPrompt(userID int64, promptType PromptType) (string, 
 		defaultPrompt = defaultGroupSummaryPrompt
 	case PromptTypeNewsletter:
 		defaultPrompt = defaultNewsletterPrompt
+	case PromptTypeSummary:
+		defaultPrompt = defaultSummaryPrompt
 	default:
 		return "", fmt.Errorf("unknown prompt type: %s", promptType)
 	}
@@ -187,6 +197,8 @@ func (pl *PromptLoader) GetTemperature(userID int64, promptType PromptType) floa
 				configTemp = config.Temperatures.GroupSummary
 			case PromptTypeNewsletter:
 				configTemp = config.Temperatures.Newsletter
+			case PromptTypeSummary:
+				configTemp = config.Temperatures.Summary
 			}
 
 			if configTemp > 0 {
@@ -206,6 +218,8 @@ func (pl *PromptLoader) GetTemperature(userID int64, promptType PromptType) floa
 	case PromptTypeGroupSummary:
 		return 0.5
 	case PromptTypeNewsletter:
+		return 0.6
+	case PromptTypeSummary:
 		return 0.6
 	default:
 		return 0.5 // balanced default

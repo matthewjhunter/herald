@@ -20,9 +20,20 @@ import "github.com/microcosm-cc/bluemonday"
 // use, so one package-level instance serves every caller.
 var htmlPolicy = bluemonday.UGCPolicy()
 
+// textPolicy strips every tag, leaving only visible text. Used when feeding
+// untrusted feed content to a model as plain text.
+var textPolicy = bluemonday.StrictPolicy()
+
 // HTML returns s with disallowed tags and attributes removed. It is the only
 // sanctioned way to turn untrusted feed HTML into output-safe HTML; never emit
 // or render raw feed content without routing it through here first.
 func HTML(s string) string {
 	return htmlPolicy.Sanitize(s)
+}
+
+// Text returns the visible text of s with all HTML tags removed. Use it to hand
+// untrusted feed content to an AI model as plain text — no markup to be
+// misread, fewer tokens, and no tags to smuggle instructions through.
+func Text(s string) string {
+	return textPolicy.Sanitize(s)
 }

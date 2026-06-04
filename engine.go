@@ -28,6 +28,7 @@ type Engine struct {
 	fetcher      *feeds.Fetcher
 	ai           *ai.AIProcessor
 	groupMatcher *ai.GroupMatcher
+	summarizer   *ai.CloudSummarizer // AI Summary cloud backend; nil when unconfigured
 	config       *storage.Config
 	maxParallel  int          // max concurrent AI pipeline workers (1 = serial)
 	mu           sync.RWMutex // protects config fields modified at runtime
@@ -87,6 +88,23 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		}
 	}
 
+	// AI Summary cloud backend is built independently of ReadOnly so the
+	// read-only web process can offer it. It is one streaming HTTPS call, not the
+	// Olla pipeline.
+	if cfg.SummaryBaseURL != "" {
+		storeCfg.Summary.BaseURL = cfg.SummaryBaseURL
+	}
+	if cfg.SummaryModel != "" {
+		storeCfg.Summary.Model = cfg.SummaryModel
+	}
+	var summarizer *ai.CloudSummarizer
+	if storeCfg.Summary.BaseURL != "" {
+		summarizer = ai.NewCloudSummarizer(
+			storeCfg.Summary.BaseURL, cfg.SummaryAPIKey,
+			storeCfg.Summary.Model, storeCfg.Summary.Timeout,
+		)
+	}
+
 	maxParallel := max(cfg.MaxParallel, 1)
 
 	var groupMatcher *ai.GroupMatcher
@@ -109,6 +127,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		fetcher:      fetcher,
 		ai:           processor,
 		groupMatcher: groupMatcher,
+		summarizer:   summarizer,
 		config:       storeCfg,
 		maxParallel:  maxParallel,
 	}
@@ -1160,6 +1179,7 @@ var allowedPromptTypes = map[string]bool{
 	"curation":      true,
 	"summarization": true,
 	"group_summary": true,
+	"summary":       true,
 }
 
 // GetUserPreference returns a single raw preference value for a user.

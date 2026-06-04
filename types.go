@@ -15,6 +15,13 @@ type EngineConfig struct {
 	UserID                  int64    // primary user ID; DB preferences override CLI flags
 	ReadOnly                bool     // when true, skip AI processor and fetcher creation
 	MaxParallel             int      // max concurrent AI pipeline workers; 0 or 1 = serial
+
+	// AI Summary cloud backend (independent of ReadOnly — the read-only web
+	// process still offers it). Empty SummaryBaseURL disables the feature. The
+	// API key comes from the environment, never config.
+	SummaryBaseURL string
+	SummaryModel   string // optional override; defaults to the config model
+	SummaryAPIKey  string
 }
 
 // User represents a registered household member.
