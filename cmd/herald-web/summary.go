@@ -122,9 +122,9 @@ func (h *handlers) handleSummaryGenerate(w http.ResponseWriter, r *http.Request)
 		h.renderError(w, http.StatusServiceUnavailable, "AI Summary is not configured on this server.")
 		return
 	}
-	if id, prompt, err := h.engine.BeginAISummary(uid); err == nil {
+	if id, prompt, err := h.engine.BeginAISummary(uid, nil); err == nil {
 		go func() {
-			if ferr := h.engine.FinishAISummary(context.Background(), uid, id, prompt); ferr != nil {
+			if ferr := h.engine.FinishAISummary(context.Background(), uid, id, nil, prompt); ferr != nil {
 				log.Printf("herald-web: AI summary %d (user %d): %v", id, uid, ferr)
 			}
 		}()
