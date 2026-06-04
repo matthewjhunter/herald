@@ -1,10 +1,63 @@
 package ai
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
+
+// TestGenerateStreamThinkingToggle verifies that disableThinking controls the
+// chat_template_kwargs.enable_thinking field in the request body — the fix for
+// Qwen3 reasoning models burning the whole completion budget on a thinking pass
+// (surfacing as "stream ended with no content").
+func TestGenerateStreamThinkingToggle(t *testing.T) {
+	cases := []struct {
+		name            string
+		disableThinking bool
+		wantKwargs      bool
+	}{
+		{"disabled sends enable_thinking=false", true, true},
+		{"default omits chat_template_kwargs", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotBody map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				_ = json.Unmarshal(b, &gotBody)
+				w.Header().Set("Content-Type", "text/event-stream")
+				io.WriteString(w, `data: {"choices":[{"delta":{"content":"ok"}}]}`+"\n\n")
+				io.WriteString(w, "data: [DONE]\n\n")
+			}))
+			defer srv.Close()
+
+			c := newCloudClient(srv.URL, "", time.Minute, tc.disableThinking)
+			text, _, _, err := c.generateStream(context.Background(), "m", "hi", 0.5, 64)
+			if err != nil {
+				t.Fatalf("generateStream: %v", err)
+			}
+			if text != "ok" {
+				t.Errorf("text = %q, want %q", text, "ok")
+			}
+			kwargs, present := gotBody["chat_template_kwargs"]
+			if present != tc.wantKwargs {
+				t.Fatalf("chat_template_kwargs present = %v, want %v (body: %v)", present, tc.wantKwargs, gotBody)
+			}
+			if tc.wantKwargs {
+				m, ok := kwargs.(map[string]any)
+				if !ok || m["enable_thinking"] != false {
+					t.Errorf("chat_template_kwargs = %v, want {enable_thinking:false}", kwargs)
+				}
+			}
+		})
+	}
+}
 
 func TestParseSSE(t *testing.T) {
 	t.Run("accumulates deltas and records usage", func(t *testing.T) {

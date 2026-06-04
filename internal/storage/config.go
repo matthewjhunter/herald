@@ -93,6 +93,9 @@ type Config struct {
 		BodyCharCap      int           `yaml:"body_char_cap"`      // per-article body truncation
 		MaxOutputTokens  int           `yaml:"max_output_tokens"`  // completion cap
 		Timeout          time.Duration `yaml:"timeout"`
+		// DisableThinking turns off a reasoning backend's thinking pass (Qwen3 via
+		// Lemonade) so the completion is real content, not reasoning_content.
+		DisableThinking bool `yaml:"disable_thinking"`
 	} `yaml:"summary,omitempty"`
 }
 

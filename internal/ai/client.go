@@ -150,6 +150,12 @@ type chatRequest struct {
 	Temperature float64       `json:"temperature,omitempty"`
 	MaxTokens   int           `json:"max_tokens,omitempty"`
 	Stream      bool          `json:"stream"`
+	// ChatTemplateKwargs passes extra arguments to the server's chat template.
+	// Used to disable a reasoning model's thinking pass (e.g. Qwen3 via
+	// llama.cpp/Lemonade: {"enable_thinking": false}) so the whole completion
+	// budget isn't spent on reasoning_content, leaving content empty. Omitted
+	// when nil, so non-reasoning backends (Gemma, Anthropic) are unaffected.
+	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
 }
 
 type chatMessage struct {

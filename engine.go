@@ -98,11 +98,13 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	if cfg.SummaryModel != "" {
 		storeCfg.Summary.Model = cfg.SummaryModel
 	}
+	storeCfg.Summary.DisableThinking = cfg.SummaryDisableThinking
 	var summarizer *ai.CloudSummarizer
 	if storeCfg.Summary.BaseURL != "" {
 		summarizer = ai.NewCloudSummarizer(
 			storeCfg.Summary.BaseURL, cfg.SummaryAPIKey,
 			storeCfg.Summary.Model, storeCfg.Summary.Timeout,
+			storeCfg.Summary.DisableThinking,
 		)
 	}
 

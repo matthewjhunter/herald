@@ -33,6 +33,9 @@ type SummaryConfig struct {
 	BaseURL string `toml:"base_url"`
 	// Model is the cloud model name (defaults to claude-sonnet-4-6 when empty).
 	Model string `toml:"model"`
+	// DisableThinking turns off a reasoning backend's thinking pass (Qwen3 via
+	// Lemonade) so the digest is real content, not an unfinished reasoning_content.
+	DisableThinking bool `toml:"disable_thinking"`
 }
 
 // WebauthConfig holds webauth OIDC settings.
