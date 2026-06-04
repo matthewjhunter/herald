@@ -155,7 +155,7 @@ func (h *handlers) init() {
 	shared := []string{"base.html", "nav.html", "settings_subnav.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "search_results.html", "ai_summary_list.html", "ai_summary_detail.html", "error.html"}
 
 	// Pages that get their own template tree.
-	pages := []string{"home.html", "feeds_manage.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_stats.html", "stats.html", "newsletters_manage.html"}
+	pages := []string{"home.html", "feeds_manage.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_digest.html", "admin_stats.html", "stats.html", "newsletters_manage.html"}
 
 	h.pages = make(map[string]*template.Template, len(pages))
 	for _, page := range pages {

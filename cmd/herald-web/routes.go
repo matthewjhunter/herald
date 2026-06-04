@@ -90,8 +90,6 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.Handle("GET /summary/{id}", auth(http.HandlerFunc(h.handleSummaryDetail)))
 	mux.Handle("POST /summary/generate", auth(http.HandlerFunc(h.handleSummaryGenerate)))
 	mux.Handle("POST /summary/{id}/mark-read", auth(http.HandlerFunc(h.handleSummaryMarkRead)))
-	mux.Handle("POST /summary/prompt", auth(http.HandlerFunc(h.handleSummaryPromptSave)))
-	mux.Handle("DELETE /summary/prompt", auth(http.HandlerFunc(h.handleSummaryPromptReset)))
 
 	// Ollama model list (used by prompt settings pages).
 	mux.Handle("GET /api/ollama/models", auth(http.HandlerFunc(h.handleOllamaModels)))
@@ -107,6 +105,8 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.Handle("GET /admin/prompts", auth(adminAuth(http.HandlerFunc(h.handleAdminPrompts))))
 	mux.Handle("POST /admin/prompts/{promptType}", auth(adminAuth(http.HandlerFunc(h.handleAdminPromptSave))))
 	mux.Handle("DELETE /admin/prompts/{promptType}", auth(adminAuth(http.HandlerFunc(h.handleAdminPromptReset))))
+	mux.Handle("GET /admin/digest", auth(adminAuth(http.HandlerFunc(h.handleAdminDigest))))
+	mux.Handle("POST /admin/digest", auth(adminAuth(http.HandlerFunc(h.handleAdminDigest))))
 
 	return mux
 }

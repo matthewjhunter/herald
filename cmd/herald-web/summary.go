@@ -2,12 +2,10 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"html/template"
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -15,17 +13,16 @@ import (
 type summaryRow struct {
 	ID           int64
 	Label        string // date/time label, e.g. "Jun 4, 2026 · 2:30 PM"
+	ConfigName   string // the digest config that produced it (empty = ad-hoc)
 	Status       string // "generating", "done", "failed"
 	ArticleCount int
 }
 
 // summaryListData drives the top (list) pane.
 type summaryListData struct {
-	Enabled        bool
-	Prompt         string
-	PromptIsCustom bool
-	Generating     bool // any row generating → poll the list
-	Rows           []summaryRow
+	Enabled    bool
+	Generating bool // any row generating → poll the list
+	Rows       []summaryRow
 }
 
 // summaryDetailData drives the bottom (reading) pane for one summary.
@@ -51,18 +48,24 @@ func (h *handlers) handleSummaryView(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID
 
 	data := summaryListData{Enabled: h.engine.AISummaryEnabled()}
-	if detail, err := h.engine.GetPrompt(uid, "summary"); err == nil {
-		data.Prompt = detail.Template
-		data.PromptIsCustom = detail.IsCustom
-	}
 	if summaries, err := h.engine.GetAISummaries(uid, 50); err == nil {
+		names := map[int64]string{} // cache config id → name
 		for _, s := range summaries {
 			if s.Status == "generating" {
 				data.Generating = true
 			}
-			data.Rows = append(data.Rows, summaryRow{
-				ID: s.ID, Label: summaryLabel(s.CreatedAt), Status: s.Status, ArticleCount: s.ArticleCount,
-			})
+			row := summaryRow{ID: s.ID, Label: summaryLabel(s.CreatedAt), Status: s.Status, ArticleCount: s.ArticleCount}
+			if s.NewsletterID != nil {
+				name, ok := names[*s.NewsletterID]
+				if !ok {
+					if nl, err := h.engine.GetNewsletter(*s.NewsletterID); err == nil {
+						name = nl.Name
+					}
+					names[*s.NewsletterID] = name
+				}
+				row.ConfigName = name
+			}
+			data.Rows = append(data.Rows, row)
 		}
 	}
 
@@ -85,10 +88,11 @@ func (h *handlers) handleSummaryDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.renderFragment(w, "ai_summary_detail", summaryDetailData{
-		ID:            s.ID,
-		Status:        s.Status,
-		Headline:      s.Headline,
-		SanitizedHTML: template.HTML(sanitizeHTML(s.ContentHTML)), //nolint:gosec // re-sanitized defense in depth
+		ID:       s.ID,
+		Status:   s.Status,
+		Headline: s.Headline,
+		// Wrap in the admin header/footer at render time; everything is sanitized.
+		SanitizedHTML: template.HTML(sanitizeHTML(h.engine.WrapDigestChrome(s.ContentHTML))), //nolint:gosec
 		GeneratedFmt:  formatDate(s.GeneratedAt),
 		ArticleCount:  s.ArticleCount,
 		InputTokens:   s.InputTokens,
@@ -151,35 +155,4 @@ func (h *handlers) handleSummaryMarkRead(w http.ResponseWriter, r *http.Request)
 	}
 	w.Header().Set("HX-Trigger", "feeds-changed")
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// handleSummaryPromptSave persists a custom summary prompt.
-func (h *handlers) handleSummaryPromptSave(w http.ResponseWriter, r *http.Request) {
-	uid := userFromContext(r.Context()).ID
-	if err := r.ParseForm(); err != nil {
-		h.renderError(w, http.StatusBadRequest, "Invalid form data")
-		return
-	}
-	tmpl := strings.TrimSpace(r.FormValue("template"))
-	if tmpl == "" {
-		h.renderError(w, http.StatusBadRequest, "Prompt cannot be empty")
-		return
-	}
-	if err := h.engine.SetPrompt(uid, "summary", tmpl, nil, nil); err != nil {
-		h.renderError(w, http.StatusBadRequest, "Failed to save prompt: "+err.Error())
-		return
-	}
-	w.Header().Set("HX-Trigger", "prompt-saved")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, "Prompt saved.")
-}
-
-// handleSummaryPromptReset reverts the summary prompt to the embedded default.
-func (h *handlers) handleSummaryPromptReset(w http.ResponseWriter, r *http.Request) {
-	uid := userFromContext(r.Context()).ID
-	if err := h.engine.ResetPrompt(uid, "summary"); err != nil {
-		h.renderError(w, http.StatusBadRequest, "Failed to reset prompt: "+err.Error())
-		return
-	}
-	h.handleSummaryView(w, r)
 }
