@@ -122,7 +122,7 @@ func DefaultConfig() *Config {
 	cfg.Summary.MinSecurityScore = 7.0
 	cfg.Summary.MaxInputTokens = 170000
 	cfg.Summary.BodyCharCap = 6000
-	cfg.Summary.MaxOutputTokens = 8000
+	cfg.Summary.MaxOutputTokens = 16000
 	cfg.Summary.Timeout = 5 * time.Minute
 	return cfg
 }

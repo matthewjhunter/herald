@@ -67,9 +67,8 @@ func (e *Engine) FinishAISummary(ctx context.Context, userID, id int64, prompt s
 		log.Printf("herald: AI summary %d (user %d) failed: %v", id, userID, genErr)
 		return e.store.UpdateAISummaryFailed(id, genErr.Error())
 	}
-	if headline == "" {
-		headline = "AI Summary"
-	}
+	// headline is empty by default — the digest's own leading <h2> is the title;
+	// it is only set if a custom prompt returns a {headline, body} object.
 	return e.store.UpdateAISummaryDone(id, headline, body, ids, inTok, outTok)
 }
 
