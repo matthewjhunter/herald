@@ -120,6 +120,9 @@ func (h *handlers) init() {
 		"int64in": func(haystack []int64, needle int64) bool {
 			return slices.Contains(haystack, needle)
 		},
+		"strin": func(haystack []string, needle string) bool {
+			return slices.Contains(haystack, needle)
+		},
 		"assetVersion": func() string { return version },
 		"buildVersion": func() string { return version },
 		"buildTime":    func() string { return buildTime },
@@ -226,7 +229,8 @@ type articleViewData struct {
 }
 
 type feedManageData struct {
-	Feeds []feedRow
+	Feeds   []feedRow
+	AllTags []string // every tag the user has applied (datalist autocomplete)
 }
 
 type feedRow struct {
@@ -234,6 +238,7 @@ type feedRow struct {
 	Title                string
 	URL                  string
 	SiteURL              string
+	Tags                 []string
 	TotalArticles        int
 	UnreadArticles       int
 	UnsummarizedArticles int
@@ -509,13 +514,17 @@ func (h *handlers) handleFeedsManage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	data := feedManageData{}
+	feedTags, _ := h.engine.GetAllFeedTags(uid)
+	allTags, _ := h.engine.GetUserTags(uid)
+
+	data := feedManageData{AllTags: allTags}
 	for _, f := range feeds {
 		row := feedRow{
 			FeedID:  f.ID,
 			Title:   f.Title,
 			URL:     f.URL,
 			SiteURL: f.SiteURL,
+			Tags:    feedTags[f.ID],
 		}
 		if f.LastError != nil {
 			row.LastError = *f.LastError
@@ -1208,6 +1217,51 @@ func (h *handlers) handleFeedRename(w http.ResponseWriter, r *http.Request) {
 		"FeedID": feedID,
 		"Title":  title,
 	})
+}
+
+// renderFeedTagsCell re-renders one feed's tag cell (chips + add input) after a
+// tag change, so htmx can swap it in place.
+func (h *handlers) renderFeedTagsCell(w http.ResponseWriter, uid, feedID int64) {
+	tags, _ := h.engine.GetFeedTags(uid, feedID)
+	allTags, _ := h.engine.GetUserTags(uid)
+	h.renderFragment(w, "feed_tags_cell", map[string]any{
+		"FeedID":  feedID,
+		"Tags":    tags,
+		"AllTags": allTags,
+	})
+}
+
+// handleFeedTagAdd tags a feed for the current user and returns the updated cell.
+func (h *handlers) handleFeedTagAdd(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	feedID, err := strconv.ParseInt(r.PathValue("feedID"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid feed ID", http.StatusBadRequest)
+		return
+	}
+	tag := strings.TrimSpace(r.FormValue("tag"))
+	if tag != "" {
+		if err := h.engine.AddFeedTag(uid, feedID, tag); err != nil {
+			http.Error(w, "Failed to add tag", http.StatusBadRequest)
+			return
+		}
+	}
+	h.renderFeedTagsCell(w, uid, feedID)
+}
+
+// handleFeedTagRemove removes a tag from a feed and returns the updated cell.
+func (h *handlers) handleFeedTagRemove(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	feedID, err := strconv.ParseInt(r.PathValue("feedID"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid feed ID", http.StatusBadRequest)
+		return
+	}
+	if err := h.engine.RemoveFeedTag(uid, feedID, r.FormValue("tag")); err != nil {
+		http.Error(w, "Failed to remove tag", http.StatusInternalServerError)
+		return
+	}
+	h.renderFeedTagsCell(w, uid, feedID)
 }
 
 // handleArticleImage serves a cached article image by its ID.
