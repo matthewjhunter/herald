@@ -569,6 +569,67 @@ func (e *Engine) GetUserFeeds(userID int64) ([]Feed, error) {
 	return feedsFromInternal(feeds), nil
 }
 
+// AddFeedTag tags a feed for a user. RemoveFeedTag, GetFeedTags, GetAllFeedTags,
+// and GetUserTags are thin passthroughs to the store for the web handlers.
+func (e *Engine) AddFeedTag(userID, feedID int64, tag string) error {
+	return e.store.AddFeedTag(userID, feedID, tag)
+}
+
+// RemoveFeedTag removes a tag from a feed for a user.
+func (e *Engine) RemoveFeedTag(userID, feedID int64, tag string) error {
+	return e.store.RemoveFeedTag(userID, feedID, tag)
+}
+
+// GetFeedTags returns one feed's tags for a user.
+func (e *Engine) GetFeedTags(userID, feedID int64) ([]string, error) {
+	return e.store.GetFeedTags(userID, feedID)
+}
+
+// GetAllFeedTags returns every tagged feed's tags for a user, keyed by feed ID.
+func (e *Engine) GetAllFeedTags(userID int64) (map[int64][]string, error) {
+	return e.store.GetAllFeedTags(userID)
+}
+
+// GetUserTags returns the distinct tags a user has applied.
+func (e *Engine) GetUserTags(userID int64) ([]string, error) {
+	return e.store.GetUserTags(userID)
+}
+
+// effectiveIncludeFeeds expands a digest config's followed tags (IncludeTags)
+// into the feeds currently carrying them and unions that with the explicit
+// IncludeFeeds, de-duplicated. With no followed tags it returns IncludeFeeds
+// unchanged. A followed tag that resolves to no feeds contributes nothing — if
+// that leaves the union empty and IncludeFeeds was empty, selection falls
+// through to "all feeds" (an empty restriction).
+func (e *Engine) effectiveIncludeFeeds(userID int64, cfg storage.NewsletterConfig) []int64 {
+	if len(cfg.IncludeTags) == 0 {
+		return cfg.IncludeFeeds
+	}
+	tagged, err := e.store.GetFeedsByTags(userID, cfg.IncludeTags)
+	if err != nil {
+		log.Printf("herald: resolve digest tags for user %d: %v", userID, err)
+		return cfg.IncludeFeeds
+	}
+	if len(tagged) == 0 {
+		return cfg.IncludeFeeds
+	}
+	seen := make(map[int64]bool, len(cfg.IncludeFeeds)+len(tagged))
+	out := make([]int64, 0, len(cfg.IncludeFeeds)+len(tagged))
+	for _, id := range cfg.IncludeFeeds {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	for _, id := range tagged {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // feedURLCandidates returns the URLs to attempt for a user-supplied feed
 // input. If the input already contains a scheme it's returned as-is;
 // otherwise https:// is tried first and http:// as a fallback, so a user

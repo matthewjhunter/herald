@@ -94,7 +94,12 @@ func (e *Engine) selectDigestArticles(userID int64, newsletterID *int64) ([]stor
 		if limit <= 0 {
 			limit = 1000
 		}
-		articles, _, err := e.store.GetNewsletterArticles(userID, &nl.Config, nl.LastGeneratedAt, limit)
+		// Resolve followed tags to the feeds currently carrying them and merge
+		// into the explicit feed set, so the digest tracks tag membership at
+		// generation time. The storage query stays purely feed-ID based.
+		cfg := nl.Config
+		cfg.IncludeFeeds = e.effectiveIncludeFeeds(userID, cfg)
+		articles, _, err := e.store.GetNewsletterArticles(userID, &cfg, nl.LastGeneratedAt, limit)
 		return articles, err
 	}
 	sum := e.config.Summary

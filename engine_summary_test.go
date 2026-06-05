@@ -118,6 +118,66 @@ func TestGenerateAISummary(t *testing.T) {
 	}
 }
 
+func TestEffectiveIncludeFeeds(t *testing.T) {
+	store, err := storage.NewSQLiteStore(filepath.Join(t.TempDir(), "h.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	uid, _ := store.CreateUser("u")
+	f1, _ := store.AddFeed("https://a/feed", "A", "")
+	f2, _ := store.AddFeed("https://b/feed", "B", "")
+	f3, _ := store.AddFeed("https://c/feed", "C", "")
+	for _, f := range []int64{f1, f2, f3} {
+		_ = store.SubscribeUserToFeed(uid, f)
+	}
+	_ = store.AddFeedTag(uid, f1, "security")
+	_ = store.AddFeedTag(uid, f2, "security")
+
+	e := &Engine{store: store}
+
+	// No followed tags → IncludeFeeds returned unchanged.
+	cfg := storage.NewsletterConfig{IncludeFeeds: []int64{f3}}
+	if got := e.effectiveIncludeFeeds(uid, cfg); !sameIDs(got, []int64{f3}) {
+		t.Errorf("no tags: got %v, want [%d]", got, f3)
+	}
+
+	// Followed tag unions with the explicit feed, de-duped (f1 is both tagged and explicit).
+	cfg = storage.NewsletterConfig{IncludeFeeds: []int64{f1, f3}, IncludeTags: []string{"security"}}
+	if got := e.effectiveIncludeFeeds(uid, cfg); !sameIDs(got, []int64{f1, f2, f3}) {
+		t.Errorf("tag+explicit: got %v, want {%d,%d,%d}", got, f1, f2, f3)
+	}
+
+	// Dynamic-follow guarantee: tagging a new feed later adds it without editing the config.
+	_ = store.AddFeedTag(uid, f3, "security")
+	cfg = storage.NewsletterConfig{IncludeTags: []string{"security"}}
+	if got := e.effectiveIncludeFeeds(uid, cfg); !sameIDs(got, []int64{f1, f2, f3}) {
+		t.Errorf("after retag: got %v, want {%d,%d,%d}", got, f1, f2, f3)
+	}
+
+	// A followed tag that resolves to nothing leaves IncludeFeeds untouched.
+	cfg = storage.NewsletterConfig{IncludeFeeds: []int64{f3}, IncludeTags: []string{"nonexistent"}}
+	if got := e.effectiveIncludeFeeds(uid, cfg); !sameIDs(got, []int64{f3}) {
+		t.Errorf("empty tag: got %v, want [%d]", got, f3)
+	}
+}
+
+func sameIDs(got, want []int64) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	m := map[int64]bool{}
+	for _, v := range got {
+		m[v] = true
+	}
+	for _, v := range want {
+		if !m[v] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestNewEngineSummaryOverrides(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "h.db")
 	e, err := NewEngine(EngineConfig{
