@@ -82,6 +82,17 @@ CREATE TABLE IF NOT EXISTS user_feeds (
 
 CREATE INDEX IF NOT EXISTS idx_user_feeds_feed ON user_feeds(feed_id);
 
+CREATE TABLE IF NOT EXISTS feed_tags (
+    user_id INTEGER NOT NULL DEFAULT 1,
+    feed_id INTEGER NOT NULL,
+    tag TEXT NOT NULL COLLATE NOCASE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, feed_id, tag),
+    FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_feed_tags_user_tag ON feed_tags(user_id, tag);
+
 CREATE TABLE IF NOT EXISTS article_summaries (
     user_id INTEGER NOT NULL DEFAULT 1,
     article_id INTEGER NOT NULL,

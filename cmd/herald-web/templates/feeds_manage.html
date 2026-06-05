@@ -45,6 +45,25 @@
 {{end}}
 {{end}}
 
+{{define "feed_tags_cell"}}
+<div id="feed-tags-cell-{{.FeedID}}" style="display:flex;flex-wrap:wrap;align-items:center;gap:0.3rem;">
+    {{range .Tags}}
+    <span class="feed-tag-chip">{{.}}<form style="display:inline;margin:0;"
+            hx-delete="/feeds/{{$.FeedID}}/tags"
+            hx-target="#feed-tags-cell-{{$.FeedID}}" hx-swap="outerHTML">
+        <input type="hidden" name="tag" value="{{.}}">
+        <button type="submit" title="Remove tag">✕</button></form></span>
+    {{end}}
+    <form style="display:inline-flex;margin:0;" autocomplete="off"
+          hx-post="/feeds/{{.FeedID}}/tags"
+          hx-target="#feed-tags-cell-{{.FeedID}}" hx-swap="outerHTML"
+          hx-on::after-request="if(event.detail.successful) this.reset();">
+        <input type="text" name="tag" placeholder="+ tag" list="all-tags-list" maxlength="50"
+               style="margin:0;padding:0.1rem 0.4rem;font-size:0.75rem;width:7rem;">
+    </form>
+</div>
+{{end}}
+
 {{define "title"}}Herald - Manage Feeds{{end}}
 {{define "nav"}}{{template "shared-nav" "feeds"}}{{end}}
 {{define "content"}}
@@ -90,6 +109,7 @@
                     <th data-col="3" class="sortable" style="text-align:right;">Unscored</th>
                     <th data-col="4" class="sortable">Last Post</th>
                     <th data-col="5" class="sortable">Last Fetched</th>
+                    <th>Tags</th>
                     <th></th>
                 </tr>
             </thead>
@@ -106,6 +126,7 @@
                     <td style="text-align:right;">{{if .UnsummarizedArticles}}{{.UnsummarizedArticles}}{{else}}0{{end}}</td>
                     <td>{{.LastPostDateFmt}}</td>
                     <td>{{.LastFetchedFmt}}</td>
+                    <td>{{template "feed_tags_cell" (dict "FeedID" .FeedID "Tags" .Tags)}}</td>
                     <td>
                         <button class="outline secondary" style="padding:0.25rem 0.5rem;font-size:0.8rem;"
                                 hx-delete="/feeds/{{.FeedID}}"
@@ -118,11 +139,19 @@
                 {{end}}
             </tbody>
         </table>
+        <datalist id="all-tags-list">{{range .AllTags}}<option value="{{.}}"></option>{{end}}</datalist>
         <style>
             #feeds-table th.sortable { cursor:pointer; user-select:none; white-space:nowrap; }
             #feeds-table th.sortable:hover { opacity:0.75; }
             #feeds-table th.sort-asc::after { content:" ▲"; font-size:0.7em; }
             #feeds-table th.sort-desc::after { content:" ▼"; font-size:0.7em; }
+            .feed-tag-chip { display:inline-flex; align-items:center; gap:0.15rem;
+                background:var(--pico-secondary-background); color:var(--pico-secondary-inverse);
+                border-radius:0.8rem; padding:0.05rem 0.5rem; font-size:0.75rem; white-space:nowrap; }
+            .feed-tag-chip form { display:inline; }
+            .feed-tag-chip button { background:none; border:none; color:inherit; cursor:pointer;
+                padding:0; margin:0; font-size:0.8rem; line-height:1; opacity:0.7; width:auto; }
+            .feed-tag-chip button:hover { opacity:1; }
         </style>
         {{else}}
         <p class="empty-state">No feeds subscribed. Add one above.</p>

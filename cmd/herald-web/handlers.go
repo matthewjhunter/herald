@@ -120,6 +120,15 @@ func (h *handlers) init() {
 		"int64in": func(haystack []int64, needle int64) bool {
 			return slices.Contains(haystack, needle)
 		},
+		"strin": func(haystack []string, needle string) bool {
+			return slices.Contains(haystack, needle)
+		},
+		"toJSON": func(v any) (string, error) {
+			b, err := json.Marshal(v)
+			return string(b), err
+		},
+		"emptyInts":    func() []int64 { return nil },
+		"emptyStrs":    func() []string { return nil },
 		"assetVersion": func() string { return version },
 		"buildVersion": func() string { return version },
 		"buildTime":    func() string { return buildTime },
@@ -226,7 +235,8 @@ type articleViewData struct {
 }
 
 type feedManageData struct {
-	Feeds []feedRow
+	Feeds   []feedRow
+	AllTags []string // every tag the user has applied (datalist autocomplete)
 }
 
 type feedRow struct {
@@ -234,6 +244,7 @@ type feedRow struct {
 	Title                string
 	URL                  string
 	SiteURL              string
+	Tags                 []string
 	TotalArticles        int
 	UnreadArticles       int
 	UnsummarizedArticles int
@@ -509,13 +520,17 @@ func (h *handlers) handleFeedsManage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	data := feedManageData{}
+	feedTags, _ := h.engine.GetAllFeedTags(uid)
+	allTags, _ := h.engine.GetUserTags(uid)
+
+	data := feedManageData{AllTags: allTags}
 	for _, f := range feeds {
 		row := feedRow{
 			FeedID:  f.ID,
 			Title:   f.Title,
 			URL:     f.URL,
 			SiteURL: f.SiteURL,
+			Tags:    feedTags[f.ID],
 		}
 		if f.LastError != nil {
 			row.LastError = *f.LastError
@@ -912,6 +927,8 @@ func (h *handlers) handleGroupMarkRead(w http.ResponseWriter, r *http.Request) {
 type newslettersManageData struct {
 	Newsletters []storage.Newsletter
 	Feeds       []herald.Feed
+	FeedTags    map[int64][]string // feed ID → its tags (picker grouping)
+	AllTags     []string           // distinct tags the user has applied
 }
 
 func (h *handlers) handleNewslettersManage(w http.ResponseWriter, r *http.Request) {
@@ -938,8 +955,9 @@ func (h *handlers) handleNewsletterCreate(w http.ResponseWriter, r *http.Request
 	h.renderFragment(w, "newsletter_list_fragment", h.digestManageData(uid))
 }
 
-// parseDigestForm reads the shared digest-config form (name, schedule, prompt,
-// filters, and the feed multi-select → Config.IncludeFeeds).
+// parseDigestForm reads the shared digest-config form: name, schedule, prompt,
+// filters, the explicit feed picks (feed_ids → Config.IncludeFeeds) and the
+// followed tags (tag_names → Config.IncludeTags).
 func parseDigestForm(r *http.Request) (name, schedule, email, prompt string, config storage.NewsletterConfig) {
 	minScore, _ := strconv.ParseFloat(r.FormValue("min_interest_score"), 64)
 	maxArticles, _ := strconv.Atoi(r.FormValue("max_articles"))
@@ -949,15 +967,23 @@ func parseDigestForm(r *http.Request) (name, schedule, email, prompt string, con
 			feeds = append(feeds, id)
 		}
 	}
-	config = storage.NewsletterConfig{MinInterestScore: minScore, MaxArticles: maxArticles, IncludeFeeds: feeds}
+	var tags []string
+	for _, s := range r.Form["tag_names"] {
+		if s = strings.TrimSpace(s); s != "" {
+			tags = append(tags, s)
+		}
+	}
+	config = storage.NewsletterConfig{MinInterestScore: minScore, MaxArticles: maxArticles, IncludeFeeds: feeds, IncludeTags: tags}
 	return r.FormValue("name"), r.FormValue("schedule"), r.FormValue("email_recipient"), strings.TrimSpace(r.FormValue("prompt")), config
 }
 
-// digestManageData loads the config list plus the user's feeds for the form.
+// digestManageData loads the config list plus the user's feeds and tags for the form.
 func (h *handlers) digestManageData(uid int64) newslettersManageData {
 	configs, _ := h.engine.GetUserNewsletters(uid)
 	feeds, _ := h.engine.GetUserFeeds(uid)
-	return newslettersManageData{Newsletters: configs, Feeds: feeds}
+	feedTags, _ := h.engine.GetAllFeedTags(uid)
+	allTags, _ := h.engine.GetUserTags(uid)
+	return newslettersManageData{Newsletters: configs, Feeds: feeds, FeedTags: feedTags, AllTags: allTags}
 }
 
 func (h *handlers) handleNewsletterDelete(w http.ResponseWriter, r *http.Request) {
@@ -1208,6 +1234,51 @@ func (h *handlers) handleFeedRename(w http.ResponseWriter, r *http.Request) {
 		"FeedID": feedID,
 		"Title":  title,
 	})
+}
+
+// renderFeedTagsCell re-renders one feed's tag cell (chips + add input) after a
+// tag change, so htmx can swap it in place.
+func (h *handlers) renderFeedTagsCell(w http.ResponseWriter, uid, feedID int64) {
+	tags, _ := h.engine.GetFeedTags(uid, feedID)
+	allTags, _ := h.engine.GetUserTags(uid)
+	h.renderFragment(w, "feed_tags_cell", map[string]any{
+		"FeedID":  feedID,
+		"Tags":    tags,
+		"AllTags": allTags,
+	})
+}
+
+// handleFeedTagAdd tags a feed for the current user and returns the updated cell.
+func (h *handlers) handleFeedTagAdd(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	feedID, err := strconv.ParseInt(r.PathValue("feedID"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid feed ID", http.StatusBadRequest)
+		return
+	}
+	tag := strings.TrimSpace(r.FormValue("tag"))
+	if tag != "" {
+		if err := h.engine.AddFeedTag(uid, feedID, tag); err != nil {
+			http.Error(w, "Failed to add tag", http.StatusBadRequest)
+			return
+		}
+	}
+	h.renderFeedTagsCell(w, uid, feedID)
+}
+
+// handleFeedTagRemove removes a tag from a feed and returns the updated cell.
+func (h *handlers) handleFeedTagRemove(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	feedID, err := strconv.ParseInt(r.PathValue("feedID"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid feed ID", http.StatusBadRequest)
+		return
+	}
+	if err := h.engine.RemoveFeedTag(uid, feedID, r.FormValue("tag")); err != nil {
+		http.Error(w, "Failed to remove tag", http.StatusInternalServerError)
+		return
+	}
+	h.renderFeedTagsCell(w, uid, feedID)
 }
 
 // handleArticleImage serves a cached article image by its ID.

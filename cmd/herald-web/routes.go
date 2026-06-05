@@ -62,6 +62,8 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.Handle("PATCH /feeds/{feedID}", auth(http.HandlerFunc(h.handleFeedRename)))
 	mux.Handle("GET /feeds/{feedID}/edit-title", auth(http.HandlerFunc(h.handleFeedEditTitle)))
 	mux.Handle("GET /feeds/{feedID}/title", auth(http.HandlerFunc(h.handleFeedTitleDisplay)))
+	mux.Handle("POST /feeds/{feedID}/tags", auth(http.HandlerFunc(h.handleFeedTagAdd)))
+	mux.Handle("DELETE /feeds/{feedID}/tags", auth(http.HandlerFunc(h.handleFeedTagRemove)))
 	mux.Handle("POST /settings", auth(http.HandlerFunc(h.handleSettingsSave)))
 	mux.Handle("POST /settings/opml-token", auth(http.HandlerFunc(h.handleOPMLTokenGenerate)))
 	mux.Handle("POST /settings/fever", auth(http.HandlerFunc(h.handleFeverCredentialSave)))

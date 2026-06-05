@@ -109,6 +109,17 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 		WHERE search_vector IS NULL`,
 		// Link a generated AI digest to the config (newsletter) that produced it.
 		"ALTER TABLE ai_summaries ADD COLUMN IF NOT EXISTS newsletter_id BIGINT REFERENCES newsletters(id) ON DELETE SET NULL",
+		// Per-user feed tags (many-to-many): group feeds so a digest can follow a
+		// tag. New table for existing DBs; fresh DBs get it from the schema.
+		`CREATE TABLE IF NOT EXISTS feed_tags (
+			user_id    BIGINT NOT NULL DEFAULT 1,
+			feed_id    BIGINT NOT NULL,
+			tag        TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE
+		)`,
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_tags_unique ON feed_tags(user_id, feed_id, lower(tag))",
+		"CREATE INDEX IF NOT EXISTS idx_feed_tags_user_tag ON feed_tags(user_id, lower(tag))",
 	}
 	for _, m := range pgMigrations {
 		if _, err := db.Exec(m); err != nil {
@@ -1876,6 +1887,132 @@ func (s *PostgresStore) SubscribeUserToFeed(userID, feedID int64) error {
 		return fmt.Errorf("failed to subscribe user to feed: %w", err)
 	}
 	return nil
+}
+
+// AddFeedTag tags a feed for a user (idempotent; case-insensitive duplicate is a no-op).
+func (s *PostgresStore) AddFeedTag(userID, feedID int64, tag string) error {
+	tag = normalizeTag(tag)
+	if tag == "" {
+		return fmt.Errorf("empty tag")
+	}
+	_, err := s.db.Exec(
+		"INSERT INTO feed_tags (user_id, feed_id, tag) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+		userID, feedID, tag,
+	)
+	if err != nil {
+		return fmt.Errorf("add feed tag: %w", err)
+	}
+	return nil
+}
+
+// RemoveFeedTag removes a tag from a feed for a user (case-insensitive).
+func (s *PostgresStore) RemoveFeedTag(userID, feedID int64, tag string) error {
+	tag = normalizeTag(tag)
+	_, err := s.db.Exec(
+		"DELETE FROM feed_tags WHERE user_id = ? AND feed_id = ? AND lower(tag) = lower(?)",
+		userID, feedID, tag,
+	)
+	if err != nil {
+		return fmt.Errorf("remove feed tag: %w", err)
+	}
+	return nil
+}
+
+// GetFeedTags returns one feed's tags for a user, sorted.
+func (s *PostgresStore) GetFeedTags(userID, feedID int64) ([]string, error) {
+	rows, err := s.db.Query(
+		"SELECT tag FROM feed_tags WHERE user_id = ? AND feed_id = ? ORDER BY tag",
+		userID, feedID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get feed tags: %w", err)
+	}
+	defer rows.Close()
+	var tags []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, fmt.Errorf("scan feed tag: %w", err)
+		}
+		tags = append(tags, t)
+	}
+	return tags, rows.Err()
+}
+
+// GetAllFeedTags returns every tagged feed's tags for a user in one query.
+func (s *PostgresStore) GetAllFeedTags(userID int64) (map[int64][]string, error) {
+	rows, err := s.db.Query(
+		"SELECT feed_id, tag FROM feed_tags WHERE user_id = ? ORDER BY feed_id, tag",
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get all feed tags: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[int64][]string)
+	for rows.Next() {
+		var fid int64
+		var t string
+		if err := rows.Scan(&fid, &t); err != nil {
+			return nil, fmt.Errorf("scan feed tag: %w", err)
+		}
+		out[fid] = append(out[fid], t)
+	}
+	return out, rows.Err()
+}
+
+// GetUserTags returns the distinct tags a user has applied, sorted.
+func (s *PostgresStore) GetUserTags(userID int64) ([]string, error) {
+	rows, err := s.db.Query(
+		"SELECT DISTINCT tag FROM feed_tags WHERE user_id = ? ORDER BY tag",
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get user tags: %w", err)
+	}
+	defer rows.Close()
+	var tags []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, fmt.Errorf("scan user tag: %w", err)
+		}
+		tags = append(tags, t)
+	}
+	return tags, rows.Err()
+}
+
+// GetFeedsByTags resolves a set of tags to the distinct feed IDs carrying any of
+// them (case-insensitive). Empty input returns nil.
+func (s *PostgresStore) GetFeedsByTags(userID int64, tags []string) ([]int64, error) {
+	norm := normalizeTags(tags)
+	if len(norm) == 0 {
+		return nil, nil
+	}
+	ph := make([]string, len(norm))
+	args := make([]any, 0, len(norm)+1)
+	args = append(args, userID)
+	for i, t := range norm {
+		ph[i] = "lower(?)"
+		args = append(args, t)
+	}
+	rows, err := s.db.Query(
+		"SELECT DISTINCT feed_id FROM feed_tags WHERE user_id = ? AND lower(tag) IN ("+strings.Join(ph, ",")+") ORDER BY feed_id",
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get feeds by tags: %w", err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan feed id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func (s *PostgresStore) GetUserFeeds(userID int64) ([]Feed, error) {

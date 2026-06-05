@@ -22,11 +22,7 @@
                 <label>Min Interest Score<input type="number" name="min_interest_score" value="0" min="0" max="10" step="0.5"></label>
                 <label>Max Articles<input type="number" name="max_articles" value="100" min="1" max="500"></label>
             </div>
-            <label>Feeds to include (none = all feeds)
-                <select multiple name="feed_ids" size="6">
-                    {{range .Feeds}}<option value="{{.ID}}">{{.Title}}</option>{{end}}
-                </select>
-            </label>
+            {{template "feed_picker" (dict "Suffix" "new" "Feeds" .Feeds "FeedTags" .FeedTags "AllTags" .AllTags "SelFeeds" emptyInts "SelTags" emptyStrs)}}
             <label>Prompt (leave blank for the default summary prompt)
                 <textarea name="prompt" rows="6" style="font-family:monospace;font-size:0.85em;"></textarea>
             </label>
@@ -39,6 +35,7 @@
         {{template "newsletter_list_fragment" .}}
     </div>
 </main>
+{{template "feed_picker_assets"}}
 {{end}}
 
 {{define "newsletter_list_fragment"}}
@@ -49,7 +46,8 @@
     <header style="display:flex;justify-content:space-between;align-items:center;">
         <strong>{{.Name}}</strong>
         <span class="meta">{{.Schedule}} &middot; min {{printf "%.1f" .Config.MinInterestScore}} &middot; max {{.Config.MaxArticles}}
-            {{if .Config.IncludeFeeds}}&middot; {{len .Config.IncludeFeeds}} feed(s){{else}}&middot; all feeds{{end}}
+            {{if .Config.IncludeTags}}&middot; tags: {{range $i, $t := .Config.IncludeTags}}{{if $i}}, {{end}}{{$t}}{{end}}{{end}}
+            {{if .Config.IncludeFeeds}}&middot; {{len .Config.IncludeFeeds}} feed(s){{else}}{{if not .Config.IncludeTags}}&middot; all feeds{{end}}{{end}}
             {{if .EmailRecipient}}&middot; ✉ {{.EmailRecipient}}{{end}}</span>
     </header>
     <div style="display:flex;gap:0.5rem;align-items:center;">
@@ -77,12 +75,7 @@
                 <label>Min Interest Score<input type="number" name="min_interest_score" min="0" max="10" step="0.5" value="{{printf "%.1f" .Config.MinInterestScore}}"></label>
                 <label>Max Articles<input type="number" name="max_articles" min="1" max="500" value="{{.Config.MaxArticles}}"></label>
             </div>
-            <label>Feeds to include (none = all feeds)
-                <select multiple name="feed_ids" size="6">
-                    {{$nl := .}}
-                    {{range $feeds}}<option value="{{.ID}}" {{if int64in $nl.Config.IncludeFeeds .ID}}selected{{end}}>{{.Title}}</option>{{end}}
-                </select>
-            </label>
+            {{template "feed_picker" (dict "Suffix" .ID "Feeds" $feeds "FeedTags" $.FeedTags "AllTags" $.AllTags "SelFeeds" .Config.IncludeFeeds "SelTags" .Config.IncludeTags)}}
             <label>Prompt (leave blank for the default summary prompt)
                 <textarea name="prompt" rows="6" style="font-family:monospace;font-size:0.85em;">{{.PromptTemplate}}</textarea>
             </label>
@@ -95,4 +88,151 @@
 {{else}}
 <p class="empty-state">No digests yet.</p>
 {{end}}
+{{end}}
+
+{{/* feed_picker: progressive-enhancement feed selector. The baseline is two
+     native multi-selects (tag_names → followed tags, feed_ids → explicit feeds),
+     fully functional without JS. The script below enhances it into a two-pane
+     transfer list. Context: Suffix, Feeds, FeedTags(map id→[]tag), AllTags,
+     SelFeeds([]int64), SelTags([]string). */}}
+{{define "feed_picker"}}
+<div class="feed-picker" data-picker="{{.Suffix}}">
+    <p class="fp-hint">Pick feeds to summarize. Follow a <strong>tag</strong> to auto-include every feed carrying it (new feeds tagged later join automatically). No tags and no feeds = all feeds.</p>
+    <fieldset class="fp-native">
+        <label>Follow tags
+            <select multiple name="tag_names" size="4" class="fp-tags">
+                {{range .AllTags}}<option value="{{.}}"{{if strin $.SelTags .}} selected{{end}}>{{.}}</option>{{end}}
+            </select>
+        </label>
+        <label>Include individual feeds
+            <select multiple name="feed_ids" size="6" class="fp-feeds">
+                {{range .Feeds}}<option value="{{.ID}}" data-title="{{.Title}}" data-tags="{{toJSON (index $.FeedTags .ID)}}"{{if int64in $.SelFeeds .ID}} selected{{end}}>{{.Title}}</option>{{end}}
+            </select>
+        </label>
+    </fieldset>
+</div>
+{{end}}
+
+{{define "feed_picker_assets"}}
+<style>
+    .feed-picker { margin-bottom: 1rem; }
+    .fp-hint { font-size: 0.8rem; color: var(--pico-muted-color); margin: 0 0 0.4rem; }
+    .feed-picker.fp-on .fp-native { display: none; }
+    .fp-panes { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+    .fp-pane { border: 1px solid var(--pico-muted-border-color); border-radius: 0.4rem; padding: 0.5rem; }
+    .fp-pane h5 { margin: 0 0 0.4rem; font-size: 0.8rem; text-transform: uppercase; color: var(--pico-muted-color); }
+    .fp-search { width: 100%; margin: 0 0 0.5rem; padding: 0.2rem 0.4rem; font-size: 0.85rem; }
+    .fp-scroll { max-height: 16rem; overflow-y: auto; }
+    .fp-group > summary { cursor: pointer; font-size: 0.8rem; font-weight: 600; padding: 0.2rem 0; }
+    .fp-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.15rem 0.25rem; font-size: 0.85rem; }
+    .fp-row button { padding: 0 0.4rem; margin: 0; font-size: 0.8rem; line-height: 1.4; width: auto; }
+    .fp-chip { display: inline-flex; align-items: center; gap: 0.2rem; background: var(--pico-secondary-background); color: var(--pico-secondary-inverse); border-radius: 0.8rem; padding: 0.1rem 0.55rem; margin: 0.15rem 0.2rem 0 0; font-size: 0.8rem; }
+    .fp-chip.fp-tagchip { background: var(--pico-primary-background); color: var(--pico-primary-inverse); }
+    .fp-chip button { background: none; border: none; color: inherit; cursor: pointer; padding: 0; margin: 0; width: auto; font-size: 0.85rem; line-height: 1; }
+    .fp-included-empty { font-size: 0.8rem; color: var(--pico-muted-color); }
+</style>
+<script>
+(function () {
+    function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+
+    function buildPicker(pick) {
+        if (pick.dataset.fpInit) return;
+        pick.dataset.fpInit = '1';
+        var tagSel = pick.querySelector('.fp-tags');
+        var feedSel = pick.querySelector('.fp-feeds');
+        if (!feedSel) return;
+
+        var feeds = Array.prototype.map.call(feedSel.options, function (o) {
+            var tags = [];
+            try { tags = JSON.parse(o.dataset.tags || '[]') || []; } catch (e) { tags = []; }
+            return { id: o.value, title: o.dataset.title || o.text, tags: tags, opt: o };
+        });
+        var tagOpts = tagSel ? Array.prototype.slice.call(tagSel.options) : [];
+
+        var ui = document.createElement('div');
+        ui.className = 'fp-panes';
+        ui.innerHTML =
+            '<div class="fp-pane fp-avail"><h5>Available</h5>' +
+            '<input type="search" class="fp-search" placeholder="filter feeds…"><div class="fp-scroll"></div></div>' +
+            '<div class="fp-pane fp-incl"><h5>Included</h5><div class="fp-scroll fp-incl-body"></div></div>';
+        pick.appendChild(ui);
+        pick.classList.add('fp-on');
+
+        var availBody = ui.querySelector('.fp-avail .fp-scroll');
+        var inclBody = ui.querySelector('.fp-incl-body');
+        var search = ui.querySelector('.fp-search');
+
+        function tagSelected(name) {
+            var o = tagOpts.find(function (t) { return t.value === name; });
+            return o ? o.selected : false;
+        }
+        function setTag(name, on) {
+            var o = tagOpts.find(function (t) { return t.value === name; });
+            if (o) o.selected = on;
+        }
+
+        function renderAvail() {
+            var q = (search.value || '').toLowerCase();
+            var groups = {}; var order = [];
+            tagOpts.forEach(function (t) { groups[t.value] = []; order.push(t.value); });
+            var untagged = [];
+            feeds.forEach(function (f) {
+                if (q && f.title.toLowerCase().indexOf(q) === -1) return;
+                if (!f.tags.length) { untagged.push(f); return; }
+                f.tags.forEach(function (tg) { if (!(tg in groups)) { groups[tg] = []; order.push(tg); } groups[tg].push(f); });
+            });
+            var html = '';
+            order.forEach(function (tg) {
+                if (!groups[tg].length) return;
+                html += '<details class="fp-group" open><summary>' + esc(tg) +
+                    ' <button type="button" class="outline" data-follow="' + esc(tg) + '">' +
+                    (tagSelected(tg) ? 'following ✓' : 'follow →') + '</button></summary>';
+                groups[tg].forEach(function (f) {
+                    html += '<div class="fp-row"><span>' + esc(f.title) + '</span>' +
+                        '<button type="button" class="outline" data-add="' + esc(f.id) + '">' + (f.opt.selected ? '✓' : '+') + '</button></div>';
+                });
+                html += '</details>';
+            });
+            if (untagged.length) {
+                html += '<details class="fp-group"><summary>Untagged</summary>';
+                untagged.forEach(function (f) {
+                    html += '<div class="fp-row"><span>' + esc(f.title) + '</span>' +
+                        '<button type="button" class="outline" data-add="' + esc(f.id) + '">' + (f.opt.selected ? '✓' : '+') + '</button></div>';
+                });
+                html += '</details>';
+            }
+            availBody.innerHTML = html || '<p class="fp-included-empty">No feeds.</p>';
+        }
+
+        function renderIncl() {
+            var html = '';
+            tagOpts.filter(function (t) { return t.selected; }).forEach(function (t) {
+                html += '<span class="fp-chip fp-tagchip">#' + esc(t.value) +
+                    '<button type="button" data-unfollow="' + esc(t.value) + '">✕</button></span>';
+            });
+            feeds.filter(function (f) { return f.opt.selected; }).forEach(function (f) {
+                html += '<span class="fp-chip">' + esc(f.title) +
+                    '<button type="button" data-rm="' + esc(f.id) + '">✕</button></span>';
+            });
+            inclBody.innerHTML = html || '<p class="fp-included-empty">Nothing selected → all feeds.</p>';
+        }
+
+        function rerender() { renderAvail(); renderIncl(); }
+
+        pick.addEventListener('click', function (e) {
+            var b = e.target.closest('button'); if (!b || !pick.contains(b)) return;
+            if (b.dataset.add != null) { var f = feeds.find(function (x) { return x.id === b.dataset.add; }); if (f) f.opt.selected = true; e.preventDefault(); rerender(); }
+            else if (b.dataset.rm != null) { var f2 = feeds.find(function (x) { return x.id === b.dataset.rm; }); if (f2) f2.opt.selected = false; e.preventDefault(); rerender(); }
+            else if (b.dataset.follow != null) { setTag(b.dataset.follow, true); e.preventDefault(); rerender(); }
+            else if (b.dataset.unfollow != null) { setTag(b.dataset.unfollow, false); e.preventDefault(); rerender(); }
+        });
+        search.addEventListener('input', renderAvail);
+        rerender();
+    }
+
+    function init(root) { (root || document).querySelectorAll('.feed-picker').forEach(buildPicker); }
+    if (document.readyState !== 'loading') init(); else document.addEventListener('DOMContentLoaded', function () { init(); });
+    document.body.addEventListener('htmx:afterSwap', function (e) { init(e.target); });
+})();
+</script>
 {{end}}

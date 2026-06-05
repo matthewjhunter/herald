@@ -216,6 +216,14 @@ type Store interface {
 	GetAllFeedFavicons() ([]FeedFavicon, error)
 	GetSubscribedFeedsWithoutFavicons() ([]Feed, error)
 
+	// Feed tags (per-user, many-to-many)
+	AddFeedTag(userID, feedID int64, tag string) error
+	RemoveFeedTag(userID, feedID int64, tag string) error
+	GetFeedTags(userID, feedID int64) ([]string, error)
+	GetAllFeedTags(userID int64) (map[int64][]string, error)
+	GetUserTags(userID int64) ([]string, error)
+	GetFeedsByTags(userID int64, tags []string) ([]int64, error)
+
 	// Subscriptions
 	SubscribeUserToFeed(userID, feedID int64) error
 	GetUserFeeds(userID int64) ([]Feed, error)
