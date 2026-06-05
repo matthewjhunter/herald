@@ -123,6 +123,12 @@ func (h *handlers) init() {
 		"strin": func(haystack []string, needle string) bool {
 			return slices.Contains(haystack, needle)
 		},
+		"toJSON": func(v any) (string, error) {
+			b, err := json.Marshal(v)
+			return string(b), err
+		},
+		"emptyInts":    func() []int64 { return nil },
+		"emptyStrs":    func() []string { return nil },
 		"assetVersion": func() string { return version },
 		"buildVersion": func() string { return version },
 		"buildTime":    func() string { return buildTime },
@@ -921,6 +927,8 @@ func (h *handlers) handleGroupMarkRead(w http.ResponseWriter, r *http.Request) {
 type newslettersManageData struct {
 	Newsletters []storage.Newsletter
 	Feeds       []herald.Feed
+	FeedTags    map[int64][]string // feed ID → its tags (picker grouping)
+	AllTags     []string           // distinct tags the user has applied
 }
 
 func (h *handlers) handleNewslettersManage(w http.ResponseWriter, r *http.Request) {
@@ -947,8 +955,9 @@ func (h *handlers) handleNewsletterCreate(w http.ResponseWriter, r *http.Request
 	h.renderFragment(w, "newsletter_list_fragment", h.digestManageData(uid))
 }
 
-// parseDigestForm reads the shared digest-config form (name, schedule, prompt,
-// filters, and the feed multi-select → Config.IncludeFeeds).
+// parseDigestForm reads the shared digest-config form: name, schedule, prompt,
+// filters, the explicit feed picks (feed_ids → Config.IncludeFeeds) and the
+// followed tags (tag_names → Config.IncludeTags).
 func parseDigestForm(r *http.Request) (name, schedule, email, prompt string, config storage.NewsletterConfig) {
 	minScore, _ := strconv.ParseFloat(r.FormValue("min_interest_score"), 64)
 	maxArticles, _ := strconv.Atoi(r.FormValue("max_articles"))
@@ -958,15 +967,23 @@ func parseDigestForm(r *http.Request) (name, schedule, email, prompt string, con
 			feeds = append(feeds, id)
 		}
 	}
-	config = storage.NewsletterConfig{MinInterestScore: minScore, MaxArticles: maxArticles, IncludeFeeds: feeds}
+	var tags []string
+	for _, s := range r.Form["tag_names"] {
+		if s = strings.TrimSpace(s); s != "" {
+			tags = append(tags, s)
+		}
+	}
+	config = storage.NewsletterConfig{MinInterestScore: minScore, MaxArticles: maxArticles, IncludeFeeds: feeds, IncludeTags: tags}
 	return r.FormValue("name"), r.FormValue("schedule"), r.FormValue("email_recipient"), strings.TrimSpace(r.FormValue("prompt")), config
 }
 
-// digestManageData loads the config list plus the user's feeds for the form.
+// digestManageData loads the config list plus the user's feeds and tags for the form.
 func (h *handlers) digestManageData(uid int64) newslettersManageData {
 	configs, _ := h.engine.GetUserNewsletters(uid)
 	feeds, _ := h.engine.GetUserFeeds(uid)
-	return newslettersManageData{Newsletters: configs, Feeds: feeds}
+	feedTags, _ := h.engine.GetAllFeedTags(uid)
+	allTags, _ := h.engine.GetUserTags(uid)
+	return newslettersManageData{Newsletters: configs, Feeds: feeds, FeedTags: feedTags, AllTags: allTags}
 }
 
 func (h *handlers) handleNewsletterDelete(w http.ResponseWriter, r *http.Request) {
