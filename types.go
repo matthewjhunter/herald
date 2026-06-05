@@ -98,7 +98,10 @@ type NewsletterConfig struct {
 	ExcludeFeeds      []int64  `json:"exclude_feeds,omitempty"`
 	IncludeCategories []string `json:"include_categories,omitempty"`
 	ExcludeCategories []string `json:"exclude_categories,omitempty"`
-	MaxArticles       int      `json:"max_articles"`
+	// IncludeTags names feed tags this digest follows: at generation time they
+	// resolve to whatever feeds currently carry the tag, unioned with IncludeFeeds.
+	IncludeTags []string `json:"include_tags,omitempty"`
+	MaxArticles int      `json:"max_articles"`
 }
 
 // NewsletterIssue represents a single generated newsletter edition.

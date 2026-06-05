@@ -2470,6 +2470,124 @@ func eachStore(t *testing.T, fn func(t *testing.T, store Store)) {
 	})
 }
 
+func TestFeedTagsCRUD(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		f1, _ := store.AddFeed("https://a.example/feed", "Krebs", "")
+		f2, _ := store.AddFeed("https://b.example/feed", "The Register", "")
+		f3, _ := store.AddFeed("https://c.example/feed", "Sports Daily", "")
+		for _, f := range []int64{f1, f2, f3} {
+			if err := store.SubscribeUserToFeed(1, f); err != nil {
+				t.Fatalf("subscribe: %v", err)
+			}
+		}
+
+		// Tag feeds; a feed can carry several tags.
+		for _, tc := range []struct {
+			feed int64
+			tag  string
+		}{{f1, "Security"}, {f2, "Security"}, {f2, "News"}, {f3, "Sports"}} {
+			if err := store.AddFeedTag(1, tc.feed, tc.tag); err != nil {
+				t.Fatalf("AddFeedTag(%d,%q): %v", tc.feed, tc.tag, err)
+			}
+		}
+
+		// Idempotent + case-insensitive duplicate is a no-op.
+		if err := store.AddFeedTag(1, f1, "security"); err != nil {
+			t.Fatalf("dup AddFeedTag: %v", err)
+		}
+		tags, err := store.GetFeedTags(1, f1)
+		if err != nil {
+			t.Fatalf("GetFeedTags: %v", err)
+		}
+		if len(tags) != 1 || tags[0] != "Security" {
+			t.Fatalf("f1 tags = %v, want [Security]", tags)
+		}
+
+		// GetUserTags: distinct, sorted.
+		ut, _ := store.GetUserTags(1)
+		if got := strings.Join(ut, ","); got != "News,Security,Sports" {
+			t.Errorf("GetUserTags = %q, want News,Security,Sports", got)
+		}
+
+		// GetAllFeedTags: one feed → multiple tags.
+		all, _ := store.GetAllFeedTags(1)
+		if len(all[f2]) != 2 {
+			t.Errorf("f2 tags = %v, want 2", all[f2])
+		}
+
+		// GetFeedsByTags: union across tags, case-insensitive, deduped.
+		ids, err := store.GetFeedsByTags(1, []string{"security", "sports"})
+		if err != nil {
+			t.Fatalf("GetFeedsByTags: %v", err)
+		}
+		if !sameIDSet(ids, []int64{f1, f2, f3}) {
+			t.Errorf("GetFeedsByTags(security,sports) = %v, want {%d,%d,%d}", ids, f1, f2, f3)
+		}
+		// A single tag resolves to just its feeds.
+		ids, _ = store.GetFeedsByTags(1, []string{"News"})
+		if !sameIDSet(ids, []int64{f2}) {
+			t.Errorf("GetFeedsByTags(News) = %v, want {%d}", ids, f2)
+		}
+		// Empty / unknown tags → nil.
+		if ids, _ := store.GetFeedsByTags(1, nil); ids != nil {
+			t.Errorf("GetFeedsByTags(nil) = %v, want nil", ids)
+		}
+
+		// Remove one tag (case-insensitive).
+		if err := store.RemoveFeedTag(1, f2, "news"); err != nil {
+			t.Fatalf("RemoveFeedTag: %v", err)
+		}
+		if tags, _ := store.GetFeedTags(1, f2); !sameStrSet(tags, []string{"Security"}) {
+			t.Errorf("f2 tags after remove = %v, want [Security]", tags)
+		}
+
+		// Cascade: deleting the feed row drops its tags. DeleteFeedIfOrphaned only
+		// removes a feed with no subscribers, so unsubscribe first.
+		if err := store.UnsubscribeUserFromFeed(1, f3); err != nil {
+			t.Fatalf("unsubscribe: %v", err)
+		}
+		deleted, err := store.DeleteFeedIfOrphaned(f3)
+		if err != nil || !deleted {
+			t.Fatalf("DeleteFeedIfOrphaned = %v, %v; want true, nil", deleted, err)
+		}
+		if tags, _ := store.GetFeedTags(1, f3); len(tags) != 0 {
+			t.Errorf("f3 tags after feed delete = %v, want none", tags)
+		}
+	})
+}
+
+func sameIDSet(got, want []int64) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	m := make(map[int64]bool, len(got))
+	for _, v := range got {
+		m[v] = true
+	}
+	for _, v := range want {
+		if !m[v] {
+			return false
+		}
+	}
+	return true
+}
+
+func sameStrSet(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	m := make(map[string]bool, len(got))
+	for _, v := range got {
+		m[v] = true
+	}
+	for _, v := range want {
+		if !m[v] {
+			return false
+		}
+	}
+	return true
+}
+
 func articleIDs(arts []Article) []int64 {
 	out := make([]int64, len(arts))
 	for i, a := range arts {

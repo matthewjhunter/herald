@@ -114,7 +114,10 @@ type NewsletterConfig struct {
 	ExcludeFeeds      []int64  `json:"exclude_feeds,omitempty"`
 	IncludeCategories []string `json:"include_categories,omitempty"`
 	ExcludeCategories []string `json:"exclude_categories,omitempty"`
-	MaxArticles       int      `json:"max_articles"`
+	// IncludeTags names feed tags this digest follows: at generation time they
+	// resolve to whatever feeds currently carry the tag, unioned with IncludeFeeds.
+	IncludeTags []string `json:"include_tags,omitempty"`
+	MaxArticles int      `json:"max_articles"`
 }
 
 // Newsletter represents a user-defined newsletter/digest configuration.
@@ -343,6 +346,17 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		// NULL = ad-hoc. SQLite can't add a FK via ALTER — fresh DBs get it from
 		// the CREATE TABLE; existing rows just carry the plain column.
 		"ALTER TABLE ai_summaries ADD COLUMN newsletter_id INTEGER",
+		// Per-user feed tags (many-to-many): group feeds so a digest can follow a
+		// tag. New table for existing DBs; fresh DBs get it from the schema.
+		`CREATE TABLE IF NOT EXISTS feed_tags (
+			user_id INTEGER NOT NULL DEFAULT 1,
+			feed_id INTEGER NOT NULL,
+			tag TEXT NOT NULL COLLATE NOCASE,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (user_id, feed_id, tag),
+			FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE
+		)`,
+		"CREATE INDEX IF NOT EXISTS idx_feed_tags_user_tag ON feed_tags(user_id, tag)",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -1701,6 +1715,171 @@ func (s *SQLiteStore) SubscribeUserToFeed(userID, feedID int64) error {
 		return fmt.Errorf("failed to subscribe user to feed: %w", err)
 	}
 	return nil
+}
+
+// maxTagLen caps a feed tag's length (runes) to keep the UI and storage sane.
+const maxTagLen = 50
+
+// normalizeTag trims surrounding space, collapses internal whitespace runs to a
+// single space, and caps the length. Returns "" for an effectively empty tag,
+// which callers reject. Case is preserved for display; uniqueness is enforced
+// case-insensitively by the schema (COLLATE NOCASE / lower(tag) index).
+func normalizeTag(tag string) string {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return ""
+	}
+	tag = strings.Join(strings.Fields(tag), " ")
+	if len([]rune(tag)) > maxTagLen {
+		tag = string([]rune(tag)[:maxTagLen])
+	}
+	return tag
+}
+
+// AddFeedTag tags a feed for a user (idempotent; case-insensitive duplicate is a no-op).
+func (s *SQLiteStore) AddFeedTag(userID, feedID int64, tag string) error {
+	tag = normalizeTag(tag)
+	if tag == "" {
+		return fmt.Errorf("empty tag")
+	}
+	_, err := s.db.Exec(
+		"INSERT OR IGNORE INTO feed_tags (user_id, feed_id, tag) VALUES (?, ?, ?)",
+		userID, feedID, tag,
+	)
+	if err != nil {
+		return fmt.Errorf("add feed tag: %w", err)
+	}
+	return nil
+}
+
+// RemoveFeedTag removes a tag from a feed for a user (case-insensitive).
+func (s *SQLiteStore) RemoveFeedTag(userID, feedID int64, tag string) error {
+	tag = normalizeTag(tag)
+	_, err := s.db.Exec(
+		"DELETE FROM feed_tags WHERE user_id = ? AND feed_id = ? AND tag = ?",
+		userID, feedID, tag,
+	)
+	if err != nil {
+		return fmt.Errorf("remove feed tag: %w", err)
+	}
+	return nil
+}
+
+// GetFeedTags returns one feed's tags for a user, sorted.
+func (s *SQLiteStore) GetFeedTags(userID, feedID int64) ([]string, error) {
+	rows, err := s.db.Query(
+		"SELECT tag FROM feed_tags WHERE user_id = ? AND feed_id = ? ORDER BY tag",
+		userID, feedID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get feed tags: %w", err)
+	}
+	defer rows.Close()
+	var tags []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, fmt.Errorf("scan feed tag: %w", err)
+		}
+		tags = append(tags, t)
+	}
+	return tags, rows.Err()
+}
+
+// GetAllFeedTags returns every tagged feed's tags for a user in one query.
+func (s *SQLiteStore) GetAllFeedTags(userID int64) (map[int64][]string, error) {
+	rows, err := s.db.Query(
+		"SELECT feed_id, tag FROM feed_tags WHERE user_id = ? ORDER BY feed_id, tag",
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get all feed tags: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[int64][]string)
+	for rows.Next() {
+		var fid int64
+		var t string
+		if err := rows.Scan(&fid, &t); err != nil {
+			return nil, fmt.Errorf("scan feed tag: %w", err)
+		}
+		out[fid] = append(out[fid], t)
+	}
+	return out, rows.Err()
+}
+
+// GetUserTags returns the distinct tags a user has applied, sorted.
+func (s *SQLiteStore) GetUserTags(userID int64) ([]string, error) {
+	rows, err := s.db.Query(
+		"SELECT DISTINCT tag FROM feed_tags WHERE user_id = ? ORDER BY tag",
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get user tags: %w", err)
+	}
+	defer rows.Close()
+	var tags []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, fmt.Errorf("scan user tag: %w", err)
+		}
+		tags = append(tags, t)
+	}
+	return tags, rows.Err()
+}
+
+// GetFeedsByTags resolves a set of tags to the distinct feed IDs carrying any of
+// them (case-insensitive). Empty input returns nil.
+func (s *SQLiteStore) GetFeedsByTags(userID int64, tags []string) ([]int64, error) {
+	norm := normalizeTags(tags)
+	if len(norm) == 0 {
+		return nil, nil
+	}
+	ph := make([]string, len(norm))
+	args := make([]any, 0, len(norm)+1)
+	args = append(args, userID)
+	for i, t := range norm {
+		ph[i] = "?"
+		args = append(args, t)
+	}
+	rows, err := s.db.Query(
+		"SELECT DISTINCT feed_id FROM feed_tags WHERE user_id = ? AND tag IN ("+strings.Join(ph, ",")+") ORDER BY feed_id",
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get feeds by tags: %w", err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan feed id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// normalizeTags normalizes a slice of tags, dropping empties and case-insensitive
+// duplicates while preserving order.
+func normalizeTags(tags []string) []string {
+	seen := make(map[string]bool, len(tags))
+	out := make([]string, 0, len(tags))
+	for _, t := range tags {
+		n := normalizeTag(t)
+		if n == "" {
+			continue
+		}
+		k := strings.ToLower(n)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, n)
+	}
+	return out
 }
 
 // GetUserFeeds returns all feeds a user is subscribed to.
