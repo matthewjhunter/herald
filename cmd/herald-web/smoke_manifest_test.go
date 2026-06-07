@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -41,7 +42,35 @@ func TestSmokeManifestUpToDate(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Errorf("smoke manifest drift: routes changed but %s is stale.\n"+
-			"Regenerate: UPDATE_SMOKE_MANIFEST=1 go test ./cmd/herald-web/ -run TestSmokeManifestUpToDate",
-			smokeManifestPath)
+			"Regenerate: UPDATE_SMOKE_MANIFEST=1 go test ./cmd/herald-web/ -run TestSmokeManifestUpToDate\n%s",
+			smokeManifestPath, lineDiff(string(want), string(got)))
 	}
+}
+
+// lineDiff reports lines present in want-but-not-got and got-but-not-want, so a
+// drift failure pinpoints which routes were added or removed regardless of
+// ordering. It is a set difference, not a positional diff.
+func lineDiff(want, got string) string {
+	wantSet := map[string]bool{}
+	for _, l := range strings.Split(want, "\n") {
+		wantSet[l] = true
+	}
+	gotSet := map[string]bool{}
+	for _, l := range strings.Split(got, "\n") {
+		gotSet[l] = true
+	}
+	var b strings.Builder
+	b.WriteString("lines only in committed (want):\n")
+	for _, l := range strings.Split(want, "\n") {
+		if !gotSet[l] {
+			b.WriteString("  - " + l + "\n")
+		}
+	}
+	b.WriteString("lines only in generated (got):\n")
+	for _, l := range strings.Split(got, "\n") {
+		if !wantSet[l] {
+			b.WriteString("  + " + l + "\n")
+		}
+	}
+	return b.String()
 }
