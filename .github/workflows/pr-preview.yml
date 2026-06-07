@@ -1,0 +1,115 @@
+name: PR Preview
+
+# Stands up a per-PR preview container of herald-web on the homelab docker-web
+# host and black-box smoke-probes it. This is the phase-2b complement to the
+# in-process smoke harness (TestSmokeRoutesAuthenticated): it catches the
+# regressions that only show up in a real deployment -- a broken Dockerfile, a
+# schema/migration that fails on a fresh database, a missing file in the image,
+# a boot-time wiring fault -- against the actual postgres backend production
+# uses.
+#
+# The preview points at the real webauth issuer for discovery but does NOT
+# configure a client_id/callback, so it never registers a per-PR OIDC client and
+# never completes a login. The smoke pass is therefore UNAUTHENTICATED: every
+# auth-gated route answers 302 (redirect to login = served, wired, no 5xx), and
+# the few public routes (/health, /static, the Fever endpoint, logout) answer
+# directly. That validates routing + boot + migrations + image without needing a
+# webauth test user. An authenticated pass (real login via a smokeauth harvester,
+# or a fake-OIDC sidecar) is a later increment; webauth supports RFC 7591 dynamic
+# registration, so per-PR clients are available when we add it.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  preview:
+    runs-on: [self-hosted, linux, docker-web]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build preview image
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: docker build -t ghcr.io/matthewjhunter/herald:pr-${PR} .
+
+      - name: Deploy preview container
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          docker rm -f herald-pr-${PR} 2>/dev/null || true
+
+          # Isolated per-PR database: a preview must never run its schema and
+          # idempotent migrations against the shared herald database that backs
+          # the live site. Create herald_pr_${PR} (pr-cleanup drops it on close)
+          # owned by the herald role. herald-web applies SchemaPostgres + the
+          # ALTER ... IF NOT EXISTS migrations against it at boot -- which is
+          # exactly the deploy-time path this preview is here to validate.
+          docker exec postgres psql -U postgres -tAc \
+            "SELECT 1 FROM pg_database WHERE datname='herald_pr_${PR}'" | grep -q 1 \
+            || docker exec postgres psql -U postgres \
+                 -c "CREATE DATABASE \"herald_pr_${PR}\" OWNER herald"
+
+          # Build the per-PR DSN from the deployed herald role password (read
+          # from the host env file, never echoed) and hand it to the container
+          # via HERALD_DB_DSN so it stays off the command line / docker inspect.
+          PW=$(grep -E '^POSTGRES_PASSWORD=' /opt/docker/herald/.env | cut -d= -f2-)
+          PR_DSN="postgres://herald:${PW}@postgres:5432/herald_pr_${PR}?sslmode=disable"
+
+          # Create on web, attach db, then start: herald-web connects to postgres
+          # at boot (schema runs first), and postgres lives on the db network.
+          # docker create takes one --network, so attach db before start --
+          # starting on web alone races the server's boot connect.
+          docker create \
+            --name herald-pr-${PR} \
+            --network web \
+            --restart unless-stopped \
+            --env-file /opt/docker/herald/.env \
+            -e HERALD_DB_DSN="${PR_DSN}" \
+            -e SMOKE_MANIFEST=1 \
+            -l "traefik.enable=true" \
+            -l "traefik.docker.network=web" \
+            -l "traefik.http.routers.herald-pr-${PR}.rule=Host(\`pr-${PR}.herald.infodancer.net\`)" \
+            -l "traefik.http.routers.herald-pr-${PR}.entrypoints=websecure" \
+            -l "traefik.http.routers.herald-pr-${PR}.tls=true" \
+            -l "traefik.http.routers.herald-pr-${PR}.tls.certresolver=letsencrypt" \
+            -l "traefik.http.services.herald-pr-${PR}.loadbalancer.server.port=8080" \
+            ghcr.io/matthewjhunter/herald:pr-${PR} \
+            herald-web -addr :8080 -webauth-issuer https://webauth.infodancer.net/t/infodancer
+          docker network connect db herald-pr-${PR}
+          docker start herald-pr-${PR}
+
+      - name: Smoke test routes (unauthenticated)
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          # Black-box round trip against the live preview: fetch the manifest the
+          # server exposes at /_smoke/manifest and probe every route directly on
+          # the web network (no Traefik/TLS/public DNS), failing on any 5xx (or a
+          # 4xx on a route we expect to serve). Reads only -- mutating routes are
+          # skipped without --include-writes, auth-gated routes answer 302.
+          base="http://herald-pr-${PR}:8080"
+          docker run --rm \
+            --network web \
+            -v "${GITHUB_WORKSPACE}":/src -w /src \
+            golang:1.26-alpine sh -c '
+              for _ in $(seq 1 60); do
+                wget -qO- "'"$base"'/health" >/dev/null 2>&1 && break
+                sleep 2
+              done
+              go tool smolder run --base "'"$base"'"
+            '
+
+      - name: Comment preview URL on PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          url="https://pr-${PR}.herald.infodancer.net"
+          gh pr comment ${PR} --repo ${REPO} --body "Preview deployed: ${url}" --edit-last 2>/dev/null || \
+          gh pr comment ${PR} --repo ${REPO} --body "Preview deployed: ${url}"
