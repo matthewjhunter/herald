@@ -1,0 +1,24 @@
+name: PR Cleanup
+
+# Tears down the per-PR preview created by pr-preview.yml when the PR closes.
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  cleanup:
+    # See pr-preview.yml: inert until the runner exists and the preview is
+    # enabled, so a closed PR doesn't queue forever against a missing runner.
+    if: ${{ vars.HERALD_PREVIEW_ENABLED == 'true' }}
+    runs-on: [self-hosted, linux, docker-web]
+    steps:
+      - name: Remove preview container, image, and database
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          docker rm -f herald-pr-${PR} 2>/dev/null || true
+          docker rmi ghcr.io/matthewjhunter/herald:pr-${PR} 2>/dev/null || true
+          # Drop the isolated preview database created in pr-preview.yml.
+          docker exec postgres psql -U postgres \
+            -c "DROP DATABASE IF EXISTS \"herald_pr_${PR}\" WITH (FORCE)" 2>/dev/null || true

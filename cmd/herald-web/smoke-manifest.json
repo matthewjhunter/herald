@@ -301,6 +301,12 @@
     },
     {
       "method": "GET",
+      "pattern": "/health",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "GET",
       "pattern": "/images/{imageID}",
       "effect": "read_only",
       "example_params": {

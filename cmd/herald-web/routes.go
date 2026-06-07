@@ -35,6 +35,13 @@ var embedded embed.FS
 func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole string, adminUsers []string) *smoke.Mux {
 	mux := smoke.NewMux()
 
+	// Liveness probe — no auth, no DB. Used by the PR-preview pipeline to wait
+	// for the container to be serving before smoke-probing it.
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+
 	// Static files — no auth required.
 	staticFS, _ := fs.Sub(embedded, "static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)),
