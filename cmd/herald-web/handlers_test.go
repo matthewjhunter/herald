@@ -909,3 +909,18 @@ func TestHandleGroupDisband(t *testing.T) {
 		t.Error("group should be deleted after DELETE /groups/{id}")
 	}
 }
+
+func TestHandleProcessingStatus(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	rr := authedRequest(t, tf, "GET", "/status", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"Processing Status", "Pending backlog", "Pipeline", "Summarized"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("status page missing %q", want)
+		}
+	}
+}

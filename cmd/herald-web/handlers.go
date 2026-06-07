@@ -164,7 +164,7 @@ func (h *handlers) init() {
 	shared := []string{"base.html", "nav.html", "settings_subnav.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "search_results.html", "ai_summary_list.html", "ai_summary_detail.html", "error.html"}
 
 	// Pages that get their own template tree.
-	pages := []string{"home.html", "feeds_manage.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_digest.html", "admin_stats.html", "stats.html", "newsletters_manage.html"}
+	pages := []string{"home.html", "feeds_manage.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_digest.html", "admin_stats.html", "stats.html", "status.html", "newsletters_manage.html"}
 
 	h.pages = make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
@@ -1523,6 +1523,22 @@ func (h *handlers) handleStats(w http.ResponseWriter, r *http.Request) {
 		IntDonut: makeDonut(t.IntHigh, t.IntMedium, t.IntLow, fmt.Sprintf("%d%%", int(t.IntHighPct()))),
 	}
 	h.renderPage(w, r, "stats.html", data)
+}
+
+// handleProcessingStatus renders the overall AI-pipeline processing status:
+// an aggregate funnel (fetched -> scored -> passed -> summarized -> curated)
+// plus the real backlog and feed-fetch health. Distinct from /stats, which
+// shows score *outcomes* per feed.
+func (h *handlers) handleProcessingStatus(w http.ResponseWriter, r *http.Request) {
+	h.init()
+	uid := userFromContext(r.Context()).ID
+
+	ps, err := h.engine.GetProcessingStats(uid)
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Failed to load processing status")
+		return
+	}
+	h.renderPage(w, r, "status.html", ps)
 }
 
 // adminStatsData is the template data for the admin stats page.

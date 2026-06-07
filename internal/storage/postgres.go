@@ -1426,6 +1426,54 @@ func (s *PostgresStore) GetArticleSummary(userID, articleID int64) (*ArticleSumm
 
 // --- Feed stats ---
 
+// GetProcessingStats returns an aggregate snapshot of the AI pipeline state for a
+// user's articles (not broken down by feed). "pending" uses ai_retries < 3 (the
+// retry budget the pipeline honours); "stuck" is everything that has exhausted it.
+func (s *PostgresStore) GetProcessingStats(userID int64) (*ProcessingStats, error) {
+	var p ProcessingStats
+	err := s.db.QueryRow(`
+		SELECT
+			COUNT(*),
+			COALESCE(SUM(CASE WHEN rs.ai_scored = TRUE THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN (rs.article_id IS NULL OR rs.ai_scored = FALSE) AND COALESCE(rs.ai_retries, 0) < 3 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN (rs.article_id IS NULL OR rs.ai_scored = FALSE) AND COALESCE(rs.ai_retries, 0) >= 3 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN rs.security_score >= 7 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN rs.security_score IS NOT NULL AND rs.security_score < 7 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN rs.ai_scored = TRUE AND rs.security_score IS NULL THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN rs.interest_score IS NOT NULL THEN 1 ELSE 0 END), 0)
+		FROM articles a
+		JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = ?
+		LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = ?`,
+		userID, userID,
+	).Scan(&p.TotalArticles, &p.Scored, &p.Pending, &p.Stuck,
+		&p.SecurityPassed, &p.SecurityRejected, &p.SecuritySkipped, &p.Curated)
+	if err != nil {
+		return nil, fmt.Errorf("get processing stats (funnel): %w", err)
+	}
+
+	err = s.db.QueryRow(`
+		SELECT
+			(SELECT COUNT(*) FROM article_summaries WHERE user_id = ? AND ai_summary <> ''),
+			(SELECT COUNT(*) FROM article_summaries WHERE user_id = ? AND COALESCE(skip_reason, '') <> '')`,
+		userID, userID,
+	).Scan(&p.Summarized, &p.SummarizeSkipped)
+	if err != nil {
+		return nil, fmt.Errorf("get processing stats (summaries): %w", err)
+	}
+
+	err = s.db.QueryRow(`
+		SELECT
+			(SELECT COUNT(*) FROM user_feeds WHERE user_id = ?),
+			(SELECT COUNT(*) FROM feeds f JOIN user_feeds uf ON uf.feed_id = f.id
+			 WHERE uf.user_id = ? AND f.consecutive_errors > 0)`,
+		userID, userID,
+	).Scan(&p.FeedsTotal, &p.FeedsErroring)
+	if err != nil {
+		return nil, fmt.Errorf("get processing stats (feeds): %w", err)
+	}
+	return &p, nil
+}
+
 func (s *PostgresStore) GetFeedStats(userID int64) ([]FeedStats, error) {
 	rows, err := s.db.Query(`
 		SELECT f.id, COALESCE(uf.user_title, f.title),

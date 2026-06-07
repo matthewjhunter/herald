@@ -1296,6 +1296,29 @@ func (e *Engine) GetScoreStats(userID int64) (*ScoreStatsResult, error) {
 	return result, nil
 }
 
+// GetProcessingStats returns an aggregate snapshot of the AI pipeline state for
+// a user's articles (pipeline progress, not score outcomes; not per-feed).
+func (e *Engine) GetProcessingStats(userID int64) (*ProcessingStats, error) {
+	p, err := e.store.GetProcessingStats(userID)
+	if err != nil {
+		return nil, err
+	}
+	return &ProcessingStats{
+		TotalArticles:    p.TotalArticles,
+		Scored:           p.Scored,
+		Pending:          p.Pending,
+		Stuck:            p.Stuck,
+		SecurityPassed:   p.SecurityPassed,
+		SecurityRejected: p.SecurityRejected,
+		SecuritySkipped:  p.SecuritySkipped,
+		Summarized:       p.Summarized,
+		SummarizeSkipped: p.SummarizeSkipped,
+		Curated:          p.Curated,
+		FeedsTotal:       p.FeedsTotal,
+		FeedsErroring:    p.FeedsErroring,
+	}, nil
+}
+
 // PendingCounts returns the number of articles awaiting AI processing.
 func (e *Engine) PendingCounts(userID int64) (unsummarized, unscored int, err error) {
 	unsummarized, err = e.store.GetUnsummarizedArticleCount(userID)

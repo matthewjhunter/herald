@@ -1,0 +1,48 @@
+{{define "title"}}Herald - Processing Status{{end}}
+{{define "nav"}}{{template "shared-nav" "status"}}{{end}}
+
+{{define "content"}}
+<main class="container" style="max-width:900px;">
+  <h2>Processing Status</h2>
+  <p class="secondary">
+    Where your articles sit in the AI pipeline right now, across all feeds.
+    For per-feed score breakdowns see <a href="/stats">Stats</a>.
+  </p>
+
+  {{/* Headline cards: the numbers that need action */}}
+  <div style="display:flex;gap:1rem;flex-wrap:wrap;margin:1.5rem 0;">
+    <article style="flex:1;min-width:160px;text-align:center;">
+      <div style="font-size:2rem;font-weight:bold;">{{.Pending}}</div>
+      <div class="secondary">Pending backlog</div>
+    </article>
+    <article style="flex:1;min-width:160px;text-align:center;{{if gt .Stuck 0}}border-color:#f44336;{{end}}">
+      <div style="font-size:2rem;font-weight:bold;{{if gt .Stuck 0}}color:#f44336;{{end}}">{{.Stuck}}</div>
+      <div class="secondary">Stuck (out of retries)</div>
+    </article>
+    <article style="flex:1;min-width:160px;text-align:center;{{if gt .FeedsErroring 0}}border-color:#ff9800;{{end}}">
+      <div style="font-size:2rem;font-weight:bold;{{if gt .FeedsErroring 0}}color:#ff9800;{{end}}">{{.FeedsErroring}}<span class="secondary" style="font-size:1rem;">&nbsp;/&nbsp;{{.FeedsTotal}}</span></div>
+      <div class="secondary">Feeds erroring</div>
+    </article>
+  </div>
+
+  {{/* Pipeline funnel: fetched -> security -> summarize -> curate */}}
+  <h3>Pipeline</h3>
+  <figure>
+    <table role="grid">
+      <tbody>
+        <tr><th>Total articles</th><td><strong>{{.TotalArticles}}</strong></td><td class="secondary"></td></tr>
+        <tr><th>Scored</th><td>{{.Scored}}</td><td class="secondary">security verdict recorded</td></tr>
+        <tr><td style="padding-left:2rem;">Security passed</td><td>{{.SecurityPassed}}</td><td class="secondary">&ge; 7.0 -- eligible for summary + interest</td></tr>
+        <tr><td style="padding-left:2rem;">Security rejected</td><td>{{.SecurityRejected}}</td><td class="secondary">below threshold</td></tr>
+        <tr><td style="padding-left:2rem;">Skipped</td><td>{{.SecuritySkipped}}</td><td class="secondary">no content / too short</td></tr>
+        <tr><th>Summarized</th><td>{{.Summarized}}</td><td class="secondary">{{.SummarizeSkipped}} skipped (can't be shortened)</td></tr>
+        <tr><th>Curated</th><td>{{.Curated}}</td><td class="secondary">interest scored</td></tr>
+      </tbody>
+    </table>
+  </figure>
+  <p class="secondary" style="font-size:0.85em;">
+    "Pending" is the real backlog the daemon will pick up next cycle.
+    "Stuck" articles have hit the retry limit and won't be retried without intervention.
+  </p>
+</main>
+{{end}}

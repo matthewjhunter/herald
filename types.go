@@ -244,6 +244,24 @@ type ScoreStatsResult struct {
 	Total FeedScoreStats
 }
 
+// ProcessingStats is an aggregate snapshot of where a user's articles sit in the
+// AI pipeline (fetch -> security -> summarize -> curate). It reports pipeline
+// state (done vs pending), not score outcomes, and is not broken down by feed.
+type ProcessingStats struct {
+	TotalArticles    int
+	Scored           int
+	Pending          int // real backlog: unscored, within the retry budget
+	Stuck            int // unscored but out of retries -- needs attention
+	SecurityPassed   int
+	SecurityRejected int
+	SecuritySkipped  int // scored but no security verdict (no content / too short)
+	Summarized       int
+	SummarizeSkipped int
+	Curated          int
+	FeedsTotal       int
+	FeedsErroring    int
+}
+
 // UserPreferences holds all user-configurable preference values.
 type UserPreferences struct {
 	Keywords          []string `json:"keywords"`
