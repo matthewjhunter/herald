@@ -286,7 +286,8 @@ func migrateArticles(ctx context.Context, src *tracedDB, dst Store, dstDB *trace
 		       COALESCE(content,''), COALESCE(summary,''), COALESCE(author,''),
 		       published_date, fetched_date,
 		       COALESCE(linked_url,''), COALESCE(linked_content,''),
-		       full_text_fetched, images_cached
+		       full_text_fetched, images_cached,
+		       security_score, COALESCE(security_reason,''), security_flagged, security_screened_at
 		FROM articles ORDER BY id`)
 	if err != nil {
 		return err
@@ -305,6 +306,10 @@ func migrateArticles(ctx context.Context, src *tracedDB, dst Store, dstDB *trace
 		linkedContent    string
 		fullTextFetched  bool
 		imagesCached     bool
+		securityScore    sql.NullFloat64
+		securityReason   string
+		securityFlagged  bool
+		securityScreened sql.NullTime
 	}
 
 	var articles []articleRow
@@ -316,6 +321,7 @@ func migrateArticles(ctx context.Context, src *tracedDB, dst Store, dstDB *trace
 			&a.publishedDate, &a.fetchedDate,
 			&a.linkedURL, &a.linkedContent,
 			&a.fullTextFetched, &a.imagesCached,
+			&a.securityScore, &a.securityReason, &a.securityFlagged, &a.securityScreened,
 		); err != nil {
 			return fmt.Errorf("scan article: %w", err)
 		}
@@ -373,6 +379,18 @@ func migrateArticles(ctx context.Context, src *tracedDB, dst Store, dstDB *trace
 		if a.imagesCached {
 			if err := dst.MarkArticleImagesCached(dstID); err != nil {
 				return fmt.Errorf("MarkArticleImagesCached %d: %w", dstID, err)
+			}
+		}
+		// Carry the article-level security verdict (#141) so the destination does
+		// not re-screen. A screened article with a score gets the verdict; one
+		// screened without a score was a deliberate skip (no content / too short).
+		if a.securityScreened.Valid {
+			if a.securityScore.Valid {
+				if err := dst.ScreenArticleSecurity(dstID, a.securityScore.Float64, a.securityReason, a.securityFlagged); err != nil {
+					return fmt.Errorf("ScreenArticleSecurity %d: %w", dstID, err)
+				}
+			} else if err := dst.SkipArticleSecurity(dstID, a.securityReason); err != nil {
+				return fmt.Errorf("SkipArticleSecurity %d: %w", dstID, err)
 			}
 		}
 		stats.Articles++

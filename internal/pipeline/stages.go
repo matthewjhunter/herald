@@ -9,20 +9,21 @@ import (
 	"github.com/matthewjhunter/herald/internal/storage"
 )
 
-// Security screens each article and records the verdict. It is the gate for the
-// whole pipeline: only articles that clear the full security threshold are
-// returned (for summarization, scoring, embedding, and clustering). Articles
+// Security screens each article and records the verdict on the article itself
+// (#141): maliciousness is a property of the content, so each article is
+// screened once and the verdict is shared by every subscriber. It is the gate
+// for the whole pipeline: only articles that clear the full security threshold
+// are returned (for summarization, scoring, embedding, and clustering). Articles
 // with no content or too little content are marked skipped; hard-blocked and
-// medium-flagged articles are marked terminal; a model-failure increments the
-// retry budget unless the backend was simply unavailable (#90, #100).
+// medium-flagged articles are recorded with their score (and so excluded from
+// the passing set); a model-failure increments the per-article retry budget
+// unless the backend was simply unavailable (#90, #100).
 //
-// Passing articles are recorded with MarkSecurityScored, which sets ai_scored
-// and the security score but leaves interest_score NULL, so the curation stage
-// can pick them up. The summarize/score/embed/cluster stages never see a
-// blocked article, preserving the gate established in #90.
+// This stage runs in the global, once-per-cycle security pass (RunSecurity), not
+// in the per-user pipeline — there is no user_id in the verdict.
 func (s *Stage) Security(ctx context.Context, in []storage.Article) []storage.Article {
 	if !s.AI.BackendAvailable() {
-		s.Formatter.Warning("pipeline: skipping security stage for user %d — AI backend unavailable (breaker open)", s.UserID)
+		s.Formatter.Warning("pipeline: skipping security stage — AI backend unavailable (breaker open)")
 		return nil
 	}
 	return s.mapArticles(ctx, in, s.securityOne)
@@ -32,24 +33,20 @@ func (s *Stage) securityOne(ctx context.Context, article storage.Article) *stora
 	content := articleContent(article)
 	if content == "" {
 		s.Formatter.Warning("skipping article %d %q: no content", article.ID, article.Title)
-		// Mark scored with a zero interest score and NULL security score so the
-		// article leaves the queue without polluting security metrics.
-		zeroInterest := 0.0
-		reason := "no content"
-		s.Store.UpdateReadState(s.UserID, article.ID, false, &zeroInterest, nil, &reason, nil) //nolint:errcheck
+		// Mark screened-but-skipped (NULL score) so it leaves the queue without
+		// polluting security metrics and is distinguishable from "not screened".
+		s.Store.SkipArticleSecurity(article.ID, "no content") //nolint:errcheck
 		return nil
 	}
 
 	minLen := s.Cfg.Summarization.MinArticleLength
 	if minLen > 0 && len(content) < minLen {
 		s.Formatter.Warning("skipping article %d: content too short (%d < %d)", article.ID, len(content), minLen)
-		zeroInterest := 0.0
-		reason := fmt.Sprintf("content too short (%d < %d)", len(content), minLen)
-		s.Store.UpdateReadState(s.UserID, article.ID, false, &zeroInterest, nil, &reason, nil) //nolint:errcheck
+		s.Store.SkipArticleSecurity(article.ID, fmt.Sprintf("content too short (%d < %d)", len(content), minLen)) //nolint:errcheck
 		return nil
 	}
 
-	secResult, err := s.AI.SecurityCheck(ctx, s.UserID, article.Title, content)
+	secResult, err := s.AI.SecurityCheck(ctx, article.Title, content)
 	if err != nil {
 		s.Formatter.Warning("security check failed for article %d: %v", article.ID, err)
 		// Only a genuine model-response failure counts against the retry budget;
@@ -57,7 +54,7 @@ func (s *Stage) securityOne(ctx context.Context, article storage.Article) *stora
 		// without incrementing and let a later cycle retry once the backend
 		// recovers (#100).
 		if !errors.Is(err, ai.ErrBackendUnavailable) {
-			s.Store.IncrementAIRetries(s.UserID, article.ID) //nolint:errcheck
+			s.Store.IncrementArticleSecurityAttempts(article.ID) //nolint:errcheck
 		}
 		return nil
 	}
@@ -68,28 +65,23 @@ func (s *Stage) securityOne(ctx context.Context, article storage.Article) *stora
 	}
 
 	if !secResult.Safe || secResult.Score < mediumScore {
-		// Hard block: below the lower threshold entirely.
-		secScore := secResult.Score
-		interestScore := 0.0
-		s.Store.UpdateReadState(s.UserID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning, nil) //nolint:errcheck
-		s.Formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, false)
+		// Hard block: below the lower threshold entirely. Record the verdict; the
+		// score gates it out of every downstream (passing) query.
+		s.Store.ScreenArticleSecurity(article.ID, secResult.Score, secResult.Reasoning, false) //nolint:errcheck
+		s.Formatter.OutputProcessingStatus(article.ID, article.Title, 0, secResult.Score, false)
 		return nil
 	}
 
 	if secResult.Score < s.Cfg.Thresholds.SecurityScore {
-		// Medium: clears the lower threshold but not the full one. Let through
-		// without AI processing; flag for audit.
-		secScore := secResult.Score
-		interestScore := 0.0
-		flagged := true
-		s.Store.UpdateReadState(s.UserID, article.ID, false, &interestScore, &secScore, &secResult.Reasoning, &flagged) //nolint:errcheck
-		s.Formatter.OutputProcessingStatus(article.ID, article.Title, interestScore, secScore, false)
+		// Medium: clears the lower threshold but not the full one. Flag for audit.
+		s.Store.ScreenArticleSecurity(article.ID, secResult.Score, secResult.Reasoning, true) //nolint:errcheck
+		s.Formatter.OutputProcessingStatus(article.ID, article.Title, 0, secResult.Score, false)
 		return nil
 	}
 
-	// Passed. Record the security verdict but leave interest_score NULL so the
-	// curation stage scores it.
-	if err := s.Store.MarkSecurityScored(s.UserID, article.ID, secResult.Score, secResult.Reasoning, false); err != nil {
+	// Passed. Record the verdict on the article; the per-user curation stage
+	// picks it up via the security threshold and assigns each user's interest.
+	if err := s.Store.ScreenArticleSecurity(article.ID, secResult.Score, secResult.Reasoning, false); err != nil {
 		s.Formatter.Warning("failed to record security verdict for article %d: %v", article.ID, err)
 		return nil
 	}
@@ -167,13 +159,13 @@ func (s *Stage) Curate(ctx context.Context, in []storage.Article) []storage.Arti
 		s.Formatter.Warning("pipeline: skipping curation stage for user %d — AI backend unavailable (breaker open)", s.UserID)
 		return nil
 	}
-	// The security verdict lives in read_state, not on the in-memory Article, so
-	// fetch it once for the batch to report alongside the interest score (#119).
+	// The security verdict lives on the article, not on the in-memory Article
+	// struct, so fetch it once for the batch to report alongside interest (#119).
 	batchIDs := make([]int64, len(in))
 	for i, a := range in {
 		batchIDs[i] = a.ID
 	}
-	secScores, err := s.Store.GetSecurityScores(s.UserID, batchIDs)
+	secScores, err := s.Store.GetArticleSecurityScores(batchIDs)
 	if err != nil {
 		s.Formatter.Warning("pipeline: could not load security scores for curation reporting: %v", err)
 		secScores = nil

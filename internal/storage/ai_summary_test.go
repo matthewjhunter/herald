@@ -13,7 +13,11 @@ func seedScored(t *testing.T, store Store, feedID, userID int64, guid string, re
 	if err != nil {
 		t.Fatalf("AddArticle: %v", err)
 	}
-	if err := store.UpdateReadState(userID, id, false, &interest, &security, nil, nil); err != nil {
+	// Security verdict is article-level (#141); interest stays per-user.
+	if err := store.ScreenArticleSecurity(id, security, "", false); err != nil {
+		t.Fatalf("ScreenArticleSecurity: %v", err)
+	}
+	if err := store.UpdateReadState(userID, id, false, &interest, nil, nil, nil); err != nil {
 		t.Fatalf("UpdateReadState scores: %v", err)
 	}
 	if read {

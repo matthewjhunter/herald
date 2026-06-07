@@ -84,9 +84,14 @@ func newPromptLoaderSafe(store, config any) *PromptLoader {
 	}
 }
 
-// SecurityCheck analyzes content for security threats (prompt injection, malicious content).
-func (p *AIProcessor) SecurityCheck(ctx context.Context, userID int64, title, content string) (*SecurityResult, error) {
-	promptTemplate, err := p.promptLoader.GetPrompt(userID, PromptTypeSecurity)
+// SecurityCheck analyzes content for security threats (prompt injection,
+// malicious content). The verdict is a property of the article, shared by every
+// subscriber (#141), so it always uses the global security prompt/model/
+// temperature (the user_id=0 admin override, then config, then default) — never
+// a per-user prompt. Only curation (relevance) is per-user.
+func (p *AIProcessor) SecurityCheck(ctx context.Context, title, content string) (*SecurityResult, error) {
+	const globalUser = int64(0)
+	promptTemplate, err := p.promptLoader.GetPrompt(globalUser, PromptTypeSecurity)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load security prompt: %w", err)
 	}
@@ -100,8 +105,8 @@ func (p *AIProcessor) SecurityCheck(ctx context.Context, userID int64, title, co
 		return nil, fmt.Errorf("failed to render security prompt: %w", err)
 	}
 
-	temperature := p.promptLoader.GetTemperature(userID, PromptTypeSecurity)
-	model := p.promptLoader.GetModel(userID, PromptTypeSecurity)
+	temperature := p.promptLoader.GetTemperature(globalUser, PromptTypeSecurity)
+	model := p.promptLoader.GetModel(globalUser, PromptTypeSecurity)
 	if model == "" {
 		model = p.securityModel
 	}

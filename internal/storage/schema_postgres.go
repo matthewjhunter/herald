@@ -37,11 +37,22 @@ CREATE TABLE IF NOT EXISTS articles (
     linked_content    TEXT NOT NULL DEFAULT '',
     full_text_fetched BOOLEAN NOT NULL DEFAULT FALSE,
     images_cached     BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Security verdict lives on the article, not per-user: maliciousness is a
+    -- property of the content, so each article is screened once and the verdict
+    -- is shared by every subscriber. security_screened_at distinguishes "screened
+    -- but skipped" (set, score NULL) from "not yet screened" (NULL).
+    security_score    DOUBLE PRECISION,
+    security_reason   TEXT,
+    security_flagged  BOOLEAN NOT NULL DEFAULT FALSE,
+    security_screened_at TIMESTAMPTZ,
+    security_attempts INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE,
     UNIQUE(feed_id, guid)
 );
 
 CREATE INDEX IF NOT EXISTS idx_articles_published ON articles(published_date DESC);
+-- Drives the global security pass: newest unscreened articles first.
+CREATE INDEX IF NOT EXISTS idx_articles_unscreened ON articles(published_date DESC) WHERE security_screened_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS users (
     id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

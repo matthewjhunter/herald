@@ -120,6 +120,39 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 		)`,
 		"CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_tags_unique ON feed_tags(user_id, feed_id, lower(tag))",
 		"CREATE INDEX IF NOT EXISTS idx_feed_tags_user_tag ON feed_tags(user_id, lower(tag))",
+		// Move the security verdict from per-user read_state onto the article
+		// itself (#141): each article is screened once and the verdict is shared
+		// by all subscribers. security_screened_at is the "have we screened this"
+		// marker, also disambiguating "screened but skipped" (set, score NULL)
+		// from "not yet screened" (NULL) — the conflation #123 flagged.
+		"ALTER TABLE articles ADD COLUMN IF NOT EXISTS security_score DOUBLE PRECISION",
+		"ALTER TABLE articles ADD COLUMN IF NOT EXISTS security_reason TEXT",
+		"ALTER TABLE articles ADD COLUMN IF NOT EXISTS security_flagged BOOLEAN NOT NULL DEFAULT FALSE",
+		"ALTER TABLE articles ADD COLUMN IF NOT EXISTS security_screened_at TIMESTAMPTZ",
+		"ALTER TABLE articles ADD COLUMN IF NOT EXISTS security_attempts INTEGER NOT NULL DEFAULT 0",
+		"CREATE INDEX IF NOT EXISTS idx_articles_unscreened ON articles(published_date DESC) WHERE security_screened_at IS NULL",
+		// Backfill: copy each article's verdict from the existing per-user
+		// read_state, picking the lowest user_id with a non-NULL score. Guarded on
+		// security_screened_at IS NULL so it is idempotent.
+		`UPDATE articles a
+		 SET security_score    = v.security_score,
+		     security_reason   = v.security_reason,
+		     security_flagged  = COALESCE(v.security_flagged, FALSE),
+		     security_screened_at = NOW()
+		 FROM (
+		     SELECT DISTINCT ON (article_id) article_id, security_score, security_reason, security_flagged
+		     FROM read_state
+		     WHERE security_score IS NOT NULL
+		     ORDER BY article_id, user_id
+		 ) v
+		 WHERE a.id = v.article_id AND a.security_screened_at IS NULL`,
+		// Articles a user marked ai_scored but with NULL security (the #123
+		// "screened but skipped" case): mark screened, leave the score NULL.
+		`UPDATE articles a
+		 SET security_screened_at = NOW()
+		 WHERE a.security_screened_at IS NULL
+		   AND EXISTS (SELECT 1 FROM read_state rs
+		         WHERE rs.article_id = a.id AND rs.ai_scored = TRUE)`,
 	}
 	for _, m := range pgMigrations {
 		if _, err := db.Exec(m); err != nil {
@@ -503,13 +536,13 @@ func (s *PostgresStore) GetScoreStats(userID int64) (*ScoreStatsResult, error) {
 		SELECT
 			f.id,
 			COALESCE(uf.user_title, f.title),
-			COUNT(*) FILTER (WHERE rs.ai_scored IS TRUE),
-			COUNT(*) FILTER (WHERE rs.security_score >= 7.0),
-			COUNT(*) FILTER (WHERE rs.security_score >= 4.0 AND rs.security_score < 7.0),
-			COUNT(*) FILTER (WHERE rs.security_score IS NOT NULL AND rs.security_score < 4.0),
-			COUNT(*) FILTER (WHERE rs.security_score >= 7.0 AND rs.interest_score >= 8.0),
-			COUNT(*) FILTER (WHERE rs.security_score >= 7.0 AND rs.interest_score >= 5.0 AND rs.interest_score < 8.0),
-			COUNT(*) FILTER (WHERE rs.security_score >= 7.0 AND rs.interest_score IS NOT NULL AND rs.interest_score < 5.0)
+			COUNT(*) FILTER (WHERE a.security_screened_at IS NOT NULL),
+			COUNT(*) FILTER (WHERE a.security_score >= 7.0),
+			COUNT(*) FILTER (WHERE a.security_score >= 4.0 AND a.security_score < 7.0),
+			COUNT(*) FILTER (WHERE a.security_score IS NOT NULL AND a.security_score < 4.0),
+			COUNT(*) FILTER (WHERE a.security_score >= 7.0 AND rs.interest_score >= 8.0),
+			COUNT(*) FILTER (WHERE a.security_score >= 7.0 AND rs.interest_score >= 5.0 AND rs.interest_score < 8.0),
+			COUNT(*) FILTER (WHERE a.security_score >= 7.0 AND rs.interest_score IS NOT NULL AND rs.interest_score < 5.0)
 		FROM feeds f
 		JOIN user_feeds uf ON uf.feed_id = f.id AND uf.user_id = ?
 		JOIN articles a ON a.feed_id = f.id
@@ -559,23 +592,30 @@ func (s *PostgresStore) IncrementAIRetries(userID, articleID int64) error {
 	return nil
 }
 
-// ResetScores clears AI scores so articles are reprocessed by the pipeline.
+// ResetScores clears the security verdict on the user's subscribed articles so
+// the pipeline re-screens (and re-curates) them. The verdict is article-level
+// now (#141): this resets the shared article rows for the user's feeds, plus the
+// user's own interest scores. If securityOnly, only articles below belowScore are
+// reset. Returns the number of article rows reset.
 func (s *PostgresStore) ResetScores(userID int64, securityOnly bool, belowScore float64) (int64, error) {
-	var result sql.Result
-	var err error
-	if securityOnly {
-		result, err = s.db.Exec(
-			`UPDATE read_state SET ai_scored = FALSE, ai_retries = 0, interest_score = NULL, security_score = NULL, security_reason = NULL
-			 WHERE user_id = ? AND security_score IS NOT NULL AND security_score < ?`,
-			userID, belowScore,
-		)
-	} else {
-		result, err = s.db.Exec(
-			`UPDATE read_state SET ai_scored = FALSE, ai_retries = 0, interest_score = NULL, security_score = NULL, security_reason = NULL
-			 WHERE user_id = ?`,
-			userID,
-		)
+	if !securityOnly {
+		if _, err := s.db.Exec(
+			`UPDATE read_state SET ai_scored = FALSE, ai_retries = 0, interest_score = NULL
+			 WHERE user_id = ?`, userID,
+		); err != nil {
+			return 0, fmt.Errorf("reset scores (read_state): %w", err)
+		}
 	}
+	query := `UPDATE articles
+		 SET security_score = NULL, security_reason = NULL, security_flagged = FALSE,
+		     security_screened_at = NULL, security_attempts = 0
+		 WHERE feed_id IN (SELECT feed_id FROM user_feeds WHERE user_id = ?)`
+	args := []any{userID}
+	if securityOnly {
+		query += ` AND security_score IS NOT NULL AND security_score < ?`
+		args = append(args, belowScore)
+	}
+	result, err := s.db.Exec(query, args...)
 	if err != nil {
 		return 0, fmt.Errorf("reset scores: %w", err)
 	}
@@ -843,7 +883,7 @@ func (s *PostgresStore) GetUnreadArticlesForUser(userID int64, limit, offset int
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date,
-		       COALESCE(rs.security_flagged, FALSE) AS security_flagged
+		       COALESCE(a.security_flagged, FALSE) AS security_flagged
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
@@ -872,7 +912,7 @@ func (s *PostgresStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, off
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date,
-		       COALESCE(rs.security_flagged, FALSE) AS security_flagged
+		       COALESCE(a.security_flagged, FALSE) AS security_flagged
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
@@ -896,24 +936,9 @@ func (s *PostgresStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, off
 	return scanArticlesWithFlags(rows)
 }
 
-func (s *PostgresStore) GetUnscoredArticlesForUser(userID int64, limit int) ([]Article, error) {
-	rows, err := s.db.Query(`
-		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date
-		FROM articles a
-		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
-		WHERE uf.user_id = ? AND (rs.article_id IS NULL OR rs.ai_scored = FALSE)
-		  AND COALESCE(rs.ai_retries, 0) < 3
-		ORDER BY a.published_date DESC
-		LIMIT ?`, userID, userID, limit)
-	if err != nil {
-		return nil, fmt.Errorf("get unscored articles for user: %w", err)
-	}
-	defer rows.Close()
-	return scanArticles(rows)
-}
-
+// GetUnscoredArticleCount counts the user's articles still in the AI funnel:
+// not yet security-screened (within budget) or screened-pass but not yet
+// interest-scored for this user. See the SQLite implementation (#141).
 func (s *PostgresStore) GetUnscoredArticleCount(userID int64) (int, error) {
 	var count int
 	err := s.db.QueryRow(`
@@ -921,8 +946,11 @@ func (s *PostgresStore) GetUnscoredArticleCount(userID int64) (int, error) {
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
-		WHERE uf.user_id = ? AND (rs.article_id IS NULL OR rs.ai_scored = FALSE)
-		  AND COALESCE(rs.ai_retries, 0) < 3`,
+		WHERE uf.user_id = ?
+		  AND (
+		    (a.security_screened_at IS NULL AND a.security_attempts < 3)
+		    OR (a.security_score >= 7.0 AND rs.interest_score IS NULL)
+		  )`,
 		userID, userID,
 	).Scan(&count)
 	if err != nil {
@@ -937,11 +965,9 @@ func (s *PostgresStore) GetUnsummarizedScoredArticles(userID int64, securityThre
 		       a.author, a.published_date, a.fetched_date
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
 		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id AND asumm.user_id = uf.user_id
 		WHERE uf.user_id = ?
-		  AND rs.ai_scored = TRUE
-		  AND rs.security_score >= ?
+		  AND a.security_score >= ?
 		  AND asumm.article_id IS NULL
 		ORDER BY a.published_date DESC
 		LIMIT ?`, userID, securityThreshold, limit)
@@ -969,23 +995,66 @@ func (s *PostgresStore) SetInterestScore(userID, articleID int64, interestScore 
 	return nil
 }
 
-// MarkSecurityScored records the security verdict and marks ai_scored without
-// writing an interest score. See the SQLite implementation.
-func (s *PostgresStore) MarkSecurityScored(userID, articleID int64, securityScore float64, securityReason string, securityFlagged bool) error {
+// ScreenArticleSecurity records the security verdict on the article itself
+// (#141). See the SQLite implementation.
+func (s *PostgresStore) ScreenArticleSecurity(articleID int64, securityScore float64, securityReason string, securityFlagged bool) error {
 	_, err := s.db.Exec(
-		`INSERT INTO read_state (user_id, article_id, read, security_score, security_reason, security_flagged, ai_scored)
-		 VALUES (?, ?, FALSE, ?, ?, ?, TRUE)
-		 ON CONFLICT(user_id, article_id) DO UPDATE SET
-		   security_score = excluded.security_score,
-		   security_reason = excluded.security_reason,
-		   security_flagged = excluded.security_flagged,
-		   ai_scored = TRUE`,
-		userID, articleID, securityScore, securityReason, securityFlagged,
+		`UPDATE articles
+		 SET security_score = ?, security_reason = ?, security_flagged = ?,
+		     security_screened_at = NOW()
+		 WHERE id = ?`,
+		securityScore, securityReason, securityFlagged, articleID,
 	)
 	if err != nil {
-		return fmt.Errorf("mark security scored: %w", err)
+		return fmt.Errorf("screen article security: %w", err)
 	}
 	return nil
+}
+
+// SkipArticleSecurity marks an article screened without a score (no content /
+// too short). See the SQLite implementation.
+func (s *PostgresStore) SkipArticleSecurity(articleID int64, reason string) error {
+	_, err := s.db.Exec(
+		`UPDATE articles
+		 SET security_reason = ?, security_screened_at = NOW()
+		 WHERE id = ?`,
+		reason, articleID,
+	)
+	if err != nil {
+		return fmt.Errorf("skip article security: %w", err)
+	}
+	return nil
+}
+
+// IncrementArticleSecurityAttempts bumps the per-article security retry counter.
+// See the SQLite implementation.
+func (s *PostgresStore) IncrementArticleSecurityAttempts(articleID int64) error {
+	_, err := s.db.Exec(
+		`UPDATE articles SET security_attempts = security_attempts + 1 WHERE id = ?`,
+		articleID,
+	)
+	if err != nil {
+		return fmt.Errorf("increment article security attempts: %w", err)
+	}
+	return nil
+}
+
+// GetUnscreenedArticles returns articles not yet security-screened, within the
+// retry budget, newest first. Global (not user-scoped). See the SQLite version.
+func (s *PostgresStore) GetUnscreenedArticles(limit int) ([]Article, error) {
+	rows, err := s.db.Query(`
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date
+		FROM articles a
+		WHERE a.security_screened_at IS NULL
+		  AND a.security_attempts < 3
+		ORDER BY a.published_date DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get unscreened articles: %w", err)
+	}
+	defer rows.Close()
+	return scanArticles(rows)
 }
 
 // GetUnscoredCurationArticles returns articles that passed the security screen
@@ -997,10 +1066,9 @@ func (s *PostgresStore) GetUnscoredCurationArticles(userID int64, securityThresh
 		       a.author, a.published_date, a.fetched_date
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
+		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
 		WHERE uf.user_id = ?
-		  AND rs.ai_scored = TRUE
-		  AND rs.security_score >= ?
+		  AND a.security_score >= ?
 		  AND rs.interest_score IS NULL
 		ORDER BY a.published_date DESC
 		LIMIT ?`, userID, securityThreshold, limit)
@@ -1020,12 +1088,10 @@ func (s *PostgresStore) GetUngroupedEmbeddedArticles(userID int64, model string,
 		       a.author, a.published_date, a.fetched_date
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = uf.user_id
 		JOIN article_embeddings ae ON ae.article_id = a.id
 		    AND ae.embedding_model = ? AND ae.status = ?
 		WHERE uf.user_id = ?
-		  AND rs.ai_scored = TRUE
-		  AND rs.security_score >= ?
+		  AND a.security_score >= ?
 		  AND COALESCE(a.published_date, a.fetched_date) >= ?
 		  AND NOT EXISTS (
 		      SELECT 1 FROM article_group_members agm
@@ -1434,12 +1500,12 @@ func (s *PostgresStore) GetProcessingStats(userID int64) (*ProcessingStats, erro
 	err := s.db.QueryRow(`
 		SELECT
 			COUNT(*),
-			COALESCE(SUM(CASE WHEN rs.ai_scored = TRUE THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN (rs.article_id IS NULL OR rs.ai_scored = FALSE) AND COALESCE(rs.ai_retries, 0) < 3 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN (rs.article_id IS NULL OR rs.ai_scored = FALSE) AND COALESCE(rs.ai_retries, 0) >= 3 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN rs.security_score >= 7 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN rs.security_score IS NOT NULL AND rs.security_score < 7 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN rs.ai_scored = TRUE AND rs.security_score IS NULL THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN a.security_screened_at IS NOT NULL THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN a.security_screened_at IS NULL AND a.security_attempts < 3 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN a.security_screened_at IS NULL AND a.security_attempts >= 3 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN a.security_score >= 7 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN a.security_score IS NOT NULL AND a.security_score < 7 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN a.security_screened_at IS NOT NULL AND a.security_score IS NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN rs.interest_score IS NOT NULL THEN 1 ELSE 0 END), 0)
 		FROM articles a
 		JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = ?
@@ -1632,23 +1698,22 @@ func (s *PostgresStore) GetArticleInterestScores(userID int64, articleIDs []int6
 	return scores, rows.Err()
 }
 
-// GetSecurityScores returns the persisted security_score for each of the given
-// articles (user-scoped), skipping any with a NULL score. The curate stage uses
-// it to report the verdict the security stage wrote, since that score is not
-// carried on the in-memory Article (#119).
-func (s *PostgresStore) GetSecurityScores(userID int64, articleIDs []int64) (map[int64]float64, error) {
+// GetArticleSecurityScores returns the persisted security_score for each of the
+// given articles, skipping any with a NULL score. Not user-scoped — the verdict
+// lives on the article (#141). The curate stage uses it to report the verdict
+// alongside the interest score (#119).
+func (s *PostgresStore) GetArticleSecurityScores(articleIDs []int64) (map[int64]float64, error) {
 	if len(articleIDs) == 0 {
 		return map[int64]float64{}, nil
 	}
 	placeholders := make([]string, len(articleIDs))
-	args := make([]any, 0, len(articleIDs)+1)
-	args = append(args, userID)
+	args := make([]any, 0, len(articleIDs))
 	for i, id := range articleIDs {
 		placeholders[i] = "?"
 		args = append(args, id)
 	}
-	query := `SELECT article_id, security_score FROM read_state
-		WHERE user_id = ? AND article_id IN (` + strings.Join(placeholders, ",") + `)
+	query := `SELECT id, security_score FROM articles
+		WHERE id IN (` + strings.Join(placeholders, ",") + `)
 		AND security_score IS NOT NULL`
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -3021,7 +3086,7 @@ func (s *PostgresStore) GetNewsletterArticles(userID int64, config *NewsletterCo
 		args = append(args, config.MinInterestScore)
 	}
 	if config.MinSecurityScore > 0 {
-		query += ` AND rs.security_score >= ?`
+		query += ` AND a.security_score >= ?`
 		args = append(args, config.MinSecurityScore)
 	}
 	if len(config.IncludeFeeds) > 0 {

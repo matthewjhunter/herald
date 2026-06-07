@@ -140,7 +140,7 @@ func getUnreadArticlesForSummary(db *tracedDB, userID int64, minSecurity, minInt
 		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
 		WHERE uf.user_id = ?
 		  AND rs.read = ?
-		  AND rs.security_score >= ?
+		  AND a.security_score >= ?
 		  AND rs.interest_score >= ?
 		ORDER BY COALESCE(a.published_date, a.fetched_date) DESC
 		LIMIT ?`, userID, false, minSecurity, minInterest, limit)
