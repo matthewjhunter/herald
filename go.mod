@@ -7,6 +7,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/infodancer/oidclient v0.1.0
+	github.com/infodancer/smoke v0.1.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/matthewjhunter/go-embedding v0.4.6
 	github.com/microcosm-cc/bluemonday v1.0.27
@@ -57,3 +58,5 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+tool github.com/infodancer/smoke/cmd/smolder
