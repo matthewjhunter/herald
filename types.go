@@ -68,6 +68,9 @@ type Feed struct {
 	LastError   *string    `json:"last_error,omitempty"`
 	Enabled     bool       `json:"enabled"`
 	CreatedAt   time.Time  `json:"created_at"`
+	// ConsecutiveErrors is the number of failed fetches since the last success;
+	// reset to 0 on a successful fetch. >0 means the feed is currently failing.
+	ConsecutiveErrors int `json:"consecutive_errors,omitempty"`
 }
 
 // SearchResult holds a single search hit with match metadata.

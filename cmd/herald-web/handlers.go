@@ -249,6 +249,7 @@ type feedRow struct {
 	UnreadArticles       int
 	UnsummarizedArticles int
 	LastError            string
+	ConsecutiveErrors    int
 	LastFetchedFmt       string
 	LastPostDateFmt      string
 }
@@ -535,6 +536,7 @@ func (h *handlers) handleFeedsManage(w http.ResponseWriter, r *http.Request) {
 		if f.LastError != nil {
 			row.LastError = *f.LastError
 		}
+		row.ConsecutiveErrors = f.ConsecutiveErrors
 		if f.LastFetched != nil {
 			row.LastFetchedFmt = formatDate(f.LastFetched)
 		}

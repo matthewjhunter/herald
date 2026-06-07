@@ -528,6 +528,13 @@ func TestHandleFeedsManage(t *testing.T) {
 	if !strings.Contains(body, "example.com/feed") {
 		t.Error("feeds page should contain feed URL")
 	}
+	// The column reflects what it actually measures (no summary), not "Unscored".
+	if !strings.Contains(body, "Unsummarized") {
+		t.Error("feeds page should label the column Unsummarized")
+	}
+	if strings.Contains(body, ">Unscored<") {
+		t.Error("feeds page should no longer use the misleading Unscored header")
+	}
 }
 
 func TestHandleSettings(t *testing.T) {

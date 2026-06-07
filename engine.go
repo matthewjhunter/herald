@@ -1804,15 +1804,16 @@ func (e *Engine) GetArticleImage(imageID int64) (*storage.ArticleImage, error) {
 
 func feedFromInternal(f storage.Feed) Feed {
 	return Feed{
-		ID:          f.ID,
-		URL:         f.URL,
-		Title:       f.Title,
-		Description: f.Description,
-		SiteURL:     f.SiteURL,
-		LastFetched: f.LastFetched,
-		LastError:   f.LastError,
-		Enabled:     f.Enabled,
-		CreatedAt:   f.CreatedAt,
+		ID:                f.ID,
+		URL:               f.URL,
+		Title:             f.Title,
+		Description:       f.Description,
+		SiteURL:           f.SiteURL,
+		LastFetched:       f.LastFetched,
+		LastError:         f.LastError,
+		Enabled:           f.Enabled,
+		CreatedAt:         f.CreatedAt,
+		ConsecutiveErrors: f.ConsecutiveErrors,
 	}
 }
 
