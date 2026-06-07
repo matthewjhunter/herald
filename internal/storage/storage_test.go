@@ -2846,3 +2846,43 @@ func TestGetProcessingStats(t *testing.T) {
 		}
 	}
 }
+
+func TestCycleStats(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	base := time.Now()
+	for i := range 3 {
+		if err := store.RecordCycleStats(CycleStats{
+			CompletedAt:        base.Add(time.Duration(i) * time.Minute),
+			DurationMs:         int64(1000 * (i + 1)),
+			FeedsTotal:         10,
+			FeedsDownloaded:    5,
+			NewArticles:        i,
+			Processed:          i * 2,
+			HighInterest:       i,
+			FeedsErrored:       i,
+			AIBackendAvailable: i%2 == 0,
+		}); err != nil {
+			t.Fatalf("record %d: %v", i, err)
+		}
+	}
+
+	recent, err := store.GetRecentCycleStats(10)
+	if err != nil {
+		t.Fatalf("get recent: %v", err)
+	}
+	if len(recent) != 3 {
+		t.Fatalf("got %d cycles, want 3", len(recent))
+	}
+	// Newest first (completed_at DESC): the i=2 row.
+	if recent[0].Processed != 4 || recent[0].DurationMs != 3000 || !recent[0].AIBackendAvailable {
+		t.Errorf("newest cycle mismatch: %+v", recent[0])
+	}
+	if recent[2].NewArticles != 0 {
+		t.Errorf("oldest cycle NewArticles = %d, want 0", recent[2].NewArticles)
+	}
+	if one, _ := store.GetRecentCycleStats(1); len(one) != 1 {
+		t.Fatalf("limit=1 returned %d rows", len(one))
+	}
+}

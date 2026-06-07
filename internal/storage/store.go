@@ -40,6 +40,23 @@ type ProcessingStats struct {
 	FeedsErroring    int // feeds whose latest fetch failed (consecutive_errors > 0)
 }
 
+// CycleStats is one completed run of the fetch+process daemon cycle. Persisted so
+// the web UI can show throughput and backend health without access to the
+// daemon's in-memory state. (storage-internal type)
+type CycleStats struct {
+	ID                 int64
+	CompletedAt        time.Time
+	DurationMs         int64
+	FeedsTotal         int
+	FeedsDownloaded    int
+	FeedsNotModified   int
+	FeedsErrored       int
+	NewArticles        int
+	Processed          int
+	HighInterest       int
+	AIBackendAvailable bool
+}
+
 // Store defines the storage interface for herald's data layer.
 type Store interface {
 	Close() error
@@ -75,6 +92,8 @@ type Store interface {
 	ResetScores(userID int64, securityOnly bool, belowScore float64) (int64, error)
 	GetScoreStats(userID int64) (*ScoreStatsResult, error)
 	GetProcessingStats(userID int64) (*ProcessingStats, error)
+	RecordCycleStats(stats CycleStats) error
+	GetRecentCycleStats(limit int) ([]CycleStats, error)
 
 	// Feeds
 	AddFeed(url, title, description string) (int64, error)

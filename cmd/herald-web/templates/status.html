@@ -2,6 +2,7 @@
 {{define "nav"}}{{template "shared-nav" "status"}}{{end}}
 
 {{define "content"}}
+{{- $p := .Processing -}}
 <main class="container" style="max-width:900px;">
   <h2>Processing Status</h2>
   <p class="secondary">
@@ -12,31 +13,49 @@
   {{/* Headline cards: the numbers that need action */}}
   <div style="display:flex;gap:1rem;flex-wrap:wrap;margin:1.5rem 0;">
     <article style="flex:1;min-width:160px;text-align:center;">
-      <div style="font-size:2rem;font-weight:bold;">{{.Pending}}</div>
+      <div style="font-size:2rem;font-weight:bold;">{{$p.Pending}}</div>
       <div class="secondary">Pending backlog</div>
     </article>
-    <article style="flex:1;min-width:160px;text-align:center;{{if gt .Stuck 0}}border-color:#f44336;{{end}}">
-      <div style="font-size:2rem;font-weight:bold;{{if gt .Stuck 0}}color:#f44336;{{end}}">{{.Stuck}}</div>
+    <article style="flex:1;min-width:160px;text-align:center;{{if gt $p.Stuck 0}}border-color:#f44336;{{end}}">
+      <div style="font-size:2rem;font-weight:bold;{{if gt $p.Stuck 0}}color:#f44336;{{end}}">{{$p.Stuck}}</div>
       <div class="secondary">Stuck (out of retries)</div>
     </article>
-    <article style="flex:1;min-width:160px;text-align:center;{{if gt .FeedsErroring 0}}border-color:#ff9800;{{end}}">
-      <div style="font-size:2rem;font-weight:bold;{{if gt .FeedsErroring 0}}color:#ff9800;{{end}}">{{.FeedsErroring}}<span class="secondary" style="font-size:1rem;">&nbsp;/&nbsp;{{.FeedsTotal}}</span></div>
+    <article style="flex:1;min-width:160px;text-align:center;{{if gt $p.FeedsErroring 0}}border-color:#ff9800;{{end}}">
+      <div style="font-size:2rem;font-weight:bold;{{if gt $p.FeedsErroring 0}}color:#ff9800;{{end}}">{{$p.FeedsErroring}}<span class="secondary" style="font-size:1rem;">&nbsp;/&nbsp;{{$p.FeedsTotal}}</span></div>
       <div class="secondary">Feeds erroring</div>
     </article>
   </div>
+
+  {{/* Last cycle: throughput + backend health from the daemon */}}
+  {{if .HasCycles}}
+  {{- $c := .LastCycle -}}
+  <h3>Last cycle <span class="secondary" style="font-weight:normal;font-size:0.8em;">{{$c.When}}, took {{$c.Duration}}</span></h3>
+  <div style="display:flex;gap:1.5rem;flex-wrap:wrap;align-items:center;margin-bottom:0.5rem;">
+    <div>AI backend:
+      {{if $c.BackendUp}}<strong style="color:#4caf50;">up</strong>
+      {{else}}<strong style="color:#f44336;">down</strong>{{end}}
+    </div>
+    <div class="secondary">new: <strong>{{$c.NewArticles}}</strong></div>
+    <div class="secondary">processed: <strong>{{$c.Processed}}</strong></div>
+    <div class="secondary">high-interest: <strong>{{$c.HighInterest}}</strong></div>
+  </div>
+  {{else}}
+  <h3>Last cycle</h3>
+  <p class="secondary">No daemon cycles recorded yet.</p>
+  {{end}}
 
   {{/* Pipeline funnel: fetched -> security -> summarize -> curate */}}
   <h3>Pipeline</h3>
   <figure>
     <table role="grid">
       <tbody>
-        <tr><th>Total articles</th><td><strong>{{.TotalArticles}}</strong></td><td class="secondary"></td></tr>
-        <tr><th>Scored</th><td>{{.Scored}}</td><td class="secondary">security verdict recorded</td></tr>
-        <tr><td style="padding-left:2rem;">Security passed</td><td>{{.SecurityPassed}}</td><td class="secondary">&ge; 7.0 -- eligible for summary + interest</td></tr>
-        <tr><td style="padding-left:2rem;">Security rejected</td><td>{{.SecurityRejected}}</td><td class="secondary">below threshold</td></tr>
-        <tr><td style="padding-left:2rem;">Skipped</td><td>{{.SecuritySkipped}}</td><td class="secondary">no content / too short</td></tr>
-        <tr><th>Summarized</th><td>{{.Summarized}}</td><td class="secondary">{{.SummarizeSkipped}} skipped (can't be shortened)</td></tr>
-        <tr><th>Curated</th><td>{{.Curated}}</td><td class="secondary">interest scored</td></tr>
+        <tr><th>Total articles</th><td><strong>{{$p.TotalArticles}}</strong></td><td class="secondary"></td></tr>
+        <tr><th>Scored</th><td>{{$p.Scored}}</td><td class="secondary">security verdict recorded</td></tr>
+        <tr><td style="padding-left:2rem;">Security passed</td><td>{{$p.SecurityPassed}}</td><td class="secondary">&ge; 7.0 -- eligible for summary + interest</td></tr>
+        <tr><td style="padding-left:2rem;">Security rejected</td><td>{{$p.SecurityRejected}}</td><td class="secondary">below threshold</td></tr>
+        <tr><td style="padding-left:2rem;">Skipped</td><td>{{$p.SecuritySkipped}}</td><td class="secondary">no content / too short</td></tr>
+        <tr><th>Summarized</th><td>{{$p.Summarized}}</td><td class="secondary">{{$p.SummarizeSkipped}} skipped (can't be shortened)</td></tr>
+        <tr><th>Curated</th><td>{{$p.Curated}}</td><td class="secondary">interest scored</td></tr>
       </tbody>
     </table>
   </figure>
@@ -44,5 +63,30 @@
     "Pending" is the real backlog the daemon will pick up next cycle.
     "Stuck" articles have hit the retry limit and won't be retried without intervention.
   </p>
+
+  {{/* Recent cycle history */}}
+  {{if .HasCycles}}
+  <h3>Recent cycles</h3>
+  <figure>
+    <table role="grid">
+      <thead>
+        <tr><th>When</th><th>Duration</th><th>New</th><th>Processed</th><th>High-interest</th><th>Feeds errored</th><th>Backend</th></tr>
+      </thead>
+      <tbody>
+        {{range .Recent}}
+        <tr>
+          <td>{{.When}}</td>
+          <td>{{.Duration}}</td>
+          <td>{{.NewArticles}}</td>
+          <td>{{.Processed}}</td>
+          <td>{{.HighInterest}}</td>
+          <td{{if gt .FeedsErrored 0}} style="color:#ff9800;"{{end}}>{{.FeedsErrored}}</td>
+          <td>{{if .BackendUp}}up{{else}}<span style="color:#f44336;">down</span>{{end}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </figure>
+  {{end}}
 </main>
 {{end}}

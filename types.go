@@ -262,6 +262,22 @@ type ProcessingStats struct {
 	FeedsErroring    int
 }
 
+// CycleStats is one completed run of the fetch+process daemon cycle, persisted so
+// the web UI can report throughput and backend health.
+type CycleStats struct {
+	ID                 int64
+	CompletedAt        time.Time
+	DurationMs         int64
+	FeedsTotal         int
+	FeedsDownloaded    int
+	FeedsNotModified   int
+	FeedsErrored       int
+	NewArticles        int
+	Processed          int
+	HighInterest       int
+	AIBackendAvailable bool
+}
+
 // UserPreferences holds all user-configurable preference values.
 type UserPreferences struct {
 	Keywords          []string `json:"keywords"`

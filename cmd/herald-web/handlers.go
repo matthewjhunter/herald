@@ -1525,10 +1525,38 @@ func (h *handlers) handleStats(w http.ResponseWriter, r *http.Request) {
 	h.renderPage(w, r, "stats.html", data)
 }
 
+// cycleView is a daemon cycle formatted for display.
+type cycleView struct {
+	When         string // relative, e.g. "25m ago"
+	Duration     string // e.g. "8.5s"
+	NewArticles  int
+	Processed    int
+	HighInterest int
+	FeedsErrored int
+	BackendUp    bool
+}
+
+// statusPageData is the template data for the processing-status page.
+type statusPageData struct {
+	Processing *herald.ProcessingStats
+	HasCycles  bool
+	LastCycle  cycleView
+	Recent     []cycleView
+}
+
+// fmtDurationMs renders a millisecond duration compactly (e.g. "8.5s", "1m3s").
+func fmtDurationMs(ms int64) string {
+	d := time.Duration(ms) * time.Millisecond
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return d.Round(time.Second).String()
+}
+
 // handleProcessingStatus renders the overall AI-pipeline processing status:
 // an aggregate funnel (fetched -> scored -> passed -> summarized -> curated)
-// plus the real backlog and feed-fetch health. Distinct from /stats, which
-// shows score *outcomes* per feed.
+// plus the real backlog, feed-fetch health, and recent daemon-cycle throughput.
+// Distinct from /stats, which shows score *outcomes* per feed.
 func (h *handlers) handleProcessingStatus(w http.ResponseWriter, r *http.Request) {
 	h.init()
 	uid := userFromContext(r.Context()).ID
@@ -1538,7 +1566,28 @@ func (h *handlers) handleProcessingStatus(w http.ResponseWriter, r *http.Request
 		h.renderError(w, http.StatusInternalServerError, "Failed to load processing status")
 		return
 	}
-	h.renderPage(w, r, "status.html", ps)
+
+	// Recent cycles are global (the daemon processes all users per cycle), so they
+	// aren't user-scoped. Failure to load them is non-fatal -- the funnel still renders.
+	recent, _ := h.engine.GetRecentCycleStats(10)
+	data := statusPageData{Processing: ps}
+	for _, c := range recent {
+		t := c.CompletedAt
+		data.Recent = append(data.Recent, cycleView{
+			When:         formatDate(&t),
+			Duration:     fmtDurationMs(c.DurationMs),
+			NewArticles:  c.NewArticles,
+			Processed:    c.Processed,
+			HighInterest: c.HighInterest,
+			FeedsErrored: c.FeedsErrored,
+			BackendUp:    c.AIBackendAvailable,
+		})
+	}
+	if len(data.Recent) > 0 {
+		data.HasCycles = true
+		data.LastCycle = data.Recent[0]
+	}
+	h.renderPage(w, r, "status.html", data)
 }
 
 // adminStatsData is the template data for the admin stats page.

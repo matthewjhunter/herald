@@ -1426,6 +1426,55 @@ func (s *SQLiteStore) GetProcessingStats(userID int64) (*ProcessingStats, error)
 	return &p, nil
 }
 
+// RecordCycleStats persists one completed daemon cycle, then prunes to a bounded
+// history so the table can't grow without limit on a long-running daemon.
+func (s *SQLiteStore) RecordCycleStats(cs CycleStats) error {
+	if _, err := s.db.Exec(
+		`INSERT INTO cycle_stats
+		   (completed_at, duration_ms, feeds_total, feeds_downloaded, feeds_not_modified,
+		    feeds_errored, new_articles, processed, high_interest, ai_backend_available)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		cs.CompletedAt, cs.DurationMs, cs.FeedsTotal, cs.FeedsDownloaded, cs.FeedsNotModified,
+		cs.FeedsErrored, cs.NewArticles, cs.Processed, cs.HighInterest, cs.AIBackendAvailable,
+	); err != nil {
+		return fmt.Errorf("record cycle stats: %w", err)
+	}
+	// Keep the most recent 500 cycles (~10 days at a 30m cadence).
+	if _, err := s.db.Exec(
+		`DELETE FROM cycle_stats WHERE id NOT IN (
+		   SELECT id FROM cycle_stats ORDER BY completed_at DESC LIMIT 500)`,
+	); err != nil {
+		return fmt.Errorf("prune cycle stats: %w", err)
+	}
+	return nil
+}
+
+// GetRecentCycleStats returns the most recent completed cycles, newest first.
+func (s *SQLiteStore) GetRecentCycleStats(limit int) ([]CycleStats, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.db.Query(
+		`SELECT id, completed_at, duration_ms, feeds_total, feeds_downloaded, feeds_not_modified,
+		        feeds_errored, new_articles, processed, high_interest, ai_backend_available
+		 FROM cycle_stats ORDER BY completed_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get recent cycle stats: %w", err)
+	}
+	defer rows.Close()
+	var out []CycleStats
+	for rows.Next() {
+		var c CycleStats
+		if err := rows.Scan(&c.ID, &c.CompletedAt, &c.DurationMs, &c.FeedsTotal, &c.FeedsDownloaded,
+			&c.FeedsNotModified, &c.FeedsErrored, &c.NewArticles, &c.Processed, &c.HighInterest,
+			&c.AIBackendAvailable); err != nil {
+			return nil, fmt.Errorf("scan cycle stats: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // CreateArticleGroup creates a new article group
 func (s *SQLiteStore) CreateArticleGroup(userID int64, topic string) (int64, error) {
 	result, err := s.db.Exec(

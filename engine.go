@@ -1319,6 +1319,32 @@ func (e *Engine) GetProcessingStats(userID int64) (*ProcessingStats, error) {
 	}, nil
 }
 
+// GetRecentCycleStats returns the most recent completed daemon cycles, newest
+// first, for the processing-status view.
+func (e *Engine) GetRecentCycleStats(limit int) ([]CycleStats, error) {
+	rows, err := e.store.GetRecentCycleStats(limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CycleStats, len(rows))
+	for i, c := range rows {
+		out[i] = CycleStats{
+			ID:                 c.ID,
+			CompletedAt:        c.CompletedAt,
+			DurationMs:         c.DurationMs,
+			FeedsTotal:         c.FeedsTotal,
+			FeedsDownloaded:    c.FeedsDownloaded,
+			FeedsNotModified:   c.FeedsNotModified,
+			FeedsErrored:       c.FeedsErrored,
+			NewArticles:        c.NewArticles,
+			Processed:          c.Processed,
+			HighInterest:       c.HighInterest,
+			AIBackendAvailable: c.AIBackendAvailable,
+		}
+	}
+	return out, nil
+}
+
 // PendingCounts returns the number of articles awaiting AI processing.
 func (e *Engine) PendingCounts(userID int64) (unsummarized, unscored int, err error) {
 	unsummarized, err = e.store.GetUnsummarizedArticleCount(userID)
