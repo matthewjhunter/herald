@@ -46,6 +46,8 @@ github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/infodancer/oidclient v0.1.0 h1:RmmVwzf2G38yBnW4TUECn7dXB4lRdSJlQxif48ruWsY=
 github.com/infodancer/oidclient v0.1.0/go.mod h1:6vGWxWv4vVx0xQ0M0pyHuHjh+8Rbp3HKjcLXLC7/280=
+github.com/infodancer/smoke v0.1.0 h1:meBKkJHVtkFwV0NZ2YzOHTn9Fc+JG4flkRfrNd/30yU=
+github.com/infodancer/smoke v0.1.0/go.mod h1:zh5UdP94gj1koedPhrzaaXJbysCyv1x7NiJpWQiSloc=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
 github.com/jackc/pgpassfile v1.0.0/go.mod h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=
 github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=

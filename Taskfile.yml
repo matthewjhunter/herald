@@ -69,6 +69,16 @@ tasks:
     cmds:
       - govulncheck ./...
 
+  smoke:gen:
+    desc: Regenerate the committed smoke route manifest from herald-web's routes.
+    cmds:
+      - UPDATE_SMOKE_MANIFEST=1 go test ./cmd/herald-web/ -run TestSmokeManifestUpToDate
+
+  smoke:gate:
+    desc: List routes lacking smoke coverage (warn; pass MODE=fail to hard-gate).
+    cmds:
+      - go tool smolder gate --manifest cmd/herald-web/smoke-manifest.json --mode {{.MODE | default "warn"}}
+
   check:
     desc: Run all CI checks (test, vet, fmt, lint, vulncheck)
     cmds:

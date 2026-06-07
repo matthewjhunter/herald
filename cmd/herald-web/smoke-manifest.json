@@ -1,0 +1,416 @@
+{
+  "routes": [
+    {
+      "method": "GET",
+      "pattern": "/admin/digest",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/admin/digest",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/admin/feeds/export.opml",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/admin/prompts",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "DELETE",
+      "pattern": "/admin/prompts/{promptType}",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/admin/prompts/{promptType}",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/admin/stats",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/api/ollama/models",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/articles",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/articles/mark-all-read",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/articles/{articleID}",
+      "effect": "read_only",
+      "complete": false
+    },
+    {
+      "method": "POST",
+      "pattern": "/articles/{articleID}/star",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/auth/callback",
+      "effect": "read_only",
+      "skip": "OIDC callback; requires a code \u0026 state, not a bare GET",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/auth/logout",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/feeds",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/feeds",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/feeds/discover",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/feeds/export.opml",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/feeds/import",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/feeds/metadata",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "DELETE",
+      "pattern": "/feeds/{feedID}",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "PATCH",
+      "pattern": "/feeds/{feedID}",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/feeds/{feedID}/edit-title",
+      "effect": "read_only",
+      "complete": false
+    },
+    {
+      "method": "GET",
+      "pattern": "/feeds/{feedID}/favicon",
+      "effect": "read_only",
+      "complete": false
+    },
+    {
+      "method": "GET",
+      "pattern": "/feeds/{feedID}/metadata",
+      "effect": "read_only",
+      "complete": false
+    },
+    {
+      "method": "DELETE",
+      "pattern": "/feeds/{feedID}/tags",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/feeds/{feedID}/tags",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/feeds/{feedID}/title",
+      "effect": "read_only",
+      "complete": false
+    },
+    {
+      "method": "GET",
+      "pattern": "/fever/",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/fever/",
+      "effect": "mutating",
+      "skip": "Fever API sync endpoint; own api_key auth, POST",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/filters",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/filters",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/filters/threshold",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/filters/values",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "DELETE",
+      "pattern": "/filters/{ruleID}",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "DELETE",
+      "pattern": "/groups/{groupID}",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/groups/{groupID}/mark-read",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/groups/{groupID}/mute",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/images/{imageID}",
+      "effect": "read_only",
+      "complete": false
+    },
+    {
+      "method": "GET",
+      "pattern": "/newsletters",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/newsletters",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "DELETE",
+      "pattern": "/newsletters/{newsletterID}",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "PATCH",
+      "pattern": "/newsletters/{newsletterID}",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/newsletters/{newsletterID}/generate",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/opml/{userID}/{token}",
+      "effect": "read_only",
+      "skip": "token-authenticated OPML sync; requires a valid per-user token",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/search",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/settings",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/settings",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "DELETE",
+      "pattern": "/settings/fever",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/settings/fever",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/settings/opml-token",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/settings/prompts",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "DELETE",
+      "pattern": "/settings/prompts/{promptType}",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/settings/prompts/{promptType}",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/settings/sync",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/sidebar",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/static/",
+      "effect": "read_only",
+      "skip": "static file server subtree",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/stats",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/summary",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/summary/generate",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/summary/{id}",
+      "effect": "read_only",
+      "complete": false
+    },
+    {
+      "method": "POST",
+      "pattern": "/summary/{id}/mark-read",
+      "effect": "mutating",
+      "skip": "write — smoke phase 2 (auth + payloads)",
+      "complete": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/{$}",
+      "effect": "read_only",
+      "complete": true
+    }
+  ]
+}
