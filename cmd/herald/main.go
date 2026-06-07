@@ -344,6 +344,7 @@ func processCmd() *cobra.Command {
 // and the `daemon` command call this. It uses the package-level cfg and
 // outputFormat variables.
 func doFetch(ctx context.Context) error {
+	cycleStart := time.Now()
 	formatter := output.NewFormatter(output.Format(outputFormat))
 
 	store, err := storage.NewStore(cfg.Database.Path)
@@ -351,6 +352,34 @@ func doFetch(ctx context.Context) error {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
 	defer store.Close()
+
+	// Persist a per-cycle summary on the way out so the web UI can show
+	// throughput and backend health without access to the daemon's memory. The
+	// closure reads fetchResult/aiBackendUp, populated as the cycle runs, and
+	// records whatever progress was made even on an early return. Registered
+	// after store.Close()'s defer, so it runs first (LIFO) while the store is
+	// still open.
+	var fetchResult *output.FetchResult
+	aiBackendUp := false
+	defer func() {
+		if fetchResult == nil {
+			return
+		}
+		if err := store.RecordCycleStats(storage.CycleStats{
+			CompletedAt:        time.Now(),
+			DurationMs:         time.Since(cycleStart).Milliseconds(),
+			FeedsTotal:         fetchResult.FeedsTotal,
+			FeedsDownloaded:    fetchResult.FeedsDownloaded,
+			FeedsNotModified:   fetchResult.FeedsNotModified,
+			FeedsErrored:       fetchResult.FeedsErrored,
+			NewArticles:        fetchResult.NewArticles,
+			Processed:          fetchResult.ProcessedCount,
+			HighInterest:       fetchResult.HighInterest,
+			AIBackendAvailable: aiBackendUp,
+		}); err != nil {
+			formatter.Warning("failed to record cycle stats: %v", err)
+		}
+	}()
 
 	// Get all feeds due to fetch this cycle. Adaptive scheduling stages
 	// next_fetch_at across feeds, so it's normal for an individual cycle to
@@ -363,7 +392,7 @@ func doFetch(ctx context.Context) error {
 
 	// Fetch each feed once (efficient)
 	fetcher := feeds.NewFetcher(store)
-	fetchResult := &output.FetchResult{FeedsTotal: len(subscribedFeeds)}
+	fetchResult = &output.FetchResult{FeedsTotal: len(subscribedFeeds)}
 	for _, feed := range subscribedFeeds {
 		feedCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		result, err := fetcher.FetchFeed(feedCtx, feed)
@@ -433,6 +462,7 @@ func doFetch(ctx context.Context) error {
 		formatter.Warning("skipping AI processing (Ollama may not be running)")
 		return formatter.OutputFetchResult(fetchResult)
 	}
+	aiBackendUp = processor.BackendAvailable()
 
 	// Get all users who have subscriptions
 	allUserIDs, err := store.GetAllSubscribingUsers()

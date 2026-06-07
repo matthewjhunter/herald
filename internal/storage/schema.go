@@ -279,4 +279,19 @@ CREATE TABLE IF NOT EXISTS ai_summaries (
     FOREIGN KEY (newsletter_id) REFERENCES newsletters(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_ai_summaries_user ON ai_summaries(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS cycle_stats (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    completed_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    duration_ms          INTEGER NOT NULL DEFAULT 0,
+    feeds_total          INTEGER NOT NULL DEFAULT 0,
+    feeds_downloaded     INTEGER NOT NULL DEFAULT 0,
+    feeds_not_modified   INTEGER NOT NULL DEFAULT 0,
+    feeds_errored        INTEGER NOT NULL DEFAULT 0,
+    new_articles         INTEGER NOT NULL DEFAULT 0,
+    processed            INTEGER NOT NULL DEFAULT 0,
+    high_interest        INTEGER NOT NULL DEFAULT 0,
+    ai_backend_available BOOLEAN NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_cycle_stats_completed ON cycle_stats(completed_at DESC);
 `

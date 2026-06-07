@@ -68,6 +68,9 @@ type Feed struct {
 	LastError   *string    `json:"last_error,omitempty"`
 	Enabled     bool       `json:"enabled"`
 	CreatedAt   time.Time  `json:"created_at"`
+	// ConsecutiveErrors is the number of failed fetches since the last success;
+	// reset to 0 on a successful fetch. >0 means the feed is currently failing.
+	ConsecutiveErrors int `json:"consecutive_errors,omitempty"`
 }
 
 // SearchResult holds a single search hit with match metadata.
@@ -242,6 +245,40 @@ func (f FeedScoreStats) IntLowPct() float64 {
 type ScoreStatsResult struct {
 	Feeds []FeedScoreStats
 	Total FeedScoreStats
+}
+
+// ProcessingStats is an aggregate snapshot of where a user's articles sit in the
+// AI pipeline (fetch -> security -> summarize -> curate). It reports pipeline
+// state (done vs pending), not score outcomes, and is not broken down by feed.
+type ProcessingStats struct {
+	TotalArticles    int
+	Scored           int
+	Pending          int // real backlog: unscored, within the retry budget
+	Stuck            int // unscored but out of retries -- needs attention
+	SecurityPassed   int
+	SecurityRejected int
+	SecuritySkipped  int // scored but no security verdict (no content / too short)
+	Summarized       int
+	SummarizeSkipped int
+	Curated          int
+	FeedsTotal       int
+	FeedsErroring    int
+}
+
+// CycleStats is one completed run of the fetch+process daemon cycle, persisted so
+// the web UI can report throughput and backend health.
+type CycleStats struct {
+	ID                 int64
+	CompletedAt        time.Time
+	DurationMs         int64
+	FeedsTotal         int
+	FeedsDownloaded    int
+	FeedsNotModified   int
+	FeedsErrored       int
+	NewArticles        int
+	Processed          int
+	HighInterest       int
+	AIBackendAvailable bool
 }
 
 // UserPreferences holds all user-configurable preference values.
