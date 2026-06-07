@@ -71,8 +71,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Merge: CLI flag wins over config file, config file wins over hardcoded default.
-	db := mergeString(*dbPath, mergeString(cfg.DB, "./herald.db"))
+	// Merge: CLI flag wins over env var, env over config file, config over the
+	// hardcoded default. HERALD_DB_DSN lets a deployment (e.g. the per-PR
+	// preview) supply the DSN without putting it on the command line.
+	db := mergeString(*dbPath, mergeString(os.Getenv("HERALD_DB_DSN"), mergeString(cfg.DB, "./herald.db")))
 	listenAddr := mergeString(*addr, mergeString(cfg.Addr, ":8080"))
 	issuerURL := mergeString(*webauthIssuer, cfg.Webauth.IssuerURL)
 	webauthBaseURL := mergeString(*webauthURL, cfg.Webauth.WebauthURL)
