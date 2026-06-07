@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/infodancer/oidclient"
@@ -27,6 +28,7 @@ type handlers struct {
 	engine     *herald.Engine
 	validator  *oidclient.Client
 	pages      map[string]*template.Template // per-page template sets
+	pagesOnce  sync.Once                     // guards lazy template parsing
 	adminRole  string                        // JWT role value that grants admin access (default: "admin")
 	adminUsers []string                      // fallback email list when the IdP does not issue role claims
 }
@@ -109,10 +111,14 @@ func (h *handlers) loadPromptEntries(userID int64) []promptUIEntry {
 // This avoids Go's template namespace collision where multiple files defining the
 // same block name (e.g. "nav") overwrite each other.
 func (h *handlers) init() {
-	if h.pages != nil {
-		return
-	}
+	h.pagesOnce.Do(h.parseTemplates)
+}
 
+// parseTemplates builds the per-page template trees. It runs exactly once via
+// pagesOnce: the previous lazy guard (assign h.pages, then populate it) let a
+// concurrent first request observe a half-built map and 500 with "unknown
+// template" -- a race the smoke harness surfaced under concurrent probing.
+func (h *handlers) parseTemplates() {
 	funcMap := template.FuncMap{
 		"safeHTML": func(s string) template.HTML {
 			return template.HTML(s) //nolint:gosec // already sanitized by bluemonday
@@ -166,12 +172,14 @@ func (h *handlers) init() {
 	// Pages that get their own template tree.
 	pages := []string{"home.html", "feeds_manage.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_digest.html", "admin_stats.html", "stats.html", "status.html", "newsletters_manage.html"}
 
-	h.pages = make(map[string]*template.Template, len(pages))
+	built := make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
 		files := append(shared, page)
 		t := template.Must(template.New("").Funcs(funcMap).ParseFS(tmplFS, files...))
-		h.pages[page] = t
+		built[page] = t
 	}
+	// Publish only once fully built so no reader sees a partial map.
+	h.pages = built
 }
 
 // --- Template data types ---

@@ -64,22 +64,27 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.Handle("GET /status", auth(http.HandlerFunc(h.handleProcessingStatus)))
 
 	// htmx fragment routes.
+	//
+	// Parameterized read routes carry smoke.Example() values that reference the
+	// deterministic smoke fixture (each entity is the first row in a fresh DB,
+	// so its id is 1). The fixture is seeded by TestSmokeRoutesAuthenticated
+	// (and, for the phase-2b container preview, by an equivalent seeder).
 	mux.Handle("GET /search", auth(http.HandlerFunc(h.handleSearch)))
 	mux.Handle("GET /articles", auth(http.HandlerFunc(h.handleArticleList)))
-	mux.Handle("GET /articles/{articleID}", auth(http.HandlerFunc(h.handleArticleView)))
+	mux.Handle("GET /articles/{articleID}", auth(http.HandlerFunc(h.handleArticleView)), smoke.Example("articleID", "1"))
 	mux.Handle("GET /sidebar", auth(http.HandlerFunc(h.handleSidebar)))
 	mux.Handle("POST /articles/mark-all-read", auth(http.HandlerFunc(h.handleMarkAllRead)), smoke.Write())
 	mux.Handle("POST /articles/{articleID}/star", auth(http.HandlerFunc(h.handleStarToggle)), smoke.Write())
-	mux.Handle("GET /images/{imageID}", auth(http.HandlerFunc(h.handleArticleImage)))
-	mux.Handle("GET /feeds/{feedID}/favicon", auth(http.HandlerFunc(h.handleFeedFavicon)))
+	mux.Handle("GET /images/{imageID}", auth(http.HandlerFunc(h.handleArticleImage)), smoke.Example("imageID", "1"))
+	mux.Handle("GET /feeds/{feedID}/favicon", auth(http.HandlerFunc(h.handleFeedFavicon)), smoke.Example("feedID", "1"))
 	mux.Handle("GET /feeds/export.opml", auth(http.HandlerFunc(h.handleOPMLExport)))
 	mux.Handle("POST /feeds/discover", auth(http.HandlerFunc(h.handleFeedDiscover)), smoke.Write())
 	mux.Handle("POST /feeds", auth(http.HandlerFunc(h.handleFeedSubscribe)), smoke.Write())
 	mux.Handle("POST /feeds/import", auth(http.HandlerFunc(h.handleOPMLImport)), smoke.Write())
 	mux.Handle("DELETE /feeds/{feedID}", auth(http.HandlerFunc(h.handleFeedUnsubscribe)), smoke.Write())
 	mux.Handle("PATCH /feeds/{feedID}", auth(http.HandlerFunc(h.handleFeedRename)), smoke.Write())
-	mux.Handle("GET /feeds/{feedID}/edit-title", auth(http.HandlerFunc(h.handleFeedEditTitle)))
-	mux.Handle("GET /feeds/{feedID}/title", auth(http.HandlerFunc(h.handleFeedTitleDisplay)))
+	mux.Handle("GET /feeds/{feedID}/edit-title", auth(http.HandlerFunc(h.handleFeedEditTitle)), smoke.Example("feedID", "1"))
+	mux.Handle("GET /feeds/{feedID}/title", auth(http.HandlerFunc(h.handleFeedTitleDisplay)), smoke.Example("feedID", "1"))
 	mux.Handle("POST /feeds/{feedID}/tags", auth(http.HandlerFunc(h.handleFeedTagAdd)), smoke.Write())
 	mux.Handle("DELETE /feeds/{feedID}/tags", auth(http.HandlerFunc(h.handleFeedTagRemove)), smoke.Write())
 	mux.Handle("POST /settings", auth(http.HandlerFunc(h.handleSettingsSave)), smoke.Write())
@@ -89,7 +94,7 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.Handle("POST /filters", auth(http.HandlerFunc(h.handleFilterAdd)), smoke.Write())
 	mux.Handle("POST /filters/threshold", auth(http.HandlerFunc(h.handleFilterThreshold)), smoke.Write())
 	mux.Handle("DELETE /filters/{ruleID}", auth(http.HandlerFunc(h.handleFilterDelete)), smoke.Write())
-	mux.Handle("GET /feeds/{feedID}/metadata", auth(http.HandlerFunc(h.handleFeedMetadata)))
+	mux.Handle("GET /feeds/{feedID}/metadata", auth(http.HandlerFunc(h.handleFeedMetadata)), smoke.Example("feedID", "1"))
 	mux.Handle("GET /feeds/metadata", auth(http.HandlerFunc(h.handleFeedMetadataByQuery)))
 	mux.Handle("GET /filters/values", auth(http.HandlerFunc(h.handleFilterValues)))
 
@@ -107,7 +112,7 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 
 	// AI Summary routes — list in the top pane, a selected digest in the reading pane.
 	mux.Handle("GET /summary", auth(http.HandlerFunc(h.handleSummaryView)))
-	mux.Handle("GET /summary/{id}", auth(http.HandlerFunc(h.handleSummaryDetail)))
+	mux.Handle("GET /summary/{id}", auth(http.HandlerFunc(h.handleSummaryDetail)), smoke.Example("id", "1"))
 	mux.Handle("POST /summary/generate", auth(http.HandlerFunc(h.handleSummaryGenerate)), smoke.Write())
 	mux.Handle("POST /summary/{id}/mark-read", auth(http.HandlerFunc(h.handleSummaryMarkRead)), smoke.Write())
 

@@ -68,7 +68,10 @@
       "method": "GET",
       "pattern": "/articles/{articleID}",
       "effect": "read_only",
-      "complete": false
+      "example_params": {
+        "articleID": "1"
+      },
+      "complete": true
     },
     {
       "method": "POST",
@@ -147,19 +150,28 @@
       "method": "GET",
       "pattern": "/feeds/{feedID}/edit-title",
       "effect": "read_only",
-      "complete": false
+      "example_params": {
+        "feedID": "1"
+      },
+      "complete": true
     },
     {
       "method": "GET",
       "pattern": "/feeds/{feedID}/favicon",
       "effect": "read_only",
-      "complete": false
+      "example_params": {
+        "feedID": "1"
+      },
+      "complete": true
     },
     {
       "method": "GET",
       "pattern": "/feeds/{feedID}/metadata",
       "effect": "read_only",
-      "complete": false
+      "example_params": {
+        "feedID": "1"
+      },
+      "complete": true
     },
     {
       "method": "DELETE",
@@ -179,7 +191,10 @@
       "method": "GET",
       "pattern": "/feeds/{feedID}/title",
       "effect": "read_only",
-      "complete": false
+      "example_params": {
+        "feedID": "1"
+      },
+      "complete": true
     },
     {
       "method": "GET",
@@ -252,7 +267,10 @@
       "method": "GET",
       "pattern": "/images/{imageID}",
       "effect": "read_only",
-      "complete": false
+      "example_params": {
+        "imageID": "1"
+      },
+      "complete": true
     },
     {
       "method": "GET",
@@ -403,7 +421,10 @@
       "method": "GET",
       "pattern": "/summary/{id}",
       "effect": "read_only",
-      "complete": false
+      "example_params": {
+        "id": "1"
+      },
+      "complete": true
     },
     {
       "method": "POST",
