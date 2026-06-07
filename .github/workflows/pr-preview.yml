@@ -28,6 +28,11 @@ permissions:
 
 jobs:
   preview:
+    # Inert until the herald self-hosted runner exists on docker-web and the
+    # repo variable HERALD_PREVIEW_ENABLED is set to "true". Without this guard
+    # the job would queue forever against a missing runner, leaving every PR
+    # with a stuck check. Enable once the homelab runner play has been applied.
+    if: ${{ vars.HERALD_PREVIEW_ENABLED == 'true' }}
     runs-on: [self-hosted, linux, docker-web]
     steps:
       - uses: actions/checkout@v4

@@ -8,6 +8,9 @@ on:
 
 jobs:
   cleanup:
+    # See pr-preview.yml: inert until the runner exists and the preview is
+    # enabled, so a closed PR doesn't queue forever against a missing runner.
+    if: ${{ vars.HERALD_PREVIEW_ENABLED == 'true' }}
     runs-on: [self-hosted, linux, docker-web]
     steps:
       - name: Remove preview container, image, and database
