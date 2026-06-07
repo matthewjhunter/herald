@@ -382,6 +382,12 @@
     },
     {
       "method": "GET",
+      "pattern": "/status",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "GET",
       "pattern": "/summary",
       "effect": "read_only",
       "complete": true

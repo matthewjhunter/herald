@@ -2759,3 +2759,130 @@ func TestGetUngroupedEmbeddedArticles(t *testing.T) {
 		}
 	})
 }
+
+func TestGetProcessingStats(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feed1, _ := store.AddFeed("https://ex.com/f1", "Feed One", "")
+	feed2, _ := store.AddFeed("https://ex.com/f2", "Feed Two", "")
+	if err := store.SubscribeUserToFeed(1, feed1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SubscribeUserToFeed(1, feed2); err != nil {
+		t.Fatal(err)
+	}
+	// feed2 has a failing latest fetch.
+	if err := store.UpdateFeedError(feed2, "boom: context canceled"); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	add := func(guid string) int64 {
+		id, err := store.AddArticle(&Article{
+			FeedID: feed1, GUID: guid, Title: guid,
+			URL: "https://ex.com/" + guid, Content: "body", PublishedDate: &now,
+		})
+		if err != nil {
+			t.Fatalf("add %s: %v", guid, err)
+		}
+		return id
+	}
+
+	add("a1") // untouched -> pending
+
+	a2 := add("a2") // scored, security pass, curated, summarized
+	if err := store.MarkSecurityScored(1, a2, 8, "ok", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetInterestScore(1, a2, 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateArticleAISummary(1, a2, "a real summary"); err != nil {
+		t.Fatal(err)
+	}
+
+	a3 := add("a3") // scored, security rejected, summarize-skipped
+	if err := store.MarkSecurityScored(1, a3, 3, "unsafe", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkSummarizationSkipped(1, a3, "too short"); err != nil {
+		t.Fatal(err)
+	}
+
+	a4 := add("a4") // unscored with retries maxed -> stuck
+	for range 3 {
+		if err := store.IncrementAIRetries(1, a4); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ps, err := store.GetProcessingStats(1)
+	if err != nil {
+		t.Fatalf("GetProcessingStats: %v", err)
+	}
+
+	checks := []struct {
+		name string
+		got  int
+		want int
+	}{
+		{"TotalArticles", ps.TotalArticles, 4},
+		{"Scored", ps.Scored, 2},
+		{"Pending", ps.Pending, 1},
+		{"Stuck", ps.Stuck, 1},
+		{"SecurityPassed", ps.SecurityPassed, 1},
+		{"SecurityRejected", ps.SecurityRejected, 1},
+		{"SecuritySkipped", ps.SecuritySkipped, 0},
+		{"Curated", ps.Curated, 1},
+		{"Summarized", ps.Summarized, 1},
+		{"SummarizeSkipped", ps.SummarizeSkipped, 1},
+		{"FeedsTotal", ps.FeedsTotal, 2},
+		{"FeedsErroring", ps.FeedsErroring, 1},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s = %d, want %d", c.name, c.got, c.want)
+		}
+	}
+}
+
+func TestCycleStats(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	base := time.Now()
+	for i := range 3 {
+		if err := store.RecordCycleStats(CycleStats{
+			CompletedAt:        base.Add(time.Duration(i) * time.Minute),
+			DurationMs:         int64(1000 * (i + 1)),
+			FeedsTotal:         10,
+			FeedsDownloaded:    5,
+			NewArticles:        i,
+			Processed:          i * 2,
+			HighInterest:       i,
+			FeedsErrored:       i,
+			AIBackendAvailable: i%2 == 0,
+		}); err != nil {
+			t.Fatalf("record %d: %v", i, err)
+		}
+	}
+
+	recent, err := store.GetRecentCycleStats(10)
+	if err != nil {
+		t.Fatalf("get recent: %v", err)
+	}
+	if len(recent) != 3 {
+		t.Fatalf("got %d cycles, want 3", len(recent))
+	}
+	// Newest first (completed_at DESC): the i=2 row.
+	if recent[0].Processed != 4 || recent[0].DurationMs != 3000 || !recent[0].AIBackendAvailable {
+		t.Errorf("newest cycle mismatch: %+v", recent[0])
+	}
+	if recent[2].NewArticles != 0 {
+		t.Errorf("oldest cycle NewArticles = %d, want 0", recent[2].NewArticles)
+	}
+	if one, _ := store.GetRecentCycleStats(1); len(one) != 1 {
+		t.Fatalf("limit=1 returned %d rows", len(one))
+	}
+}

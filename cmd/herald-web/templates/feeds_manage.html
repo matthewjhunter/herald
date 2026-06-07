@@ -106,7 +106,7 @@
                     <th data-col="0" class="sortable">Feed</th>
                     <th data-col="1" class="sortable" style="text-align:right;">Articles</th>
                     <th data-col="2" class="sortable" style="text-align:right;">Unread</th>
-                    <th data-col="3" class="sortable" style="text-align:right;">Unscored</th>
+                    <th data-col="3" class="sortable" style="text-align:right;">Unsummarized</th>
                     <th data-col="4" class="sortable">Last Post</th>
                     <th data-col="5" class="sortable">Last Fetched</th>
                     <th>Tags</th>
@@ -119,7 +119,7 @@
                     <td>
                         <strong id="feed-title-cell-{{.FeedID}}">{{template "feed_title_display" .}}</strong><br>
                         <small class="secondary">{{.URL}}</small>
-                        {{if .LastError}}<br><small style="color:var(--pico-del-color);">Error: {{.LastError}}</small>{{end}}
+                        {{if gt .ConsecutiveErrors 0}}<br><small style="color:var(--pico-del-color);">&#9888; Failing ({{.ConsecutiveErrors}}x since last success){{if .LastError}}: {{.LastError}}{{end}}</small>{{else if .LastError}}<br><small class="secondary">Last error: {{.LastError}}</small>{{end}}
                     </td>
                     <td style="text-align:right;">{{.TotalArticles}}</td>
                     <td style="text-align:right;">{{.UnreadArticles}}</td>

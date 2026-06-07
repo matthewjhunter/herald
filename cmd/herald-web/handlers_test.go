@@ -528,6 +528,13 @@ func TestHandleFeedsManage(t *testing.T) {
 	if !strings.Contains(body, "example.com/feed") {
 		t.Error("feeds page should contain feed URL")
 	}
+	// The column reflects what it actually measures (no summary), not "Unscored".
+	if !strings.Contains(body, "Unsummarized") {
+		t.Error("feeds page should label the column Unsummarized")
+	}
+	if strings.Contains(body, ">Unscored<") {
+		t.Error("feeds page should no longer use the misleading Unscored header")
+	}
 }
 
 func TestHandleSettings(t *testing.T) {
@@ -907,5 +914,20 @@ func TestHandleGroupDisband(t *testing.T) {
 	group, _ := tf.store.GetGroup(groupID)
 	if group != nil {
 		t.Error("group should be deleted after DELETE /groups/{id}")
+	}
+}
+
+func TestHandleProcessingStatus(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	rr := authedRequest(t, tf, "GET", "/status", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"Processing Status", "Pending backlog", "Pipeline", "Summarized"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("status page missing %q", want)
+		}
 	}
 }
