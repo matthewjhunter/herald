@@ -93,6 +93,7 @@ func (s *Stage) securityOne(ctx context.Context, article storage.Article) *stora
 		s.Formatter.Warning("failed to record security verdict for article %d: %v", article.ID, err)
 		return nil
 	}
+	s.Formatter.Debug("article %d passed security (score %.1f), queued for curation: %s", article.ID, secResult.Score, article.Title)
 	return &article
 }
 
@@ -193,5 +194,6 @@ func (s *Stage) curateOne(ctx context.Context, article storage.Article, security
 	// security stage and must not be clobbered (SetInterestScore leaves it).
 	s.Store.SetInterestScore(s.UserID, article.ID, curResult.InterestScore) //nolint:errcheck
 	s.Formatter.OutputProcessingStatus(article.ID, article.Title, curResult.InterestScore, securityScore, true)
+	s.Formatter.Info("scored article %d: interest=%.1f security=%.1f: %s", article.ID, curResult.InterestScore, securityScore, article.Title)
 	return &article
 }

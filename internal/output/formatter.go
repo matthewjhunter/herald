@@ -19,10 +19,39 @@ const (
 	FormatHuman Format = "human"
 )
 
+// Level controls which diagnostic lines (Debug/Info) reach the error stream.
+// Warning and Error always emit. The default is LevelInfo, so per-article
+// scoring results are visible in the daemon log without extra configuration;
+// set HERALD_LOG_LEVEL=debug for the finer-grained per-stage milestones.
+type Level int
+
+const (
+	LevelDebug Level = iota
+	LevelInfo
+	LevelWarn
+	LevelError
+)
+
+// parseLevel maps a HERALD_LOG_LEVEL string to a Level, defaulting to LevelInfo
+// for empty or unrecognised values.
+func parseLevel(s string) Level {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "debug":
+		return LevelDebug
+	case "warn", "warning":
+		return LevelWarn
+	case "error":
+		return LevelError
+	default:
+		return LevelInfo
+	}
+}
+
 type Formatter struct {
 	format Format
 	out    io.Writer
 	err    io.Writer
+	level  Level
 }
 
 // NewFormatter creates a new output formatter
@@ -31,6 +60,7 @@ func NewFormatter(format Format) *Formatter {
 		format: format,
 		out:    os.Stdout,
 		err:    os.Stderr,
+		level:  parseLevel(os.Getenv("HERALD_LOG_LEVEL")),
 	}
 }
 
@@ -40,8 +70,12 @@ func NewFormatterWithWriters(format Format, out, errW io.Writer) *Formatter {
 		format: format,
 		out:    out,
 		err:    errW,
+		level:  parseLevel(os.Getenv("HERALD_LOG_LEVEL")),
 	}
 }
+
+// SetLevel overrides the diagnostic log level.
+func (f *Formatter) SetLevel(l Level) { f.level = l }
 
 // ArticleGroup represents a group of articles covering the same event
 type ArticleGroup struct {
@@ -248,6 +282,23 @@ func (f *Formatter) Error(format string, args ...any) {
 // Warning outputs a warning message to stderr
 func (f *Formatter) Warning(format string, args ...any) {
 	fmt.Fprintf(f.err, "Warning: "+format+"\n", args...)
+}
+
+// Info outputs an informational message to stderr when the level permits
+// (default). Use for successful, per-cycle-meaningful results worth seeing in
+// normal operation, e.g. an article's final interest/security scores.
+func (f *Formatter) Info(format string, args ...any) {
+	if f.level <= LevelInfo {
+		fmt.Fprintf(f.err, "Info: "+format+"\n", args...)
+	}
+}
+
+// Debug outputs a fine-grained message to stderr only when HERALD_LOG_LEVEL=debug.
+// Use for per-stage milestones (e.g. an article clearing the security gate).
+func (f *Formatter) Debug(format string, args ...any) {
+	if f.level <= LevelDebug {
+		fmt.Fprintf(f.err, "Debug: "+format+"\n", args...)
+	}
 }
 
 // formatTime formats a time pointer for output

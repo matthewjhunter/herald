@@ -319,3 +319,66 @@ func TestTruncate(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatterLevels(t *testing.T) {
+	t.Run("info logs with results at default (info) level", func(t *testing.T) {
+		var out, errBuf bytes.Buffer
+		f := NewFormatterWithWriters(FormatJSON, &out, &errBuf)
+		f.Info("scored article %d: interest=%.1f security=%.1f", int64(42), 8.0, 7.5)
+		got := errBuf.String()
+		if !strings.Contains(got, "scored article 42") || !strings.Contains(got, "interest=8.0") || !strings.Contains(got, "security=7.5") {
+			t.Errorf("info line missing content: %q", got)
+		}
+		if out.Len() != 0 {
+			t.Errorf("info must not pollute stdout: %q", out.String())
+		}
+	})
+
+	t.Run("debug suppressed at default (info) level", func(t *testing.T) {
+		var out, errBuf bytes.Buffer
+		f := NewFormatterWithWriters(FormatJSON, &out, &errBuf)
+		f.Debug("passed security %d", int64(7))
+		if errBuf.Len() != 0 {
+			t.Errorf("debug should be suppressed at info level, got: %q", errBuf.String())
+		}
+	})
+
+	t.Run("debug logs once level lowered to debug", func(t *testing.T) {
+		var out, errBuf bytes.Buffer
+		f := NewFormatterWithWriters(FormatJSON, &out, &errBuf)
+		f.SetLevel(LevelDebug)
+		f.Debug("passed security %d", int64(7))
+		if !strings.Contains(errBuf.String(), "passed security 7") {
+			t.Errorf("debug not logged at debug level: %q", errBuf.String())
+		}
+	})
+
+	t.Run("info suppressed at warn level", func(t *testing.T) {
+		var out, errBuf bytes.Buffer
+		f := NewFormatterWithWriters(FormatJSON, &out, &errBuf)
+		f.SetLevel(LevelWarn)
+		f.Info("scored article %d", int64(42))
+		if errBuf.Len() != 0 {
+			t.Errorf("info should be suppressed at warn level, got: %q", errBuf.String())
+		}
+	})
+
+	t.Run("warnings always emit regardless of level", func(t *testing.T) {
+		var out, errBuf bytes.Buffer
+		f := NewFormatterWithWriters(FormatJSON, &out, &errBuf)
+		f.SetLevel(LevelError)
+		f.Warning("boom %d", int64(1))
+		if !strings.Contains(errBuf.String(), "boom 1") {
+			t.Errorf("warning must always emit: %q", errBuf.String())
+		}
+	})
+
+	t.Run("parseLevel maps env strings", func(t *testing.T) {
+		cases := map[string]Level{"debug": LevelDebug, "info": LevelInfo, "warn": LevelWarn, "error": LevelError, "": LevelInfo, "bogus": LevelInfo}
+		for in, want := range cases {
+			if got := parseLevel(in); got != want {
+				t.Errorf("parseLevel(%q) = %d, want %d", in, got, want)
+			}
+		}
+	})
+}

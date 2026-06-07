@@ -388,6 +388,31 @@ func TestCurateStage(t *testing.T) {
 		}
 	})
 
+	t.Run("logs scored result at info level on success", func(t *testing.T) {
+		fake := &fakeAI{available: true, curateFn: func(string, string) (*ai.CurationResult, error) {
+			return &ai.CurationResult{InterestScore: 8.0}, nil
+		}}
+		st, store, feedID := newHarness(t, fake)
+		var errBuf bytes.Buffer
+		st.Formatter = output.NewFormatterWithWriters(output.FormatJSON, io.Discard, &errBuf)
+		a := seed(t, store, feedID, "headline here", "body text")
+		if err := store.MarkSecurityScored(1, a.ID, 9, "ok", false); err != nil {
+			t.Fatal(err)
+		}
+
+		st.Curate(context.Background(), []storage.Article{a})
+
+		// Success must be visible in the daemon log (stderr) with the actual
+		// scores, not only as a structured stdout event.
+		got := errBuf.String()
+		if !strings.Contains(got, "Info:") {
+			t.Errorf("expected an info-level success line, got: %q", got)
+		}
+		if !strings.Contains(got, "interest=8.0") || !strings.Contains(got, "security=9.0") {
+			t.Errorf("info line missing actual scores, got: %q", got)
+		}
+	})
+
 	t.Run("curation failure leaves the article for a later cycle", func(t *testing.T) {
 		fake := &fakeAI{available: true, curateFn: func(string, string) (*ai.CurationResult, error) {
 			return nil, errors.New("model timeout")
