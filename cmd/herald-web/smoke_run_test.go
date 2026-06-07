@@ -92,10 +92,59 @@ func TestSmokeRoutesAuthenticated(t *testing.T) {
 		t.Fatalf("UpdateAISummaryDone: %v", err)
 	}
 
+	// Fixtures for the write probes. Destructive writes target a dedicated
+	// second row so they don't delete what the read probes need.
+	//   feed 1: tag "smoke-seed" (DELETE /feeds/1/tags removes it)
+	//   feed 2: DELETE /feeds/2 unsubscribes it
+	if err := st.AddFeedTag(user.ID, feedID, "smoke-seed"); err != nil {
+		t.Fatalf("AddFeedTag: %v", err)
+	}
+	feed2, err := st.AddFeed("https://example.com/feed2", "Feed Two", "second feed")
+	if err != nil {
+		t.Fatalf("AddFeed feed2: %v", err)
+	}
+	if err := st.SubscribeUserToFeed(user.ID, feed2); err != nil {
+		t.Fatalf("SubscribeUserToFeed feed2: %v", err)
+	}
+	ruleID, err := st.AddFilterRule(&storage.FilterRule{UserID: user.ID, Axis: "author", Value: "seed", Score: 50})
+	if err != nil {
+		t.Fatalf("AddFilterRule: %v", err)
+	}
+	group1, err := st.CreateArticleGroup(user.ID, "Smoke Group One")
+	if err != nil {
+		t.Fatalf("CreateArticleGroup g1: %v", err)
+	}
+	if err := st.AddArticleToGroup(group1, articleID); err != nil {
+		t.Fatalf("AddArticleToGroup: %v", err)
+	}
+	group2, err := st.CreateArticleGroup(user.ID, "Smoke Group Two")
+	if err != nil {
+		t.Fatalf("CreateArticleGroup g2: %v", err)
+	}
+	nl1, err := st.CreateNewsletter(&storage.Newsletter{UserID: user.ID, Name: "NL One", Schedule: "daily", Config: storage.NewsletterConfig{MaxArticles: 10}})
+	if err != nil {
+		t.Fatalf("CreateNewsletter nl1: %v", err)
+	}
+	nl2, err := st.CreateNewsletter(&storage.Newsletter{UserID: user.ID, Name: "NL Two", Schedule: "daily", Config: storage.NewsletterConfig{MaxArticles: 10}})
+	if err != nil {
+		t.Fatalf("CreateNewsletter nl2: %v", err)
+	}
+	if err := st.SetFeverCredential(user.ID, "smoke-api-key"); err != nil {
+		t.Fatalf("SetFeverCredential: %v", err)
+	}
+	// "curation" prompts for the reset probes: user-scoped and global (id 0).
+	if err := st.SetUserPrompt(user.ID, "curation", "seed user prompt", nil, nil); err != nil {
+		t.Fatalf("SetUserPrompt user: %v", err)
+	}
+	if err := st.SetUserPrompt(0, "curation", "seed global prompt", nil, nil); err != nil {
+		t.Fatalf("SetUserPrompt global: %v", err)
+	}
+
 	// Confirm the deterministic ids the manifest examples assume.
-	if user.ID != 1 || feedID != 1 || articleID != 1 || sumID != 1 {
-		t.Fatalf("fixture ids not deterministic: user=%d feed=%d article=%d summary=%d (want all 1)",
-			user.ID, feedID, articleID, sumID)
+	if user.ID != 1 || feedID != 1 || articleID != 1 || sumID != 1 ||
+		feed2 != 2 || ruleID != 1 || group1 != 1 || group2 != 2 || nl1 != 1 || nl2 != 2 {
+		t.Fatalf("fixture ids not deterministic: user=%d feed=%d feed2=%d article=%d summary=%d rule=%d group1=%d group2=%d nl1=%d nl2=%d",
+			user.ID, feedID, feed2, articleID, sumID, ruleID, group1, group2, nl1, nl2)
 	}
 
 	validator, token := newTestValidator(t)
@@ -106,24 +155,45 @@ func TestSmokeRoutesAuthenticated(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	report, err := smoke.Run(context.Background(), mux.Registry().Manifest(), smoke.RunOptions{
-		BaseURL: srv.URL,
-		Target:  smoke.Preview,
-		Cookie:  "test_jwt=" + token,
-		// Writes are smoke.Write()-skipped (no payloads/CSRF wired yet); this is
-		// the authed reads pass. Converting writes to real probes is follow-up.
-		IncludeWrites: false,
+	ctx := context.Background()
+	manifest := mux.Registry().Manifest()
+	cookie := "test_jwt=" + token
+
+	// Pass 1: reads, concurrently. Concurrency is the point -- it re-exercises
+	// the path that surfaced the template-init race -- so leave it at the
+	// default and don't probe writes here (mutating routes are skipped).
+	reads, err := smoke.Run(ctx, manifest, smoke.RunOptions{
+		BaseURL: srv.URL, Target: smoke.Preview, Cookie: cookie, IncludeWrites: false,
 	})
 	if err != nil {
-		t.Fatalf("smoke.Run: %v", err)
+		t.Fatalf("smoke.Run reads: %v", err)
 	}
 
-	pass, fail, skip := report.Counts()
-	t.Logf("smoke authed run: %d pass, %d fail, %d skip (of %d routes)", pass, fail, skip, len(mux.Registry().Manifest().Routes))
-	if pass == 0 {
-		t.Fatalf("no routes passed -- the harness likely isn't reaching the server")
+	// Pass 2: writes, serially. Restrict the manifest to mutating routes and run
+	// at concurrency 1 so destructive probes can't race each other or a
+	// dependent probe. The manifest is sorted (pattern, then method), so for a
+	// shared entity a DELETE sorts before its POST -- e.g. DELETE then POST
+	// /settings/fever both succeed.
+	writeManifest := smoke.Manifest{}
+	for _, r := range manifest.Routes {
+		if r.Effect == "mutating" {
+			writeManifest.Routes = append(writeManifest.Routes, r)
+		}
 	}
-	for _, res := range report.Failed() {
+	writes, err := smoke.Run(ctx, writeManifest, smoke.RunOptions{
+		BaseURL: srv.URL, Target: smoke.Preview, Cookie: cookie, IncludeWrites: true, Concurrency: 1,
+	})
+	if err != nil {
+		t.Fatalf("smoke.Run writes: %v", err)
+	}
+
+	rp, rf, rs := reads.Counts()
+	wp, wf, ws := writes.Counts()
+	t.Logf("smoke authed: reads %d pass / %d fail / %d skip; writes %d pass / %d fail / %d skip", rp, rf, rs, wp, wf, ws)
+	if rp == 0 || wp == 0 {
+		t.Fatalf("no routes passed in a pass (reads pass=%d, writes pass=%d) -- harness likely not reaching the server", rp, wp)
+	}
+	for _, res := range append(reads.Failed(), writes.Failed()...) {
 		t.Errorf("FAIL %s %s -> status %d: %s", res.Method, res.Pattern, res.Status, res.Reason)
 	}
 }
