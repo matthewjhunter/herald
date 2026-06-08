@@ -86,7 +86,13 @@ type Store interface {
 	// Read state
 	UpdateStarred(userID, articleID int64, starred bool) error
 	UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64, securityReason *string, securityFlagged *bool) error
-	MarkSecurityScored(userID, articleID int64, securityScore float64, securityReason string, securityFlagged bool) error
+	// Security verdict lives on the article (#141): screened once, shared by all
+	// subscribers. ScreenArticleSecurity/SkipArticleSecurity record the verdict;
+	// GetUnscreenedArticles drives the global once-per-cycle security pass.
+	ScreenArticleSecurity(articleID int64, securityScore float64, securityReason string, securityFlagged bool) error
+	SkipArticleSecurity(articleID int64, reason string) error
+	IncrementArticleSecurityAttempts(articleID int64) error
+	GetUnscreenedArticles(limit int) ([]Article, error)
 	SetInterestScore(userID, articleID int64, interestScore float64) error
 	IncrementAIRetries(userID, articleID int64) error
 	ResetScores(userID int64, securityOnly bool, belowScore float64) (int64, error)
@@ -116,7 +122,6 @@ type Store interface {
 	GetArticlesByInterestScore(userID int64, threshold float64, limit, offset int, filterThreshold *int) ([]Article, []float64, error)
 	GetUnreadArticlesForUser(userID int64, limit, offset int, filterThreshold *int) ([]Article, error)
 	GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int, filterThreshold *int) ([]Article, error)
-	GetUnscoredArticlesForUser(userID int64, limit int) ([]Article, error)
 	GetUnscoredArticleCount(userID int64) (int, error)
 	GetUnsummarizedArticleCount(userID int64) (int, error)
 	GetUnsummarizedScoredArticles(userID int64, securityThreshold float64, limit int) ([]Article, error)
@@ -166,7 +171,7 @@ type Store interface {
 	AddArticleToGroup(groupID, articleID int64) error
 	GetGroupArticles(groupID int64) ([]Article, error)
 	GetArticleInterestScores(userID int64, articleIDs []int64) (map[int64]float64, error)
-	GetSecurityScores(userID int64, articleIDs []int64) (map[int64]float64, error)
+	GetArticleSecurityScores(articleIDs []int64) (map[int64]float64, error)
 	UpdateGroupSummary(groupID int64, headline, summary string, articleCount int, maxInterestScore *float64) error
 	GetGroupSummary(groupID int64) (*GroupSummary, error)
 	GetUserGroups(userID int64) ([]ArticleGroup, error)

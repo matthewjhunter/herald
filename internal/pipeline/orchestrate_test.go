@@ -34,19 +34,23 @@ func TestRunEndToEnd(t *testing.T) {
 	a := seed(t, store, feedID, "a", strings.Repeat("x", 500))
 	b := seed(t, store, feedID, "b", strings.Repeat("y", 500))
 
-	// Two unscored articles flow through every stage in a single Run call.
-	processed, err := st.Run(context.Background())
+	// The global security pass screens both, then the per-user pipeline advances
+	// them through every stage.
+	processed, err := st.RunSecurity(context.Background())
 	if err != nil {
-		t.Fatalf("Run: %v", err)
+		t.Fatalf("RunSecurity: %v", err)
 	}
 	if processed != 2 {
 		t.Fatalf("expected 2 articles processed, got %d", processed)
 	}
+	if err := st.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
 
-	// Everything advanced: scored, summarized, embedded, and (identical default
+	// Everything advanced: screened, summarized, embedded, and (identical default
 	// vectors) grouped together.
-	if unscored, _ := store.GetUnscoredArticlesForUser(1, 10); len(unscored) != 0 {
-		t.Fatalf("expected all articles scored, still unscored: %v", ids(unscored))
+	if unscreened, _ := store.GetUnscreenedArticles(10); len(unscreened) != 0 {
+		t.Fatalf("expected all articles screened, still unscreened: %v", ids(unscreened))
 	}
 	if cur, _ := store.GetUnscoredCurationArticles(1, 7.0, 10); len(cur) != 0 {
 		t.Fatalf("expected all articles curated, still pending: %v", ids(cur))
@@ -71,12 +75,15 @@ func TestRunDrainsBacklog(t *testing.T) {
 		arts = append(arts, seed(t, store, feedID, fmt.Sprintf("a%d", i), strings.Repeat("x", 500)))
 	}
 
-	if _, err := st.Run(context.Background()); err != nil {
+	if _, err := st.RunSecurity(context.Background()); err != nil {
+		t.Fatalf("RunSecurity: %v", err)
+	}
+	if err := st.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
-	if unscored, _ := store.GetUnscoredArticlesForUser(1, 10); len(unscored) != 0 {
-		t.Fatalf("backlog not drained, still unscored: %v", ids(unscored))
+	if unscreened, _ := store.GetUnscreenedArticles(10); len(unscreened) != 0 {
+		t.Fatalf("backlog not drained, still unscreened: %v", ids(unscreened))
 	}
 	for _, a := range arts {
 		if sum, _ := store.GetArticleSummary(1, a.ID); sum == nil {
@@ -94,12 +101,12 @@ func TestRunTerminatesOnPersistentFailure(t *testing.T) {
 	withRealEmbed(st)
 
 	a := seed(t, store, feedID, "a", strings.Repeat("x", 500))
-	if err := store.MarkSecurityScored(1, a.ID, 9, "ok", false); err != nil {
+	if err := store.ScreenArticleSecurity(a.ID, 9, "ok", false); err != nil {
 		t.Fatal(err)
 	}
 
 	done := make(chan error, 1)
-	go func() { _, err := st.Run(context.Background()); done <- err }()
+	go func() { done <- st.Run(context.Background()) }()
 	select {
 	case err := <-done:
 		if err != nil {
@@ -120,11 +127,11 @@ func TestRunSkipsWhenBreakerOpen(t *testing.T) {
 	withRealEmbed(st)
 
 	seed(t, store, feedID, "a", strings.Repeat("x", 500))
-	if _, err := st.Run(context.Background()); err != nil {
-		t.Fatalf("Run: %v", err)
+	if _, err := st.RunSecurity(context.Background()); err != nil {
+		t.Fatalf("RunSecurity: %v", err)
 	}
-	if unscored, _ := store.GetUnscoredArticlesForUser(1, 10); len(unscored) != 1 {
-		t.Fatalf("breaker open should leave the article untouched, got %v", ids(unscored))
+	if unscreened, _ := store.GetUnscreenedArticles(10); len(unscreened) != 1 {
+		t.Fatalf("breaker open should leave the article untouched, got %v", ids(unscreened))
 	}
 	if fake.secCalls != 0 {
 		t.Fatalf("expected no security calls with breaker open, got %d", fake.secCalls)

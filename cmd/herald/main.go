@@ -298,10 +298,13 @@ func processCmd() *cobra.Command {
 				return err
 			}
 
-			// The `process` command runs the staged pipeline over the user's
-			// pending articles.
+			// The `process` command runs the global security pass (screens any
+			// unscreened articles once) followed by the per-user pipeline.
 			stage := newPipelineStage(store, processor, groupMatcher, formatter, userID)
-			if _, err := stage.Run(ctx); err != nil {
+			if _, err := stage.RunSecurity(ctx); err != nil {
+				return err
+			}
+			if err := stage.Run(ctx); err != nil {
 				return err
 			}
 
@@ -481,19 +484,27 @@ func doFetch(ctx context.Context) error {
 		formatter.Warning("skipping embedding backfill and group matching")
 	}
 
-	// Run the staged pipeline for each subscribing user. It drives every stage
-	// from its own state-driven, newest-first query, so this cycle's freshly
-	// fetched articles (now enriched with full text and cached images) are
-	// processed ahead of older backlog, and anything left pending from prior
-	// cycles drains the same way. Self-skips when the AI backend is unavailable.
-	totalProcessed := 0
+	// Security screening is global: each article is screened once and the verdict
+	// is shared by every subscriber (#141), so run it once per cycle before the
+	// per-user pipelines rather than re-screening per user. One breaker check,
+	// not one per user (#111).
+	securityStage := newPipelineStage(store, processor, groupMatcher, formatter, cfg.DefaultUserID)
+	totalProcessed, err := securityStage.RunSecurity(ctx)
+	if err != nil {
+		formatter.Warning("security pass failed: %v", err)
+	}
+
+	// Run the per-user pipeline for each subscribing user. It drives every stage
+	// from its own state-driven, newest-first query, reading the article-level
+	// security verdict to decide what to summarize/curate, so this cycle's freshly
+	// screened articles are processed ahead of older backlog, and anything left
+	// pending from prior cycles drains the same way. Self-skips when the AI
+	// backend is unavailable.
 	for _, userID := range allUserIDs {
 		stage := newPipelineStage(store, processor, groupMatcher, formatter, userID)
-		processed, err := stage.Run(ctx)
-		if err != nil {
+		if err := stage.Run(ctx); err != nil {
 			formatter.Warning("pipeline failed for user %d: %v", userID, err)
 		}
-		totalProcessed += processed
 	}
 
 	fetchResult.ProcessedCount = totalProcessed

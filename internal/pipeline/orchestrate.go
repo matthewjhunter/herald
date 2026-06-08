@@ -14,37 +14,48 @@ const clusterCohortLimit = 500
 // drainBatch is how many articles each stage pulls per query.
 const drainBatch = 100
 
-// Run executes the full staged pipeline for the user: it drives each stage from
-// its own state-driven query, in order, so any pending article advances one
-// stage at a time. An article fetched this cycle flows through all five stages
-// in a single call — security marks it scored, the summarize query then sees it,
-// then curate, then embed, then cluster — and every query is newest-first, so
-// fresh articles are processed ahead of older backlog. Work left by prior cycles
-// (stranded by a transient failure or a backend that was down) drains the same
-// way. The whole run is skipped when the LLM backend is unavailable; that check
-// plus the per-stage skips keep an outage from spinning.
-// Run returns the number of articles that newly passed the security screen this
-// call — the daemon's "processed" metric.
-func (s *Stage) Run(ctx context.Context) (int, error) {
+// RunSecurity screens every not-yet-screened article exactly once, globally. The
+// security verdict is a property of the content, shared by all subscribers
+// (#141), so this runs once per cycle rather than once per user — and it checks
+// the breaker a single time, draining the global queue newest-first. Self-skips
+// with one log line when the backend is down, instead of one blocked call per
+// article (#111). Returns the number of articles that newly passed the screen
+// this call — the daemon's "processed" metric.
+func (s *Stage) RunSecurity(ctx context.Context) (int, error) {
 	if !s.AI.BackendAvailable() {
-		s.Formatter.Warning("pipeline: skipping run for user %d — AI backend unavailable (breaker open)", s.UserID)
+		s.Formatter.Warning("pipeline: skipping security pass — AI backend unavailable (breaker open)")
 		return 0, nil
 	}
-
 	processed := 0
-	if err := s.drain(
-		func(limit int) ([]storage.Article, error) { return s.Store.GetUnscoredArticlesForUser(s.UserID, limit) },
+	err := s.drain(
+		func(limit int) ([]storage.Article, error) { return s.Store.GetUnscreenedArticles(limit) },
 		func(arts []storage.Article) { processed += len(s.Security(ctx, arts)) },
-	); err != nil {
-		return processed, err
+	)
+	return processed, err
+}
+
+// Run executes the per-user pipeline: it drives each stage from its own
+// state-driven query, in order, so any pending article advances one stage at a
+// time. Security screening is NOT here — it is the global RunSecurity pass,
+// which runs once per cycle before the per-user pipelines. This pipeline starts
+// at summarize, reading the article-level security verdict to decide which
+// articles it processes for this user. Every query is newest-first, so fresh
+// articles are processed ahead of older backlog; work left by prior cycles
+// drains the same way. The whole run is skipped when the LLM backend is
+// unavailable.
+func (s *Stage) Run(ctx context.Context) error {
+	if !s.AI.BackendAvailable() {
+		s.Formatter.Warning("pipeline: skipping run for user %d — AI backend unavailable (breaker open)", s.UserID)
+		return nil
 	}
+
 	if err := s.drain(
 		func(limit int) ([]storage.Article, error) {
 			return s.Store.GetUnsummarizedScoredArticles(s.UserID, s.Cfg.Thresholds.SecurityScore, limit)
 		},
 		func(arts []storage.Article) { s.Summarize(ctx, arts) },
 	); err != nil {
-		return processed, err
+		return err
 	}
 	if err := s.drain(
 		func(limit int) ([]storage.Article, error) {
@@ -52,7 +63,7 @@ func (s *Stage) Run(ctx context.Context) (int, error) {
 		},
 		func(arts []storage.Article) { s.Curate(ctx, arts) },
 	); err != nil {
-		return processed, err
+		return err
 	}
 	if s.Embedder != nil {
 		if err := s.drain(
@@ -61,11 +72,11 @@ func (s *Stage) Run(ctx context.Context) (int, error) {
 			},
 			func(arts []storage.Article) { s.Embed(ctx, arts) },
 		); err != nil {
-			return processed, err
+			return err
 		}
 	}
 
-	return processed, s.clusterRecent(ctx)
+	return s.clusterRecent(ctx)
 }
 
 // drain repeatedly fetches a batch and processes the articles it has not yet

@@ -357,6 +357,45 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 			FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE
 		)`,
 		"CREATE INDEX IF NOT EXISTS idx_feed_tags_user_tag ON feed_tags(user_id, tag)",
+		// Move the security verdict from per-user read_state onto the article
+		// itself (#141): maliciousness is a property of the content, so each
+		// article is screened once and the verdict is shared by all subscribers.
+		// security_screened_at is the "have we screened this" marker, which also
+		// disambiguates "screened but skipped" (set, score NULL) from "not yet
+		// screened" (NULL) — the conflation #123 flagged.
+		"ALTER TABLE articles ADD COLUMN security_score REAL",
+		"ALTER TABLE articles ADD COLUMN security_reason TEXT",
+		"ALTER TABLE articles ADD COLUMN security_flagged BOOLEAN NOT NULL DEFAULT 0",
+		"ALTER TABLE articles ADD COLUMN security_screened_at DATETIME",
+		"ALTER TABLE articles ADD COLUMN security_attempts INTEGER NOT NULL DEFAULT 0",
+		"CREATE INDEX IF NOT EXISTS idx_articles_unscreened ON articles(published_date DESC) WHERE security_screened_at IS NULL",
+		// Backfill: copy each article's verdict from the existing per-user
+		// read_state. Pick the lowest user_id that holds a non-NULL score
+		// (deterministic; in practice every user screened to the same verdict).
+		// Guarded on security_screened_at IS NULL so it is idempotent and a no-op
+		// on subsequent startups.
+		`UPDATE articles
+		 SET security_score = (SELECT rs.security_score FROM read_state rs
+		         WHERE rs.article_id = articles.id AND rs.security_score IS NOT NULL
+		         ORDER BY rs.user_id LIMIT 1),
+		     security_reason = (SELECT rs.security_reason FROM read_state rs
+		         WHERE rs.article_id = articles.id AND rs.security_score IS NOT NULL
+		         ORDER BY rs.user_id LIMIT 1),
+		     security_flagged = COALESCE((SELECT rs.security_flagged FROM read_state rs
+		         WHERE rs.article_id = articles.id AND rs.security_score IS NOT NULL
+		         ORDER BY rs.user_id LIMIT 1), 0),
+		     security_screened_at = CURRENT_TIMESTAMP
+		 WHERE security_screened_at IS NULL
+		   AND EXISTS (SELECT 1 FROM read_state rs
+		         WHERE rs.article_id = articles.id AND rs.security_score IS NOT NULL)`,
+		// Articles a user marked ai_scored but with NULL security (the #123
+		// "screened but skipped: too short / no content" case): mark screened so
+		// they are not re-queued, leaving the score NULL.
+		`UPDATE articles
+		 SET security_screened_at = CURRENT_TIMESTAMP
+		 WHERE security_screened_at IS NULL
+		   AND EXISTS (SELECT 1 FROM read_state rs
+		         WHERE rs.article_id = articles.id AND rs.ai_scored = 1)`,
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore "duplicate column" errors
@@ -1071,29 +1110,74 @@ func (s *SQLiteStore) UpdateReadState(userID, articleID int64, read bool, intere
 	return nil
 }
 
-// MarkSecurityScored records the security verdict for an article and marks it
-// ai_scored, WITHOUT writing an interest score. The staged pipeline runs the
-// security screen and interest scoring as separate passes: a passing article is
-// marked here (interest_score stays NULL) so the curation stage can pick it up
-// via GetUnscoredCurationArticles. interest_score is never touched on conflict,
-// so re-running the security stage cannot clobber a score the curator already
-// wrote. (Hard-blocked and medium-flagged articles are terminal and still go
-// through UpdateReadState with interest_score=0.)
-func (s *SQLiteStore) MarkSecurityScored(userID, articleID int64, securityScore float64, securityReason string, securityFlagged bool) error {
+// ScreenArticleSecurity records the security verdict on the article itself
+// (#141). The verdict is a property of the content, so it is screened once and
+// shared by every subscriber — no user_id. security_screened_at marks the
+// article screened so the global security pass does not re-queue it; the
+// per-user curation stage reads security_score to gate which articles it scores.
+func (s *SQLiteStore) ScreenArticleSecurity(articleID int64, securityScore float64, securityReason string, securityFlagged bool) error {
 	_, err := s.db.Exec(
-		`INSERT INTO read_state (user_id, article_id, read, security_score, security_reason, security_flagged, ai_scored)
-		 VALUES (?, ?, 0, ?, ?, ?, 1)
-		 ON CONFLICT(user_id, article_id) DO UPDATE SET
-		   security_score = excluded.security_score,
-		   security_reason = excluded.security_reason,
-		   security_flagged = excluded.security_flagged,
-		   ai_scored = 1`,
-		userID, articleID, securityScore, securityReason, securityFlagged,
+		`UPDATE articles
+		 SET security_score = ?, security_reason = ?, security_flagged = ?,
+		     security_screened_at = CURRENT_TIMESTAMP
+		 WHERE id = ?`,
+		securityScore, securityReason, securityFlagged, articleID,
 	)
 	if err != nil {
-		return fmt.Errorf("mark security scored: %w", err)
+		return fmt.Errorf("screen article security: %w", err)
 	}
 	return nil
+}
+
+// SkipArticleSecurity marks an article screened without a score: the security
+// stage deliberately skipped it (no content / too short). Recording the reason
+// with a NULL score keeps "screened but skipped" distinct from "not yet
+// screened" (security_screened_at IS NULL) — the conflation #123 flagged.
+func (s *SQLiteStore) SkipArticleSecurity(articleID int64, reason string) error {
+	_, err := s.db.Exec(
+		`UPDATE articles
+		 SET security_reason = ?, security_screened_at = CURRENT_TIMESTAMP
+		 WHERE id = ?`,
+		reason, articleID,
+	)
+	if err != nil {
+		return fmt.Errorf("skip article security: %w", err)
+	}
+	return nil
+}
+
+// IncrementArticleSecurityAttempts bumps the per-article security retry counter.
+// The global security pass skips articles whose attempts have hit the cap, so a
+// model that keeps failing on one article cannot re-screen it every cycle.
+func (s *SQLiteStore) IncrementArticleSecurityAttempts(articleID int64) error {
+	_, err := s.db.Exec(
+		`UPDATE articles SET security_attempts = security_attempts + 1 WHERE id = ?`,
+		articleID,
+	)
+	if err != nil {
+		return fmt.Errorf("increment article security attempts: %w", err)
+	}
+	return nil
+}
+
+// GetUnscreenedArticles returns articles that have not yet been security-screened
+// (security_screened_at IS NULL) and are still within the retry budget, newest
+// first. It is global — not scoped to a user — because the security verdict is
+// shared. This is the input to the once-per-cycle security pass.
+func (s *SQLiteStore) GetUnscreenedArticles(limit int) ([]Article, error) {
+	rows, err := s.db.Query(`
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date
+		FROM articles a
+		WHERE a.security_screened_at IS NULL
+		  AND a.security_attempts < 3
+		ORDER BY a.published_date DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get unscreened articles: %w", err)
+	}
+	defer rows.Close()
+	return scanArticles(rows)
 }
 
 // SetInterestScore records the interest score from the curation stage WITHOUT
@@ -1122,13 +1206,13 @@ func (s *SQLiteStore) GetScoreStats(userID int64) (*ScoreStatsResult, error) {
 		SELECT
 			f.id,
 			COALESCE(uf.user_title, f.title),
-			COUNT(*) FILTER (WHERE rs.ai_scored = 1),
-			COUNT(*) FILTER (WHERE rs.security_score >= 7.0),
-			COUNT(*) FILTER (WHERE rs.security_score >= 4.0 AND rs.security_score < 7.0),
-			COUNT(*) FILTER (WHERE rs.security_score IS NOT NULL AND rs.security_score < 4.0),
-			COUNT(*) FILTER (WHERE rs.security_score >= 7.0 AND rs.interest_score >= 8.0),
-			COUNT(*) FILTER (WHERE rs.security_score >= 7.0 AND rs.interest_score >= 5.0 AND rs.interest_score < 8.0),
-			COUNT(*) FILTER (WHERE rs.security_score >= 7.0 AND rs.interest_score IS NOT NULL AND rs.interest_score < 5.0)
+			COUNT(*) FILTER (WHERE a.security_screened_at IS NOT NULL),
+			COUNT(*) FILTER (WHERE a.security_score >= 7.0),
+			COUNT(*) FILTER (WHERE a.security_score >= 4.0 AND a.security_score < 7.0),
+			COUNT(*) FILTER (WHERE a.security_score IS NOT NULL AND a.security_score < 4.0),
+			COUNT(*) FILTER (WHERE a.security_score >= 7.0 AND rs.interest_score >= 8.0),
+			COUNT(*) FILTER (WHERE a.security_score >= 7.0 AND rs.interest_score >= 5.0 AND rs.interest_score < 8.0),
+			COUNT(*) FILTER (WHERE a.security_score >= 7.0 AND rs.interest_score IS NOT NULL AND rs.interest_score < 5.0)
 		FROM feeds f
 		JOIN user_feeds uf ON uf.feed_id = f.id AND uf.user_id = ?
 		JOIN articles a ON a.feed_id = f.id
@@ -1178,26 +1262,32 @@ func (s *SQLiteStore) IncrementAIRetries(userID, articleID int64) error {
 	return nil
 }
 
-// ResetScores clears AI scores so articles are reprocessed by the pipeline.
-// If securityOnly is true, only articles that failed the security check are reset.
-// belowScore filters to articles with security_score < belowScore (use 10.0 to reset all).
-// Returns the number of rows affected.
+// ResetScores clears the security verdict on the user's subscribed articles so
+// the pipeline re-screens (and re-curates) them. The verdict is article-level
+// now (#141), so this resets the shared article rows for the feeds this user
+// subscribes to, plus the user's own interest scores. If securityOnly is true,
+// only articles whose security_score is below belowScore are reset (use 10.0 to
+// reset all). Returns the number of article rows reset.
 func (s *SQLiteStore) ResetScores(userID int64, securityOnly bool, belowScore float64) (int64, error) {
-	var result sql.Result
-	var err error
-	if securityOnly {
-		result, err = s.db.Exec(
-			`UPDATE read_state SET ai_scored = 0, ai_retries = 0, interest_score = NULL, security_score = NULL, security_reason = NULL
-			 WHERE user_id = ? AND security_score IS NOT NULL AND security_score < ?`,
-			userID, belowScore,
-		)
-	} else {
-		result, err = s.db.Exec(
-			`UPDATE read_state SET ai_scored = 0, ai_retries = 0, interest_score = NULL, security_score = NULL, security_reason = NULL
-			 WHERE user_id = ?`,
-			userID,
-		)
+	if !securityOnly {
+		// Full reset also clears this user's interest scores so curation re-runs.
+		if _, err := s.db.Exec(
+			`UPDATE read_state SET ai_scored = 0, ai_retries = 0, interest_score = NULL
+			 WHERE user_id = ?`, userID,
+		); err != nil {
+			return 0, fmt.Errorf("reset scores (read_state): %w", err)
+		}
 	}
+	query := `UPDATE articles
+		 SET security_score = NULL, security_reason = NULL, security_flagged = 0,
+		     security_screened_at = NULL, security_attempts = 0
+		 WHERE feed_id IN (SELECT feed_id FROM user_feeds WHERE user_id = ?)`
+	args := []any{userID}
+	if securityOnly {
+		query += ` AND security_score IS NOT NULL AND security_score < ?`
+		args = append(args, belowScore)
+	}
+	result, err := s.db.Exec(query, args...)
 	if err != nil {
 		return 0, fmt.Errorf("reset scores: %w", err)
 	}
@@ -1378,20 +1468,21 @@ func (s *SQLiteStore) GetFeedStats(userID int64) ([]FeedStats, error) {
 }
 
 // GetProcessingStats returns an aggregate snapshot of the AI pipeline state for a
-// user's articles (not broken down by feed). Counts mirror the daemon's own
-// work-selection predicates: "pending" uses ai_retries < 3 (the retry budget the
-// pipeline honours) and "stuck" is everything that has exhausted it.
+// user's articles (not broken down by feed). The security funnel is article-level
+// now (#141): "pending"/"stuck" mirror the global security pass's work-selection
+// (security_attempts < 3 = within budget; >= 3 = exhausted), while "curated"
+// stays per-user (interest_score on the user's read_state).
 func (s *SQLiteStore) GetProcessingStats(userID int64) (*ProcessingStats, error) {
 	var p ProcessingStats
 	err := s.db.QueryRow(`
 		SELECT
 			COUNT(*),
-			COALESCE(SUM(CASE WHEN rs.ai_scored = 1 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN (rs.article_id IS NULL OR rs.ai_scored = 0) AND COALESCE(rs.ai_retries, 0) < 3 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN (rs.article_id IS NULL OR rs.ai_scored = 0) AND COALESCE(rs.ai_retries, 0) >= 3 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN rs.security_score >= 7 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN rs.security_score IS NOT NULL AND rs.security_score < 7 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN rs.ai_scored = 1 AND rs.security_score IS NULL THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN a.security_screened_at IS NOT NULL THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN a.security_screened_at IS NULL AND a.security_attempts < 3 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN a.security_screened_at IS NULL AND a.security_attempts >= 3 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN a.security_score >= 7 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN a.security_score IS NOT NULL AND a.security_score < 7 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN a.security_screened_at IS NOT NULL AND a.security_score IS NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN rs.interest_score IS NOT NULL THEN 1 ELSE 0 END), 0)
 		FROM articles a
 		JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = ?
@@ -1563,23 +1654,23 @@ func (s *SQLiteStore) GetArticleInterestScores(userID int64, articleIDs []int64)
 	return scores, rows.Err()
 }
 
-// GetSecurityScores returns the persisted security_score for each of the given
-// articles (user-scoped), skipping any with a NULL score. The curate stage uses
-// it to report the verdict the security stage wrote, since that score is not
-// carried on the in-memory Article (#119).
-func (s *SQLiteStore) GetSecurityScores(userID int64, articleIDs []int64) (map[int64]float64, error) {
+// GetArticleSecurityScores returns the persisted security_score for each of the
+// given articles, skipping any with a NULL score. The verdict lives on the
+// article (#141), so this is not user-scoped. The curate stage uses it to report
+// the verdict alongside the interest score, since the score is not carried on
+// the in-memory Article (#119).
+func (s *SQLiteStore) GetArticleSecurityScores(articleIDs []int64) (map[int64]float64, error) {
 	if len(articleIDs) == 0 {
 		return map[int64]float64{}, nil
 	}
 	placeholders := make([]string, len(articleIDs))
-	args := make([]any, 0, len(articleIDs)+1)
-	args = append(args, userID)
+	args := make([]any, 0, len(articleIDs))
 	for i, id := range articleIDs {
 		placeholders[i] = "?"
 		args = append(args, id)
 	}
-	query := `SELECT article_id, security_score FROM read_state
-		WHERE user_id = ? AND article_id IN (` + strings.Join(placeholders, ",") + `)
+	query := `SELECT id, security_score FROM articles
+		WHERE id IN (` + strings.Join(placeholders, ",") + `)
 		AND security_score IS NOT NULL`
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -2197,6 +2288,10 @@ func (s *SQLiteStore) UpdateArticleLinkedContent(articleID int64, linkedURL, lin
 
 // GetUnscoredArticleCount returns the number of articles from the user's
 // subscribed feeds that have no read_state entry (pending security/interest scoring).
+// GetUnscoredArticleCount counts the user's articles still in the AI funnel:
+// not yet security-screened (within the retry budget), or screened-pass but not
+// yet interest-scored for this user. Security is article-level now (#141), so
+// the pending-screening half is shared across users; curation stays per-user.
 func (s *SQLiteStore) GetUnscoredArticleCount(userID int64) (int, error) {
 	var count int
 	err := s.db.QueryRow(`
@@ -2204,8 +2299,11 @@ func (s *SQLiteStore) GetUnscoredArticleCount(userID int64) (int, error) {
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
-		WHERE uf.user_id = ? AND (rs.article_id IS NULL OR rs.ai_scored = 0)
-		  AND COALESCE(rs.ai_retries, 0) < 3`,
+		WHERE uf.user_id = ?
+		  AND (
+		    (a.security_screened_at IS NULL AND a.security_attempts < 3)
+		    OR (a.security_score >= 7.0 AND rs.interest_score IS NULL)
+		  )`,
 		userID, userID,
 	).Scan(&count)
 	if err != nil {
@@ -2232,38 +2330,6 @@ func (s *SQLiteStore) GetUnsummarizedArticleCount(userID int64) (int, error) {
 	return count, nil
 }
 
-// GetUnscoredArticlesForUser returns articles from the user's subscribed feeds
-// that have no read_state entry (never been scored by the AI pipeline).
-func (s *SQLiteStore) GetUnscoredArticlesForUser(userID int64, limit int) ([]Article, error) {
-	query := `
-		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date
-		FROM articles a
-		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
-		WHERE uf.user_id = ? AND (rs.article_id IS NULL OR rs.ai_scored = 0)
-		  AND COALESCE(rs.ai_retries, 0) < 3
-		ORDER BY a.published_date DESC
-		LIMIT ?
-	`
-	rows, err := s.db.Query(query, userID, userID, limit)
-	if err != nil {
-		return nil, fmt.Errorf("get unscored articles for user: %w", err)
-	}
-	defer rows.Close()
-
-	var articles []Article
-	for rows.Next() {
-		var a Article
-		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
-			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate); err != nil {
-			return nil, fmt.Errorf("scan article: %w", err)
-		}
-		articles = append(articles, a)
-	}
-	return articles, rows.Err()
-}
-
 // GetUnsummarizedScoredArticles returns articles that have been AI-scored with
 // a passing security score but lack a cached AI summary. Used by the daemon's
 // summary backfill pass to re-attempt summarization that failed transiently
@@ -2274,11 +2340,9 @@ func (s *SQLiteStore) GetUnsummarizedScoredArticles(userID int64, securityThresh
 		       a.author, a.published_date, a.fetched_date
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
 		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id AND asumm.user_id = uf.user_id
 		WHERE uf.user_id = ?
-		  AND rs.ai_scored = 1
-		  AND rs.security_score >= ?
+		  AND a.security_score >= ?
 		  AND asumm.article_id IS NULL
 		ORDER BY a.published_date DESC
 		LIMIT ?
@@ -2312,10 +2376,9 @@ func (s *SQLiteStore) GetUnscoredCurationArticles(userID int64, securityThreshol
 		       a.author, a.published_date, a.fetched_date
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
+		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
 		WHERE uf.user_id = ?
-		  AND rs.ai_scored = 1
-		  AND rs.security_score >= ?
+		  AND a.security_score >= ?
 		  AND rs.interest_score IS NULL
 		ORDER BY a.published_date DESC
 		LIMIT ?`, userID, securityThreshold, limit)
@@ -2340,12 +2403,10 @@ func (s *SQLiteStore) GetUngroupedEmbeddedArticles(userID int64, model string, s
 		       a.author, a.published_date, a.fetched_date
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = uf.user_id
 		JOIN article_embeddings ae ON ae.article_id = a.id
 		    AND ae.embedding_model = ? AND ae.status = ?
 		WHERE uf.user_id = ?
-		  AND rs.ai_scored = 1
-		  AND rs.security_score >= ?
+		  AND a.security_score >= ?
 		  AND COALESCE(a.published_date, a.fetched_date) >= ?
 		  AND NOT EXISTS (
 		      SELECT 1 FROM article_group_members agm
@@ -2367,7 +2428,7 @@ func (s *SQLiteStore) GetUnreadArticlesForUser(userID int64, limit, offset int, 
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date,
-		       COALESCE(rs.security_flagged, 0) AS security_flagged
+		       COALESCE(a.security_flagged, 0) AS security_flagged
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
@@ -2409,7 +2470,7 @@ func (s *SQLiteStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, offse
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date,
-		       COALESCE(rs.security_flagged, 0) AS security_flagged
+		       COALESCE(a.security_flagged, 0) AS security_flagged
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
@@ -3466,7 +3527,7 @@ func (s *SQLiteStore) GetNewsletterArticles(userID int64, config *NewsletterConf
 		args = append(args, config.MinInterestScore)
 	}
 	if config.MinSecurityScore > 0 {
-		query += ` AND rs.security_score >= ?`
+		query += ` AND a.security_score >= ?`
 		args = append(args, config.MinSecurityScore)
 	}
 	if len(config.IncludeFeeds) > 0 {

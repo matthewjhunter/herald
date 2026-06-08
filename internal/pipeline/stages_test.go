@@ -48,7 +48,7 @@ func (f *fakeAI) RefineGroupTopic(_ context.Context, _ int64, summary string) (s
 	return "refined topic", nil
 }
 
-func (f *fakeAI) SecurityCheck(_ context.Context, _ int64, title, content string) (*ai.SecurityResult, error) {
+func (f *fakeAI) SecurityCheck(_ context.Context, title, content string) (*ai.SecurityResult, error) {
 	f.mu.Lock()
 	f.secCalls++
 	f.mu.Unlock()
@@ -158,7 +158,7 @@ func TestSecurityStageGatesAndMarks(t *testing.T) {
 		t.Fatalf("expected article %d awaiting curation, got %v", pass.ID, ids(cur))
 	}
 	// All five left the unscored (security) queue: pass is scored, the rest terminal.
-	unscored, _ := store.GetUnscoredArticlesForUser(1, 10)
+	unscored, _ := store.GetUnscreenedArticles(10)
 	if len(unscored) != 0 {
 		t.Fatalf("expected unscored queue empty, got %v", ids(unscored))
 	}
@@ -177,7 +177,7 @@ func TestSecurityRetryBudget(t *testing.T) {
 		for range 4 {
 			st.Security(context.Background(), []storage.Article{art})
 		}
-		unscored, _ := store.GetUnscoredArticlesForUser(1, 10)
+		unscored, _ := store.GetUnscreenedArticles(10)
 		if len(unscored) != 1 {
 			t.Fatalf("backend-unavailable article should still be retryable, got %v", ids(unscored))
 		}
@@ -192,7 +192,7 @@ func TestSecurityRetryBudget(t *testing.T) {
 		for range 3 {
 			st.Security(context.Background(), []storage.Article{art})
 		}
-		unscored, _ := store.GetUnscoredArticlesForUser(1, 10)
+		unscored, _ := store.GetUnscreenedArticles(10)
 		if len(unscored) != 0 {
 			t.Fatalf("article should drop out after 3 verdict failures, got %v", ids(unscored))
 		}
@@ -211,7 +211,7 @@ func TestSecurityStageSkipsWhenBreakerOpen(t *testing.T) {
 	if fake.secCalls != 0 {
 		t.Fatalf("expected zero security calls with breaker open, got %d", fake.secCalls)
 	}
-	unscored, _ := store.GetUnscoredArticlesForUser(1, 10)
+	unscored, _ := store.GetUnscreenedArticles(10)
 	if len(unscored) != 1 {
 		t.Fatalf("article should remain unscored after a skipped stage, got %v", ids(unscored))
 	}
@@ -261,7 +261,7 @@ func TestSummarizeStage(t *testing.T) {
 	st, store, feedID := newHarness(t, &fakeAI{available: true})
 	mustPass := func(a storage.Article) {
 		// Put the article into the security-passed state the summarize stage expects.
-		if err := store.MarkSecurityScored(1, a.ID, 9, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(a.ID, 9, "ok", false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -334,7 +334,7 @@ func TestCurateStage(t *testing.T) {
 		}}
 		st, store, feedID := newHarness(t, fake)
 		a := seed(t, store, feedID, "x", "body text")
-		if err := store.MarkSecurityScored(1, a.ID, 9, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(a.ID, 9, "ok", false); err != nil {
 			t.Fatal(err)
 		}
 
@@ -361,7 +361,7 @@ func TestCurateStage(t *testing.T) {
 		var buf bytes.Buffer
 		st.Formatter = output.NewFormatterWithWriters(output.FormatJSON, &buf, io.Discard)
 		a := seed(t, store, feedID, "x", "body text")
-		if err := store.MarkSecurityScored(1, a.ID, 9, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(a.ID, 9, "ok", false); err != nil {
 			t.Fatal(err)
 		}
 
@@ -396,7 +396,7 @@ func TestCurateStage(t *testing.T) {
 		var errBuf bytes.Buffer
 		st.Formatter = output.NewFormatterWithWriters(output.FormatJSON, io.Discard, &errBuf)
 		a := seed(t, store, feedID, "headline here", "body text")
-		if err := store.MarkSecurityScored(1, a.ID, 9, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(a.ID, 9, "ok", false); err != nil {
 			t.Fatal(err)
 		}
 
@@ -419,7 +419,7 @@ func TestCurateStage(t *testing.T) {
 		}}
 		st, store, feedID := newHarness(t, fake)
 		a := seed(t, store, feedID, "x", "body text")
-		if err := store.MarkSecurityScored(1, a.ID, 9, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(a.ID, 9, "ok", false); err != nil {
 			t.Fatal(err)
 		}
 		out := st.Curate(context.Background(), []storage.Article{a})

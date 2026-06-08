@@ -62,7 +62,11 @@ func TestGenerateAISummary(t *testing.T) {
 	mk := func(guid string, interest, security float64) int64 {
 		id, _ := store.AddArticle(&storage.Article{FeedID: feedID, GUID: guid, Title: guid,
 			URL: "https://example.com/" + guid, Content: "<p>body " + guid + "</p>", PublishedDate: &now})
-		if err := store.UpdateReadState(uid, id, false, &interest, &security, nil, nil); err != nil {
+		// Security verdict is article-level (#141); interest stays per-user.
+		if err := store.ScreenArticleSecurity(id, security, "", false); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.UpdateReadState(uid, id, false, &interest, nil, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 		return id
@@ -237,8 +241,9 @@ func TestGenerateForConfig(t *testing.T) {
 	mk := func(feedID int64, guid string) int64 {
 		id, _ := store.AddArticle(&storage.Article{FeedID: feedID, GUID: guid, Title: guid,
 			URL: "https://example.com/" + guid, Content: "<p>body " + guid + "</p>", PublishedDate: &now})
-		i, s := 8.0, 9.0
-		store.UpdateReadState(uid, id, false, &i, &s, nil, nil) //nolint:errcheck
+		i := 8.0
+		store.ScreenArticleSecurity(id, 9.0, "", false)          //nolint:errcheck
+		store.UpdateReadState(uid, id, false, &i, nil, nil, nil) //nolint:errcheck
 		return id
 	}
 	a1 := mk(feedA, "a1")

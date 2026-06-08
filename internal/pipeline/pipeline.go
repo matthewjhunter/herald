@@ -17,7 +17,7 @@ import (
 // lets a stage skip itself with a single log line when the circuit breaker is
 // open, instead of attempting (and logging) one blocked call per article.
 type AI interface {
-	SecurityCheck(ctx context.Context, userID int64, title, content string) (*ai.SecurityResult, error)
+	SecurityCheck(ctx context.Context, title, content string) (*ai.SecurityResult, error)
 	SummarizeArticle(ctx context.Context, userID int64, title, content string, maxSummaryLength int) (string, error)
 	CurateArticle(ctx context.Context, userID int64, title, content string, keywords []string) (*ai.CurationResult, error)
 	GenerateGroupSummary(ctx context.Context, userID int64, topic string, articles []ai.GroupSummaryInput) (*ai.GroupSummaryResult, error)

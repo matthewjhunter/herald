@@ -37,7 +37,7 @@ func TestEmbedStage(t *testing.T) {
 		emb := &fakeEmbedder{model: "m", embedFn: func(string) ([]float32, error) { return []float32{1, 2, 3}, nil }}
 		withEmbedder(st, emb)
 		a := seed(t, store, feedID, "a", "body")
-		if err := store.MarkSecurityScored(1, a.ID, 9, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(a.ID, 9, "ok", false); err != nil {
 			t.Fatal(err)
 		}
 

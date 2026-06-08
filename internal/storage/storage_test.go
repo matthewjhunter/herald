@@ -1651,41 +1651,42 @@ func TestAIRetryLimit(t *testing.T) {
 		URL: "https://example.com/retry", PublishedDate: &now,
 	})
 
-	// Article should initially appear as unscored.
-	unscored, err := store.GetUnscoredArticlesForUser(1, 100)
+	// Article should initially appear as unscreened (security verdict is
+	// article-level now, #141).
+	unscreened, err := store.GetUnscreenedArticles(100)
 	if err != nil {
-		t.Fatalf("GetUnscoredArticlesForUser: %v", err)
+		t.Fatalf("GetUnscreenedArticles: %v", err)
 	}
-	if len(unscored) != 1 {
-		t.Fatalf("expected 1 unscored article, got %d", len(unscored))
+	if len(unscreened) != 1 {
+		t.Fatalf("expected 1 unscreened article, got %d", len(unscreened))
 	}
 
-	// Increment retries up to the limit (3).
+	// Exhaust the per-article security retry budget (3).
 	for i := range 3 {
-		if err := store.IncrementAIRetries(1, articleID); err != nil {
-			t.Fatalf("IncrementAIRetries call %d: %v", i+1, err)
+		if err := store.IncrementArticleSecurityAttempts(articleID); err != nil {
+			t.Fatalf("IncrementArticleSecurityAttempts call %d: %v", i+1, err)
 		}
 	}
 
-	// After 3 retries, article should no longer appear as unscored.
-	unscored, err = store.GetUnscoredArticlesForUser(1, 100)
+	// After 3 attempts, the article drops out of the security queue.
+	unscreened, err = store.GetUnscreenedArticles(100)
 	if err != nil {
-		t.Fatalf("GetUnscoredArticlesForUser after retries: %v", err)
+		t.Fatalf("GetUnscreenedArticles after retries: %v", err)
 	}
-	if len(unscored) != 0 {
-		t.Errorf("expected 0 unscored articles after 3 retries, got %d", len(unscored))
+	if len(unscreened) != 0 {
+		t.Errorf("expected 0 unscreened articles after 3 attempts, got %d", len(unscreened))
 	}
 
-	// Count should also reflect the exhausted article.
+	// The pending-AI count reflects the exhausted article too.
 	count, err := store.GetUnscoredArticleCount(1)
 	if err != nil {
 		t.Fatalf("GetUnscoredArticleCount: %v", err)
 	}
 	if count != 0 {
-		t.Errorf("expected unscored count 0 after 3 retries, got %d", count)
+		t.Errorf("expected unscored count 0 after 3 attempts, got %d", count)
 	}
 
-	// ResetScores should clear retries and make the article reappear.
+	// ResetScores clears the attempts and makes the article reappear.
 	n, err := store.ResetScores(1, false, 10.0)
 	if err != nil {
 		t.Fatalf("ResetScores: %v", err)
@@ -1693,12 +1694,12 @@ func TestAIRetryLimit(t *testing.T) {
 	if n != 1 {
 		t.Errorf("expected 1 row reset, got %d", n)
 	}
-	unscored, err = store.GetUnscoredArticlesForUser(1, 100)
+	unscreened, err = store.GetUnscreenedArticles(100)
 	if err != nil {
-		t.Fatalf("GetUnscoredArticlesForUser after reset: %v", err)
+		t.Fatalf("GetUnscreenedArticles after reset: %v", err)
 	}
-	if len(unscored) != 1 {
-		t.Errorf("expected 1 unscored article after reset, got %d", len(unscored))
+	if len(unscreened) != 1 {
+		t.Errorf("expected 1 unscreened article after reset, got %d", len(unscreened))
 	}
 }
 
@@ -1715,8 +1716,7 @@ func TestGetUnsummarizedScoredArticles(t *testing.T) {
 		FeedID: feedID, GUID: "a1", Title: "Has summary",
 		URL: "https://example.com/1", PublishedDate: &now,
 	})
-	score, sec := 8.0, 10.0
-	store.UpdateReadState(1, a1, false, &score, &sec, nil, nil)
+	store.ScreenArticleSecurity(a1, 10.0, "", false)
 	store.UpdateArticleAISummary(1, a1, "an existing summary")
 
 	// Article 2: scored, passed security, NO summary — included.
@@ -1724,15 +1724,14 @@ func TestGetUnsummarizedScoredArticles(t *testing.T) {
 		FeedID: feedID, GUID: "a2", Title: "Missing summary",
 		URL: "https://example.com/2", PublishedDate: &now,
 	})
-	store.UpdateReadState(1, a2, false, &score, &sec, nil, nil)
+	store.ScreenArticleSecurity(a2, 10.0, "", false)
 
 	// Article 3: scored, FAILED security — excluded (security_score < threshold).
 	a3, _ := store.AddArticle(&Article{
 		FeedID: feedID, GUID: "a3", Title: "Failed security",
 		URL: "https://example.com/3", PublishedDate: &now,
 	})
-	zero, low := 0.0, 3.0
-	store.UpdateReadState(1, a3, false, &zero, &low, nil, nil)
+	store.ScreenArticleSecurity(a3, 3.0, "", false)
 
 	// Article 4: never scored — excluded (no read_state).
 	store.AddArticle(&Article{
@@ -1745,7 +1744,7 @@ func TestGetUnsummarizedScoredArticles(t *testing.T) {
 		FeedID: feedID, GUID: "a5", Title: "Skipped — too short to compress",
 		URL: "https://example.com/5", PublishedDate: &now,
 	})
-	store.UpdateReadState(1, a5, false, &score, &sec, nil, nil)
+	store.ScreenArticleSecurity(a5, 10.0, "", false)
 	if err := store.MarkSummarizationSkipped(1, a5, "summary longer than content"); err != nil {
 		t.Fatalf("MarkSummarizationSkipped: %v", err)
 	}
@@ -2618,15 +2617,18 @@ func TestMarkSecurityScoredAndCurationQueue(t *testing.T) {
 		scored := mk("scored") // fully scored (interest set) → excluded
 		_ = mk("unscored")     // no read_state at all → excluded
 
-		if err := store.MarkSecurityScored(1, passed, 8.0, "fine", false); err != nil {
-			t.Fatalf("MarkSecurityScored: %v", err)
+		if err := store.ScreenArticleSecurity(passed, 8.0, "fine", false); err != nil {
+			t.Fatalf("ScreenArticleSecurity: %v", err)
 		}
-		if err := store.MarkSecurityScored(1, lowSec, 5.0, "borderline", false); err != nil {
-			t.Fatalf("MarkSecurityScored low: %v", err)
+		if err := store.ScreenArticleSecurity(lowSec, 5.0, "borderline", false); err != nil {
+			t.Fatalf("ScreenArticleSecurity low: %v", err)
 		}
-		interest, sec := 6.0, 8.0
-		if err := store.UpdateReadState(1, scored, false, &interest, &sec, nil, nil); err != nil {
-			t.Fatalf("UpdateReadState: %v", err)
+		// "scored": security-passed and already interest-scored for this user.
+		if err := store.ScreenArticleSecurity(scored, 8.0, "fine", false); err != nil {
+			t.Fatalf("ScreenArticleSecurity scored: %v", err)
+		}
+		if err := store.SetInterestScore(1, scored, 6.0); err != nil {
+			t.Fatalf("SetInterestScore: %v", err)
 		}
 
 		got, err := store.GetUnscoredCurationArticles(1, 7.0, 10)
@@ -2637,20 +2639,21 @@ func TestMarkSecurityScoredAndCurationQueue(t *testing.T) {
 			t.Fatalf("expected only article %d awaiting curation, got %v", passed, articleIDs(got))
 		}
 
-		// Security-scored article must have left the unscored (security) queue.
-		unscored, _ := store.GetUnscoredArticlesForUser(1, 10)
-		for _, a := range unscored {
+		// Screened article must have left the (global) security queue.
+		unscreened, _ := store.GetUnscreenedArticles(10)
+		for _, a := range unscreened {
 			if a.ID == passed {
-				t.Fatal("security-scored article should not be in the unscored queue")
+				t.Fatal("screened article should not be in the unscreened queue")
 			}
 		}
 
-		// Curate it, then re-screen: the interest score must survive (ON CONFLICT
-		// does not touch interest_score) and it must drop out of the curation queue.
-		curScore := 7.5
-		store.UpdateReadState(1, passed, false, &curScore, &sec, nil, nil) //nolint:errcheck
-		if err := store.MarkSecurityScored(1, passed, 8.0, "re-screened", false); err != nil {
-			t.Fatalf("MarkSecurityScored re-run: %v", err)
+		// Curate it, then re-screen: the interest score must survive (security and
+		// interest live in different tables now) and it must drop out of curation.
+		if err := store.SetInterestScore(1, passed, 7.5); err != nil {
+			t.Fatalf("SetInterestScore passed: %v", err)
+		}
+		if err := store.ScreenArticleSecurity(passed, 8.0, "re-screened", false); err != nil {
+			t.Fatalf("ScreenArticleSecurity re-run: %v", err)
 		}
 		after, _ := store.GetUnscoredCurationArticles(1, 7.0, 10)
 		if len(after) != 0 {
@@ -2672,8 +2675,8 @@ func TestSetInterestScorePreservesSecurity(t *testing.T) {
 		id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "x", Title: "x",
 			URL: "https://example.com/x", PublishedDate: &now})
 
-		if err := store.MarkSecurityScored(1, id, 8.0, "ok", false); err != nil {
-			t.Fatalf("MarkSecurityScored: %v", err)
+		if err := store.ScreenArticleSecurity(id, 8.0, "ok", false); err != nil {
+			t.Fatalf("ScreenArticleSecurity: %v", err)
 		}
 		if err := store.SetInterestScore(1, id, 6.0); err != nil {
 			t.Fatalf("SetInterestScore: %v", err)
@@ -2715,7 +2718,7 @@ func TestGetUngroupedEmbeddedArticles(t *testing.T) {
 		mk := func(guid string, pub time.Time) int64 {
 			id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: guid, Title: guid,
 				URL: "https://example.com/" + guid, PublishedDate: &pub})
-			store.MarkSecurityScored(1, id, 9, "ok", false) //nolint:errcheck
+			store.ScreenArticleSecurity(id, 9, "ok", false) //nolint:errcheck
 			return id
 		}
 
@@ -2744,10 +2747,7 @@ func TestGetUngroupedEmbeddedArticles(t *testing.T) {
 		blocked := mk("blocked", now)
 		store.StoreArticleEmbedding(blocked, vec, model) //nolint:errcheck
 		// Overwrite the passing verdict with a failing one.
-		zero := 0.0
-		secScore := 2.0
-		reason := "blocked"
-		store.UpdateReadState(1, blocked, false, &zero, &secScore, &reason, nil) //nolint:errcheck
+		store.ScreenArticleSecurity(blocked, 2.0, "blocked", false) //nolint:errcheck
 
 		since := now.Add(-48 * time.Hour)
 		got, err := store.GetUngroupedEmbeddedArticles(1, model, 7.0, since, 10)
@@ -2791,8 +2791,8 @@ func TestGetProcessingStats(t *testing.T) {
 
 	add("a1") // untouched -> pending
 
-	a2 := add("a2") // scored, security pass, curated, summarized
-	if err := store.MarkSecurityScored(1, a2, 8, "ok", false); err != nil {
+	a2 := add("a2") // screened, security pass, curated, summarized
+	if err := store.ScreenArticleSecurity(a2, 8, "ok", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.SetInterestScore(1, a2, 7); err != nil {
@@ -2802,17 +2802,17 @@ func TestGetProcessingStats(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	a3 := add("a3") // scored, security rejected, summarize-skipped
-	if err := store.MarkSecurityScored(1, a3, 3, "unsafe", false); err != nil {
+	a3 := add("a3") // screened, security rejected, summarize-skipped
+	if err := store.ScreenArticleSecurity(a3, 3, "unsafe", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.MarkSummarizationSkipped(1, a3, "too short"); err != nil {
 		t.Fatal(err)
 	}
 
-	a4 := add("a4") // unscored with retries maxed -> stuck
+	a4 := add("a4") // unscreened with security attempts maxed -> stuck
 	for range 3 {
-		if err := store.IncrementAIRetries(1, a4); err != nil {
+		if err := store.IncrementArticleSecurityAttempts(a4); err != nil {
 			t.Fatal(err)
 		}
 	}
