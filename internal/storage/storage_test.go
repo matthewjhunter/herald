@@ -1539,6 +1539,86 @@ func TestMigrationFromPreOIDCSchema(t *testing.T) {
 	}
 }
 
+// TestMigrationFromPre141Schema reproduces the upgrade-in-place failure where a
+// database created before #141 has an articles table without the security
+// columns. The schema script's CREATE TABLE IF NOT EXISTS is a no-op on the
+// existing table, so security_screened_at does not exist until the ALTER
+// migration adds it; a partial index referencing that column in the schema
+// script crashed startup with "no such column: security_screened_at". The index
+// now lives in the migrations, which run after the column is added.
+//
+// The existing per-article tests reopen a DB created by the current binary, so
+// the column is present from the first open and never exercise this path — this
+// test bootstraps a genuinely pre-#141 articles table by hand.
+func TestMigrationFromPre141Schema(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "pre-141.db")
+
+	// Bootstrap an old-style database: articles without any security_* columns,
+	// mirroring the schema that shipped before #141.
+	legacyDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	_, err = legacyDB.Exec(`
+		CREATE TABLE feeds (
+			id    INTEGER PRIMARY KEY AUTOINCREMENT,
+			url   TEXT NOT NULL UNIQUE,
+			title TEXT NOT NULL
+		);
+		CREATE TABLE articles (
+			id                INTEGER PRIMARY KEY AUTOINCREMENT,
+			feed_id           INTEGER NOT NULL,
+			guid              TEXT NOT NULL,
+			title             TEXT NOT NULL,
+			url               TEXT NOT NULL,
+			content           TEXT,
+			summary           TEXT,
+			author            TEXT,
+			published_date    DATETIME,
+			fetched_date      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			linked_url        TEXT NOT NULL DEFAULT '',
+			linked_content    TEXT NOT NULL DEFAULT '',
+			full_text_fetched BOOLEAN NOT NULL DEFAULT 0,
+			images_cached     BOOLEAN NOT NULL DEFAULT 0,
+			FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE,
+			UNIQUE(feed_id, guid)
+		);
+		INSERT INTO feeds (url, title) VALUES ('https://example.com/feed', 'Feed');
+		INSERT INTO articles (feed_id, guid, title, url)
+		    VALUES (1, 'a1', 'Old Article', 'https://example.com/a1');
+	`)
+	if err != nil {
+		t.Fatalf("create legacy articles table: %v", err)
+	}
+	legacyDB.Close()
+
+	// NewSQLiteStore must migrate in place, not crash on the missing column.
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore on pre-141 schema: %v", err)
+	}
+	defer store.Close()
+
+	// The security columns and the partial index must now exist.
+	var screened *time.Time
+	if err := store.db.QueryRow(
+		`SELECT security_screened_at FROM articles WHERE guid = 'a1'`,
+	).Scan(&screened); err != nil {
+		t.Fatalf("security_screened_at column missing after migration: %v", err)
+	}
+	if screened != nil {
+		t.Errorf("legacy article should be unscreened (NULL), got %v", screened)
+	}
+
+	var indexName string
+	if err := store.db.QueryRow(
+		`SELECT name FROM sqlite_master
+		 WHERE type = 'index' AND name = 'idx_articles_unscreened'`,
+	).Scan(&indexName); err != nil {
+		t.Fatalf("idx_articles_unscreened missing after migration: %v", err)
+	}
+}
+
 func TestGroupVirtualFeed(t *testing.T) {
 	store, cleanup := newTestStore(t)
 	defer cleanup()

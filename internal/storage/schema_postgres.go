@@ -51,8 +51,11 @@ CREATE TABLE IF NOT EXISTS articles (
 );
 
 CREATE INDEX IF NOT EXISTS idx_articles_published ON articles(published_date DESC);
--- Drives the global security pass: newest unscreened articles first.
-CREATE INDEX IF NOT EXISTS idx_articles_unscreened ON articles(published_date DESC) WHERE security_screened_at IS NULL;
+-- idx_articles_unscreened (the partial index driving the security pass) is
+-- created by the migrations, not here. On an upgrade-in-place the CREATE TABLE
+-- above is a no-op, so security_screened_at does not exist until the ALTER
+-- migration adds it; creating a WHERE security_screened_at IS NULL index in this
+-- script would fail. The migration creates it after the column is guaranteed.
 
 CREATE TABLE IF NOT EXISTS users (
     id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
