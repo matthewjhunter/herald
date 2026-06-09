@@ -69,15 +69,15 @@ Fetches all enabled feeds and processes articles with AI.
 **What happens:**
 
 1. **Fetch**: Downloads new articles from all feeds
-2. **Security Check**: Gemma 2 analyzes content for threats
+2. **Security Check**: Gemma analyzes content for threats
    - Prompt injection detection
    - Malicious content screening
    - Articles below security threshold are rejected
-3. **Curation**: Llama 3.2 scores articles for interest
+3. **Curation**: Llama scores articles for interest
    - Considers user keywords
    - Evaluates news value and relevance
    - Assigns 0-10 interest score
-4. **Notification**: High-scoring articles trigger Majordomo
+4. **Notification**: High-scoring articles trigger notifications
 
 **Example output:**
 
@@ -184,7 +184,7 @@ Process articles in batches:
 
 ## AI Processing Details
 
-### Security Layer (Gemma 2)
+### Security Layer (Gemma)
 
 **Purpose**: Detect malicious or manipulative content
 
@@ -202,7 +202,7 @@ Process articles in batches:
 
 **Default threshold**: 7.0 (configurable)
 
-### Curation Layer (Llama 3.2)
+### Curation Layer (Llama)
 
 **Purpose**: Score articles for personal interest
 
@@ -262,24 +262,6 @@ preferences:
 
 ## Integration Examples
 
-### Majordomo Voice Notifications
-
-When a high-interest article is found:
-
-```
-Jarvis: "Sir, high-interest article detected. Breakthrough in Quantum
-Computing at MIT. Would you like to hear more?"
-```
-
-Configure in `config/config.yaml`:
-
-```yaml
-majordomo:
-  enabled: true
-  chat_command: majordomo
-  target_persona: jarvis
-```
-
 ### Slack Notifications
 
 Add a custom notification script:
@@ -297,7 +279,7 @@ curl -X POST https://hooks.slack.com/services/YOUR/WEBHOOK/URL \
   -d "{\"text\":\"🔥 High Interest Article ($SCORE/10)\\n*$ARTICLE_TITLE*\\n$ARTICLE_URL\"}"
 ```
 
-Modify `internal/majordomo/notify.go` to call this script.
+Pipe Herald's JSON notification output (`herald fetch --format=json`) to this script.
 
 ### Email Digest
 

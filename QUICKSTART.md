@@ -86,8 +86,8 @@ ollama pull llama3.1:8b
 ### No Models Found
 AI processing will be skipped, but feed fetching still works.
 
-### Majordomo Not Available
-Notifications will fall back to stdout.
+### Notifier Not Available
+Notifications fall back to stdout.
 
 ## Next Steps
 

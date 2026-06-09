@@ -27,15 +27,6 @@ ollama pull llama3.1:8b
 curl http://localhost:11434/api/tags
 ```
 
-### 3. Install Majordomo (Optional)
-
-If you want voice notifications:
-
-```bash
-# Follow Majordomo installation instructions
-# https://github.com/your-majordomo-repo
-```
-
 ## Building FeedReader
 
 ```bash
@@ -73,11 +64,6 @@ ollama:
   base_url: http://localhost:11434
   security_model: gemma3:4b    # For threat detection
   curation_model: llama3.1:8b  # For interest scoring
-
-majordomo:
-  enabled: true               # Enable/disable notifications
-  chat_command: majordomo
-  target_persona: jarvis
 
 thresholds:
   interest_score: 8.0         # Notify for articles scoring >= 8
@@ -122,14 +108,6 @@ Add this line to fetch every 30 minutes:
 
 ```cron
 */30 * * * * cd /path/to/herald && ./herald fetch >> logs/fetch.log 2>&1
-```
-
-### Option 2: Majordomo Cron
-
-If you're using Majordomo:
-
-```bash
-majordomo cron add "*/30 * * * *" "cd /path/to/herald && ./herald fetch"
 ```
 
 ### Option 3: Systemd Timer
@@ -246,17 +224,6 @@ Check feed URLs are accessible:
 ```bash
 # Test a feed URL
 curl -I https://hnrss.org/frontpage
-```
-
-### Majordomo Notifications Not Working
-
-```bash
-# Test majordomo command
-majordomo chat --recipients jarvis --text "Test notification"
-
-# If fails, check majordomo installation
-which majordomo
-majordomo --version
 ```
 
 ## Performance Tuning

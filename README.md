@@ -9,7 +9,7 @@ AI-powered feed reader with security-first content screening and neutral interes
 
 ## What It Does
 
-Herald is an intelligent RSS/Atom reader that uses a two-model AI pipeline to filter and curate news. A security model (Gemma) screens content for prompt injection and adversarial manipulation before it ever reaches curation, while a separate model (Llama) scores articles by relevance — without imposing editorial bias. Related articles are automatically clustered using vector embeddings, and high-interest items can be delivered as voice notifications via [Majordomo](https://github.com/matthewjhunter/majordomo) integration. Herald runs in three modes: CLI for manual use, MCP server for AI persona integration, and a web interface for browsing.
+Herald is an intelligent RSS/Atom reader that uses a two-model AI pipeline to filter and curate news. A security model (Gemma) screens content for prompt injection and adversarial manipulation before it ever reaches curation, while a separate model (Llama) scores articles by relevance — without imposing editorial bias. Related articles are automatically clustered using vector embeddings, and high-interest items are surfaced as formatted notification output. Herald runs in three modes: CLI for manual use, MCP server for AI persona integration, and a web interface for browsing.
 
 ## The Two-Model Approach
 
@@ -38,7 +38,7 @@ Security and editorial judgment are different problems that benefit from differe
 - Customizable AI prompts with 3-tier fallback: database → config → embedded defaults
 - Article summarization with per-user caching
 - Conditional feed fetching (ETag / Last-Modified) to minimize bandwidth
-- Majordomo voice notification integration for high-interest articles
+- Formatted notification output for high-interest articles
 - MCP server for AI persona access (26 tools)
 - Web interface for browsing articles and groups
 - Multi-user support: separate feeds, preferences, and read state per user
@@ -80,7 +80,6 @@ See [docs/architecture.md](docs/architecture.md) for a detailed breakdown of eac
   ollama pull llama3.1:8b
   ```
   See [Choosing models](#choosing-models) for sizing by available VRAM.
-- Majordomo (optional, for voice notifications)
 
 **Build**
 
@@ -108,7 +107,7 @@ herald import /path/to/subscriptions.opml
 herald fetch
 ```
 
-This fetches all subscribed feeds, runs the security and curation pipeline on new articles, clusters related stories, and notifies Majordomo about high-interest items.
+This fetches all subscribed feeds, runs the security and curation pipeline on new articles, clusters related stories, and emits notification output for high-interest items.
 
 **Read articles**
 
@@ -183,11 +182,9 @@ A discrete GPU is strongly recommended. CPU-only inference works but runs multip
 
 > **Experimental:** large-context summarization (a separate, in-progress feature) pairs better with a long-context model such as `qwen3` -- noted here only for that use, not for routine screening or curation.
 
-## Majordomo Integration
+## MCP Integration
 
-Herald integrates with [Majordomo](https://github.com/matthewjhunter/majordomo) for voice notifications and AI persona access. The MCP server (`herald-mcp`) exposes 26 tools covering feed management, article reading, group browsing, preference management, and prompt customization.
-
-See [docs/majordomo-integration.md](docs/majordomo-integration.md) for the complete integration guide and [examples/majordomo-config.toml](examples/majordomo-config.toml) for configuration templates.
+The MCP server (`herald-mcp`) exposes 26 tools for AI persona and assistant access, covering feed management, article reading, group browsing, preference management, and prompt customization.
 
 ## License
 

@@ -20,17 +20,16 @@ FeedReader is a fully functional, production-ready intelligent RSS/Atom feed rea
 - [x] Command-line interface (CLI)
 
 ### AI Integration ✅
-- [x] Security layer using Gemma 2 via Ollama
-- [x] Curation layer using Llama 3.2 via Ollama
+- [x] Security layer using Gemma via Ollama
+- [x] Curation layer using Llama via Ollama
 - [x] Two-model architecture (security + curation)
 - [x] Interest scoring (0-10 scale)
 - [x] Security scoring (0-10 scale)
 - [x] Configurable thresholds
 - [x] Graceful degradation when Ollama unavailable
 
-### Majordomo Integration ✅
+### Notification Output ✅
 - [x] Formatted notification output for high-interest articles
-- [x] Ready for future CLI integration (when `majordomo chat` command exists)
 - [x] Clear stdout formatting for capture/piping
 - [x] Configurable notification thresholds
 
@@ -74,11 +73,9 @@ feedreader/
 │       └── main.go              # CLI entry point
 ├── internal/
 │   ├── ai/
-│   │   └── ollama.go            # AI processing (Gemma 2 + Llama 3.2)
+│   │   └── ollama.go            # AI processing (gemma3:4b + llama3.1:8b)
 │   ├── feeds/
 │   │   └── fetcher.go           # Feed fetching and OPML import
-│   ├── majordomo/
-│   │   └── notify.go            # Majordomo integration
 │   └── storage/
 │       ├── config.go            # Configuration structures
 │       ├── schema.go            # Database schema
@@ -151,8 +148,7 @@ PASS
 - SQLite (via go-sqlite3) ✅
 
 ### Optional
-- Ollama with Gemma 2 and Llama 3.2 models (for AI features)
-- Majordomo (for voice notifications)
+- Ollama with gemma3:4b and llama3.1:8b models (for AI features)
 - Task (go-task) - for Taskfile execution
 
 ### Go Libraries
@@ -172,10 +168,6 @@ ollama:
   base_url: http://localhost:11434
   security_model: gemma3:4b
   curation_model: llama3.1:8b
-majordomo:
-  enabled: true
-  chat_command: majordomo
-  target_persona: jarvis
 thresholds:
   interest_score: 8.0
   security_score: 7.0
@@ -192,7 +184,7 @@ preferences:
 4. **Summary Only**: Uses feed-provided content, no full-text extraction
 5. **Ollama Required**: AI features require local Ollama installation
 6. **No Learning**: Interest scoring is static (learning in Phase 2)
-7. **Majordomo Integration**: Currently outputs formatted notifications to stdout; ready for `majordomo chat` CLI when implemented
+7. **Notifications**: Currently outputs formatted notifications to stdout for capture/piping
 
 ## Future Roadmap
 
@@ -218,7 +210,7 @@ preferences:
 ✅ **Documentation Complete**: Yes
 ✅ **Tests Passing**: Yes
 ✅ **Error Handling**: Comprehensive
-✅ **Security**: Implemented (Gemma 2 screening)
+✅ **Security**: Implemented (Gemma screening)
 ✅ **Performance**: Optimized for cron usage
 ✅ **Maintainability**: Well-structured, documented code
 
@@ -226,7 +218,7 @@ preferences:
 
 1. **User Testing**: Deploy for personal use and gather feedback
 2. **Cron Setup**: Configure automatic fetching
-3. **Ollama Models**: Ensure Gemma 2 and Llama 3.2 are installed
+3. **Ollama Models**: Ensure gemma3:4b and llama3.1:8b are installed
 4. **Feed Import**: Import real OPML subscription list
 5. **Threshold Tuning**: Adjust interest/security thresholds based on results
 6. **Monitoring**: Watch logs for errors or issues
