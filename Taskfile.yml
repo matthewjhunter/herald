@@ -191,8 +191,8 @@ tasks:
     desc: Check if Ollama is running and has required models
     cmds:
       - echo "Checking Ollama..."
-      - curl -s http://localhost:11434/api/tags | grep -q "gemma2" && echo "✓ gemma2 model found" || echo "✗ gemma2 model not found"
-      - curl -s http://localhost:11434/api/tags | grep -q "llama3.2" && echo "✓ llama3.2 model found" || echo "✗ llama3.2 model not found"
+      - curl -s http://localhost:11434/api/tags | grep -q "gemma3" && echo "✓ gemma3 model found" || echo "✗ gemma3 model not found"
+      - curl -s http://localhost:11434/api/tags | grep -q "llama3.1" && echo "✓ llama3.1 model found" || echo "✗ llama3.1 model not found"
 
   setup:
     desc: Complete setup - initialize config and verify dependencies

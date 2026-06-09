@@ -49,10 +49,10 @@ func TestNewEngineDefaults(t *testing.T) {
 	if engine.config.Ollama.BaseURL != "http://localhost:11434" {
 		t.Errorf("default base URL: got %s", engine.config.Ollama.BaseURL)
 	}
-	if engine.config.Ollama.SecurityModel != "gemma4" {
+	if engine.config.Ollama.SecurityModel != "gemma3:4b" {
 		t.Errorf("default security model: got %s", engine.config.Ollama.SecurityModel)
 	}
-	if engine.config.Ollama.CurationModel != "gemma4" {
+	if engine.config.Ollama.CurationModel != "llama3.1:8b" {
 		t.Errorf("default curation model: got %s", engine.config.Ollama.CurationModel)
 	}
 	if engine.config.Thresholds.InterestScore != 8.0 {

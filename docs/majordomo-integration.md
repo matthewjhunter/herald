@@ -185,8 +185,8 @@ database:
 
 ollama:
   base_url: "http://localhost:11434"
-  security_model: "gemma2:2b"
-  curation_model: "llama3.2:3b"
+  security_model: "gemma3:4b"
+  curation_model: "llama3.1:8b"
 
 ai:
   security_threshold: 7.0

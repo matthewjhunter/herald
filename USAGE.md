@@ -433,5 +433,5 @@ Reduce articles per fetch or use faster models:
 
 ```yaml
 ollama:
-  curation_model: llama3.2:1b  # Smaller, faster model
+  curation_model: gemma3:1b  # Smaller, faster model
 ```

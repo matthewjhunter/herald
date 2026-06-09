@@ -41,10 +41,10 @@ type Engine struct {
 // reading still work normally.
 func NewEngine(cfg EngineConfig) (*Engine, error) {
 	if cfg.SecurityModel == "" {
-		cfg.SecurityModel = "gemma4"
+		cfg.SecurityModel = "gemma3:4b"
 	}
 	if cfg.CurationModel == "" {
-		cfg.CurationModel = "gemma4"
+		cfg.CurationModel = "llama3.1:8b"
 	}
 	if cfg.InterestThreshold == 0 {
 		cfg.InterestThreshold = 8.0

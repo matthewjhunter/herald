@@ -77,8 +77,9 @@ See [docs/architecture.md](docs/architecture.md) for a detailed breakdown of eac
 - [Ollama](https://ollama.com/) running locally with models pulled:
   ```bash
   ollama pull gemma3:4b
-  ollama pull llama3
+  ollama pull llama3.1:8b
   ```
+  See [Choosing models](#choosing-models) for sizing by available VRAM.
 - Majordomo (optional, for voice notifications)
 
 **Build**
@@ -130,7 +131,7 @@ Herald reads `config/config.yaml`. Key sections:
 ollama:
   base_url: http://localhost:11434
   security_model: gemma3:4b
-  curation_model: llama3
+  curation_model: llama3.1:8b
 
 thresholds:
   interest_score: 8.0    # articles above this score trigger notifications
@@ -144,6 +145,43 @@ preferences:
 ```
 
 AI prompts can be overridden in the config file or per-user in the database. See [docs/architecture.md](docs/architecture.md) for the full prompt system description.
+
+## Choosing models
+
+Herald runs two local models with separate jobs, so size them independently:
+
+| Role | Config key | Runs on | What to optimize |
+|------|-----------|---------|------------------|
+| Security screening | `security_model` | Every fetched article, before curation | Small and fast -- it gates throughput. A 4B model is enough. |
+| Curation / scoring | `curation_model` | Articles that pass screening | Judgment quality. Use the largest model your VRAM allows. |
+
+Both can be resident at once, so budget for the **combined** size.
+
+| VRAM | `security_model` | `curation_model` |
+|------|------------------|------------------|
+| 8-10 GB | `gemma3:4b` | `gemma3:4b` (reuse one model for both) |
+| 12-16 GB | `gemma3:4b` | `llama3.1:8b` |
+| 24 GB | `gemma3:4b` | `gemma3:12b` |
+| 24 GB+ / multi-GPU | `gemma3:12b` | `gemma3:27b` |
+
+Any Ollama chat model works -- these are starting points, not requirements. Pull your pick and set both keys:
+
+```bash
+ollama pull gemma3:4b
+ollama pull llama3.1:8b
+```
+
+```yaml
+ollama:
+  security_model: gemma3:4b
+  curation_model: llama3.1:8b
+```
+
+Google's **Gemma 4** family is newer and ships in several sizes -- compact `E2B` and `E4B` variants through larger `26B-A4B` and `31B` builds -- and is worth experimenting with for both roles as it lands in Ollama.
+
+A discrete GPU is strongly recommended. CPU-only inference works but runs multiple seconds per article; GPUs with under ~6 GB are fine for embeddings but not for the screening and curation models.
+
+> **Experimental:** large-context summarization (a separate, in-progress feature) pairs better with a long-context model such as `qwen3` -- noted here only for that use, not for routine screening or curation.
 
 ## Majordomo Integration
 

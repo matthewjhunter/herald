@@ -5,8 +5,8 @@ database:
 # just for herald). See README.md for the full env-var list.
 ollama:
   base_url: http://ollama:11434
-  security_model: gemma4
-  curation_model: gemma4
+  security_model: gemma3:4b
+  curation_model: llama3.1:8b
 grouping:
   similarity_threshold: 0.75
   cluster_threshold: 0.75

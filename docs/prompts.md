@@ -284,8 +284,8 @@ database:
 
 ollama:
   base_url: http://localhost:11434
-  security_model: gemma2
-  curation_model: llama3.2
+  security_model: gemma3:4b
+  curation_model: llama3.1:8b
 ```
 
 ### Config with Custom Temperature

@@ -20,8 +20,8 @@ go version
 curl -fsSL https://ollama.com/install.sh | sh
 
 # Pull required models
-ollama pull gemma2
-ollama pull llama3.2
+ollama pull gemma3:4b
+ollama pull llama3.1:8b
 
 # Verify Ollama is running
 curl http://localhost:11434/api/tags
@@ -71,8 +71,8 @@ database:
 
 ollama:
   base_url: http://localhost:11434
-  security_model: gemma2      # For threat detection
-  curation_model: llama3.2    # For interest scoring
+  security_model: gemma3:4b    # For threat detection
+  curation_model: llama3.1:8b  # For interest scoring
 
 majordomo:
   enabled: true               # Enable/disable notifications
@@ -221,8 +221,8 @@ ollama serve
 
 ```bash
 # Pull required models
-ollama pull gemma2
-ollama pull llama3.2
+ollama pull gemma3:4b
+ollama pull llama3.1:8b
 
 # List installed models
 ollama list
