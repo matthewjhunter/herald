@@ -33,17 +33,6 @@ ollama:
 # as new articles are processed. To force a full rebuild, clear the column:
 # UPDATE article_groups SET embedding = NULL;
 
-majordomo:
-  # Enable formatted notification output (for future Majordomo integration)
-  enabled: true
-
-  # Command to execute for sending messages (reserved for future use)
-  # When 'majordomo chat' CLI command is implemented, this will be used
-  chat_command: majordomo
-
-  # Target persona to receive notifications
-  target_persona: jarvis
-
 thresholds:
   # Minimum interest score (0-10) to trigger notification
   interest_score: 8

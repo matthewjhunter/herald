@@ -9,7 +9,7 @@ AI-powered feed reader with security-first content screening and neutral interes
 
 ## What It Does
 
-Herald is an intelligent RSS/Atom reader that uses a two-model AI pipeline to filter and curate news. A security model (Gemma) screens content for prompt injection and adversarial manipulation before it ever reaches curation, while a separate model (Llama) scores articles by relevance — without imposing editorial bias. Related articles are automatically clustered using vector embeddings, and high-interest items can be delivered as voice notifications via [Majordomo](https://github.com/matthewjhunter/majordomo) integration. Herald runs in three modes: CLI for manual use, MCP server for AI persona integration, and a web interface for browsing.
+Herald is an intelligent RSS/Atom reader that uses a two-model AI pipeline to filter and curate news. A security model (Gemma) screens content for prompt injection and adversarial manipulation before it ever reaches curation, while a separate model (Llama) scores articles by relevance — without imposing editorial bias. Related articles are automatically clustered using vector embeddings, and high-interest items are surfaced as formatted notification output. Herald runs in three modes: CLI for manual use, MCP server for AI persona integration, and a web interface for browsing.
 
 ## The Two-Model Approach
 
@@ -38,7 +38,7 @@ Security and editorial judgment are different problems that benefit from differe
 - Customizable AI prompts with 3-tier fallback: database → config → embedded defaults
 - Article summarization with per-user caching
 - Conditional feed fetching (ETag / Last-Modified) to minimize bandwidth
-- Majordomo voice notification integration for high-interest articles
+- Formatted notification output for high-interest articles
 - MCP server for AI persona access (26 tools)
 - Web interface for browsing articles and groups
 - Multi-user support: separate feeds, preferences, and read state per user
@@ -77,9 +77,9 @@ See [docs/architecture.md](docs/architecture.md) for a detailed breakdown of eac
 - [Ollama](https://ollama.com/) running locally with models pulled:
   ```bash
   ollama pull gemma3:4b
-  ollama pull llama3
+  ollama pull llama3.1:8b
   ```
-- Majordomo (optional, for voice notifications)
+  See [Choosing models](#choosing-models) for sizing by available VRAM.
 
 **Build**
 
@@ -107,7 +107,7 @@ herald import /path/to/subscriptions.opml
 herald fetch
 ```
 
-This fetches all subscribed feeds, runs the security and curation pipeline on new articles, clusters related stories, and notifies Majordomo about high-interest items.
+This fetches all subscribed feeds, runs the security and curation pipeline on new articles, clusters related stories, and emits notification output for high-interest items.
 
 **Read articles**
 
@@ -130,7 +130,7 @@ Herald reads `config/config.yaml`. Key sections:
 ollama:
   base_url: http://localhost:11434
   security_model: gemma3:4b
-  curation_model: llama3
+  curation_model: llama3.1:8b
 
 thresholds:
   interest_score: 8.0    # articles above this score trigger notifications
@@ -145,11 +145,46 @@ preferences:
 
 AI prompts can be overridden in the config file or per-user in the database. See [docs/architecture.md](docs/architecture.md) for the full prompt system description.
 
-## Majordomo Integration
+## Choosing models
 
-Herald integrates with [Majordomo](https://github.com/matthewjhunter/majordomo) for voice notifications and AI persona access. The MCP server (`herald-mcp`) exposes 26 tools covering feed management, article reading, group browsing, preference management, and prompt customization.
+Herald runs two local models with separate jobs, so size them independently:
 
-See [docs/majordomo-integration.md](docs/majordomo-integration.md) for the complete integration guide and [examples/majordomo-config.toml](examples/majordomo-config.toml) for configuration templates.
+| Role | Config key | Runs on | What to optimize |
+|------|-----------|---------|------------------|
+| Security screening | `security_model` | Every fetched article, before curation | Small and fast -- it gates throughput. A 4B model is enough. |
+| Curation / scoring | `curation_model` | Articles that pass screening | Judgment quality. Use the largest model your VRAM allows. |
+
+Both can be resident at once, so budget for the **combined** size.
+
+| VRAM | `security_model` | `curation_model` |
+|------|------------------|------------------|
+| 8-10 GB | `gemma3:4b` | `gemma3:4b` (reuse one model for both) |
+| 12-16 GB | `gemma3:4b` | `llama3.1:8b` |
+| 24 GB | `gemma3:4b` | `gemma3:12b` |
+| 24 GB+ / multi-GPU | `gemma3:12b` | `gemma3:27b` |
+
+Any Ollama chat model works -- these are starting points, not requirements. Pull your pick and set both keys:
+
+```bash
+ollama pull gemma3:4b
+ollama pull llama3.1:8b
+```
+
+```yaml
+ollama:
+  security_model: gemma3:4b
+  curation_model: llama3.1:8b
+```
+
+Google's **Gemma 4** family is newer and ships in several sizes -- compact `E2B` and `E4B` variants through larger `26B-A4B` and `31B` builds -- and is worth experimenting with for both roles as it lands in Ollama.
+
+A discrete GPU is strongly recommended. CPU-only inference works but runs multiple seconds per article; GPUs with under ~6 GB are fine for embeddings but not for the screening and curation models.
+
+> **Experimental:** large-context summarization (a separate, in-progress feature) pairs better with a long-context model such as `qwen3` -- noted here only for that use, not for routine screening or curation.
+
+## MCP Integration
+
+The MCP server (`herald-mcp`) exposes 26 tools for AI persona and assistant access, covering feed management, article reading, group browsing, preference management, and prompt customization.
 
 ## License
 

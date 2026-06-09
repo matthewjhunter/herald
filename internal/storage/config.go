@@ -105,8 +105,8 @@ func DefaultConfig() *Config {
 	cfg.DefaultUserID = 1
 	cfg.Database.Path = "./herald.db"
 	cfg.Ollama.BaseURL = "http://localhost:11434"
-	cfg.Ollama.SecurityModel = "gemma4"
-	cfg.Ollama.CurationModel = "gemma4"
+	cfg.Ollama.SecurityModel = "gemma3:4b"
+	cfg.Ollama.CurationModel = "llama3.1:8b"
 	cfg.Ollama.Timeout = 2 * time.Minute
 	cfg.Summarization.MinArticleLength = 200
 	cfg.Summarization.MaxSummaryLength = 500

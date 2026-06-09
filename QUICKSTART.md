@@ -12,7 +12,7 @@ go version
 curl http://localhost:11434/api/tags
 
 # Check if required models are installed
-ollama list | grep -E "(gemma2|llama3.2)"
+ollama list | grep -E "(gemma3|llama3.1)"
 ```
 
 ## Installation
@@ -79,15 +79,15 @@ Published: 2026-02-17 14:30
 ollama serve
 
 # Pull models
-ollama pull gemma2
-ollama pull llama3.2
+ollama pull gemma3:4b
+ollama pull llama3.1:8b
 ```
 
 ### No Models Found
 AI processing will be skipped, but feed fetching still works.
 
-### Majordomo Not Available
-Notifications will fall back to stdout.
+### Notifier Not Available
+Notifications fall back to stdout.
 
 ## Next Steps
 
@@ -115,8 +115,8 @@ Key settings:
 - `thresholds.interest_score`: Notification threshold (default: 8.0)
 - `thresholds.security_score`: Security threshold (default: 7.0)
 - `preferences.keywords`: Topics of interest
-- `ollama.security_model`: Security screening model (gemma2)
-- `ollama.curation_model`: Interest scoring model (llama3.2)
+- `ollama.security_model`: Security screening model (gemma3:4b)
+- `ollama.curation_model`: Interest scoring model (llama3.1:8b)
 
 ## Full Documentation
 

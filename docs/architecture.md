@@ -84,7 +84,7 @@ Group Matching (embedding + cosine similarity)
     └─ no match ──► new group created
     │
     ▼ (if interest score >= threshold)
-Majordomo Notification
+Notification Output
 ```
 
 ### Security Screening
@@ -200,11 +200,9 @@ Tool categories:
 | Users | `user_register`, `user_list` |
 | Briefing | `briefing` |
 
-The `briefing` tool generates a formatted markdown digest of high-interest unread articles, intended for delivery as a voice briefing through Majordomo.
+The `briefing` tool generates a formatted markdown digest of high-interest unread articles, intended for delivery as a voice briefing.
 
 Feed fetching and AI processing are the `herald daemon`'s responsibility; `herald-mcp` reads the results. Run a daemon (or `herald fetch`) against the same database to keep it populated.
-
-See [docs/majordomo-integration.md](majordomo-integration.md) for Majordomo-specific setup.
 
 ## Design Decisions
 

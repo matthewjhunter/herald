@@ -278,10 +278,9 @@ boundary. Many of the fixes came directly out of running Herald against a
 - Security scoring system (0-10 scale)
 - Configurable thresholds for both scores
 
-#### Majordomo Integration
-- Voice notifications for high-interest articles
-- Chat command integration
-- Graceful fallback when Majordomo unavailable
+#### Notifications
+- Formatted notification output for high-interest articles
+- Graceful fallback to stdout when no notifier is configured
 
 #### CLI Commands
 - `init-config` - Create default configuration file
@@ -294,7 +293,7 @@ boundary. Many of the fixes came directly out of running Herald against a
 - YAML-based configuration system
 - User preferences for keywords and sources
 - Configurable Ollama models and endpoints
-- Majordomo integration settings
+- Notification settings
 - Threshold customization
 
 #### Database Schema
