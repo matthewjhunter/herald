@@ -60,6 +60,67 @@ func TestDiscoverFeeds_HTMLLinks(t *testing.T) {
 	}
 }
 
+func TestDiscoverFeeds_AnchorLinks(t *testing.T) {
+	// Some sites (e.g. Paizo's Nuxt blog) advertise feeds only via <a> tags in
+	// the body, not the standard <link rel="alternate"> in <head>. The page
+	// links feeds with a query-string scheme under a subpath, which the
+	// common-path probe would never find.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RawQuery == "feed=rss" {
+			w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
+			fmt.Fprint(w, testRSS)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<!DOCTYPE html><html><head><title>Blog</title></head>
+<body>
+    <a href="/blog/?feed=rss">RSS</a>
+    <a href="/about">About</a>
+</body></html>`)
+	}))
+	defer srv.Close()
+
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	fetcher := NewFetcher(store)
+	results, err := fetcher.DiscoverFeeds(context.Background(), srv.URL+"/blog/")
+	if err != nil {
+		t.Fatalf("DiscoverFeeds: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 feed from anchor discovery, got %d", len(results))
+	}
+	want := srv.URL + "/blog/?feed=rss"
+	if results[0].URL != want {
+		t.Errorf("URL=%q, want %q", results[0].URL, want)
+	}
+	if results[0].Type != "rss" {
+		t.Errorf("Type=%q, want rss", results[0].Type)
+	}
+}
+
+func TestExtractFeedAnchors(t *testing.T) {
+	body := []byte(`<html><body>
+    <a href="/blog/?feed=atom">Atom</a>
+    <a href="/blog/?feed=rss">RSS</a>
+    <a href="/feed.xml">XML</a>
+    <a href="/about">About</a>
+    <a href="https://example.com/news">News</a>
+    <a href="/blog/?feed=rss">RSS dupe</a>
+</body></html>`)
+	got := extractFeedAnchors(body, nil)
+	want := []string{"/blog/?feed=atom", "/blog/?feed=rss", "/feed.xml"}
+	if len(got) != len(want) {
+		t.Fatalf("got %d candidates %v, want %d %v", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("candidate %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestDiscoverFeeds_RelativeURLResolution(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")

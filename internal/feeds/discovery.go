@@ -37,6 +37,16 @@ var feedContentTypes = []string{
 	"application/json",
 }
 
+// feedHrefHints are substrings in an anchor href that suggest it points to a
+// feed. Anchor candidates are always verified by fetching and parsing, so loose
+// hints here only cost an extra probe at worst.
+var feedHrefHints = []string{"rss", "atom", "feed", ".xml", ".rdf"}
+
+// maxFeedProbes bounds how many anchor candidates are fetched and parsed during
+// fallback discovery, so a page littered with feed-like links can't trigger a
+// large fan-out of requests.
+const maxFeedProbes = 15
+
 // commonFeedPaths are probed when HTML autodiscovery finds nothing.
 var commonFeedPaths = []string{
 	"/feed",
@@ -79,12 +89,7 @@ func (f *Fetcher) DiscoverFeeds(ctx context.Context, pageURL string) ([]Discover
 	// If Content-Type suggests a feed, try to parse it directly.
 	if isFeedContentType(resp.Header.Get("Content-Type")) {
 		if parsed, parseErr := f.parser.ParseString(string(body)); parseErr == nil {
-			df := DiscoveredFeed{URL: pageURL, Title: parsed.Title}
-			if parsed.FeedType == "atom" {
-				df.Type = "atom"
-			} else {
-				df.Type = "rss"
-			}
+			df := DiscoveredFeed{URL: pageURL, Title: parsed.Title, Type: feedKind(parsed.FeedType)}
 			return []DiscoveredFeed{df}, nil
 		}
 	}
@@ -96,11 +101,53 @@ func (f *Fetcher) DiscoverFeeds(ctx context.Context, pageURL string) ([]Discover
 		return discovered, nil
 	}
 
+	// Secondary: scan anchor links for feed-like hrefs and verify them. Some
+	// sites (notably SPA blogs such as Paizo's) link feeds with <a> tags in the
+	// body rather than the standard <link rel="alternate"> in <head>.
+	if candidates := extractFeedAnchors(body, base); len(candidates) > 0 {
+		if found := f.verifyFeedCandidates(ctx, candidates); len(found) > 0 {
+			return found, nil
+		}
+	}
+
 	// Fallback: probe common feed paths under the same host.
 	if base != nil {
 		return f.probeFeedPaths(ctx, base), nil
 	}
 	return nil, nil
+}
+
+// verifyFeedCandidates fetches each candidate URL and returns those that parse
+// as feeds. At most maxFeedProbes candidates are tried.
+func (f *Fetcher) verifyFeedCandidates(ctx context.Context, candidates []string) []DiscoveredFeed {
+	var found []DiscoveredFeed
+	for i, candidate := range candidates {
+		if i >= maxFeedProbes {
+			break
+		}
+		result, err := f.FetchFeed(ctx, storage.Feed{URL: candidate})
+		if err != nil || result.NotModified || result.Feed == nil {
+			continue
+		}
+		found = append(found, DiscoveredFeed{
+			URL:   candidate,
+			Title: result.Feed.Title,
+			Type:  feedKind(result.Feed.FeedType),
+		})
+	}
+	return found
+}
+
+// feedKind maps a gofeed FeedType to Herald's feed kind label.
+func feedKind(feedType string) string {
+	switch feedType {
+	case "atom":
+		return "atom"
+	case "json":
+		return "json"
+	default:
+		return "rss"
+	}
 }
 
 // probeFeedPaths tries well-known feed URL paths under the site root and
@@ -114,13 +161,11 @@ func (f *Fetcher) probeFeedPaths(ctx context.Context, base *url.URL) []Discovere
 		if err != nil || result.NotModified || result.Feed == nil {
 			continue
 		}
-		df := DiscoveredFeed{URL: candidate, Title: result.Feed.Title}
-		if result.Feed.FeedType == "atom" {
-			df.Type = "atom"
-		} else {
-			df.Type = "rss"
-		}
-		found = append(found, df)
+		found = append(found, DiscoveredFeed{
+			URL:   candidate,
+			Title: result.Feed.Title,
+			Type:  feedKind(result.Feed.FeedType),
+		})
 	}
 	return found
 }
@@ -187,6 +232,57 @@ func extractFeedLinks(body []byte, base *url.URL) []DiscoveredFeed {
 	}
 	walk(doc)
 	return discovered
+}
+
+// extractFeedAnchors parses the HTML body and returns candidate feed URLs found
+// in anchor (<a>) hrefs whose value hints at a feed (see feedHrefHints). It is a
+// fallback for pages that omit the standard <link rel="alternate"> autodiscovery
+// tags. Hrefs are resolved against base, deduplicated, and returned in document
+// order. Candidates are not guaranteed to be feeds; callers must verify them.
+func extractFeedAnchors(body []byte, base *url.URL) []string {
+	doc, err := html.Parse(strings.NewReader(string(body)))
+	if err != nil {
+		return nil
+	}
+
+	var candidates []string
+	seen := make(map[string]bool)
+
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "a" {
+			href := strings.TrimSpace(nodeAttrs(n.Attr)["href"])
+			if href != "" && looksLikeFeedHref(href) {
+				resolved := href
+				if base != nil {
+					if ref, err := base.Parse(href); err == nil {
+						resolved = ref.String()
+					}
+				}
+				if !seen[resolved] {
+					seen[resolved] = true
+					candidates = append(candidates, resolved)
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	return candidates
+}
+
+// looksLikeFeedHref reports whether an anchor href contains a hint that it may
+// point to a feed.
+func looksLikeFeedHref(href string) bool {
+	lower := strings.ToLower(href)
+	for _, hint := range feedHrefHints {
+		if strings.Contains(lower, hint) {
+			return true
+		}
+	}
+	return false
 }
 
 // nodeAttrs converts a slice of html.Attribute into a map for easy lookup.
