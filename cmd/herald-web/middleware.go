@@ -53,16 +53,14 @@ func (h *handlers) requireAuth(next http.Handler) http.Handler {
 			}
 			var loginURL string
 			if h.validator.FlowConfigured() {
-				verifier := oidclient.GenerateVerifier()
-				state, err := oidclient.GenerateNonce()
+				// Reuse any in-progress flow so concurrent unauthenticated
+				// requests don't overwrite each other's state and fail the
+				// callback with a state mismatch.
+				state, verifier, err := oidclient.GetOrCreateFlow(w, r, returnTo)
 				if err != nil {
 					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 					return
 				}
-				secure := oidclient.IsSecure(r)
-				oidclient.SetFlowCookie(w, oidclient.CookieVerifier, verifier, secure)
-				oidclient.SetFlowCookie(w, oidclient.CookieState, state, secure)
-				oidclient.SetFlowCookie(w, oidclient.CookieRedirect, returnTo, secure)
 				loginURL = h.validator.AuthorizeURL(state, verifier)
 			} else {
 				loginURL = h.validator.LoginURL(returnTo)
