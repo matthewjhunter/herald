@@ -202,13 +202,13 @@ func TestOutputHighInterestNotification_JSON(t *testing.T) {
 	}
 }
 
-func TestOutputMajordomoResult_EmptyText(t *testing.T) {
+func TestOutputCronResult_EmptyText(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	f := NewFormatterWithWriters(FormatJSON, &out, &errBuf)
 
 	result := &FetchResult{NewArticles: 5, ProcessedCount: 5, HighInterest: 0}
-	if err := f.OutputMajordomoResult(result, 1, nil); err != nil {
-		t.Fatalf("OutputMajordomoResult failed: %v", err)
+	if err := f.OutputCronResult(result, 1, nil); err != nil {
+		t.Fatalf("OutputCronResult failed: %v", err)
 	}
 
 	var decoded CommandOutput
@@ -224,7 +224,7 @@ func TestOutputMajordomoResult_EmptyText(t *testing.T) {
 	}
 }
 
-func TestOutputMajordomoResult_WithArticles(t *testing.T) {
+func TestOutputCronResult_WithArticles(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	f := NewFormatterWithWriters(FormatJSON, &out, &errBuf)
 
@@ -233,8 +233,8 @@ func TestOutputMajordomoResult_WithArticles(t *testing.T) {
 	}
 	result := &FetchResult{NewArticles: 3, ProcessedCount: 3, HighInterest: 1}
 
-	if err := f.OutputMajordomoResult(result, 1, articles); err != nil {
-		t.Fatalf("OutputMajordomoResult failed: %v", err)
+	if err := f.OutputCronResult(result, 1, articles); err != nil {
+		t.Fatalf("OutputCronResult failed: %v", err)
 	}
 
 	var decoded CommandOutput
@@ -253,12 +253,12 @@ func TestOutputMajordomoResult_WithArticles(t *testing.T) {
 	}
 }
 
-func TestOutputMajordomoResult_NonJSON(t *testing.T) {
+func TestOutputCronResult_NonJSON(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	f := NewFormatterWithWriters(FormatHuman, &out, &errBuf)
 
 	result := &FetchResult{}
-	err := f.OutputMajordomoResult(result, 1, nil)
+	err := f.OutputCronResult(result, 1, nil)
 	if err == nil {
 		t.Fatal("expected error for non-JSON format, got nil")
 	}

@@ -318,7 +318,7 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
-// CommandOutput represents Majordomo cron command output
+// CommandOutput represents Herald cron command output
 type CommandOutput struct {
 	Text     string            `json:"text"`
 	Title    string            `json:"title,omitempty"`
@@ -328,10 +328,10 @@ type CommandOutput struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
-// OutputMajordomoResult outputs results for Majordomo cron integration
-func (f *Formatter) OutputMajordomoResult(result *FetchResult, userID int64, highInterestArticles []storage.Article) error {
+// OutputCronResult outputs results for Herald cron integration
+func (f *Formatter) OutputCronResult(result *FetchResult, userID int64, highInterestArticles []storage.Article) error {
 	if f.format != FormatJSON {
-		return fmt.Errorf("majordomo output only supports JSON format")
+		return fmt.Errorf("cron output only supports JSON format")
 	}
 
 	var text strings.Builder
