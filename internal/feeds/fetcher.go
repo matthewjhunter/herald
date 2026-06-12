@@ -374,6 +374,11 @@ func (f *Fetcher) FetchAllFeeds(ctx context.Context) (*FetchStats, error) {
 			if err := f.store.ClearFeedError(feed.ID); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to update last_fetched for %s: %v\n", feed.URL, err)
 			}
+			// If site_url was never captured (pre-migration feeds), force a full
+			// fetch next cycle by clearing the cached conditional-request headers.
+			if feed.SiteURL == "" {
+				f.store.UpdateFeedCacheHeaders(feed.ID, "", "")
+			}
 			continue
 		}
 
