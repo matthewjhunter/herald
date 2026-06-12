@@ -1803,6 +1803,11 @@ func (h *handlers) handleFilterThreshold(w http.ResponseWriter, r *http.Request)
 		v = "0"
 	}
 
+	if _, err := strconv.Atoi(v); err != nil {
+		h.renderError(w, http.StatusBadRequest, "filter_threshold must be an integer")
+		return
+	}
+
 	if err := h.engine.SetPreference(uid, "filter_threshold", v); err != nil {
 		h.renderError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save threshold: %v", err))
 		return
