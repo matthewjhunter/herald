@@ -435,6 +435,14 @@ func (h *handlers) handleLogout(w http.ResponseWriter, r *http.Request) {
 // It validates the state nonce, exchanges the code for an access token via PKCE,
 // sets the JWT as an HttpOnly cookie, and redirects to the original URL.
 func (h *handlers) handleCallback(w http.ResponseWriter, r *http.Request) {
+	// A lazy client whose discovery is still pending cannot exchange the
+	// code; degrade this endpoint rather than 502ing mid-flow (#165).
+	if !h.validator.Ready() {
+		log.Printf("herald-web: callback received before provider discovery completed")
+		http.Error(w, "authentication temporarily unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
 	code := r.URL.Query().Get("code")
 	stateParam := r.URL.Query().Get("state")
 

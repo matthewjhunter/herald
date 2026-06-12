@@ -87,22 +87,23 @@ func main() {
 		os.Exit(1)
 	}
 
+	// NewLazy boots even when webauth is unreachable: discovery retries in the
+	// background and auth endpoints degrade to 503 until the provider is
+	// ready. An IdP outage must cost sign-in only, never site boot (#165; the
+	// 2026-06-12 osg/sf outage was a crash loop from eager discovery).
 	ctx := context.Background()
-	validator, err := oidclient.New(ctx, oidclient.Config{
+	validator, err := oidclient.NewLazy(ctx, oidclient.Config{
 		IssuerURL:   issuerURL,
 		CookieName:  cookie,
 		WebauthURL:  webauthBaseURL,
 		ClientID:    clientID,
 		ClientName:  "Herald",
 		CallbackURL: callbackURL,
+		Logf:        log.Printf,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "herald-web: %v\n", err)
 		os.Exit(1)
-	}
-	if validator.ClientID() != clientID {
-		log.Printf("herald-web: registered with IdP as client_id=%s (configured=%s ignored — provider supports RFC 7591 dynamic registration)",
-			validator.ClientID(), clientID)
 	}
 
 	engine, err := herald.NewEngine(herald.EngineConfig{
