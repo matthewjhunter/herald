@@ -1049,6 +1049,11 @@ func (h *handlers) handleNewsletterGenerate(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
+	nl, err := h.engine.GetNewsletter(id)
+	if err != nil || nl.UserID != uid {
+		h.renderError(w, http.StatusNotFound, "Digest not found")
+		return
+	}
 	if !h.engine.AISummaryEnabled() {
 		fmt.Fprint(w, `<span class="secondary">AI summary not configured.</span>`)
 		return
