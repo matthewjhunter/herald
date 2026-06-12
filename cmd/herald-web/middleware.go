@@ -4,11 +4,48 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/infodancer/oidclient"
 	herald "github.com/matthewjhunter/herald"
 )
+
+// localPath returns p when p is a relative same-origin path safe to
+// hand to http.Redirect after the OIDC flow, or "" otherwise. The
+// guard rejects:
+//
+//   - absolute URLs (http://evil/, https://evil/),
+//   - protocol-relative URLs (//evil/path),
+//   - backslash-prefixed variants (/\evil/path) that some browsers
+//     historically normalised into a network-path reference,
+//   - anything parsing into a URL with a non-empty Scheme or Host.
+//
+// Herald writes the redirect cookie from its own RequestURI, never from a
+// user-supplied parameter, so this guard (the CallbackHandler's
+// SanitizeRedirect hook) only defends against a cookie planted out of band,
+// e.g. from a compromised sibling subdomain. Kept identical to the osg and
+// sf copies of the same function.
+func localPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	if !strings.HasPrefix(p, "/") {
+		return ""
+	}
+	if strings.HasPrefix(p, "//") || strings.HasPrefix(p, "/\\") {
+		return ""
+	}
+	u, err := url.Parse(p)
+	if err != nil {
+		return ""
+	}
+	if u.Scheme != "" || u.Host != "" {
+		return ""
+	}
+	return p
+}
 
 // contextKey is an unexported type for context values set by this package.
 type contextKey struct{}

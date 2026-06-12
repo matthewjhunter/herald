@@ -55,7 +55,8 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	// cookie via the shared oidclient handler. No OnAuthenticated hook: user
 	// provisioning happens in requireAuth on the next request.
 	mux.Handle("GET /auth/callback", validator.CallbackHandler(oidclient.CallbackOptions{
-		Logf: log.Printf,
+		SanitizeRedirect: localPath,
+		Logf:             log.Printf,
 	}), smoke.Skip("OIDC callback; requires a code & state, not a bare GET"))
 
 	// OPML sync — token-authenticated, no JWT required.
