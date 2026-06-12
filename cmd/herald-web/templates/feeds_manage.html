@@ -75,7 +75,10 @@
         <form hx-post="/feeds/discover" hx-target="#subscribe-result" hx-swap="innerHTML"
               hx-on::after-request="if(event.detail.successful) this.reset();">
             <div class="grid">
-                <input type="url" name="url" placeholder="https://example.com/ or https://example.com/feed.xml" required>
+                {{/* Not type="url": browser validation would reject scheme-less
+                     input, but the server tries https:// then http:// itself. */}}
+                <input type="text" inputmode="url" autocomplete="url" name="url"
+                       placeholder="example.com/ or https://example.com/feed.xml" required>
                 <input type="text" name="title" placeholder="Title (optional)">
                 <button type="submit">Subscribe</button>
             </div>
