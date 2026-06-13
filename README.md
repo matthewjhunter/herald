@@ -9,7 +9,7 @@ AI-powered feed reader with security-first content screening and neutral interes
 
 ## What It Does
 
-Herald is an intelligent RSS/Atom reader that uses a two-model AI pipeline to filter and curate news. A security model (Gemma) screens content for prompt injection and adversarial manipulation before it ever reaches curation, while a separate model (Llama) scores articles by relevance — without imposing editorial bias. Related articles are automatically clustered using vector embeddings, and high-interest items are surfaced as formatted notification output. Herald runs in three modes: CLI for manual use, MCP server for AI persona integration, and a web interface for browsing.
+Herald is an intelligent RSS/Atom reader that uses a two-model AI pipeline to filter and curate news. A security model (Gemma) screens content for prompt injection and adversarial manipulation before it ever reaches curation, while a separate model (Llama) scores articles by relevance — without imposing editorial bias. Related articles are automatically clustered using vector embeddings, and high-interest items are surfaced as formatted notification output. Herald runs in two modes: CLI for manual use and a web interface for browsing.
 
 ## The Two-Model Approach
 
@@ -39,7 +39,6 @@ Security and editorial judgment are different problems that benefit from differe
 - Article summarization with per-user caching
 - Conditional feed fetching (ETag / Last-Modified) to minimize bandwidth
 - Formatted notification output for high-interest articles
-- MCP server for AI persona access (26 tools)
 - Web interface for browsing articles and groups
 - Multi-user support: separate feeds, preferences, and read state per user
 - Filter rules: score articles by author, category, or tag
@@ -55,8 +54,8 @@ RSS/Atom Feeds → Fetcher → Parser → SQLite
                                        |
                                Embedding + Clustering
                                        |
-                         .-----------.-----------.
-                        CLI      MCP Server    Web UI
+                         .-----------------------.
+                        CLI                    Web UI
 ```
 
 See [docs/architecture.md](docs/architecture.md) for a detailed breakdown of each component.
@@ -66,7 +65,6 @@ See [docs/architecture.md](docs/architecture.md) for a detailed breakdown of eac
 | Binary | Purpose |
 |--------|---------|
 | `herald` | CLI for feed management, fetching, and reading |
-| `herald-mcp` | MCP server for AI persona integration |
 | `herald-web` | Read-only web interface for browsing articles |
 
 ## Getting Started
@@ -84,7 +82,7 @@ See [docs/architecture.md](docs/architecture.md) for a detailed breakdown of eac
 **Build**
 
 ```bash
-go install ./cmd/herald ./cmd/herald-mcp ./cmd/herald-web
+go install ./cmd/herald ./cmd/herald-web
 ```
 
 **Initialize configuration**
@@ -181,10 +179,6 @@ Google's **Gemma 4** family is newer and ships in several sizes -- compact `E2B`
 A discrete GPU is strongly recommended. CPU-only inference works but runs multiple seconds per article; GPUs with under ~6 GB are fine for embeddings but not for the screening and curation models.
 
 > **Experimental:** large-context summarization (a separate, in-progress feature) pairs better with a long-context model such as `qwen3` -- noted here only for that use, not for routine screening or curation.
-
-## MCP Integration
-
-The MCP server (`herald-mcp`) exposes 26 tools for AI persona and assistant access, covering feed management, article reading, group browsing, preference management, and prompt customization.
 
 ## License
 
