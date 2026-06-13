@@ -24,6 +24,12 @@ type Config struct {
 		SecurityMediumScore float64 `yaml:"security_medium_score"`
 	} `yaml:"thresholds"`
 
+	Limits struct {
+		MaxFeedsPerUser       int `yaml:"max_feeds_per_user"`
+		MaxFilterRulesPerUser int `yaml:"max_filter_rules_per_user"`
+		MaxNewslettersPerUser int `yaml:"max_newsletters_per_user"`
+	} `yaml:"limits"`
+
 	Preferences struct {
 		Keywords         []string `yaml:"keywords"`
 		PreferredSources []string `yaml:"preferred_sources"`
@@ -118,6 +124,9 @@ func DefaultConfig() *Config {
 	cfg.Thresholds.InterestScore = 8.0
 	cfg.Thresholds.SecurityScore = 7.0
 	cfg.Thresholds.SecurityMediumScore = 4.0
+	cfg.Limits.MaxFeedsPerUser = 1000
+	cfg.Limits.MaxFilterRulesPerUser = 1000
+	cfg.Limits.MaxNewslettersPerUser = 50
 	// Default temperatures (can be overridden in config)
 	cfg.Temperatures.Security = 0.3
 	cfg.Temperatures.Curation = 0.5
