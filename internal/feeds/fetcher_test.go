@@ -59,7 +59,7 @@ func TestImportOPML(t *testing.T) {
 	path := writeOPML(t, opml)
 	fetcher := NewFetcher(store)
 
-	if err := fetcher.ImportOPML(path, 1); err != nil {
+	if err := fetcher.ImportOPML(path, 1, 0); err != nil {
 		t.Fatalf("ImportOPML failed: %v", err)
 	}
 
@@ -101,7 +101,7 @@ func TestImportOPML_NestedFolders(t *testing.T) {
 	path := writeOPML(t, opml)
 	fetcher := NewFetcher(store)
 
-	if err := fetcher.ImportOPML(path, 1); err != nil {
+	if err := fetcher.ImportOPML(path, 1, 0); err != nil {
 		t.Fatalf("ImportOPML failed: %v", err)
 	}
 
@@ -129,10 +129,10 @@ func TestImportOPML_DuplicateFeeds(t *testing.T) {
 	fetcher := NewFetcher(store)
 
 	// Import twice
-	if err := fetcher.ImportOPML(path, 1); err != nil {
+	if err := fetcher.ImportOPML(path, 1, 0); err != nil {
 		t.Fatalf("first ImportOPML failed: %v", err)
 	}
-	if err := fetcher.ImportOPML(path, 1); err != nil {
+	if err := fetcher.ImportOPML(path, 1, 0); err != nil {
 		t.Fatalf("second ImportOPML failed: %v", err)
 	}
 
@@ -150,10 +150,89 @@ func TestImportOPML_MissingFile(t *testing.T) {
 	defer cleanup()
 
 	fetcher := NewFetcher(store)
-	err := fetcher.ImportOPML("/nonexistent/feeds.opml", 1)
+	err := fetcher.ImportOPML("/nonexistent/feeds.opml", 1, 0)
 	if err == nil {
 		t.Fatal("expected error for missing OPML file, got nil")
 	}
+}
+
+func TestImportOPML_FeedCap(t *testing.T) {
+	opml4 := `<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <body>
+    <outline text="Feed A" type="rss" xmlUrl="https://example.com/a.xml"/>
+    <outline text="Feed B" type="rss" xmlUrl="https://example.com/b.xml"/>
+    <outline text="Feed C" type="rss" xmlUrl="https://example.com/c.xml"/>
+    <outline text="Feed D" type="rss" xmlUrl="https://example.com/d.xml"/>
+  </body>
+</opml>`
+
+	t.Run("capped at 2", func(t *testing.T) {
+		store, cleanup := newTestStore(t)
+		defer cleanup()
+		fetcher := NewFetcher(store)
+		path := writeOPML(t, opml4)
+
+		if err := fetcher.ImportOPML(path, 1, 2); err != nil {
+			t.Fatalf("ImportOPML failed: %v", err)
+		}
+
+		userFeeds, err := store.GetUserFeeds(1)
+		if err != nil {
+			t.Fatalf("GetUserFeeds failed: %v", err)
+		}
+		if len(userFeeds) != 2 {
+			t.Errorf("expected 2 subscribed feeds (cap=2), got %d", len(userFeeds))
+		}
+	})
+
+	t.Run("unbounded when maxFeeds=0", func(t *testing.T) {
+		store, cleanup := newTestStore(t)
+		defer cleanup()
+		fetcher := NewFetcher(store)
+		path := writeOPML(t, opml4)
+
+		if err := fetcher.ImportOPML(path, 1, 0); err != nil {
+			t.Fatalf("ImportOPML failed: %v", err)
+		}
+
+		userFeeds, err := store.GetUserFeeds(1)
+		if err != nil {
+			t.Fatalf("GetUserFeeds failed: %v", err)
+		}
+		if len(userFeeds) != 4 {
+			t.Errorf("expected 4 subscribed feeds (unbounded), got %d", len(userFeeds))
+		}
+	})
+
+	t.Run("cap respected with pre-existing subscriptions", func(t *testing.T) {
+		store, cleanup := newTestStore(t)
+		defer cleanup()
+		fetcher := NewFetcher(store)
+
+		// Pre-subscribe the user to 1 feed directly
+		preID, err := store.AddFeed("https://example.com/pre.xml", "Pre-existing", "")
+		if err != nil {
+			t.Fatalf("AddFeed failed: %v", err)
+		}
+		if err := store.SubscribeUserToFeed(1, preID); err != nil {
+			t.Fatalf("SubscribeUserToFeed failed: %v", err)
+		}
+
+		path := writeOPML(t, opml4)
+		// cap=2 with 1 pre-existing subscription -> only 1 new feed should be added
+		if err := fetcher.ImportOPML(path, 1, 2); err != nil {
+			t.Fatalf("ImportOPML failed: %v", err)
+		}
+
+		userFeeds, err := store.GetUserFeeds(1)
+		if err != nil {
+			t.Fatalf("GetUserFeeds failed: %v", err)
+		}
+		if len(userFeeds) != 2 {
+			t.Errorf("expected 2 subscribed feeds total (1 pre-existing + 1 new, cap=2), got %d", len(userFeeds))
+		}
+	})
 }
 
 func TestStoreArticles(t *testing.T) {

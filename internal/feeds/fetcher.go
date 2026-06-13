@@ -137,27 +137,40 @@ func (f *Fetcher) FetchFeed(ctx context.Context, feed storage.Feed) (*FetchResul
 }
 
 // ImportOPMLReader imports feeds from an OPML reader and subscribes user to them.
-func (f *Fetcher) ImportOPMLReader(r io.Reader, userID int64) error {
+// maxFeeds caps the total number of feeds the user may be subscribed to after import;
+// pass 0 (or any value <= 0) for unbounded (e.g. local admin CLI).
+func (f *Fetcher) ImportOPMLReader(r io.Reader, userID int64, maxFeeds int) error {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return fmt.Errorf("failed to read OPML: %w", err)
 	}
-	return f.importOPMLBytes(data, userID)
+	return f.importOPMLBytes(data, userID, maxFeeds)
 }
 
-// ImportOPML imports feeds from an OPML file and subscribes user to them
-func (f *Fetcher) ImportOPML(opmlPath string, userID int64) error {
+// ImportOPML imports feeds from an OPML file and subscribes user to them.
+// maxFeeds caps the total number of feeds the user may be subscribed to after import;
+// pass 0 (or any value <= 0) for unbounded (e.g. local admin CLI).
+func (f *Fetcher) ImportOPML(opmlPath string, userID int64, maxFeeds int) error {
 	data, err := os.ReadFile(opmlPath)
 	if err != nil {
 		return fmt.Errorf("failed to read OPML file: %w", err)
 	}
-	return f.importOPMLBytes(data, userID)
+	return f.importOPMLBytes(data, userID, maxFeeds)
 }
 
-func (f *Fetcher) importOPMLBytes(data []byte, userID int64) error {
+func (f *Fetcher) importOPMLBytes(data []byte, userID int64, maxFeeds int) error {
 	var opml OPML
 	if err := xml.Unmarshal(data, &opml); err != nil {
 		return fmt.Errorf("failed to parse OPML: %w", err)
+	}
+
+	// Establish the user's current subscription count for cap enforcement.
+	// Skip the lookup when the cap is disabled (maxFeeds <= 0).
+	subscribed := 0
+	if maxFeeds > 0 {
+		if existing, err := f.store.GetUserFeeds(userID); err == nil {
+			subscribed = len(existing)
+		}
 	}
 
 	// Process outlines recursively
@@ -170,6 +183,12 @@ func (f *Fetcher) importOPMLBytes(data []byte, userID int64) error {
 				// Reject non-http(s) schemes before touching the feeds table.
 				if u, err := url.Parse(outline.XMLURL); err != nil || !AllowedFetchScheme(u.Scheme) {
 					fmt.Fprintf(os.Stderr, "Warning: skipping OPML entry with disallowed URL %s\n", outline.XMLURL)
+					continue
+				}
+
+				// Enforce the per-user feed cap before subscribing.
+				if maxFeeds > 0 && subscribed >= maxFeeds {
+					fmt.Fprintf(os.Stderr, "Warning: feed limit (%d) reached; skipping %s\n", maxFeeds, outline.XMLURL)
 					continue
 				}
 
@@ -204,6 +223,7 @@ func (f *Fetcher) importOPMLBytes(data []byte, userID int64) error {
 					fmt.Fprintf(os.Stderr, "Warning: failed to subscribe to feed %s: %v\n", outline.XMLURL, err)
 				} else {
 					added++
+					subscribed++
 				}
 			}
 

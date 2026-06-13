@@ -185,7 +185,8 @@ func importCmd() *cobra.Command {
 			defer store.Close()
 
 			fetcher := feeds.NewFetcher(store)
-			if err := fetcher.ImportOPML(opmlPath, userID); err != nil {
+			// Local CLI import is admin-only and intentionally exempt from the per-user feed cap (pass 0 = unbounded).
+			if err := fetcher.ImportOPML(opmlPath, userID, 0); err != nil {
 				return fmt.Errorf("failed to import OPML: %w", err)
 			}
 

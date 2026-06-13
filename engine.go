@@ -559,12 +559,12 @@ func (e *Engine) MarkArticlesRead(userID int64, articleIDs []int64) error {
 
 // ImportOPML imports feeds from an OPML file and subscribes the user.
 func (e *Engine) ImportOPML(path string, userID int64) error {
-	return e.fetcher.ImportOPML(path, userID)
+	return e.fetcher.ImportOPML(path, userID, e.config.Limits.MaxFeedsPerUser)
 }
 
 // ImportOPMLReader imports feeds from an OPML reader and subscribes the user.
 func (e *Engine) ImportOPMLReader(r io.Reader, userID int64) error {
-	return e.fetcher.ImportOPMLReader(r, userID)
+	return e.fetcher.ImportOPMLReader(r, userID, e.config.Limits.MaxFeedsPerUser)
 }
 
 // GetUserFeeds returns all feeds a user is subscribed to.
