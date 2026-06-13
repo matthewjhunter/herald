@@ -234,8 +234,14 @@ func (e *Engine) GetArticle(articleID int64) (*Article, error) {
 	return &result, nil
 }
 
-// GetArticleForUser returns a single article enriched with its AI summary for the given user.
+// GetArticleForUser returns a single article enriched with its AI summary for
+// the given user. The article must belong to a feed the user is subscribed to;
+// anything else reads as not found (#162).
 func (e *Engine) GetArticleForUser(userID, articleID int64) (*Article, error) {
+	subscribed, err := e.store.UserSubscribedToArticleFeed(userID, articleID)
+	if err != nil || !subscribed {
+		return nil, fmt.Errorf("article %d not found for user %d", articleID, userID)
+	}
 	a, err := e.store.GetArticle(articleID)
 	if err != nil {
 		return nil, err
@@ -1627,8 +1633,13 @@ func (e *Engine) DefaultPrompt(promptType string) (string, error) {
 	return ai.DefaultPrompt(ai.PromptType(promptType))
 }
 
-// StarArticle sets or clears the starred flag on an article.
+// StarArticle sets or clears the starred flag on an article. Only articles
+// from the user's subscribed feeds can be starred (#162).
 func (e *Engine) StarArticle(userID, articleID int64, starred bool) error {
+	subscribed, err := e.store.UserSubscribedToArticleFeed(userID, articleID)
+	if err != nil || !subscribed {
+		return fmt.Errorf("article %d not found for user %d", articleID, userID)
+	}
 	return e.store.UpdateStarred(userID, articleID, starred)
 }
 
@@ -1826,6 +1837,21 @@ func (e *Engine) GetArticleImageMap(articleID int64) (map[string]int64, error) {
 // GetArticleImage returns a cached image by its ID.
 func (e *Engine) GetArticleImage(imageID int64) (*storage.ArticleImage, error) {
 	return e.store.GetArticleImage(imageID)
+}
+
+// GetArticleImageForUser returns a cached image by its ID when the user is
+// subscribed to the owning article's feed. No access reads as nil, nil —
+// indistinguishable from a missing image, so the handler 404s either way.
+func (e *Engine) GetArticleImageForUser(userID, imageID int64) (*storage.ArticleImage, error) {
+	img, err := e.store.GetArticleImage(imageID)
+	if err != nil || img == nil {
+		return img, err
+	}
+	subscribed, err := e.store.UserSubscribedToArticleFeed(userID, img.ArticleID)
+	if err != nil || !subscribed {
+		return nil, nil
+	}
+	return img, nil
 }
 
 func feedFromInternal(f storage.Feed) Feed {
