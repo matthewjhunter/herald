@@ -707,19 +707,31 @@ func TestBestDate(t *testing.T) {
 }
 
 func TestParseIntParam(t *testing.T) {
-	req := httptest.NewRequest("GET", "/?limit=25&bad=abc&neg=-5", nil)
+	req := httptest.NewRequest("GET", "/?limit=25&bad=abc&neg=-5&huge=9999", nil)
 
-	if v := parseIntParam(req, "limit", 10); v != 25 {
+	// Basic cases (no cap)
+	if v := parseIntParam(req, "limit", 10, 0); v != 25 {
 		t.Errorf("limit: got %d, want 25", v)
 	}
-	if v := parseIntParam(req, "missing", 10); v != 10 {
+	if v := parseIntParam(req, "missing", 10, 0); v != 10 {
 		t.Errorf("missing: got %d, want 10", v)
 	}
-	if v := parseIntParam(req, "bad", 10); v != 10 {
+	if v := parseIntParam(req, "bad", 10, 0); v != 10 {
 		t.Errorf("bad: got %d, want 10", v)
 	}
-	if v := parseIntParam(req, "neg", 10); v != 10 {
+	if v := parseIntParam(req, "neg", 10, 0); v != 10 {
 		t.Errorf("neg: got %d, want 10", v)
+	}
+
+	// Cap cases
+	if v := parseIntParam(req, "huge", 10, 100); v != 100 {
+		t.Errorf("over-max: got %d, want 100 (capped)", v)
+	}
+	if v := parseIntParam(req, "limit", 10, 50); v != 25 {
+		t.Errorf("under-max: got %d, want 25", v)
+	}
+	if v := parseIntParam(req, "missing", 10, 5); v != 10 {
+		t.Errorf("missing with cap: got %d, want 10 (default)", v)
 	}
 }
 
