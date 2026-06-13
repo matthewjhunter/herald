@@ -331,7 +331,14 @@
         applyState();
     })();
 
-    // Hide-read articles toggle
+    // Hide-read articles toggle.
+    //
+    // "Hide read" (the default) fetches only unread articles, matching the
+    // server's default. "Show read" re-fetches the list with show_read=1 so
+    // already-read articles -- including ones read in a previous session --
+    // come back, rendered faded. The choice is authoritative for every request
+    // that loads the article list (initial load, sidebar navigation, infinite
+    // scroll) via the htmx:configRequest hook below, so it survives navigation.
     (function() {
         var STORAGE_KEY = 'herald-hide-read';
         var list = document.getElementById('article-list');
@@ -343,14 +350,34 @@
 
         function applyState() {
             var hiding = isHiding();
+            // The CSS class still hides rows marked read in-session (the
+            // hx-on::after-request handler on each row), so an article you open
+            // while hiding disappears without a refetch.
             if (list) list.classList.toggle('hide-read', hiding);
             if (btn) btn.textContent = hiding ? 'Show read' : 'Hide read';
         }
+
+        // Make the toggle authoritative for every article-list request,
+        // regardless of the URL htmx started from.
+        document.body.addEventListener('htmx:configRequest', function(e) {
+            if (e.detail.path !== '/articles') return;
+            if (isHiding()) {
+                delete e.detail.parameters['show_read'];
+            } else {
+                e.detail.parameters['show_read'] = '1';
+            }
+        });
 
         if (btn) {
             btn.addEventListener('click', function() {
                 localStorage.setItem(STORAGE_KEY, isHiding() ? 'false' : 'true');
                 applyState();
+                // Re-fetch the current view; configRequest adds/removes
+                // show_read, and the OOB sidebar refreshes in the same swap.
+                if (window.htmx) {
+                    var url = '/articles' + (window._heraldSidebarQuery || '');
+                    htmx.ajax('GET', url, { target: '#article-list', swap: 'innerHTML' });
+                }
             });
         }
 
