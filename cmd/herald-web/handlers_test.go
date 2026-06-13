@@ -1216,3 +1216,82 @@ func TestHandleStarToggle_SubscriptionGated(t *testing.T) {
 		t.Errorf("expected article %d starred for the subscriber, got %v", tf.articleID, starred)
 	}
 }
+
+// --- Plan 007: input validation and security headers ---
+
+// TestPromptSaveLengthCap asserts that a prompt template exceeding maxPromptLen
+// gets a 400 and is not persisted.
+func TestPromptSaveLengthCap(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// "curation" is a valid user-settable prompt type.
+	overlong := strings.Repeat("x", maxPromptLen+1)
+	rr := authedRequestForm(t, tf, "POST", "/settings/prompts/curation", url.Values{
+		"template": {overlong},
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("overlong prompt: got %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+
+	// A prompt at exactly the limit must be accepted.
+	atLimit := strings.Repeat("x", maxPromptLen)
+	rr = authedRequestForm(t, tf, "POST", "/settings/prompts/curation", url.Values{
+		"template": {atLimit},
+	})
+	if rr.Code != http.StatusOK {
+		t.Errorf("at-limit prompt: got %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+// TestSubscribeGenericError asserts that a feed-subscribe failure returns 400
+// and does not expose raw error detail (dial strings, DNS, etc.) to the client.
+func TestSubscribeGenericError(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// 127.0.0.1:1 is an unreachable loopback address that the SSRF dial guard
+	// or TCP stack will reject immediately. We don't care which layer rejects
+	// it -- we just want the error to be generic in the response body.
+	// Route is POST /feeds (not /feeds/subscribe).
+	rr := authedRequestForm(t, tf, "POST", "/feeds", url.Values{
+		"url": {"http://127.0.0.1:1/feed.xml"},
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("failed subscribe: got %d, want 400", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, leak := range []string{"dial", "lookup", "connection refused", "connect:", "127.0.0.1"} {
+		if strings.Contains(strings.ToLower(body), leak) {
+			t.Errorf("response body leaks internal detail %q: %s", leak, body)
+		}
+	}
+}
+
+// TestSecurityHeaders asserts that every authenticated response carries the
+// required security headers when the securityHeaders middleware is applied.
+func TestSecurityHeaders(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// securityHeaders is wired in main.go but not in newRouter. Wrap manually
+	// here to test the middleware in isolation.
+	wrapped := securityHeaders(tf.router)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: tf.jwtToken})
+	rr := httptest.NewRecorder()
+	wrapped.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /: got %d, want 200", rr.Code)
+	}
+
+	want := map[string]string{
+		"X-Content-Type-Options":  "nosniff",
+		"X-Frame-Options":         "DENY",
+		"Content-Security-Policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'",
+	}
+	for header, wantVal := range want {
+		if got := rr.Header().Get(header); got != wantVal {
+			t.Errorf("%s: got %q, want %q", header, got, wantVal)
+		}
+	}
+}
