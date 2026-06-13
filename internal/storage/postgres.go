@@ -3261,21 +3261,6 @@ func scanArticles(rows *sql.Rows) ([]Article, error) {
 	return articles, rows.Err()
 }
 
-// scanArticlesWithFlags scans rows that include a security_flagged column after the standard article fields.
-func scanArticlesWithFlags(rows *sql.Rows) ([]Article, error) {
-	var articles []Article
-	for rows.Next() {
-		var a Article
-		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
-			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate,
-			&a.SecurityFlagged); err != nil {
-			return nil, fmt.Errorf("scan article: %w", err)
-		}
-		articles = append(articles, a)
-	}
-	return articles, rows.Err()
-}
-
 // scanArticlesWithReadState scans rows that include a security_flagged column
 // plus the per-user read and starred flags, in that order, after the standard
 // article fields. Used by the list queries that surface read/starred state.

@@ -244,6 +244,7 @@ type articleViewData struct {
 	AISummary              string
 	SanitizedContent       template.HTML
 	Starred                bool
+	Read                   bool
 	SecurityFlagged        bool
 	LinkedURL              string
 	LinkedDomain           string
@@ -782,6 +783,9 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 		SanitizedContent: template.HTML(sanitized), //nolint:gosec // sanitized by bluemonday
 		SecurityFlagged:  article.SecurityFlagged,
 		LinkedURL:        article.LinkedURL,
+		// The article was just auto-marked read above, so the toggle starts
+		// in the read state (offering "Mark unread").
+		Read: true,
 	}
 	if article.LinkedURL != "" {
 		if u, err := url.Parse(article.LinkedURL); err == nil {
@@ -1065,6 +1069,40 @@ func (h *handlers) handleStarToggle(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w,
 		`<button class="%s" data-star-toggle hx-post="/articles/%d/star" hx-swap="outerHTML" hx-vals='{"starred":"%s"}'>%s</button>`,
 		cls, articleID, nextState, label)
+}
+
+// handleReadToggle sets the article's read state for the user and returns the
+// updated toggle button. Opening an article auto-marks it read, so the primary
+// use is marking an article unread again to revisit it later.
+func (h *handlers) handleReadToggle(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	articleID, err := strconv.ParseInt(r.PathValue("articleID"), 10, 64)
+	if err != nil {
+		h.renderError(w, http.StatusBadRequest, "Invalid article ID")
+		return
+	}
+
+	// Default to marking read; the button posts read=false to mark unread.
+	read := r.FormValue("read") != "false"
+	if err := h.engine.SetArticleRead(uid, articleID, read); err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Failed to toggle read state")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, readToggleButton(articleID, read))
+}
+
+// readToggleButton renders the mark-read/unread button for an article in the
+// given read state. Toggling refreshes the sidebar so unread counts track.
+func readToggleButton(articleID int64, read bool) string {
+	nextState, label := "true", "Mark read"
+	if read {
+		nextState, label = "false", "Mark unread"
+	}
+	return fmt.Sprintf(
+		`<button class="outline" data-read-toggle hx-post="/articles/%d/read" hx-swap="outerHTML" hx-vals='{"read":"%s"}' hx-on::after-request="htmx.trigger(document.body, 'feeds-changed')">%s</button>`,
+		articleID, nextState, label)
 }
 
 // discoverResultsData is the template data for the feed_discover_results fragment.

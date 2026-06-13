@@ -48,5 +48,13 @@
             hx-swap="outerHTML">
         {{if .Starred}}&#9733; Starred{{else}}&#9734; Star{{end}}
     </button>
+    <button class="outline"
+            data-read-toggle
+            hx-post="/articles/{{.ID}}/read"
+            hx-swap="outerHTML"
+            hx-vals='{"read":"{{if .Read}}false{{else}}true{{end}}"}'
+            hx-on::after-request="htmx.trigger(document.body, 'feeds-changed')">
+        {{if .Read}}Mark unread{{else}}Mark read{{end}}
+    </button>
 </div>
 {{end}}

@@ -544,6 +544,47 @@ func TestHandleStarToggle(t *testing.T) {
 	}
 }
 
+func TestHandleReadToggle(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	path := "/articles/" + itoa(tf.articleID) + "/read"
+
+	// Mark unread: button should now offer to mark read again, and the
+	// article should reappear in the user's unread list.
+	rr := authedRequestForm(t, tf, "POST", path, url.Values{"read": {"false"}})
+	if rr.Code != http.StatusOK {
+		t.Errorf("mark-unread status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	if !strings.Contains(rr.Body.String(), "Mark read") {
+		t.Errorf("response should offer to mark read, got %q", rr.Body.String())
+	}
+	unread, err := tf.engine.GetUnreadArticles(tf.userID, 10, 0, false)
+	if err != nil {
+		t.Fatalf("GetUnreadArticles: %v", err)
+	}
+	if len(unread) != 1 || unread[0].ID != tf.articleID {
+		t.Errorf("expected article %d back in unread list, got %d articles", tf.articleID, len(unread))
+	}
+
+	// Mark read again: button offers to mark unread, article leaves the list.
+	rr = authedRequestForm(t, tf, "POST", path, url.Values{"read": {"true"}})
+	if rr.Code != http.StatusOK {
+		t.Errorf("mark-read status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	if !strings.Contains(rr.Body.String(), "Mark unread") {
+		t.Errorf("response should offer to mark unread, got %q", rr.Body.String())
+	}
+	unread, _ = tf.engine.GetUnreadArticles(tf.userID, 10, 0, false)
+	if len(unread) != 0 {
+		t.Errorf("expected no unread articles after marking read, got %d", len(unread))
+	}
+	// But it is returned when read articles are included, flagged read.
+	all, _ := tf.engine.GetUnreadArticles(tf.userID, 10, 0, true)
+	if len(all) != 1 || !all[0].Read {
+		t.Errorf("expected 1 read article with includeRead, got %d", len(all))
+	}
+}
+
 func TestHandleSidebar(t *testing.T) {
 	tf := newTestFixtures(t)
 
