@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -1957,7 +1958,8 @@ func (h *handlers) handleOPMLSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stored, err := h.engine.GetUserPreference(userID, "opml_sync_token")
-	if err != nil || stored == "" || stored != token {
+	if err != nil || stored == "" ||
+		subtle.ConstantTimeCompare([]byte(stored), []byte(token)) != 1 {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
