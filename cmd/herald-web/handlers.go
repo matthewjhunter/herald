@@ -410,7 +410,15 @@ func formatDate(t *time.Time) string {
 	}
 }
 
-func parseIntParam(r *http.Request, name string, defaultVal int) int {
+const (
+	maxPageLimit = 500
+	maxOffset    = 1000000
+)
+
+// parseIntParam parses an integer query parameter. If maxVal > 0 and the
+// parsed value exceeds it, maxVal is returned. Negative or unparseable values
+// fall back to defaultVal.
+func parseIntParam(r *http.Request, name string, defaultVal, maxVal int) int {
 	s := r.URL.Query().Get(name)
 	if s == "" {
 		return defaultVal
@@ -418,6 +426,9 @@ func parseIntParam(r *http.Request, name string, defaultVal int) int {
 	v, err := strconv.Atoi(s)
 	if err != nil || v < 0 {
 		return defaultVal
+	}
+	if maxVal > 0 && v > maxVal {
+		return maxVal
 	}
 	return v
 }
@@ -576,8 +587,8 @@ func (h *handlers) handleSettingsPrompts(w http.ResponseWriter, r *http.Request)
 
 func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID
-	limit := parseIntParam(r, "limit", 30)
-	offset := parseIntParam(r, "offset", 0)
+	limit := parseIntParam(r, "limit", 30, maxPageLimit)
+	offset := parseIntParam(r, "offset", 0, maxOffset)
 	feedID := parseInt64Param(r, "feed_id")
 	groupID := parseInt64Param(r, "group_id")
 	starred := r.URL.Query().Get("starred") == "1"
@@ -663,8 +674,8 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) handleSearch(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID
 	query := r.URL.Query().Get("q")
-	limit := parseIntParam(r, "limit", 30)
-	offset := parseIntParam(r, "offset", 0)
+	limit := parseIntParam(r, "limit", 30, maxPageLimit)
+	offset := parseIntParam(r, "offset", 0, maxOffset)
 
 	if query == "" {
 		h.renderFragment(w, "search_results", searchResultsData{})
