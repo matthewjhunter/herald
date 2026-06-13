@@ -1048,3 +1048,37 @@ func TestQuotaUnbounded(t *testing.T) {
 		}
 	}
 }
+
+// TestDeleteUserGuard confirms that DeleteUser refuses to delete the global
+// sentinel (0) and the configured default user (1 by default).
+func TestDeleteUserGuard(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	// Sentinel user 0.
+	if err := engine.DeleteUser(0); err == nil {
+		t.Error("expected error deleting sentinel user 0, got nil")
+	}
+
+	// Default user (id 1 in a fresh DB where DefaultUserID defaults to 1).
+	if err := engine.DeleteUser(engine.config.DefaultUserID); err == nil {
+		t.Errorf("expected error deleting default user %d, got nil", engine.config.DefaultUserID)
+	}
+
+	// A real non-reserved user must be deletable.
+	// Register two users: the first will get id=1 which equals DefaultUserID,
+	// so register a second one to get a genuinely non-reserved id.
+	if _, err2 := engine.RegisterUser("default-placeholder"); err2 != nil {
+		t.Fatalf("RegisterUser placeholder: %v", err2)
+	}
+	id, err2 := engine.RegisterUser("to-be-deleted")
+	if err2 != nil {
+		t.Fatalf("RegisterUser: %v", err2)
+	}
+	if id == engine.config.DefaultUserID || id == 0 {
+		t.Fatalf("test assumption broken: to-be-deleted got reserved id %d", id)
+	}
+	if err2 := engine.DeleteUser(id); err2 != nil {
+		t.Errorf("DeleteUser(%d) unexpected error: %v", id, err2)
+	}
+}

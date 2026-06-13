@@ -3030,3 +3030,241 @@ func TestUserSubscribedToArticleFeed(t *testing.T) {
 		}
 	})
 }
+
+// TestDeleteUser verifies that DeleteUser removes rows in every per-user table
+// and leaves other users' data untouched.
+func TestDeleteUser(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		// Create two users. User 2 is the one we will delete; user 3 acts as a
+		// bystander whose rows must survive.
+		delID, err := store.CreateUser("DeleteMe")
+		if err != nil {
+			t.Fatalf("CreateUser del: %v", err)
+		}
+		keepID, err := store.CreateUser("KeepMe")
+		if err != nil {
+			t.Fatalf("CreateUser keep: %v", err)
+		}
+
+		// Seed a feed and article used by both users.
+		feedID, err := store.AddFeed("https://example.com/feed", "Test Feed", "")
+		if err != nil {
+			t.Fatalf("AddFeed: %v", err)
+		}
+		pub := time.Now().Add(-time.Hour)
+		articleID, err := store.AddArticle(&Article{
+			FeedID: feedID, GUID: "del-test-guid", Title: "T",
+			URL: "https://example.com/a", PublishedDate: &pub,
+		})
+		if err != nil {
+			t.Fatalf("AddArticle: %v", err)
+		}
+
+		// --- Seed per-user rows for the deleted user ---
+
+		// read_state
+		if err := store.SubscribeUserToFeed(delID, feedID); err != nil {
+			t.Fatalf("subscribe del: %v", err)
+		}
+		score := 0.8
+		if err := store.UpdateReadState(delID, articleID, false, &score, &score, nil, nil); err != nil {
+			t.Fatalf("UpdateReadState del: %v", err)
+		}
+
+		// user_preferences
+		if err := store.SetUserPreference(delID, "theme", "dark"); err != nil {
+			t.Fatalf("SetUserPreference del: %v", err)
+		}
+
+		// feed_tags
+		if err := store.AddFeedTag(delID, feedID, "testtag"); err != nil {
+			t.Fatalf("AddFeedTag del: %v", err)
+		}
+
+		// user_prompts
+		if err := store.SetUserPrompt(delID, "curation", "custom prompt", nil, nil); err != nil {
+			t.Fatalf("SetUserPrompt del: %v", err)
+		}
+
+		// filter_rules
+		ruleID, err := store.AddFilterRule(&FilterRule{UserID: delID, Axis: "author", Value: "spam", Score: -100})
+		if err != nil {
+			t.Fatalf("AddFilterRule del: %v", err)
+		}
+		if ruleID == 0 {
+			t.Fatal("expected non-zero rule id")
+		}
+
+		// article_groups (+ article_group_members cascade)
+		groupID, err := store.CreateArticleGroup(delID, "TestGroup")
+		if err != nil {
+			t.Fatalf("CreateArticleGroup del: %v", err)
+		}
+		if err := store.AddArticleToGroup(groupID, articleID); err != nil {
+			t.Fatalf("AddArticleToGroup del: %v", err)
+		}
+		if err := store.UpdateGroupSummary(groupID, "head", "body", 1, nil); err != nil {
+			t.Fatalf("UpdateGroupSummary del: %v", err)
+		}
+
+		// fever_credentials (ON DELETE CASCADE from users)
+		if err := store.SetFeverCredential(delID, "test-api-key"); err != nil {
+			t.Fatalf("SetFeverCredential del: %v", err)
+		}
+
+		// newsletters + newsletter_issues (ON DELETE CASCADE from users)
+		nlID, err := store.CreateNewsletter(&Newsletter{
+			UserID: delID, Name: "Test NL", Schedule: "manual",
+			Config: NewsletterConfig{MaxArticles: 10},
+		})
+		if err != nil {
+			t.Fatalf("CreateNewsletter del: %v", err)
+		}
+		issueID, err := store.CreateNewsletterIssue(&NewsletterIssue{
+			NewsletterID: nlID, Headline: "iss1", ContentHTML: "<p>body</p>",
+		})
+		if err != nil {
+			t.Fatalf("CreateNewsletterIssue del: %v", err)
+		}
+		if issueID == 0 {
+			t.Fatal("expected non-zero issue id")
+		}
+
+		// ai_summaries (ON DELETE CASCADE from users)
+		sumID, err := store.CreateAISummary(&AISummary{
+			UserID: delID, Model: "test-model", Prompt: "test prompt",
+		})
+		if err != nil {
+			t.Fatalf("CreateAISummary del: %v", err)
+		}
+		if sumID == 0 {
+			t.Fatal("expected non-zero summary id")
+		}
+
+		// --- Seed bystander rows for the kept user ---
+		if err := store.SubscribeUserToFeed(keepID, feedID); err != nil {
+			t.Fatalf("subscribe keep: %v", err)
+		}
+		if err := store.UpdateReadState(keepID, articleID, false, &score, &score, nil, nil); err != nil {
+			t.Fatalf("UpdateReadState keep: %v", err)
+		}
+		if err := store.SetUserPreference(keepID, "theme", "light"); err != nil {
+			t.Fatalf("SetUserPreference keep: %v", err)
+		}
+		if err := store.SetUserPrompt(keepID, "curation", "keep prompt", nil, nil); err != nil {
+			t.Fatalf("SetUserPrompt keep: %v", err)
+		}
+		keepNlID, err := store.CreateNewsletter(&Newsletter{
+			UserID: keepID, Name: "Keep NL", Schedule: "manual",
+			Config: NewsletterConfig{MaxArticles: 5},
+		})
+		if err != nil {
+			t.Fatalf("CreateNewsletter keep: %v", err)
+		}
+		if keepNlID == 0 {
+			t.Fatal("expected non-zero keep newsletter id")
+		}
+
+		// --- Delete the target user ---
+		if err := store.DeleteUser(delID); err != nil {
+			t.Fatalf("DeleteUser: %v", err)
+		}
+
+		// --- Assert: deleted user's rows are gone in every table ---
+
+		// users row
+		users, _ := store.ListUsers()
+		for _, u := range users {
+			if u.ID == delID {
+				t.Errorf("deleted user row still present: id=%d", delID)
+			}
+		}
+
+		// read_state
+		feeds, _ := store.GetUserFeeds(delID)
+		if len(feeds) != 0 {
+			t.Errorf("user_feeds: expected 0 for deleted user, got %d", len(feeds))
+		}
+
+		// user_preferences
+		prefs, _ := store.GetAllUserPreferences(delID)
+		if len(prefs) != 0 {
+			t.Errorf("user_preferences: expected 0 for deleted user, got %d", len(prefs))
+		}
+
+		// feed_tags
+		tags, _ := store.GetUserTags(delID)
+		if len(tags) != 0 {
+			t.Errorf("feed_tags: expected 0 for deleted user, got %d", len(tags))
+		}
+
+		// user_prompts
+		prompts, _ := store.ListUserPrompts(delID)
+		if len(prompts) != 0 {
+			t.Errorf("user_prompts: expected 0 for deleted user, got %d", len(prompts))
+		}
+
+		// filter_rules
+		rules, _ := store.GetFilterRules(delID, nil)
+		if len(rules) != 0 {
+			t.Errorf("filter_rules: expected 0 for deleted user, got %d", len(rules))
+		}
+
+		// article_groups + cascade of article_group_members and group_summaries
+		groups, _ := store.GetUserGroups(delID)
+		if len(groups) != 0 {
+			t.Errorf("article_groups: expected 0 for deleted user, got %d", len(groups))
+		}
+		// The group row is gone, so GetGroupSummary should not find it.
+		if gs, err := store.GetGroupSummary(groupID); err == nil && gs != nil {
+			t.Errorf("group_summaries: expected gone after group delete, got headline=%q", gs.Headline)
+		}
+
+		// fever_credentials (cascaded via users FK)
+		if u, err := store.GetUserByFeverAPIKey("test-api-key"); err == nil && u != nil {
+			t.Errorf("fever_credentials: expected gone after user delete")
+		}
+
+		// newsletters + newsletter_issues (cascaded via users FK)
+		nls, _ := store.GetUserNewsletters(delID)
+		if len(nls) != 0 {
+			t.Errorf("newsletters: expected 0 for deleted user, got %d", len(nls))
+		}
+		// newsletter_issues cascade is confirmed by the newsletter itself being gone;
+		// no direct API to query issues by newsletter after the newsletter is deleted.
+
+		// ai_summaries (cascaded via users FK)
+		if s, err := store.GetAISummary(delID, sumID); err == nil && s != nil {
+			t.Errorf("ai_summaries: expected gone after user delete, got id=%d", s.ID)
+		}
+
+		// --- Assert: bystander (kept user) rows are untouched ---
+		keepFeeds, _ := store.GetUserFeeds(keepID)
+		if len(keepFeeds) == 0 {
+			t.Errorf("user_feeds: kept user's feeds should survive deletion of other user")
+		}
+		keepPrefs, _ := store.GetAllUserPreferences(keepID)
+		if len(keepPrefs) == 0 {
+			t.Errorf("user_preferences: kept user's prefs should survive")
+		}
+		keepPrompts, _ := store.ListUserPrompts(keepID)
+		if len(keepPrompts) == 0 {
+			t.Errorf("user_prompts: kept user's prompts should survive")
+		}
+		keepNls, _ := store.GetUserNewsletters(keepID)
+		if len(keepNls) == 0 {
+			t.Errorf("newsletters: kept user's newsletters should survive")
+		}
+	})
+}
+
+// TestDeleteUserIdemptotent confirms that deleting a non-existent user
+// succeeds without error (all DELETEs match 0 rows, which is fine).
+func TestDeleteUserIdempotent(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		// No user with id 99999 exists; DeleteUser should not error.
+		if err := store.DeleteUser(99999); err != nil {
+			t.Errorf("DeleteUser non-existent user: want nil, got %v", err)
+		}
+	})
+}

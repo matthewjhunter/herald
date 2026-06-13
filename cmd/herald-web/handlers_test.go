@@ -1295,3 +1295,130 @@ func TestSecurityHeaders(t *testing.T) {
 		}
 	}
 }
+
+// newAdminFixtures builds test fixtures where the test user has admin access.
+func newAdminFixtures(t *testing.T) *testFixtures {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	engine, err := herald.NewEngine(herald.EngineConfig{DBPath: dbPath, ReadOnly: true})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	st, err := storage.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+
+	user, err := engine.GetOrProvisionOIDCUser("test-sub-1", "Tester", "tester@example.com")
+	if err != nil {
+		t.Fatalf("GetOrProvisionOIDCUser: %v", err)
+	}
+
+	validator, issueToken := newTestValidatorIssuer(t)
+	jwtToken := issueToken("test-sub-1", "tester@example.com", "Tester")
+	// Grant admin by listing the test user's email in adminUsers.
+	router := newRouter(engine, validator, "", []string{"tester@example.com"})
+
+	t.Cleanup(func() {
+		engine.Close()
+		st.Close()
+	})
+
+	return &testFixtures{
+		router:     router,
+		engine:     engine,
+		store:      st,
+		userID:     user.ID,
+		jwtToken:   jwtToken,
+		issueToken: issueToken,
+	}
+}
+
+// TestHandleAdminUsers_NonAdminForbidden confirms that a non-admin request to
+// GET /admin/users gets 403.
+func TestHandleAdminUsers_NonAdminForbidden(t *testing.T) {
+	tf := newTestFixtures(t) // no admin email in router
+	rr := authedRequest(t, tf, "GET", "/admin/users", nil)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("GET /admin/users non-admin: got %d, want 403", rr.Code)
+	}
+}
+
+// TestHandleAdminUserDelete_NonAdminForbidden confirms that a non-admin DELETE
+// is rejected with 403 and the user row is not removed.
+func TestHandleAdminUserDelete_NonAdminForbidden(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// Provision a second user to try to delete.
+	target, err := tf.engine.GetOrProvisionOIDCUser("target-sub", "Target", "target@example.com")
+	if err != nil {
+		t.Fatalf("GetOrProvisionOIDCUser target: %v", err)
+	}
+
+	rr := authedRequest(t, tf, "DELETE", "/admin/users/"+itoa(target.ID), nil)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("DELETE /admin/users/{id} non-admin: got %d, want 403", rr.Code)
+	}
+
+	// Confirm the user still exists.
+	users, err := tf.engine.ListUsers()
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	found := false
+	for _, u := range users {
+		if u.ID == target.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("target user should still exist after rejected non-admin delete")
+	}
+}
+
+// TestHandleAdminUserDelete_AdminSuccess confirms that an admin can delete a
+// non-reserved user and that the user is gone afterwards.
+func TestHandleAdminUserDelete_AdminSuccess(t *testing.T) {
+	tf := newAdminFixtures(t)
+
+	// Provision a target user (will get id > 1 because tf.userID is 1).
+	target, err := tf.engine.GetOrProvisionOIDCUser("target-sub", "Target", "target@example.com")
+	if err != nil {
+		t.Fatalf("GetOrProvisionOIDCUser target: %v", err)
+	}
+	if target.ID == tf.userID {
+		t.Fatalf("test assumption broken: target and admin are the same user")
+	}
+
+	rr := authedRequest(t, tf, "DELETE", "/admin/users/"+itoa(target.ID), nil)
+	// Expect a redirect (303) or 200 -- the handler sets HX-Redirect then 303.
+	if rr.Code != http.StatusSeeOther && rr.Code != http.StatusOK {
+		t.Errorf("DELETE /admin/users/{id} admin: got %d, want 303 or 200", rr.Code)
+	}
+
+	// Confirm the target user is gone.
+	users, err := tf.engine.ListUsers()
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	for _, u := range users {
+		if u.ID == target.ID {
+			t.Errorf("target user %d still exists after admin delete", target.ID)
+		}
+	}
+}
+
+// TestHandleAdminUserDelete_ReservedUserRejected confirms that deleting the
+// default/reserved user returns 400.
+func TestHandleAdminUserDelete_ReservedUserRejected(t *testing.T) {
+	tf := newAdminFixtures(t)
+
+	// tf.userID is user 1, which is the DefaultUserID (reserved).
+	rr := authedRequest(t, tf, "DELETE", "/admin/users/"+itoa(tf.userID), nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("DELETE reserved user: got %d, want 400", rr.Code)
+	}
+}
