@@ -779,7 +779,7 @@ func TestFeedURLCandidates(t *testing.T) {
 	}{
 		{"https://example.com/feed", []string{"https://example.com/feed"}},
 		{"http://example.com/feed", []string{"http://example.com/feed"}},
-		{"feed://example.com/feed", []string{"feed://example.com/feed"}},
+		{"feed://example.com/feed", nil}, // non-http(s) scheme rejected
 		{"example.com", []string{"https://example.com", "http://example.com"}},
 		{"example.com/feed.xml", []string{"https://example.com/feed.xml", "http://example.com/feed.xml"}},
 		{"  example.com  ", []string{"https://example.com", "http://example.com"}},

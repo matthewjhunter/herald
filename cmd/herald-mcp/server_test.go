@@ -6,13 +6,24 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/matthewjhunter/herald"
+	"github.com/matthewjhunter/herald/internal/feeds"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// TestMain installs a permissive dial control for the entire test binary so
+// that httptest.NewServer (which binds to 127.0.0.1) is reachable from the
+// SSRF-guarded HTTP client.
+func TestMain(m *testing.M) {
+	restore := feeds.UsePermissiveDialForTesting()
+	defer restore()
+	os.Exit(m.Run())
+}
 
 const testRSS = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">

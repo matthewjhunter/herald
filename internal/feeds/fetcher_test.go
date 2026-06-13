@@ -16,6 +16,15 @@ import (
 	ext "github.com/mmcdole/gofeed/extensions"
 )
 
+// TestMain installs a permissive dial control for the entire test binary so
+// that httptest.NewServer (which binds to 127.0.0.1) is reachable. Production
+// code always starts with safeControl; this swap is test-binary-only.
+func TestMain(m *testing.M) {
+	restore := UsePermissiveDialForTesting()
+	defer restore()
+	os.Exit(m.Run())
+}
+
 func newTestStore(t *testing.T) (*storage.SQLiteStore, func()) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "test.db")

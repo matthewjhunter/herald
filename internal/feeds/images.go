@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
@@ -107,7 +108,7 @@ func resolveToImageURL(ctx context.Context, client *http.Client, picURL string) 
 
 	httpClient := client
 	if httpClient == nil {
-		httpClient = &http.Client{}
+		httpClient = newSafeClient(30 * time.Second)
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {

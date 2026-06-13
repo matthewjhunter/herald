@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -637,18 +638,31 @@ func (e *Engine) effectiveIncludeFeeds(userID int64, cfg storage.NewsletterConfi
 }
 
 // feedURLCandidates returns the URLs to attempt for a user-supplied feed
-// input. If the input already contains a scheme it's returned as-is;
-// otherwise https:// is tried first and http:// as a fallback, so a user
-// pasting "example.com/feed.xml" still works.
+// input. If the input already contains a scheme it's returned as-is (provided
+// the scheme is http or https); otherwise https:// is tried first and http://
+// as a fallback, so a user pasting "example.com/feed.xml" still works.
+// Candidates with a scheme other than http/https are dropped; file://, gopher://,
+// ftp://, etc. are never returned.
 func feedURLCandidates(input string) []string {
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return nil
 	}
+	var raw []string
 	if strings.Contains(input, "://") {
-		return []string{input}
+		raw = []string{input}
+	} else {
+		raw = []string{"https://" + input, "http://" + input}
 	}
-	return []string{"https://" + input, "http://" + input}
+	var out []string
+	for _, candidate := range raw {
+		u, err := url.Parse(candidate)
+		if err != nil || !feeds.AllowedFetchScheme(u.Scheme) {
+			continue
+		}
+		out = append(out, candidate)
+	}
+	return out
 }
 
 // SubscribeFeed adds a feed and subscribes the user to it.

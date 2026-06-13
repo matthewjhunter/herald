@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -73,7 +74,7 @@ func NewFetcher(store storage.Store) *Fetcher {
 	parser.UserAgent = FeedUserAgent
 	return &Fetcher{
 		parser: parser,
-		client: &http.Client{},
+		client: newSafeClient(30 * time.Second),
 		store:  store,
 	}
 }
@@ -117,7 +118,8 @@ func (f *Fetcher) FetchFeed(ctx context.Context, feed storage.Feed) (*FetchResul
 		return nil, fmt.Errorf("feed %s returned status %d", feed.URL, resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	const maxFeedBytes = 10 << 20 // 10 MB: generous for RSS/Atom; bounds memory.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxFeedBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read feed %s: %w", feed.URL, err)
 	}
@@ -165,6 +167,12 @@ func (f *Fetcher) importOPMLBytes(data []byte, userID int64) error {
 		for _, outline := range outlines {
 			// If this outline has a feed URL, add it
 			if outline.XMLURL != "" {
+				// Reject non-http(s) schemes before touching the feeds table.
+				if u, err := url.Parse(outline.XMLURL); err != nil || !AllowedFetchScheme(u.Scheme) {
+					fmt.Fprintf(os.Stderr, "Warning: skipping OPML entry with disallowed URL %s\n", outline.XMLURL)
+					continue
+				}
+
 				title := outline.Title
 				if title == "" {
 					title = outline.Text
