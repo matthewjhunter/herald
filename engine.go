@@ -869,10 +869,14 @@ func (e *Engine) GetUserGroups(userID int64) ([]ArticleGroup, error) {
 }
 
 // GetGroupArticles returns the articles in a specific group with their scores.
-func (e *Engine) GetGroupArticles(groupID int64) (*ArticleGroup, error) {
+// The group must belong to the given user.
+func (e *Engine) GetGroupArticles(userID, groupID int64) (*ArticleGroup, error) {
 	group, err := e.store.GetGroup(groupID)
 	if err != nil {
 		return nil, fmt.Errorf("get group: %w", err)
+	}
+	if group == nil || group.UserID != userID {
+		return nil, fmt.Errorf("group not found or not owned by user")
 	}
 
 	articles, err := e.store.GetGroupArticles(groupID)
@@ -883,16 +887,14 @@ func (e *Engine) GetGroupArticles(groupID int64) (*ArticleGroup, error) {
 	ag := &ArticleGroup{
 		Articles: articlesFromInternal(articles),
 		Count:    len(articles),
-	}
 
-	if group != nil {
-		ag.ID = group.ID
-		ag.UserID = group.UserID
-		ag.Topic = group.Topic
-		ag.DisplayName = group.DisplayName
-		ag.Muted = group.Muted
-		ag.CreatedAt = group.CreatedAt
-		ag.UpdatedAt = group.UpdatedAt
+		ID:          group.ID,
+		UserID:      group.UserID,
+		Topic:       group.Topic,
+		DisplayName: group.DisplayName,
+		Muted:       group.Muted,
+		CreatedAt:   group.CreatedAt,
+		UpdatedAt:   group.UpdatedAt,
 	}
 
 	// Attach summary
@@ -940,6 +942,14 @@ func (e *Engine) MarkGroupRead(userID, groupID int64, before int64) error {
 
 // MuteGroup mutes a group (hides from sidebar) and marks all its articles as read.
 func (e *Engine) MuteGroup(userID, groupID int64) error {
+	// Verify the group belongs to this user
+	group, err := e.store.GetGroup(groupID)
+	if err != nil {
+		return fmt.Errorf("get group: %w", err)
+	}
+	if group == nil || group.UserID != userID {
+		return fmt.Errorf("group not found or not owned by user")
+	}
 	if err := e.store.SetGroupMuted(groupID, true); err != nil {
 		return err
 	}

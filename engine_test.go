@@ -277,7 +277,7 @@ func TestGroupLifecycle(t *testing.T) {
 	}
 
 	// Get group articles
-	group, err := engine.GetGroupArticles(groupID)
+	group, err := engine.GetGroupArticles(1, groupID)
 	if err != nil {
 		t.Fatalf("GetGroupArticles: %v", err)
 	}
@@ -293,13 +293,9 @@ func TestGetGroupArticlesNotFound(t *testing.T) {
 	engine, cleanup := newTestEngine(t)
 	defer cleanup()
 
-	group, err := engine.GetGroupArticles(999)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// Empty group is fine, not an error
-	if len(group.Articles) != 0 {
-		t.Errorf("expected 0 articles, got %d", len(group.Articles))
+	group, err := engine.GetGroupArticles(1, 999)
+	if err == nil {
+		t.Fatalf("expected error for missing group, got group %+v", group)
 	}
 }
 

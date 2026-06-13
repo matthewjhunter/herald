@@ -680,7 +680,7 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 
 	// Load group summary banner when viewing a group
 	if groupID > 0 {
-		if group, err := h.engine.GetGroupArticles(groupID); err == nil && group != nil {
+		if group, err := h.engine.GetGroupArticles(uid, groupID); err == nil && group != nil {
 			data.GroupHeadline = group.Headline
 			data.GroupSummary = group.Summary
 		}

@@ -246,7 +246,8 @@ func registerTools(s *mcp.Server, hs *heraldServer) {
 		if input.GroupID == 0 {
 			return errResult("group_id parameter is required")
 		}
-		group, err := hs.engine.GetGroupArticles(input.GroupID)
+		userID := hs.resolveUser(ptrStr(input.Speaker))
+		group, err := hs.engine.GetGroupArticles(userID, input.GroupID)
 		if err != nil {
 			return errResult("%v", err)
 		}
