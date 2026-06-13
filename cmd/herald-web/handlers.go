@@ -177,7 +177,7 @@ func (h *handlers) parseTemplates() {
 	shared := []string{"base.html", "nav.html", "settings_subnav.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "search_results.html", "ai_summary_list.html", "ai_summary_detail.html", "error.html"}
 
 	// Pages that get their own template tree.
-	pages := []string{"home.html", "feeds_manage.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_digest.html", "admin_stats.html", "stats.html", "status.html", "newsletters_manage.html"}
+	pages := []string{"home.html", "feeds_manage.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_digest.html", "admin_stats.html", "admin_users.html", "stats.html", "status.html", "newsletters_manage.html"}
 
 	built := make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
@@ -1998,4 +1998,42 @@ func (h *handlers) handleOPMLTokenGenerate(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Content-Type", "text/plain")
 	fmt.Fprint(w, syncURL)
+}
+
+// --- Admin user management handlers ---
+
+type adminUsersData struct {
+	Users []herald.User
+}
+
+func (h *handlers) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := h.engine.ListUsers()
+	if err != nil {
+		log.Printf("herald-web: list users failed: %v", err)
+		h.renderError(w, http.StatusInternalServerError, "Failed to load users")
+		return
+	}
+	h.renderPage(w, r, "admin_users.html", adminUsersData{Users: users})
+}
+
+func (h *handlers) handleAdminUserDelete(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("userID")
+	userID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		h.renderError(w, http.StatusBadRequest, "Invalid user ID")
+		return
+	}
+
+	if err := h.engine.DeleteUser(userID); err != nil {
+		log.Printf("herald-web: delete user %d failed: %v", userID, err)
+		if strings.HasPrefix(err.Error(), "refusing to delete reserved user") {
+			h.renderError(w, http.StatusBadRequest, err.Error())
+		} else {
+			h.renderError(w, http.StatusInternalServerError, "Failed to delete user")
+		}
+		return
+	}
+
+	w.Header().Set("HX-Redirect", "/admin/users")
+	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
 }

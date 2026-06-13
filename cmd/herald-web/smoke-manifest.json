@@ -54,6 +54,22 @@
     },
     {
       "method": "GET",
+      "pattern": "/admin/users",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "DELETE",
+      "pattern": "/admin/users/{userID}",
+      "effect": "mutating",
+      "example_params": {
+        "userID": "1"
+      },
+      "expect_status": 400,
+      "complete": true
+    },
+    {
+      "method": "GET",
       "pattern": "/api/ollama/models",
       "effect": "read_only",
       "complete": true

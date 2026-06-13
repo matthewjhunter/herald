@@ -153,6 +153,8 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.Handle("DELETE /admin/prompts/{promptType}", auth(adminAuth(http.HandlerFunc(h.handleAdminPromptReset))), smoke.Example("promptType", "curation"))
 	mux.Handle("GET /admin/digest", auth(adminAuth(http.HandlerFunc(h.handleAdminDigest))))
 	mux.Handle("POST /admin/digest", auth(adminAuth(http.HandlerFunc(h.handleAdminDigest))), smoke.Form(url.Values{"header": {"<p>Header</p>"}, "footer": {"<p>Footer</p>"}}))
+	mux.Handle("GET /admin/users", auth(adminAuth(http.HandlerFunc(h.handleAdminUsers))))
+	mux.Handle("DELETE /admin/users/{userID}", auth(adminAuth(http.HandlerFunc(h.handleAdminUserDelete))), smoke.Example("userID", "1"), smoke.Status(400))
 
 	// Smoke manifest introspection — emits the recorded RouteSpecs as JSON for
 	// the smolder runner. Gated on SMOKE_MANIFEST because it enumerates the
