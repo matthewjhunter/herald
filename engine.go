@@ -241,7 +241,7 @@ func (e *Engine) GetArticleForUser(userID, articleID int64) (*Article, error) {
 		return nil, err
 	}
 	result := articleFromInternal(*a)
-	if summary, err := e.store.GetArticleSummary(userID, articleID); err == nil && summary != nil {
+	if summary, err := e.store.GetArticleSummary(articleID); err == nil && summary != nil {
 		result.AISummary = summary.AISummary
 	}
 	return &result, nil
@@ -1118,7 +1118,7 @@ func (e *Engine) GenerateNewsletterIssue(ctx context.Context, userID, newsletter
 			URL:       a.URL,
 			Score:     score,
 		}
-		if summary, err := e.store.GetArticleSummary(userID, a.ID); err == nil && summary != nil {
+		if summary, err := e.store.GetArticleSummary(a.ID); err == nil && summary != nil {
 			input.AISummary = summary.AISummary
 		} else if a.Summary != "" {
 			input.AISummary = a.Summary
@@ -1236,7 +1236,7 @@ func (e *Engine) GenerateBriefing(userID int64) (string, error) {
 		fmt.Fprintf(&briefing, "## %s (%.1f/10)\n", article.Title, score)
 		fmt.Fprintf(&briefing, "%s\n", article.URL)
 
-		if summary, err := e.store.GetArticleSummary(userID, article.ID); err == nil && summary != nil {
+		if summary, err := e.store.GetArticleSummary(article.ID); err == nil && summary != nil {
 			fmt.Fprintf(&briefing, "%s\n", summary.AISummary)
 		} else if article.Summary != "" {
 			fmt.Fprintf(&briefing, "%s\n", article.Summary)
@@ -1355,9 +1355,11 @@ func (e *Engine) GetRecentCycleStats(limit int) ([]CycleStats, error) {
 	return out, nil
 }
 
-// PendingCounts returns the number of articles awaiting AI processing.
+// PendingCounts returns the number of articles awaiting AI processing. The
+// unsummarized count is global — summaries are shared per-article (#162) —
+// while the unscored count stays per-user.
 func (e *Engine) PendingCounts(userID int64) (unsummarized, unscored int, err error) {
-	unsummarized, err = e.store.GetUnsummarizedArticleCount(userID)
+	unsummarized, err = e.store.GetUnsummarizedArticleCount()
 	if err != nil {
 		return 0, 0, err
 	}
@@ -1516,6 +1518,11 @@ func (e *Engine) ListPrompts(userID int64) ([]PromptInfo, error) {
 
 	var result []PromptInfo
 	for pt := range allowedPromptTypes {
+		// The summarization prompt is global (#162): only the admin (user 0)
+		// can see or customize it.
+		if pt == "summarization" && userID != 0 {
+			continue
+		}
 		info := PromptInfo{
 			Type:        pt,
 			Status:      "default",
@@ -1574,6 +1581,11 @@ func (e *Engine) SetPrompt(userID int64, promptType, template string, temp *floa
 	if !allowedPromptTypes[promptType] {
 		return fmt.Errorf("unknown or restricted prompt type: %q", promptType)
 	}
+	// Per-article summaries are shared by all users (#162), so the
+	// summarization prompt is global: only the admin row (user 0) applies.
+	if promptType == "summarization" && userID != 0 {
+		return fmt.Errorf("summarization prompt is global; set it as admin")
+	}
 
 	// If only temperature/model is being set, we need to fetch the existing template
 	if template == "" {
@@ -1599,6 +1611,10 @@ func (e *Engine) SetPrompt(userID int64, promptType, template string, temp *floa
 func (e *Engine) ResetPrompt(userID int64, promptType string) error {
 	if !allowedPromptTypes[promptType] {
 		return fmt.Errorf("unknown or restricted prompt type: %q", promptType)
+	}
+	// See SetPrompt: the summarization prompt is global (#162).
+	if promptType == "summarization" && userID != 0 {
+		return fmt.Errorf("summarization prompt is global; set it as admin")
 	}
 	return e.store.DeleteUserPrompt(userID, promptType)
 }

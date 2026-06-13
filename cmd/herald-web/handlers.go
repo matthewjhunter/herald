@@ -76,8 +76,13 @@ type promptUIEntry struct {
 	AvailableModels []string
 }
 
-// promptTypeOrder defines the display order for prompt types in the UI.
-var promptTypeOrder = []string{"curation", "summarization", "group_summary", "newsletter"}
+// userPromptTypeOrder and adminPromptTypeOrder define the display order for
+// prompt types in the UI. The summarization prompt is global (#162) — the
+// summary is shared per-article — so only the admin page shows it.
+var (
+	userPromptTypeOrder  = []string{"curation", "group_summary", "newsletter"}
+	adminPromptTypeOrder = []string{"curation", "summarization", "group_summary", "newsletter"}
+)
 
 var promptLabels = map[string]string{
 	"curation":      "Article Curation",
@@ -86,11 +91,12 @@ var promptLabels = map[string]string{
 	"newsletter":    "Newsletter",
 }
 
-// loadPromptEntries builds the UI entry list for a given userID.
-func (h *handlers) loadPromptEntries(userID int64) []promptUIEntry {
+// loadPromptEntries builds the UI entry list for a given userID and prompt
+// type list (userPromptTypeOrder or adminPromptTypeOrder).
+func (h *handlers) loadPromptEntries(userID int64, promptTypes []string) []promptUIEntry {
 	models, _ := h.engine.ListModels(context.Background())
 	var entries []promptUIEntry
-	for _, pt := range promptTypeOrder {
+	for _, pt := range promptTypes {
 		detail, err := h.engine.GetPrompt(userID, pt)
 		if err != nil {
 			continue
@@ -622,7 +628,7 @@ func (h *handlers) handleSettingsSync(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) handleSettingsPrompts(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID
 	data := settingsPromptsData{
-		Prompts: h.loadPromptEntries(uid),
+		Prompts: h.loadPromptEntries(uid, userPromptTypeOrder),
 		IsAdmin: h.isAdminCtx(r.Context()),
 	}
 	h.renderPage(w, r, "settings_prompts.html", data)
@@ -1664,7 +1670,7 @@ type adminPromptsData struct {
 
 func (h *handlers) handleAdminPrompts(w http.ResponseWriter, r *http.Request) {
 	data := adminPromptsData{
-		Prompts: h.loadPromptEntries(0),
+		Prompts: h.loadPromptEntries(0, adminPromptTypeOrder),
 	}
 	h.renderPage(w, r, "admin_prompts.html", data)
 }
