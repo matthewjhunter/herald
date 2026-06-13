@@ -141,6 +141,10 @@ type Store interface {
 
 	GetStarredArticles(userID int64, limit, offset int, filterThreshold *int) ([]Article, error)
 
+	// UserSubscribedToArticleFeed reports whether the user is subscribed to the
+	// feed that owns the article. Unknown article IDs return false, nil.
+	UserSubscribedToArticleFeed(userID, articleID int64) (bool, error)
+
 	// Article metadata
 	StoreArticleAuthors(articleID int64, authors []ArticleAuthor) error
 	StoreArticleCategories(articleID int64, categories []string) error

@@ -520,6 +520,23 @@ func (s *PostgresStore) DeleteUserPreference(userID int64, key string) error {
 
 // --- Read state ---
 
+// UserSubscribedToArticleFeed reports whether the user is subscribed to the
+// feed that owns the article. Unknown article IDs return false, nil.
+func (s *PostgresStore) UserSubscribedToArticleFeed(userID, articleID int64) (bool, error) {
+	var subscribed bool
+	err := s.db.QueryRow(`
+		SELECT EXISTS(
+			SELECT 1 FROM articles a
+			JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = ?
+			WHERE a.id = ?
+		)`, userID, articleID,
+	).Scan(&subscribed)
+	if err != nil {
+		return false, fmt.Errorf("check article subscription: %w", err)
+	}
+	return subscribed, nil
+}
+
 func (s *PostgresStore) UpdateStarred(userID, articleID int64, starred bool) error {
 	_, err := s.db.Exec(
 		`INSERT INTO read_state (user_id, article_id, starred)
