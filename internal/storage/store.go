@@ -68,6 +68,8 @@ type Store interface {
 	CreateUserWithOIDC(name, email, sub string) (*User, error)
 	UpdateUserOIDCEmail(id int64, email string) error
 	ListUsers() ([]User, error)
+	// DeleteUser removes a user and all rows they own, atomically.
+	DeleteUser(userID int64) error
 
 	// User prompts
 	GetUserPrompt(userID int64, promptType string) (string, error)
@@ -123,8 +125,8 @@ type Store interface {
 	GetUnreadArticlesForUser(userID int64, limit, offset int, filterThreshold *int) ([]Article, error)
 	GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int, filterThreshold *int) ([]Article, error)
 	GetUnscoredArticleCount(userID int64) (int, error)
-	GetUnsummarizedArticleCount(userID int64) (int, error)
-	GetUnsummarizedScoredArticles(userID int64, securityThreshold float64, limit int) ([]Article, error)
+	GetUnsummarizedArticleCount() (int, error)
+	GetUnsummarizedScoredArticles(securityThreshold float64, limit int) ([]Article, error)
 	GetUnscoredCurationArticles(userID int64, securityThreshold float64, limit int) ([]Article, error)
 	GetUngroupedEmbeddedArticles(userID int64, model string, securityThreshold float64, since time.Time, limit int) ([]Article, error)
 	GetArticlesNeedingFullText(limit int) ([]Article, error)
@@ -141,6 +143,10 @@ type Store interface {
 
 	GetStarredArticles(userID int64, limit, offset int, filterThreshold *int) ([]Article, error)
 
+	// UserSubscribedToArticleFeed reports whether the user is subscribed to the
+	// feed that owns the article. Unknown article IDs return false, nil.
+	UserSubscribedToArticleFeed(userID, articleID int64) (bool, error)
+
 	// Article metadata
 	StoreArticleAuthors(articleID int64, authors []ArticleAuthor) error
 	StoreArticleCategories(articleID int64, categories []string) error
@@ -154,14 +160,14 @@ type Store interface {
 	// Filter rules
 	AddFilterRule(rule *FilterRule) (int64, error)
 	GetFilterRules(userID int64, feedID *int64) ([]FilterRule, error)
-	UpdateFilterRuleScore(ruleID int64, score int) error
-	DeleteFilterRule(ruleID int64) error
+	UpdateFilterRuleScore(userID, ruleID int64, score int) error
+	DeleteFilterRule(userID, ruleID int64) error
 	HasFilterRules(userID int64) (bool, error)
 
-	// Article summaries
-	UpdateArticleAISummary(userID, articleID int64, aiSummary string) error
-	MarkSummarizationSkipped(userID, articleID int64, reason string) error
-	GetArticleSummary(userID, articleID int64) (*ArticleSummary, error)
+	// Article summaries (per-article, shared by all subscribers — #162)
+	UpdateArticleAISummary(articleID int64, aiSummary string) error
+	MarkSummarizationSkipped(articleID int64, reason string) error
+	GetArticleSummary(articleID int64) (*ArticleSummary, error)
 
 	// Feed stats
 	GetFeedStats(userID int64) ([]FeedStats, error)

@@ -16,6 +16,9 @@ type Config struct {
 		CurationModel string        `yaml:"curation_model"`
 		Timeout       time.Duration `yaml:"timeout"`
 		MaxParallel   int           `yaml:"max_parallel"`
+		// MaxConcurrent bounds the number of in-flight generate() calls in this
+		// process. <= 0 means unbounded (no gate).
+		MaxConcurrent int `yaml:"max_concurrent"`
 	} `yaml:"ollama"`
 
 	Thresholds struct {
@@ -23,6 +26,12 @@ type Config struct {
 		SecurityScore       float64 `yaml:"security_score"`
 		SecurityMediumScore float64 `yaml:"security_medium_score"`
 	} `yaml:"thresholds"`
+
+	Limits struct {
+		MaxFeedsPerUser       int `yaml:"max_feeds_per_user"`
+		MaxFilterRulesPerUser int `yaml:"max_filter_rules_per_user"`
+		MaxNewslettersPerUser int `yaml:"max_newsletters_per_user"`
+	} `yaml:"limits"`
 
 	Preferences struct {
 		Keywords         []string `yaml:"keywords"`
@@ -108,6 +117,7 @@ func DefaultConfig() *Config {
 	cfg.Ollama.SecurityModel = "gemma3:4b"
 	cfg.Ollama.CurationModel = "llama3.1:8b"
 	cfg.Ollama.Timeout = 2 * time.Minute
+	cfg.Ollama.MaxConcurrent = 8
 	cfg.Summarization.MinArticleLength = 200
 	cfg.Summarization.MaxSummaryLength = 500
 	cfg.Grouping.Enabled = true
@@ -118,6 +128,9 @@ func DefaultConfig() *Config {
 	cfg.Thresholds.InterestScore = 8.0
 	cfg.Thresholds.SecurityScore = 7.0
 	cfg.Thresholds.SecurityMediumScore = 4.0
+	cfg.Limits.MaxFeedsPerUser = 1000
+	cfg.Limits.MaxFilterRulesPerUser = 1000
+	cfg.Limits.MaxNewslettersPerUser = 50
 	// Default temperatures (can be overridden in config)
 	cfg.Temperatures.Security = 0.3
 	cfg.Temperatures.Curation = 0.5

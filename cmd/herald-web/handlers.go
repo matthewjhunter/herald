@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -75,8 +76,13 @@ type promptUIEntry struct {
 	AvailableModels []string
 }
 
-// promptTypeOrder defines the display order for prompt types in the UI.
-var promptTypeOrder = []string{"curation", "summarization", "group_summary", "newsletter"}
+// userPromptTypeOrder and adminPromptTypeOrder define the display order for
+// prompt types in the UI. The summarization prompt is global (#162) — the
+// summary is shared per-article — so only the admin page shows it.
+var (
+	userPromptTypeOrder  = []string{"curation", "group_summary", "newsletter"}
+	adminPromptTypeOrder = []string{"curation", "summarization", "group_summary", "newsletter"}
+)
 
 var promptLabels = map[string]string{
 	"curation":      "Article Curation",
@@ -85,11 +91,12 @@ var promptLabels = map[string]string{
 	"newsletter":    "Newsletter",
 }
 
-// loadPromptEntries builds the UI entry list for a given userID.
-func (h *handlers) loadPromptEntries(userID int64) []promptUIEntry {
+// loadPromptEntries builds the UI entry list for a given userID and prompt
+// type list (userPromptTypeOrder or adminPromptTypeOrder).
+func (h *handlers) loadPromptEntries(userID int64, promptTypes []string) []promptUIEntry {
 	models, _ := h.engine.ListModels(context.Background())
 	var entries []promptUIEntry
-	for _, pt := range promptTypeOrder {
+	for _, pt := range promptTypes {
 		detail, err := h.engine.GetPrompt(userID, pt)
 		if err != nil {
 			continue
@@ -170,7 +177,7 @@ func (h *handlers) parseTemplates() {
 	shared := []string{"base.html", "nav.html", "settings_subnav.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "search_results.html", "ai_summary_list.html", "ai_summary_detail.html", "error.html"}
 
 	// Pages that get their own template tree.
-	pages := []string{"home.html", "feeds_manage.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_digest.html", "admin_stats.html", "stats.html", "status.html", "newsletters_manage.html"}
+	pages := []string{"home.html", "feeds_manage.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_digest.html", "admin_stats.html", "admin_users.html", "stats.html", "status.html", "newsletters_manage.html"}
 
 	built := make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
@@ -403,7 +410,19 @@ func formatDate(t *time.Time) string {
 	}
 }
 
-func parseIntParam(r *http.Request, name string, defaultVal int) int {
+const (
+	maxPageLimit      = 500
+	maxOffset         = 1000000
+	maxFeedURLLen     = 2048
+	maxTitleLen       = 512
+	maxPromptLen      = 20000
+	maxFilterValueLen = 512
+)
+
+// parseIntParam parses an integer query parameter. If maxVal > 0 and the
+// parsed value exceeds it, maxVal is returned. Negative or unparseable values
+// fall back to defaultVal.
+func parseIntParam(r *http.Request, name string, defaultVal, maxVal int) int {
 	s := r.URL.Query().Get(name)
 	if s == "" {
 		return defaultVal
@@ -411,6 +430,9 @@ func parseIntParam(r *http.Request, name string, defaultVal int) int {
 	v, err := strconv.Atoi(s)
 	if err != nil || v < 0 {
 		return defaultVal
+	}
+	if maxVal > 0 && v > maxVal {
+		return maxVal
 	}
 	return v
 }
@@ -559,7 +581,7 @@ func (h *handlers) handleSettingsSync(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) handleSettingsPrompts(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID
 	data := settingsPromptsData{
-		Prompts: h.loadPromptEntries(uid),
+		Prompts: h.loadPromptEntries(uid, userPromptTypeOrder),
 		IsAdmin: h.isAdminCtx(r.Context()),
 	}
 	h.renderPage(w, r, "settings_prompts.html", data)
@@ -569,8 +591,8 @@ func (h *handlers) handleSettingsPrompts(w http.ResponseWriter, r *http.Request)
 
 func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID
-	limit := parseIntParam(r, "limit", 30)
-	offset := parseIntParam(r, "offset", 0)
+	limit := parseIntParam(r, "limit", 30, maxPageLimit)
+	offset := parseIntParam(r, "offset", 0, maxOffset)
 	feedID := parseInt64Param(r, "feed_id")
 	groupID := parseInt64Param(r, "group_id")
 	starred := r.URL.Query().Get("starred") == "1"
@@ -618,7 +640,7 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 
 	// Load group summary banner when viewing a group
 	if groupID > 0 {
-		if group, err := h.engine.GetGroupArticles(groupID); err == nil && group != nil {
+		if group, err := h.engine.GetGroupArticles(uid, groupID); err == nil && group != nil {
 			data.GroupHeadline = group.Headline
 			data.GroupSummary = group.Summary
 		}
@@ -656,8 +678,8 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) handleSearch(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID
 	query := r.URL.Query().Get("q")
-	limit := parseIntParam(r, "limit", 30)
-	offset := parseIntParam(r, "offset", 0)
+	limit := parseIntParam(r, "limit", 30, maxPageLimit)
+	offset := parseIntParam(r, "offset", 0, maxOffset)
 
 	if query == "" {
 		h.renderFragment(w, "search_results", searchResultsData{})
@@ -987,6 +1009,11 @@ func (h *handlers) handleNewsletterGenerate(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
+	nl, err := h.engine.GetNewsletter(id)
+	if err != nil || nl.UserID != uid {
+		h.renderError(w, http.StatusNotFound, "Digest not found")
+		return
+	}
 	if !h.engine.AISummaryEnabled() {
 		fmt.Fprint(w, `<span class="secondary">AI summary not configured.</span>`)
 		return
@@ -1054,6 +1081,14 @@ func (h *handlers) handleFeedDiscover(w http.ResponseWriter, r *http.Request) {
 		h.renderDiscoverResult(w, rawURL, nil, "Feed URL is required")
 		return
 	}
+	if len(rawURL) > maxFeedURLLen {
+		h.renderDiscoverResult(w, rawURL, nil, "Feed URL is too long")
+		return
+	}
+	if len(title) > maxTitleLen {
+		h.renderDiscoverResult(w, rawURL, nil, "Feed title is too long")
+		return
+	}
 
 	// Happy path: URL is already a valid feed.
 	if err := h.engine.SubscribeFeed(uid, rawURL, title); err == nil {
@@ -1067,8 +1102,9 @@ func (h *handlers) handleFeedDiscover(w http.ResponseWriter, r *http.Request) {
 
 	discovered, err := h.engine.DiscoverFeeds(ctx, rawURL)
 	if err != nil {
+		log.Printf("herald-web: feed discover failed for %q: %v", rawURL, err)
 		h.renderDiscoverResult(w, rawURL, nil,
-			fmt.Sprintf("Could not reach %s: %v", rawURL, err))
+			"Could not reach that URL. Check the address and try again.")
 		return
 	}
 	if len(discovered) == 0 {
@@ -1120,9 +1156,18 @@ func (h *handlers) handleFeedSubscribe(w http.ResponseWriter, r *http.Request) {
 		h.renderError(w, http.StatusBadRequest, "Feed URL is required")
 		return
 	}
+	if len(url) > maxFeedURLLen {
+		h.renderError(w, http.StatusBadRequest, "Feed URL is too long")
+		return
+	}
+	if len(title) > maxTitleLen {
+		h.renderError(w, http.StatusBadRequest, "Feed title is too long")
+		return
+	}
 
 	if err := h.engine.SubscribeFeed(uid, url, title); err != nil {
-		h.renderError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to subscribe: %v", err))
+		log.Printf("herald-web: subscribe failed for user %d: %v", uid, err)
+		h.renderError(w, http.StatusBadRequest, "Could not subscribe to that feed. Check the URL and try again.")
 		return
 	}
 
@@ -1237,14 +1282,16 @@ func (h *handlers) handleFeedTagRemove(w http.ResponseWriter, r *http.Request) {
 	h.renderFeedTagsCell(w, uid, feedID)
 }
 
-// handleArticleImage serves a cached article image by its ID.
+// handleArticleImage serves a cached article image by its ID. Only users
+// subscribed to the owning article's feed can fetch it (#162).
 func (h *handlers) handleArticleImage(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
 	imageID, err := strconv.ParseInt(r.PathValue("imageID"), 10, 64)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	img, err := h.engine.GetArticleImage(imageID)
+	img, err := h.engine.GetArticleImageForUser(uid, imageID)
 	if err != nil || img == nil {
 		http.NotFound(w, r)
 		return
@@ -1288,7 +1335,8 @@ func (h *handlers) handleOPMLImport(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 
 	if err := h.engine.ImportOPMLReader(f, uid); err != nil {
-		h.renderError(w, http.StatusBadRequest, fmt.Sprintf("Failed to import OPML: %v", err))
+		log.Printf("herald-web: OPML import failed for user %d: %v", uid, err)
+		h.renderError(w, http.StatusBadRequest, "Failed to import OPML. Check that the file is valid.")
 		return
 	}
 
@@ -1383,6 +1431,10 @@ func (h *handlers) handleUserPromptSave(w http.ResponseWriter, r *http.Request) 
 		h.renderError(w, http.StatusBadRequest, "Prompt template cannot be empty")
 		return
 	}
+	if len(tmpl) > maxPromptLen {
+		h.renderError(w, http.StatusBadRequest, "Prompt template is too long")
+		return
+	}
 
 	var modelPtr *string
 	if m := strings.TrimSpace(r.FormValue("model")); m != "" {
@@ -1390,7 +1442,8 @@ func (h *handlers) handleUserPromptSave(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.engine.SetPrompt(uid, promptType, tmpl, nil, modelPtr); err != nil {
-		h.renderError(w, http.StatusBadRequest, fmt.Sprintf("Failed to save prompt: %v", err))
+		log.Printf("herald-web: save prompt failed for user %d type %q: %v", uid, promptType, err)
+		h.renderError(w, http.StatusBadRequest, "Failed to save prompt.")
 		return
 	}
 
@@ -1413,7 +1466,8 @@ func (h *handlers) handleUserPromptReset(w http.ResponseWriter, r *http.Request)
 	promptType := r.PathValue("promptType")
 
 	if err := h.engine.ResetPrompt(uid, promptType); err != nil {
-		h.renderError(w, http.StatusBadRequest, fmt.Sprintf("Failed to reset prompt: %v", err))
+		log.Printf("herald-web: reset prompt failed for user %d type %q: %v", uid, promptType, err)
+		h.renderError(w, http.StatusBadRequest, "Failed to reset prompt.")
 		return
 	}
 
@@ -1596,7 +1650,7 @@ type adminPromptsData struct {
 
 func (h *handlers) handleAdminPrompts(w http.ResponseWriter, r *http.Request) {
 	data := adminPromptsData{
-		Prompts: h.loadPromptEntries(0),
+		Prompts: h.loadPromptEntries(0, adminPromptTypeOrder),
 	}
 	h.renderPage(w, r, "admin_prompts.html", data)
 }
@@ -1614,6 +1668,10 @@ func (h *handlers) handleAdminPromptSave(w http.ResponseWriter, r *http.Request)
 		h.renderError(w, http.StatusBadRequest, "Prompt template cannot be empty")
 		return
 	}
+	if len(tmpl) > maxPromptLen {
+		h.renderError(w, http.StatusBadRequest, "Prompt template is too long")
+		return
+	}
 
 	var modelPtr *string
 	if m := strings.TrimSpace(r.FormValue("model")); m != "" {
@@ -1621,7 +1679,8 @@ func (h *handlers) handleAdminPromptSave(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := h.engine.SetPrompt(0, promptType, tmpl, nil, modelPtr); err != nil {
-		h.renderError(w, http.StatusBadRequest, fmt.Sprintf("Failed to save global prompt: %v", err))
+		log.Printf("herald-web: save global prompt failed for type %q: %v", promptType, err)
+		h.renderError(w, http.StatusBadRequest, "Failed to save global prompt.")
 		return
 	}
 
@@ -1634,7 +1693,8 @@ func (h *handlers) handleAdminPromptReset(w http.ResponseWriter, r *http.Request
 	promptType := r.PathValue("promptType")
 
 	if err := h.engine.ResetPrompt(0, promptType); err != nil {
-		h.renderError(w, http.StatusBadRequest, fmt.Sprintf("Failed to reset global prompt: %v", err))
+		log.Printf("herald-web: reset global prompt failed for type %q: %v", promptType, err)
+		h.renderError(w, http.StatusBadRequest, "Failed to reset global prompt.")
 		return
 	}
 
@@ -1699,6 +1759,11 @@ func (h *handlers) handleFilterAdd(w http.ResponseWriter, r *http.Request) {
 	scoreStr := r.FormValue("score")
 	feedIDStr := r.FormValue("feed_id")
 
+	if len(value) > maxFilterValueLen {
+		h.renderError(w, http.StatusBadRequest, "Filter value is too long")
+		return
+	}
+
 	score, err := strconv.Atoi(scoreStr)
 	if err != nil {
 		h.renderError(w, http.StatusBadRequest, "Invalid score")
@@ -1718,7 +1783,8 @@ func (h *handlers) handleFilterAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := h.engine.AddFilterRule(uid, rule); err != nil {
-		h.renderError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to add rule: %v", err))
+		log.Printf("herald-web: add filter rule failed for user %d: %v", uid, err)
+		h.renderError(w, http.StatusBadRequest, "Could not add filter rule. Check the values and try again.")
 		return
 	}
 
@@ -1734,8 +1800,8 @@ func (h *handlers) handleFilterDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.engine.DeleteFilterRule(ruleID); err != nil {
-		h.renderError(w, http.StatusInternalServerError, "Failed to delete rule")
+	if err := h.engine.DeleteFilterRule(uid, ruleID); err != nil {
+		h.renderError(w, http.StatusNotFound, "Rule not found")
 		return
 	}
 
@@ -1755,7 +1821,8 @@ func (h *handlers) handleFilterThreshold(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := h.engine.SetPreference(uid, "filter_threshold", v); err != nil {
-		h.renderError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save threshold: %v", err))
+		log.Printf("herald-web: save filter_threshold failed for user %d: %v", uid, err)
+		h.renderError(w, http.StatusInternalServerError, "Failed to save threshold.")
 		return
 	}
 
@@ -1890,7 +1957,8 @@ func (h *handlers) handleOPMLSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stored, err := h.engine.GetUserPreference(userID, "opml_sync_token")
-	if err != nil || stored == "" || stored != token {
+	if err != nil || stored == "" ||
+		subtle.ConstantTimeCompare([]byte(stored), []byte(token)) != 1 {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
@@ -1930,4 +1998,42 @@ func (h *handlers) handleOPMLTokenGenerate(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Content-Type", "text/plain")
 	fmt.Fprint(w, syncURL)
+}
+
+// --- Admin user management handlers ---
+
+type adminUsersData struct {
+	Users []herald.User
+}
+
+func (h *handlers) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := h.engine.ListUsers()
+	if err != nil {
+		log.Printf("herald-web: list users failed: %v", err)
+		h.renderError(w, http.StatusInternalServerError, "Failed to load users")
+		return
+	}
+	h.renderPage(w, r, "admin_users.html", adminUsersData{Users: users})
+}
+
+func (h *handlers) handleAdminUserDelete(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("userID")
+	userID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		h.renderError(w, http.StatusBadRequest, "Invalid user ID")
+		return
+	}
+
+	if err := h.engine.DeleteUser(userID); err != nil {
+		log.Printf("herald-web: delete user %d failed: %v", userID, err)
+		if strings.HasPrefix(err.Error(), "refusing to delete reserved user") {
+			h.renderError(w, http.StatusBadRequest, err.Error())
+		} else {
+			h.renderError(w, http.StatusInternalServerError, "Failed to delete user")
+		}
+		return
+	}
+
+	w.Header().Set("HX-Redirect", "/admin/users")
+	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
 }

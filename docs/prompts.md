@@ -26,6 +26,11 @@ Feedreader uses five different AI prompts:
 | `summarization` | Generate concise article summaries | 0.3 | `{{.Title}}`, `{{.Content}}` |
 | `group_summary` | Create narratives from related articles | 0.5 | `{{.Topic}}`, `{{.Articles}}` |
 
+The `security` and `summarization` prompts are global: their output is a
+property of the article, shared by every subscriber, so only the admin
+(user 0) override, the config file, or the embedded default applies.
+Per-user overrides for these two types are not allowed.
+
 ## Configuration
 
 ### Tier 1: Embedded Defaults (No Configuration Needed)

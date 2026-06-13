@@ -138,9 +138,10 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	// Ollama model list (used by prompt settings pages).
 	mux.Handle("GET /api/ollama/models", auth(http.HandlerFunc(h.handleOllamaModels)))
 
-	// Per-user AI prompt customization. save targets "summarization"; reset
-	// targets the seeded "curation" prompt so the two don't interact.
-	mux.Handle("POST /settings/prompts/{promptType}", auth(http.HandlerFunc(h.handleUserPromptSave)), smoke.Example("promptType", "summarization"), smoke.Form(url.Values{"template": {"Summarize: {{.Content}}"}}))
+	// Per-user AI prompt customization. save targets "group_summary"
+	// ("summarization" is admin-global since #162); reset targets the seeded
+	// "curation" prompt so the two don't interact.
+	mux.Handle("POST /settings/prompts/{promptType}", auth(http.HandlerFunc(h.handleUserPromptSave)), smoke.Example("promptType", "group_summary"), smoke.Form(url.Values{"template": {"Summarize the group: {{.Articles}}"}}))
 	mux.Handle("DELETE /settings/prompts/{promptType}", auth(http.HandlerFunc(h.handleUserPromptReset)), smoke.Example("promptType", "curation"))
 
 	// Admin-only routes.
@@ -152,6 +153,8 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.Handle("DELETE /admin/prompts/{promptType}", auth(adminAuth(http.HandlerFunc(h.handleAdminPromptReset))), smoke.Example("promptType", "curation"))
 	mux.Handle("GET /admin/digest", auth(adminAuth(http.HandlerFunc(h.handleAdminDigest))))
 	mux.Handle("POST /admin/digest", auth(adminAuth(http.HandlerFunc(h.handleAdminDigest))), smoke.Form(url.Values{"header": {"<p>Header</p>"}, "footer": {"<p>Footer</p>"}}))
+	mux.Handle("GET /admin/users", auth(adminAuth(http.HandlerFunc(h.handleAdminUsers))))
+	mux.Handle("DELETE /admin/users/{userID}", auth(adminAuth(http.HandlerFunc(h.handleAdminUserDelete))), smoke.Example("userID", "1"), smoke.Status(400))
 
 	// Smoke manifest introspection — emits the recorded RouteSpecs as JSON for
 	// the smolder runner. Gated on SMOKE_MANIFEST because it enumerates the

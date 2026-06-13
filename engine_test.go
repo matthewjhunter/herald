@@ -1,13 +1,27 @@
 package herald
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/matthewjhunter/herald/internal/feeds"
 	"github.com/matthewjhunter/herald/internal/storage"
 )
+
+// TestMain installs a permissive dial control for the entire test binary so
+// that httptest.NewServer (which binds to 127.0.0.1) is reachable for the
+// feed-quota tests that call SubscribeFeed against a local server.
+func TestMain(m *testing.M) {
+	restore := feeds.UsePermissiveDialForTesting()
+	defer restore()
+	os.Exit(m.Run())
+}
 
 func newTestEngine(t *testing.T) (*Engine, func()) {
 	t.Helper()
@@ -199,7 +213,7 @@ func TestGetArticleForUser(t *testing.T) {
 	}
 
 	// Store an AI summary and verify it's returned
-	engine.store.UpdateArticleAISummary(1, articleID, "This is the AI-generated summary.")
+	engine.store.UpdateArticleAISummary(articleID, "This is the AI-generated summary.")
 
 	article, err = engine.GetArticleForUser(1, articleID)
 	if err != nil {
@@ -209,13 +223,21 @@ func TestGetArticleForUser(t *testing.T) {
 		t.Errorf("AISummary: got %q", article.AISummary)
 	}
 
-	// Different user should not see user 1's summary
+	// A non-subscriber cannot read the article at all (#162).
+	if _, err := engine.GetArticleForUser(2, articleID); err == nil {
+		t.Fatal("expected error for a user not subscribed to the feed")
+	}
+
+	// The summary is a property of the article (#162): every subscriber sees it.
+	if err := engine.store.SubscribeUserToFeed(2, feedID); err != nil {
+		t.Fatalf("SubscribeUserToFeed: %v", err)
+	}
 	article, err = engine.GetArticleForUser(2, articleID)
 	if err != nil {
 		t.Fatalf("GetArticleForUser user 2: %v", err)
 	}
-	if article.AISummary != "" {
-		t.Errorf("expected empty AISummary for user 2, got %q", article.AISummary)
+	if article.AISummary != "This is the AI-generated summary." {
+		t.Errorf("expected the shared AISummary for user 2, got %q", article.AISummary)
 	}
 }
 
@@ -277,7 +299,7 @@ func TestGroupLifecycle(t *testing.T) {
 	}
 
 	// Get group articles
-	group, err := engine.GetGroupArticles(groupID)
+	group, err := engine.GetGroupArticles(1, groupID)
 	if err != nil {
 		t.Fatalf("GetGroupArticles: %v", err)
 	}
@@ -293,13 +315,9 @@ func TestGetGroupArticlesNotFound(t *testing.T) {
 	engine, cleanup := newTestEngine(t)
 	defer cleanup()
 
-	group, err := engine.GetGroupArticles(999)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// Empty group is fine, not an error
-	if len(group.Articles) != 0 {
-		t.Errorf("expected 0 articles, got %d", len(group.Articles))
+	group, err := engine.GetGroupArticles(1, 999)
+	if err == nil {
+		t.Fatalf("expected error for missing group, got group %+v", group)
 	}
 }
 
@@ -354,7 +372,7 @@ func TestGetFeedStats(t *testing.T) {
 	engine.store.UpdateReadState(1, id1, true, nil, nil, nil, nil)
 
 	// Summarize one article in feed 2
-	engine.store.UpdateArticleAISummary(1, id4, "Summary of article 4")
+	engine.store.UpdateArticleAISummary(id4, "Summary of article 4")
 
 	result, err := engine.GetFeedStats(1)
 	if err != nil {
@@ -470,7 +488,7 @@ func TestFilterRulesCRUD(t *testing.T) {
 	}
 
 	// Update score
-	if err := engine.UpdateFilterRule(id, 10); err != nil {
+	if err := engine.UpdateFilterRule(userID, id, 10); err != nil {
 		t.Fatalf("UpdateFilterRule: %v", err)
 	}
 	rules, _ = engine.GetFilterRules(userID, nil)
@@ -479,7 +497,7 @@ func TestFilterRulesCRUD(t *testing.T) {
 	}
 
 	// Delete
-	if err := engine.DeleteFilterRule(id); err != nil {
+	if err := engine.DeleteFilterRule(userID, id); err != nil {
 		t.Fatalf("DeleteFilterRule: %v", err)
 	}
 	rules, _ = engine.GetFilterRules(userID, nil)
@@ -775,7 +793,7 @@ func TestFeedURLCandidates(t *testing.T) {
 	}{
 		{"https://example.com/feed", []string{"https://example.com/feed"}},
 		{"http://example.com/feed", []string{"http://example.com/feed"}},
-		{"feed://example.com/feed", []string{"feed://example.com/feed"}},
+		{"feed://example.com/feed", nil}, // non-http(s) scheme rejected
 		{"example.com", []string{"https://example.com", "http://example.com"}},
 		{"example.com/feed.xml", []string{"https://example.com/feed.xml", "http://example.com/feed.xml"}},
 		{"  example.com  ", []string{"https://example.com", "http://example.com"}},
@@ -793,5 +811,274 @@ func TestFeedURLCandidates(t *testing.T) {
 				t.Errorf("feedURLCandidates(%q)[%d] = %q, want %q", c.in, i, got[i], c.want[i])
 			}
 		}
+	}
+}
+
+func TestMuteGroupCrossUser(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	groupID, err := engine.store.CreateArticleGroup(1, "Owned by user 1")
+	if err != nil {
+		t.Fatalf("CreateArticleGroup: %v", err)
+	}
+
+	if err := engine.MuteGroup(2, groupID); err == nil {
+		t.Fatal("expected error muting another user's group")
+	}
+	muted, err := engine.store.IsGroupMuted(groupID)
+	if err != nil {
+		t.Fatalf("IsGroupMuted: %v", err)
+	}
+	if muted {
+		t.Error("group should not be muted after cross-user MuteGroup")
+	}
+
+	// The owner can mute it.
+	if err := engine.MuteGroup(1, groupID); err != nil {
+		t.Fatalf("owner MuteGroup: %v", err)
+	}
+	if muted, _ := engine.store.IsGroupMuted(groupID); !muted {
+		t.Error("group should be muted after owner MuteGroup")
+	}
+}
+
+func TestGetGroupArticlesCrossUser(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	groupID, err := engine.store.CreateArticleGroup(1, "Owned by user 1")
+	if err != nil {
+		t.Fatalf("CreateArticleGroup: %v", err)
+	}
+
+	if _, err := engine.GetGroupArticles(2, groupID); err == nil {
+		t.Fatal("expected error reading another user's group")
+	}
+
+	group, err := engine.GetGroupArticles(1, groupID)
+	if err != nil {
+		t.Fatalf("owner GetGroupArticles: %v", err)
+	}
+	if group.ID != groupID || group.Topic != "Owned by user 1" {
+		t.Errorf("unexpected group: %+v", group)
+	}
+}
+
+func TestSummarizationPromptIsGlobal(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	// A regular user can neither set nor reset the summarization prompt.
+	if err := engine.SetPrompt(1, "summarization", "mine: {{.Content}}", nil, nil); err == nil ||
+		!strings.Contains(err.Error(), "global") {
+		t.Fatalf("expected global-prompt rejection for SetPrompt, got %v", err)
+	}
+	if err := engine.ResetPrompt(1, "summarization"); err == nil ||
+		!strings.Contains(err.Error(), "global") {
+		t.Fatalf("expected global-prompt rejection for ResetPrompt, got %v", err)
+	}
+
+	// The admin (user 0) can.
+	if err := engine.SetPrompt(0, "summarization", "admin: {{.Content}}", nil, nil); err != nil {
+		t.Fatalf("admin SetPrompt: %v", err)
+	}
+	if err := engine.ResetPrompt(0, "summarization"); err != nil {
+		t.Fatalf("admin ResetPrompt: %v", err)
+	}
+
+	// ListPrompts hides the type from regular users and shows it to the admin.
+	hasSummarization := func(prompts []PromptInfo) bool {
+		for _, p := range prompts {
+			if p.Type == "summarization" {
+				return true
+			}
+		}
+		return false
+	}
+	userPrompts, err := engine.ListPrompts(1)
+	if err != nil {
+		t.Fatalf("ListPrompts(1): %v", err)
+	}
+	if hasSummarization(userPrompts) {
+		t.Error("ListPrompts(1) must omit the summarization prompt")
+	}
+	adminPrompts, err := engine.ListPrompts(0)
+	if err != nil {
+		t.Fatalf("ListPrompts(0): %v", err)
+	}
+	if !hasSummarization(adminPrompts) {
+		t.Error("ListPrompts(0) must include the summarization prompt")
+	}
+}
+
+// --- Per-user quota tests ---
+
+// minimalRSSHandler returns an http.Handler serving a tiny valid RSS feed.
+const minimalRSS = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test Feed</title>
+    <item>
+      <guid>item-1</guid>
+      <title>Test Article</title>
+      <link>https://example.com/1</link>
+    </item>
+  </channel>
+</rss>`
+
+func rssHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		fmt.Fprint(w, minimalRSS)
+	})
+}
+
+func TestFeedQuota(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+	engine.config.Limits.MaxFeedsPerUser = 2
+
+	userID := int64(1)
+
+	srv1 := httptest.NewServer(rssHandler())
+	defer srv1.Close()
+	srv2 := httptest.NewServer(rssHandler())
+	defer srv2.Close()
+	srv3 := httptest.NewServer(rssHandler())
+	defer srv3.Close()
+
+	if err := engine.SubscribeFeed(userID, srv1.URL, "Feed 1"); err != nil {
+		t.Fatalf("first SubscribeFeed: %v", err)
+	}
+	if err := engine.SubscribeFeed(userID, srv2.URL, "Feed 2"); err != nil {
+		t.Fatalf("second SubscribeFeed: %v", err)
+	}
+
+	err := engine.SubscribeFeed(userID, srv3.URL, "Feed 3")
+	if err == nil {
+		t.Fatal("expected error on third SubscribeFeed (limit 2)")
+	}
+	if !strings.Contains(err.Error(), "limit reached") {
+		t.Errorf("error should contain 'limit reached', got: %v", err)
+	}
+
+	got, err := engine.GetUserFeeds(userID)
+	if err != nil {
+		t.Fatalf("GetUserFeeds: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("expected 2 feeds after quota block, got %d", len(got))
+	}
+}
+
+func TestFilterRuleQuota(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+	engine.config.Limits.MaxFilterRulesPerUser = 1
+
+	userID := int64(1)
+
+	_, err := engine.AddFilterRule(userID, FilterRule{Axis: "author", Value: "Alice", Score: 1})
+	if err != nil {
+		t.Fatalf("first AddFilterRule: %v", err)
+	}
+
+	_, err = engine.AddFilterRule(userID, FilterRule{Axis: "author", Value: "Bob", Score: 1})
+	if err == nil {
+		t.Fatal("expected error on second AddFilterRule (limit 1)")
+	}
+	if !strings.Contains(err.Error(), "limit reached") {
+		t.Errorf("error should contain 'limit reached', got: %v", err)
+	}
+}
+
+func TestNewsletterQuota(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+	engine.config.Limits.MaxNewslettersPerUser = 1
+
+	userID, err := engine.RegisterUser("testuser")
+	if err != nil {
+		t.Fatalf("RegisterUser: %v", err)
+	}
+
+	_, err = engine.CreateNewsletter(userID, "Weekly", "", "", "", storage.NewsletterConfig{})
+	if err != nil {
+		t.Fatalf("first CreateNewsletter: %v", err)
+	}
+
+	_, err = engine.CreateNewsletter(userID, "Daily", "", "", "", storage.NewsletterConfig{})
+	if err == nil {
+		t.Fatal("expected error on second CreateNewsletter (limit 1)")
+	}
+	if !strings.Contains(err.Error(), "limit reached") {
+		t.Errorf("error should contain 'limit reached', got: %v", err)
+	}
+}
+
+func TestQuotaUnbounded(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+	// limit 0 = unbounded for all three resources
+	engine.config.Limits.MaxFeedsPerUser = 0
+	engine.config.Limits.MaxFilterRulesPerUser = 0
+	engine.config.Limits.MaxNewslettersPerUser = 0
+
+	// Filter rules use userID=1 (no user FK on filter_rules)
+	filterUserID := int64(1)
+	for i := range 3 {
+		_, err := engine.AddFilterRule(filterUserID, FilterRule{
+			Axis: "author", Value: fmt.Sprintf("Author%d", i), Score: 1,
+		})
+		if err != nil {
+			t.Fatalf("AddFilterRule %d with limit=0: %v", i, err)
+		}
+	}
+
+	// Newsletters require the user to exist (FK to users table)
+	nlUserID, err := engine.RegisterUser("unbounded-user")
+	if err != nil {
+		t.Fatalf("RegisterUser: %v", err)
+	}
+	for i := range 3 {
+		_, err := engine.CreateNewsletter(nlUserID, fmt.Sprintf("NL%d", i), "", "", "", storage.NewsletterConfig{})
+		if err != nil {
+			t.Fatalf("CreateNewsletter %d with limit=0: %v", i, err)
+		}
+	}
+}
+
+// TestDeleteUserGuard confirms that DeleteUser refuses to delete the global
+// sentinel (0) and the configured default user (1 by default).
+func TestDeleteUserGuard(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	// Sentinel user 0.
+	if err := engine.DeleteUser(0); err == nil {
+		t.Error("expected error deleting sentinel user 0, got nil")
+	}
+
+	// Default user (id 1 in a fresh DB where DefaultUserID defaults to 1).
+	if err := engine.DeleteUser(engine.config.DefaultUserID); err == nil {
+		t.Errorf("expected error deleting default user %d, got nil", engine.config.DefaultUserID)
+	}
+
+	// A real non-reserved user must be deletable.
+	// Register two users: the first will get id=1 which equals DefaultUserID,
+	// so register a second one to get a genuinely non-reserved id.
+	if _, err2 := engine.RegisterUser("default-placeholder"); err2 != nil {
+		t.Fatalf("RegisterUser placeholder: %v", err2)
+	}
+	id, err2 := engine.RegisterUser("to-be-deleted")
+	if err2 != nil {
+		t.Fatalf("RegisterUser: %v", err2)
+	}
+	if id == engine.config.DefaultUserID || id == 0 {
+		t.Fatalf("test assumption broken: to-be-deleted got reserved id %d", id)
+	}
+	if err2 := engine.DeleteUser(id); err2 != nil {
+		t.Errorf("DeleteUser(%d) unexpected error: %v", id, err2)
 	}
 }

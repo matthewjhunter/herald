@@ -1,0 +1,42 @@
+{{define "title"}}Herald - User Management{{end}}
+{{define "nav"}}{{template "shared-nav" "settings"}}{{end}}
+{{define "content"}}
+<main class="container" style="max-width:900px;">
+    {{template "settings-subnav" (dict "Active" "admin-users" "IsAdmin" true)}}
+    <h2>Users</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Created</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {{range .Users}}
+            <tr>
+                <td>{{.ID}}</td>
+                <td>{{.Name}}</td>
+                <td>{{if .Email}}{{.Email}}{{else}}<span class="secondary">--</span>{{end}}</td>
+                <td><small class="secondary">{{.CreatedAt.Format "2006-01-02"}}</small></td>
+                <td>
+                    <form method="post" action="/admin/users/{{.ID}}" onsubmit="return confirm('Delete user {{.Name}} and all their data? This cannot be undone.');">
+                        <input type="hidden" name="_method" value="DELETE">
+                        <button type="submit" class="secondary" style="padding:0.2rem 0.6rem;font-size:0.85em;"
+                            hx-delete="/admin/users/{{.ID}}"
+                            hx-confirm="Delete user {{.Name}} and all their data? This cannot be undone."
+                            hx-target="closest tr"
+                            hx-swap="outerHTML">Delete</button>
+                    </form>
+                </td>
+            </tr>
+        {{else}}
+            <tr><td colspan="5" class="secondary">No users found.</td></tr>
+        {{end}}
+        </tbody>
+    </table>
+</main>
+{{end}}
