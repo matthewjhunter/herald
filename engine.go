@@ -1708,6 +1708,16 @@ func (e *Engine) ListUsers() ([]User, error) {
 	return result, nil
 }
 
+// DeleteUser removes a user and everything they own. It refuses to delete the
+// global sentinel (user 0, which owns shared/admin prompts) and the configured
+// default user, since those underpin shared state.
+func (e *Engine) DeleteUser(userID int64) error {
+	if userID == 0 || userID == e.config.DefaultUserID {
+		return fmt.Errorf("refusing to delete reserved user %d", userID)
+	}
+	return e.store.DeleteUser(userID)
+}
+
 // GetOrProvisionOIDCUser looks up a Herald user by their OIDC subject claim,
 // creating one if this is their first login. Email is synced on each login.
 func (e *Engine) GetOrProvisionOIDCUser(sub, name, email string) (*User, error) {
