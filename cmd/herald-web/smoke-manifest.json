@@ -422,9 +422,9 @@
       "pattern": "/settings/prompts/{promptType}",
       "effect": "mutating",
       "example_params": {
-        "promptType": "summarization"
+        "promptType": "group_summary"
       },
-      "request_body": "template=Summarize%3A+%7B%7B.Content%7D%7D",
+      "request_body": "template=Summarize+the+group%3A+%7B%7B.Articles%7D%7D",
       "content_type": "application/x-www-form-urlencoded",
       "complete": true
     },

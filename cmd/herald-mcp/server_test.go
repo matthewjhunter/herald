@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/matthewjhunter/herald"
@@ -533,11 +534,16 @@ func TestPromptsListDefaults(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &prompts); err != nil {
 		t.Fatalf("unmarshal prompts: %v", err)
 	}
-	if len(prompts) != 4 {
-		t.Fatalf("got %d prompt types, want 4", len(prompts))
+	// The summarization prompt is global (#162) and hidden from non-admin
+	// users, leaving 3 customizable types.
+	if len(prompts) != 3 {
+		t.Fatalf("got %d prompt types, want 3", len(prompts))
 	}
 
 	for _, p := range prompts {
+		if p.Type == "summarization" {
+			t.Error("summarization prompt must not be listed for a regular user")
+		}
 		if p.Status != "default" {
 			t.Errorf("prompt %q status = %q, want %q", p.Type, p.Status, "default")
 		}
@@ -625,7 +631,7 @@ func TestPromptSetTemperatureOnly(t *testing.T) {
 
 	// Set only temperature (template should be preserved from default)
 	result := mustCallTool(t, session, "prompt_set", map[string]any{
-		"prompt_type": "summarization",
+		"prompt_type": "curation",
 		"temperature": temp,
 	})
 	if result.IsError {
@@ -634,7 +640,7 @@ func TestPromptSetTemperatureOnly(t *testing.T) {
 
 	// Verify template is non-empty (default preserved) and temperature is set
 	result = mustCallTool(t, session, "prompt_get", map[string]any{
-		"prompt_type": "summarization",
+		"prompt_type": "curation",
 	})
 	text := resultText(t, result)
 	var detail herald.PromptDetail
@@ -644,6 +650,22 @@ func TestPromptSetTemperatureOnly(t *testing.T) {
 	}
 	if detail.Temperature != temp {
 		t.Errorf("temperature = %v, want %v", detail.Temperature, temp)
+	}
+}
+
+func TestPromptSetSummarizationRejectedForUser(t *testing.T) {
+	// The summarization prompt is global (#162): a regular user's prompt_set
+	// must be rejected.
+	_, session := newTestSession(t)
+	result := mustCallTool(t, session, "prompt_set", map[string]any{
+		"prompt_type": "summarization",
+		"template":    "Summarize: {{.Content}}",
+	})
+	if !result.IsError {
+		t.Fatal("expected prompt_set to reject the summarization prompt for a regular user")
+	}
+	if text := resultText(t, result); !strings.Contains(text, "global") {
+		t.Errorf("expected a global-prompt error, got %q", text)
 	}
 }
 

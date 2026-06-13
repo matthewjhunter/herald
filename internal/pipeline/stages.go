@@ -90,21 +90,24 @@ func (s *Stage) securityOne(ctx context.Context, article storage.Article) *stora
 }
 
 // Summarize generates and caches an AI summary for each (already security-passed)
-// article that lacks one. Articles that already have a cached summary pass
-// through unchanged. Transient failures (backend error, garbled output) are left
+// article that lacks one. Like the security verdict (#141), the summary is a
+// property of the article, shared by every subscriber (#162) — this stage runs
+// in the global, once-per-cycle summarize pass (RunSummaries), not in the
+// per-user pipeline. Articles that already have a cached summary pass through
+// unchanged. Transient failures (backend error, garbled output) are left
 // unsummarized for a later cycle to retry; deterministic rejections (summary not
 // shorter than the source, or over the length budget) are marked skipped so they
 // are not retried forever. Returns the articles that now have a usable summary.
 func (s *Stage) Summarize(ctx context.Context, in []storage.Article) []storage.Article {
 	if !s.AI.BackendAvailable() {
-		s.Formatter.Warning("pipeline: skipping summarize stage for user %d — AI backend unavailable (breaker open)", s.UserID)
+		s.Formatter.Warning("pipeline: skipping summarize stage — AI backend unavailable (breaker open)")
 		return nil
 	}
 	return s.mapArticles(ctx, in, s.summarizeOne)
 }
 
 func (s *Stage) summarizeOne(ctx context.Context, article storage.Article) *storage.Article {
-	existing, err := s.Store.GetArticleSummary(s.UserID, article.ID)
+	existing, err := s.Store.GetArticleSummary(article.ID)
 	if err != nil {
 		s.Formatter.Warning("failed to check article summary for %d: %v", article.ID, err)
 		return nil
@@ -116,7 +119,7 @@ func (s *Stage) summarizeOne(ctx context.Context, article storage.Article) *stor
 
 	content := articleContent(article)
 	maxLen := s.Cfg.Summarization.MaxSummaryLength
-	summary, err := s.AI.SummarizeArticle(ctx, s.UserID, article.Title, content, maxLen)
+	summary, err := s.AI.SummarizeArticle(ctx, article.Title, content, maxLen)
 	if err != nil {
 		// Transient — leave unsummarized, retry next cycle.
 		s.Formatter.Warning("summarization failed for article %d: %v", article.ID, err)
@@ -132,17 +135,17 @@ func (s *Stage) summarizeOne(ctx context.Context, article storage.Article) *stor
 	if len(summary) > len(content) {
 		reason := fmt.Sprintf("summary longer than content (%d > %d)", len(summary), len(content))
 		s.Formatter.Warning("marking article %d summarization skipped: %s", article.ID, reason)
-		s.Store.MarkSummarizationSkipped(s.UserID, article.ID, reason) //nolint:errcheck
+		s.Store.MarkSummarizationSkipped(article.ID, reason) //nolint:errcheck
 		return &article
 	}
 	if maxLen > 0 && len(summary) > maxLen+maxLen*15/100 {
 		reason := fmt.Sprintf("summary exceeds max length by >15%% (%d > %d)", len(summary), maxLen)
 		s.Formatter.Warning("marking article %d summarization skipped: %s", article.ID, reason)
-		s.Store.MarkSummarizationSkipped(s.UserID, article.ID, reason) //nolint:errcheck
+		s.Store.MarkSummarizationSkipped(article.ID, reason) //nolint:errcheck
 		return &article
 	}
 
-	if err := s.Store.UpdateArticleAISummary(s.UserID, article.ID, summary); err != nil {
+	if err := s.Store.UpdateArticleAISummary(article.ID, summary); err != nil {
 		s.Formatter.Warning("failed to cache AI summary for %d: %v", article.ID, err)
 		return nil
 	}

@@ -45,6 +45,13 @@ func (h *handlers) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, err := h.validator.ValidateCookie(r)
 		if err != nil {
+			// While the lazy OIDC client has not completed discovery it can
+			// neither validate cookies nor build an authorize URL; degrade to
+			// 503 rather than bouncing users to a broken IdP (#165).
+			if !h.validator.Ready() {
+				http.Error(w, "sign-in temporarily unavailable -- please try again shortly", http.StatusServiceUnavailable)
+				return
+			}
 			// For HTMX partial requests, the fragment URL (e.g. /sidebar) is not a
 			// meaningful post-login destination — redirect to the home page instead.
 			returnTo := r.URL.RequestURI()

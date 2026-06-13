@@ -150,7 +150,7 @@ SQLite schema managed by `internal/storage/schema.go`. Key tables:
 | `read_state` | Per-user read flag, starred flag, interest score, security score |
 | `user_preferences` | Key-value preference store per user (keywords, thresholds, notification settings) |
 | `user_feeds` | Many-to-many subscription mapping between users and feeds |
-| `article_summaries` | Cached AI summaries per user per article |
+| `article_summaries` | Cached AI summaries, one per article, shared by all users |
 | `article_groups` | Topic clusters with centroid embeddings |
 | `article_group_members` | Many-to-many membership between groups and articles |
 | `group_summaries` | Cached group narrative summaries with max interest score |
@@ -158,7 +158,7 @@ SQLite schema managed by `internal/storage/schema.go`. Key tables:
 | `filter_rules` | Scoring rules by author, category, or tag (positive or negative) |
 | `users` | Registered users for multi-user deployments |
 
-Feeds are shared across users; `user_feeds` tracks subscriptions. Articles are stored once; `read_state` tracks per-user scores and read status. Summaries are per-user because different users may have different summarization prompts.
+Feeds are shared across users; `user_feeds` tracks subscriptions. Articles are stored once; `read_state` tracks per-user scores and read status. Summaries are per-article and shared by every subscriber, like the security verdict: each article is summarized once with the global summarization prompt.
 
 ## Prompt System
 
@@ -181,7 +181,7 @@ The five prompt types are:
 
 Each prompt type also has a configurable temperature following the same 3-tier fallback.
 
-The `security` prompt type is intentionally excluded from MCP access — it cannot be viewed or modified through the MCP tools.
+The `security` prompt type is intentionally excluded from MCP access — it cannot be viewed or modified through the MCP tools. The `summarization` prompt is global: summaries are shared per-article, so only the admin (user 0) override applies and per-user customization is rejected.
 
 ## MCP Integration
 

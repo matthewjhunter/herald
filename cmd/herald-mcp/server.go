@@ -246,7 +246,8 @@ func registerTools(s *mcp.Server, hs *heraldServer) {
 		if input.GroupID == 0 {
 			return errResult("group_id parameter is required")
 		}
-		group, err := hs.engine.GetGroupArticles(input.GroupID)
+		userID := hs.resolveUser(ptrStr(input.Speaker))
+		group, err := hs.engine.GetGroupArticles(userID, input.GroupID)
 		if err != nil {
 			return errResult("%v", err)
 		}
@@ -456,7 +457,8 @@ func registerTools(s *mcp.Server, hs *heraldServer) {
 		if input.RuleID == 0 {
 			return errResult("rule_id parameter is required")
 		}
-		if err := hs.engine.UpdateFilterRule(input.RuleID, input.Score); err != nil {
+		userID := hs.resolveUser(ptrStr(input.Speaker))
+		if err := hs.engine.UpdateFilterRule(userID, input.RuleID, input.Score); err != nil {
 			return errResult("%v", err)
 		}
 		log.Printf("filter_rule_update: id=%d score=%d", input.RuleID, input.Score)
@@ -470,7 +472,8 @@ func registerTools(s *mcp.Server, hs *heraldServer) {
 		if input.RuleID == 0 {
 			return errResult("rule_id parameter is required")
 		}
-		if err := hs.engine.DeleteFilterRule(input.RuleID); err != nil {
+		userID := hs.resolveUser(ptrStr(input.Speaker))
+		if err := hs.engine.DeleteFilterRule(userID, input.RuleID); err != nil {
 			return errResult("%v", err)
 		}
 		log.Printf("filter_rule_delete: id=%d", input.RuleID)

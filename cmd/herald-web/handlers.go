@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -75,8 +76,13 @@ type promptUIEntry struct {
 	AvailableModels []string
 }
 
-// promptTypeOrder defines the display order for prompt types in the UI.
-var promptTypeOrder = []string{"curation", "summarization", "group_summary", "newsletter"}
+// userPromptTypeOrder and adminPromptTypeOrder define the display order for
+// prompt types in the UI. The summarization prompt is global (#162) — the
+// summary is shared per-article — so only the admin page shows it.
+var (
+	userPromptTypeOrder  = []string{"curation", "group_summary", "newsletter"}
+	adminPromptTypeOrder = []string{"curation", "summarization", "group_summary", "newsletter"}
+)
 
 var promptLabels = map[string]string{
 	"curation":      "Article Curation",
@@ -85,11 +91,12 @@ var promptLabels = map[string]string{
 	"newsletter":    "Newsletter",
 }
 
-// loadPromptEntries builds the UI entry list for a given userID.
-func (h *handlers) loadPromptEntries(userID int64) []promptUIEntry {
+// loadPromptEntries builds the UI entry list for a given userID and prompt
+// type list (userPromptTypeOrder or adminPromptTypeOrder).
+func (h *handlers) loadPromptEntries(userID int64, promptTypes []string) []promptUIEntry {
 	models, _ := h.engine.ListModels(context.Background())
 	var entries []promptUIEntry
-	for _, pt := range promptTypeOrder {
+	for _, pt := range promptTypes {
 		detail, err := h.engine.GetPrompt(userID, pt)
 		if err != nil {
 			continue
@@ -435,6 +442,14 @@ func (h *handlers) handleLogout(w http.ResponseWriter, r *http.Request) {
 // It validates the state nonce, exchanges the code for an access token via PKCE,
 // sets the JWT as an HttpOnly cookie, and redirects to the original URL.
 func (h *handlers) handleCallback(w http.ResponseWriter, r *http.Request) {
+	// A lazy client whose discovery is still pending cannot exchange the
+	// code; degrade this endpoint rather than 502ing mid-flow (#165).
+	if !h.validator.Ready() {
+		log.Printf("herald-web: callback received before provider discovery completed")
+		http.Error(w, "authentication temporarily unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
 	code := r.URL.Query().Get("code")
 	stateParam := r.URL.Query().Get("state")
 
@@ -613,7 +628,7 @@ func (h *handlers) handleSettingsSync(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) handleSettingsPrompts(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID
 	data := settingsPromptsData{
-		Prompts: h.loadPromptEntries(uid),
+		Prompts: h.loadPromptEntries(uid, userPromptTypeOrder),
 		IsAdmin: h.isAdminCtx(r.Context()),
 	}
 	h.renderPage(w, r, "settings_prompts.html", data)
@@ -672,7 +687,7 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 
 	// Load group summary banner when viewing a group
 	if groupID > 0 {
-		if group, err := h.engine.GetGroupArticles(groupID); err == nil && group != nil {
+		if group, err := h.engine.GetGroupArticles(uid, groupID); err == nil && group != nil {
 			data.GroupHeadline = group.Headline
 			data.GroupSummary = group.Summary
 		}
@@ -1041,6 +1056,11 @@ func (h *handlers) handleNewsletterGenerate(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
+	nl, err := h.engine.GetNewsletter(id)
+	if err != nil || nl.UserID != uid {
+		h.renderError(w, http.StatusNotFound, "Digest not found")
+		return
+	}
 	if !h.engine.AISummaryEnabled() {
 		fmt.Fprint(w, `<span class="secondary">AI summary not configured.</span>`)
 		return
@@ -1291,14 +1311,16 @@ func (h *handlers) handleFeedTagRemove(w http.ResponseWriter, r *http.Request) {
 	h.renderFeedTagsCell(w, uid, feedID)
 }
 
-// handleArticleImage serves a cached article image by its ID.
+// handleArticleImage serves a cached article image by its ID. Only users
+// subscribed to the owning article's feed can fetch it (#162).
 func (h *handlers) handleArticleImage(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
 	imageID, err := strconv.ParseInt(r.PathValue("imageID"), 10, 64)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	img, err := h.engine.GetArticleImage(imageID)
+	img, err := h.engine.GetArticleImageForUser(uid, imageID)
 	if err != nil || img == nil {
 		http.NotFound(w, r)
 		return
@@ -1650,7 +1672,7 @@ type adminPromptsData struct {
 
 func (h *handlers) handleAdminPrompts(w http.ResponseWriter, r *http.Request) {
 	data := adminPromptsData{
-		Prompts: h.loadPromptEntries(0),
+		Prompts: h.loadPromptEntries(0, adminPromptTypeOrder),
 	}
 	h.renderPage(w, r, "admin_prompts.html", data)
 }
@@ -1788,8 +1810,8 @@ func (h *handlers) handleFilterDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.engine.DeleteFilterRule(ruleID); err != nil {
-		h.renderError(w, http.StatusInternalServerError, "Failed to delete rule")
+	if err := h.engine.DeleteFilterRule(uid, ruleID); err != nil {
+		h.renderError(w, http.StatusNotFound, "Rule not found")
 		return
 	}
 
@@ -1944,7 +1966,8 @@ func (h *handlers) handleOPMLSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stored, err := h.engine.GetUserPreference(userID, "opml_sync_token")
-	if err != nil || stored == "" || stored != token {
+	if err != nil || stored == "" ||
+		subtle.ConstantTimeCompare([]byte(stored), []byte(token)) != 1 {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}

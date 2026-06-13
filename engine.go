@@ -234,14 +234,20 @@ func (e *Engine) GetArticle(articleID int64) (*Article, error) {
 	return &result, nil
 }
 
-// GetArticleForUser returns a single article enriched with its AI summary for the given user.
+// GetArticleForUser returns a single article enriched with its AI summary for
+// the given user. The article must belong to a feed the user is subscribed to;
+// anything else reads as not found (#162).
 func (e *Engine) GetArticleForUser(userID, articleID int64) (*Article, error) {
+	subscribed, err := e.store.UserSubscribedToArticleFeed(userID, articleID)
+	if err != nil || !subscribed {
+		return nil, fmt.Errorf("article %d not found for user %d", articleID, userID)
+	}
 	a, err := e.store.GetArticle(articleID)
 	if err != nil {
 		return nil, err
 	}
 	result := articleFromInternal(*a)
-	if summary, err := e.store.GetArticleSummary(userID, articleID); err == nil && summary != nil {
+	if summary, err := e.store.GetArticleSummary(articleID); err == nil && summary != nil {
 		result.AISummary = summary.AISummary
 	}
 	return &result, nil
@@ -869,10 +875,14 @@ func (e *Engine) GetUserGroups(userID int64) ([]ArticleGroup, error) {
 }
 
 // GetGroupArticles returns the articles in a specific group with their scores.
-func (e *Engine) GetGroupArticles(groupID int64) (*ArticleGroup, error) {
+// The group must belong to the given user.
+func (e *Engine) GetGroupArticles(userID, groupID int64) (*ArticleGroup, error) {
 	group, err := e.store.GetGroup(groupID)
 	if err != nil {
 		return nil, fmt.Errorf("get group: %w", err)
+	}
+	if group == nil || group.UserID != userID {
+		return nil, fmt.Errorf("group not found or not owned by user")
 	}
 
 	articles, err := e.store.GetGroupArticles(groupID)
@@ -883,16 +893,14 @@ func (e *Engine) GetGroupArticles(groupID int64) (*ArticleGroup, error) {
 	ag := &ArticleGroup{
 		Articles: articlesFromInternal(articles),
 		Count:    len(articles),
-	}
 
-	if group != nil {
-		ag.ID = group.ID
-		ag.UserID = group.UserID
-		ag.Topic = group.Topic
-		ag.DisplayName = group.DisplayName
-		ag.Muted = group.Muted
-		ag.CreatedAt = group.CreatedAt
-		ag.UpdatedAt = group.UpdatedAt
+		ID:          group.ID,
+		UserID:      group.UserID,
+		Topic:       group.Topic,
+		DisplayName: group.DisplayName,
+		Muted:       group.Muted,
+		CreatedAt:   group.CreatedAt,
+		UpdatedAt:   group.UpdatedAt,
 	}
 
 	// Attach summary
@@ -940,6 +948,14 @@ func (e *Engine) MarkGroupRead(userID, groupID int64, before int64) error {
 
 // MuteGroup mutes a group (hides from sidebar) and marks all its articles as read.
 func (e *Engine) MuteGroup(userID, groupID int64) error {
+	// Verify the group belongs to this user
+	group, err := e.store.GetGroup(groupID)
+	if err != nil {
+		return fmt.Errorf("get group: %w", err)
+	}
+	if group == nil || group.UserID != userID {
+		return fmt.Errorf("group not found or not owned by user")
+	}
 	if err := e.store.SetGroupMuted(groupID, true); err != nil {
 		return err
 	}
@@ -1108,7 +1124,7 @@ func (e *Engine) GenerateNewsletterIssue(ctx context.Context, userID, newsletter
 			URL:       a.URL,
 			Score:     score,
 		}
-		if summary, err := e.store.GetArticleSummary(userID, a.ID); err == nil && summary != nil {
+		if summary, err := e.store.GetArticleSummary(a.ID); err == nil && summary != nil {
 			input.AISummary = summary.AISummary
 		} else if a.Summary != "" {
 			input.AISummary = a.Summary
@@ -1226,7 +1242,7 @@ func (e *Engine) GenerateBriefing(userID int64) (string, error) {
 		fmt.Fprintf(&briefing, "## %s (%.1f/10)\n", article.Title, score)
 		fmt.Fprintf(&briefing, "%s\n", article.URL)
 
-		if summary, err := e.store.GetArticleSummary(userID, article.ID); err == nil && summary != nil {
+		if summary, err := e.store.GetArticleSummary(article.ID); err == nil && summary != nil {
 			fmt.Fprintf(&briefing, "%s\n", summary.AISummary)
 		} else if article.Summary != "" {
 			fmt.Fprintf(&briefing, "%s\n", article.Summary)
@@ -1345,9 +1361,11 @@ func (e *Engine) GetRecentCycleStats(limit int) ([]CycleStats, error) {
 	return out, nil
 }
 
-// PendingCounts returns the number of articles awaiting AI processing.
+// PendingCounts returns the number of articles awaiting AI processing. The
+// unsummarized count is global — summaries are shared per-article (#162) —
+// while the unscored count stays per-user.
 func (e *Engine) PendingCounts(userID int64) (unsummarized, unscored int, err error) {
-	unsummarized, err = e.store.GetUnsummarizedArticleCount(userID)
+	unsummarized, err = e.store.GetUnsummarizedArticleCount()
 	if err != nil {
 		return 0, 0, err
 	}
@@ -1506,6 +1524,11 @@ func (e *Engine) ListPrompts(userID int64) ([]PromptInfo, error) {
 
 	var result []PromptInfo
 	for pt := range allowedPromptTypes {
+		// The summarization prompt is global (#162): only the admin (user 0)
+		// can see or customize it.
+		if pt == "summarization" && userID != 0 {
+			continue
+		}
 		info := PromptInfo{
 			Type:        pt,
 			Status:      "default",
@@ -1564,6 +1587,11 @@ func (e *Engine) SetPrompt(userID int64, promptType, template string, temp *floa
 	if !allowedPromptTypes[promptType] {
 		return fmt.Errorf("unknown or restricted prompt type: %q", promptType)
 	}
+	// Per-article summaries are shared by all users (#162), so the
+	// summarization prompt is global: only the admin row (user 0) applies.
+	if promptType == "summarization" && userID != 0 {
+		return fmt.Errorf("summarization prompt is global; set it as admin")
+	}
 
 	// If only temperature/model is being set, we need to fetch the existing template
 	if template == "" {
@@ -1590,6 +1618,10 @@ func (e *Engine) ResetPrompt(userID int64, promptType string) error {
 	if !allowedPromptTypes[promptType] {
 		return fmt.Errorf("unknown or restricted prompt type: %q", promptType)
 	}
+	// See SetPrompt: the summarization prompt is global (#162).
+	if promptType == "summarization" && userID != 0 {
+		return fmt.Errorf("summarization prompt is global; set it as admin")
+	}
 	return e.store.DeleteUserPrompt(userID, promptType)
 }
 
@@ -1601,8 +1633,13 @@ func (e *Engine) DefaultPrompt(promptType string) (string, error) {
 	return ai.DefaultPrompt(ai.PromptType(promptType))
 }
 
-// StarArticle sets or clears the starred flag on an article.
+// StarArticle sets or clears the starred flag on an article. Only articles
+// from the user's subscribed feeds can be starred (#162).
 func (e *Engine) StarArticle(userID, articleID int64, starred bool) error {
+	subscribed, err := e.store.UserSubscribedToArticleFeed(userID, articleID)
+	if err != nil || !subscribed {
+		return fmt.Errorf("article %d not found for user %d", articleID, userID)
+	}
 	return e.store.UpdateStarred(userID, articleID, starred)
 }
 
@@ -1711,14 +1748,14 @@ func (e *Engine) GetFilterRules(userID int64, feedID *int64) ([]FilterRule, erro
 	return result, nil
 }
 
-// UpdateFilterRule updates the score of an existing filter rule.
-func (e *Engine) UpdateFilterRule(ruleID int64, score int) error {
-	return e.store.UpdateFilterRuleScore(ruleID, score)
+// UpdateFilterRule updates the score of a filter rule owned by the user.
+func (e *Engine) UpdateFilterRule(userID, ruleID int64, score int) error {
+	return e.store.UpdateFilterRuleScore(userID, ruleID, score)
 }
 
-// DeleteFilterRule deletes a filter rule by ID.
-func (e *Engine) DeleteFilterRule(ruleID int64) error {
-	return e.store.DeleteFilterRule(ruleID)
+// DeleteFilterRule deletes a filter rule by ID, scoped to the owning user.
+func (e *Engine) DeleteFilterRule(userID, ruleID int64) error {
+	return e.store.DeleteFilterRule(userID, ruleID)
 }
 
 // GetFeedMetadata returns discoverable authors and categories for a feed.
@@ -1797,9 +1834,19 @@ func (e *Engine) GetArticleImageMap(articleID int64) (map[string]int64, error) {
 	return e.store.GetArticleImageMap(articleID)
 }
 
-// GetArticleImage returns a cached image by its ID.
-func (e *Engine) GetArticleImage(imageID int64) (*storage.ArticleImage, error) {
-	return e.store.GetArticleImage(imageID)
+// GetArticleImageForUser returns a cached image by its ID when the user is
+// subscribed to the owning article's feed. No access reads as nil, nil —
+// indistinguishable from a missing image, so the handler 404s either way.
+func (e *Engine) GetArticleImageForUser(userID, imageID int64) (*storage.ArticleImage, error) {
+	img, err := e.store.GetArticleImage(imageID)
+	if err != nil || img == nil {
+		return img, err
+	}
+	subscribed, err := e.store.UserSubscribedToArticleFeed(userID, img.ArticleID)
+	if err != nil || !subscribed {
+		return nil, nil
+	}
+	return img, nil
 }
 
 func feedFromInternal(f storage.Feed) Feed {

@@ -199,7 +199,7 @@ func TestGetArticleForUser(t *testing.T) {
 	}
 
 	// Store an AI summary and verify it's returned
-	engine.store.UpdateArticleAISummary(1, articleID, "This is the AI-generated summary.")
+	engine.store.UpdateArticleAISummary(articleID, "This is the AI-generated summary.")
 
 	article, err = engine.GetArticleForUser(1, articleID)
 	if err != nil {
@@ -209,13 +209,21 @@ func TestGetArticleForUser(t *testing.T) {
 		t.Errorf("AISummary: got %q", article.AISummary)
 	}
 
-	// Different user should not see user 1's summary
+	// A non-subscriber cannot read the article at all (#162).
+	if _, err := engine.GetArticleForUser(2, articleID); err == nil {
+		t.Fatal("expected error for a user not subscribed to the feed")
+	}
+
+	// The summary is a property of the article (#162): every subscriber sees it.
+	if err := engine.store.SubscribeUserToFeed(2, feedID); err != nil {
+		t.Fatalf("SubscribeUserToFeed: %v", err)
+	}
 	article, err = engine.GetArticleForUser(2, articleID)
 	if err != nil {
 		t.Fatalf("GetArticleForUser user 2: %v", err)
 	}
-	if article.AISummary != "" {
-		t.Errorf("expected empty AISummary for user 2, got %q", article.AISummary)
+	if article.AISummary != "This is the AI-generated summary." {
+		t.Errorf("expected the shared AISummary for user 2, got %q", article.AISummary)
 	}
 }
 
@@ -277,7 +285,7 @@ func TestGroupLifecycle(t *testing.T) {
 	}
 
 	// Get group articles
-	group, err := engine.GetGroupArticles(groupID)
+	group, err := engine.GetGroupArticles(1, groupID)
 	if err != nil {
 		t.Fatalf("GetGroupArticles: %v", err)
 	}
@@ -293,13 +301,9 @@ func TestGetGroupArticlesNotFound(t *testing.T) {
 	engine, cleanup := newTestEngine(t)
 	defer cleanup()
 
-	group, err := engine.GetGroupArticles(999)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// Empty group is fine, not an error
-	if len(group.Articles) != 0 {
-		t.Errorf("expected 0 articles, got %d", len(group.Articles))
+	group, err := engine.GetGroupArticles(1, 999)
+	if err == nil {
+		t.Fatalf("expected error for missing group, got group %+v", group)
 	}
 }
 
@@ -354,7 +358,7 @@ func TestGetFeedStats(t *testing.T) {
 	engine.store.UpdateReadState(1, id1, true, nil, nil, nil, nil)
 
 	// Summarize one article in feed 2
-	engine.store.UpdateArticleAISummary(1, id4, "Summary of article 4")
+	engine.store.UpdateArticleAISummary(id4, "Summary of article 4")
 
 	result, err := engine.GetFeedStats(1)
 	if err != nil {
@@ -470,7 +474,7 @@ func TestFilterRulesCRUD(t *testing.T) {
 	}
 
 	// Update score
-	if err := engine.UpdateFilterRule(id, 10); err != nil {
+	if err := engine.UpdateFilterRule(userID, id, 10); err != nil {
 		t.Fatalf("UpdateFilterRule: %v", err)
 	}
 	rules, _ = engine.GetFilterRules(userID, nil)
@@ -479,7 +483,7 @@ func TestFilterRulesCRUD(t *testing.T) {
 	}
 
 	// Delete
-	if err := engine.DeleteFilterRule(id); err != nil {
+	if err := engine.DeleteFilterRule(userID, id); err != nil {
 		t.Fatalf("DeleteFilterRule: %v", err)
 	}
 	rules, _ = engine.GetFilterRules(userID, nil)
@@ -793,5 +797,103 @@ func TestFeedURLCandidates(t *testing.T) {
 				t.Errorf("feedURLCandidates(%q)[%d] = %q, want %q", c.in, i, got[i], c.want[i])
 			}
 		}
+	}
+}
+
+func TestMuteGroupCrossUser(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	groupID, err := engine.store.CreateArticleGroup(1, "Owned by user 1")
+	if err != nil {
+		t.Fatalf("CreateArticleGroup: %v", err)
+	}
+
+	if err := engine.MuteGroup(2, groupID); err == nil {
+		t.Fatal("expected error muting another user's group")
+	}
+	muted, err := engine.store.IsGroupMuted(groupID)
+	if err != nil {
+		t.Fatalf("IsGroupMuted: %v", err)
+	}
+	if muted {
+		t.Error("group should not be muted after cross-user MuteGroup")
+	}
+
+	// The owner can mute it.
+	if err := engine.MuteGroup(1, groupID); err != nil {
+		t.Fatalf("owner MuteGroup: %v", err)
+	}
+	if muted, _ := engine.store.IsGroupMuted(groupID); !muted {
+		t.Error("group should be muted after owner MuteGroup")
+	}
+}
+
+func TestGetGroupArticlesCrossUser(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	groupID, err := engine.store.CreateArticleGroup(1, "Owned by user 1")
+	if err != nil {
+		t.Fatalf("CreateArticleGroup: %v", err)
+	}
+
+	if _, err := engine.GetGroupArticles(2, groupID); err == nil {
+		t.Fatal("expected error reading another user's group")
+	}
+
+	group, err := engine.GetGroupArticles(1, groupID)
+	if err != nil {
+		t.Fatalf("owner GetGroupArticles: %v", err)
+	}
+	if group.ID != groupID || group.Topic != "Owned by user 1" {
+		t.Errorf("unexpected group: %+v", group)
+	}
+}
+
+func TestSummarizationPromptIsGlobal(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	// A regular user can neither set nor reset the summarization prompt.
+	if err := engine.SetPrompt(1, "summarization", "mine: {{.Content}}", nil, nil); err == nil ||
+		!strings.Contains(err.Error(), "global") {
+		t.Fatalf("expected global-prompt rejection for SetPrompt, got %v", err)
+	}
+	if err := engine.ResetPrompt(1, "summarization"); err == nil ||
+		!strings.Contains(err.Error(), "global") {
+		t.Fatalf("expected global-prompt rejection for ResetPrompt, got %v", err)
+	}
+
+	// The admin (user 0) can.
+	if err := engine.SetPrompt(0, "summarization", "admin: {{.Content}}", nil, nil); err != nil {
+		t.Fatalf("admin SetPrompt: %v", err)
+	}
+	if err := engine.ResetPrompt(0, "summarization"); err != nil {
+		t.Fatalf("admin ResetPrompt: %v", err)
+	}
+
+	// ListPrompts hides the type from regular users and shows it to the admin.
+	hasSummarization := func(prompts []PromptInfo) bool {
+		for _, p := range prompts {
+			if p.Type == "summarization" {
+				return true
+			}
+		}
+		return false
+	}
+	userPrompts, err := engine.ListPrompts(1)
+	if err != nil {
+		t.Fatalf("ListPrompts(1): %v", err)
+	}
+	if hasSummarization(userPrompts) {
+		t.Error("ListPrompts(1) must omit the summarization prompt")
+	}
+	adminPrompts, err := engine.ListPrompts(0)
+	if err != nil {
+		t.Fatalf("ListPrompts(0): %v", err)
+	}
+	if !hasSummarization(adminPrompts) {
+		t.Error("ListPrompts(0) must include the summarization prompt")
 	}
 }
