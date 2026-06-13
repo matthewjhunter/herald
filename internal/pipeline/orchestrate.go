@@ -38,8 +38,8 @@ func (s *Stage) RunSecurity(ctx context.Context) (int, error) {
 // summary, exactly once, globally. Like the security verdict (#141), the
 // summary is a property of the article, shared by all subscribers (#162), so
 // this runs once per cycle rather than once per user — one breaker check,
-// draining the global queue newest-first. Returns the number of articles
-// attempted this call.
+// draining the global queue newest-first. Returns the number of articles that
+// now carry a usable summary (or a recorded skip) after this call.
 func (s *Stage) RunSummaries(ctx context.Context) (int, error) {
 	if !s.AI.BackendAvailable() {
 		s.Formatter.Warning("pipeline: skipping summarize pass — AI backend unavailable (breaker open)")

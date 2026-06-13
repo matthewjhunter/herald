@@ -199,7 +199,7 @@ func TestGetArticleForUser(t *testing.T) {
 	}
 
 	// Store an AI summary and verify it's returned
-	engine.store.UpdateArticleAISummary(1, articleID, "This is the AI-generated summary.")
+	engine.store.UpdateArticleAISummary(articleID, "This is the AI-generated summary.")
 
 	article, err = engine.GetArticleForUser(1, articleID)
 	if err != nil {
@@ -209,13 +209,13 @@ func TestGetArticleForUser(t *testing.T) {
 		t.Errorf("AISummary: got %q", article.AISummary)
 	}
 
-	// Different user should not see user 1's summary
+	// The summary is a property of the article (#162): every user sees it.
 	article, err = engine.GetArticleForUser(2, articleID)
 	if err != nil {
 		t.Fatalf("GetArticleForUser user 2: %v", err)
 	}
-	if article.AISummary != "" {
-		t.Errorf("expected empty AISummary for user 2, got %q", article.AISummary)
+	if article.AISummary != "This is the AI-generated summary." {
+		t.Errorf("expected the shared AISummary for user 2, got %q", article.AISummary)
 	}
 }
 
@@ -350,7 +350,7 @@ func TestGetFeedStats(t *testing.T) {
 	engine.store.UpdateReadState(1, id1, true, nil, nil, nil, nil)
 
 	// Summarize one article in feed 2
-	engine.store.UpdateArticleAISummary(1, id4, "Summary of article 4")
+	engine.store.UpdateArticleAISummary(id4, "Summary of article 4")
 
 	result, err := engine.GetFeedStats(1)
 	if err != nil {

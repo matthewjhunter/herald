@@ -571,7 +571,7 @@ func TestArticleSummary(t *testing.T) {
 	})
 
 	// No summary initially
-	summary, err := store.GetArticleSummary(1, articleID)
+	summary, err := store.GetArticleSummary(articleID)
 	if err != nil {
 		t.Fatalf("GetArticleSummary failed: %v", err)
 	}
@@ -580,12 +580,12 @@ func TestArticleSummary(t *testing.T) {
 	}
 
 	// Set a summary
-	if err := store.UpdateArticleAISummary(1, articleID, "This is an AI summary"); err != nil {
+	if err := store.UpdateArticleAISummary(articleID, "This is an AI summary"); err != nil {
 		t.Fatalf("UpdateArticleAISummary failed: %v", err)
 	}
 
 	// Retrieve it
-	summary, err = store.GetArticleSummary(1, articleID)
+	summary, err = store.GetArticleSummary(articleID)
 	if err != nil {
 		t.Fatalf("GetArticleSummary failed: %v", err)
 	}
@@ -595,8 +595,8 @@ func TestArticleSummary(t *testing.T) {
 	if summary.AISummary != "This is an AI summary" {
 		t.Errorf("summary = %q, want %q", summary.AISummary, "This is an AI summary")
 	}
-	if summary.UserID != 1 || summary.ArticleID != articleID {
-		t.Errorf("summary IDs mismatch: user=%d article=%d", summary.UserID, summary.ArticleID)
+	if summary.ArticleID != articleID {
+		t.Errorf("summary article ID mismatch: article=%d", summary.ArticleID)
 	}
 }
 
@@ -1411,7 +1411,7 @@ func TestMigrateStore(t *testing.T) {
 
 	src.StoreArticleAuthors(artID, []ArticleAuthor{{Name: "Author One", Email: "a@b.com"}})
 	src.StoreArticleCategories(artID, []string{"Security"})
-	src.UpdateArticleAISummary(1, artID, "AI summary text")
+	src.UpdateArticleAISummary(artID, "AI summary text")
 
 	groupID, _ := src.CreateArticleGroup(1, "Cluster")
 	src.AddArticleToGroup(groupID, artID)
@@ -1797,7 +1797,7 @@ func TestGetUnsummarizedScoredArticles(t *testing.T) {
 		URL: "https://example.com/1", PublishedDate: &now,
 	})
 	store.ScreenArticleSecurity(a1, 10.0, "", false)
-	store.UpdateArticleAISummary(1, a1, "an existing summary")
+	store.UpdateArticleAISummary(a1, "an existing summary")
 
 	// Article 2: scored, passed security, NO summary — included.
 	a2, _ := store.AddArticle(&Article{
@@ -1825,11 +1825,11 @@ func TestGetUnsummarizedScoredArticles(t *testing.T) {
 		URL: "https://example.com/5", PublishedDate: &now,
 	})
 	store.ScreenArticleSecurity(a5, 10.0, "", false)
-	if err := store.MarkSummarizationSkipped(1, a5, "summary longer than content"); err != nil {
+	if err := store.MarkSummarizationSkipped(a5, "summary longer than content"); err != nil {
 		t.Fatalf("MarkSummarizationSkipped: %v", err)
 	}
 
-	got, err := store.GetUnsummarizedScoredArticles(1, 7.0, 100)
+	got, err := store.GetUnsummarizedScoredArticles(7.0, 100)
 	if err != nil {
 		t.Fatalf("GetUnsummarizedScoredArticles: %v", err)
 	}
@@ -1844,7 +1844,7 @@ func TestGetUnsummarizedScoredArticles(t *testing.T) {
 	// a1 has a summary row, a5 has a sentinel row — both are excluded.
 	// a2 (scored, no summary), a3 (security-failed, no summary row written),
 	// and a4 (never scored, no summary row) are all counted.
-	count, err := store.GetUnsummarizedArticleCount(1)
+	count, err := store.GetUnsummarizedArticleCount()
 	if err != nil {
 		t.Fatalf("GetUnsummarizedArticleCount: %v", err)
 	}
@@ -2765,7 +2765,7 @@ func TestSetInterestScorePreservesSecurity(t *testing.T) {
 		// Security score must survive (>= 7.0), so the article still qualifies as
 		// security-passed for the summary stage. If SetInterestScore had nulled it,
 		// this query would return nothing.
-		scored, err := store.GetUnsummarizedScoredArticles(1, 7.0, 10)
+		scored, err := store.GetUnsummarizedScoredArticles(7.0, 10)
 		if err != nil {
 			t.Fatalf("GetUnsummarizedScoredArticles: %v", err)
 		}
@@ -2878,7 +2878,7 @@ func TestGetProcessingStats(t *testing.T) {
 	if err := store.SetInterestScore(1, a2, 7); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.UpdateArticleAISummary(1, a2, "a real summary"); err != nil {
+	if err := store.UpdateArticleAISummary(a2, "a real summary"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2886,7 +2886,7 @@ func TestGetProcessingStats(t *testing.T) {
 	if err := store.ScreenArticleSecurity(a3, 3, "unsafe", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.MarkSummarizationSkipped(1, a3, "too short"); err != nil {
+	if err := store.MarkSummarizationSkipped(a3, "too short"); err != nil {
 		t.Fatal(err)
 	}
 

@@ -34,14 +34,21 @@ func TestRunEndToEnd(t *testing.T) {
 	a := seed(t, store, feedID, "a", strings.Repeat("x", 500))
 	b := seed(t, store, feedID, "b", strings.Repeat("y", 500))
 
-	// The global security pass screens both, then the per-user pipeline advances
-	// them through every stage.
+	// The global security and summarize passes handle both, then the per-user
+	// pipeline advances them through the remaining stages.
 	processed, err := st.RunSecurity(context.Background())
 	if err != nil {
 		t.Fatalf("RunSecurity: %v", err)
 	}
 	if processed != 2 {
 		t.Fatalf("expected 2 articles processed, got %d", processed)
+	}
+	summarized, err := st.RunSummaries(context.Background())
+	if err != nil {
+		t.Fatalf("RunSummaries: %v", err)
+	}
+	if summarized != 2 {
+		t.Fatalf("expected 2 articles summarized, got %d", summarized)
 	}
 	if err := st.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -56,7 +63,7 @@ func TestRunEndToEnd(t *testing.T) {
 		t.Fatalf("expected all articles curated, still pending: %v", ids(cur))
 	}
 	for _, art := range []storage.Article{a, b} {
-		if sum, _ := store.GetArticleSummary(1, art.ID); sum == nil {
+		if sum, _ := store.GetArticleSummary(art.ID); sum == nil {
 			t.Fatalf("article %d not summarized", art.ID)
 		}
 	}
@@ -78,6 +85,9 @@ func TestRunDrainsBacklog(t *testing.T) {
 	if _, err := st.RunSecurity(context.Background()); err != nil {
 		t.Fatalf("RunSecurity: %v", err)
 	}
+	if _, err := st.RunSummaries(context.Background()); err != nil {
+		t.Fatalf("RunSummaries: %v", err)
+	}
 	if err := st.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -86,7 +96,7 @@ func TestRunDrainsBacklog(t *testing.T) {
 		t.Fatalf("backlog not drained, still unscreened: %v", ids(unscreened))
 	}
 	for _, a := range arts {
-		if sum, _ := store.GetArticleSummary(1, a.ID); sum == nil {
+		if sum, _ := store.GetArticleSummary(a.ID); sum == nil {
 			t.Fatalf("article %d not summarized after backfill", a.ID)
 		}
 	}
@@ -106,16 +116,19 @@ func TestRunTerminatesOnPersistentFailure(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- st.Run(context.Background()) }()
+	go func() {
+		_, err := st.RunSummaries(context.Background())
+		done <- err
+	}()
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("Run: %v", err)
+			t.Fatalf("RunSummaries: %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Run hung on a persistently-failing stage")
+		t.Fatal("RunSummaries hung on a persistently-failing stage")
 	}
-	if sum, _ := store.GetArticleSummary(1, a.ID); sum != nil {
+	if sum, _ := store.GetArticleSummary(a.ID); sum != nil {
 		t.Fatal("garbage summary must not be cached")
 	}
 }

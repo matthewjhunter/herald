@@ -47,7 +47,7 @@ func TestClusterFormsNewGroupFromSiblings(t *testing.T) {
 	embedArt(t, store, c, []float32{0, 0, 1})      // unrelated
 	// Summaries + scores so the naming step has something to work with.
 	for _, art := range []storage.Article{a, b} {
-		if err := store.UpdateArticleAISummary(1, art.ID, "summary of "+art.GUID); err != nil {
+		if err := store.UpdateArticleAISummary(art.ID, "summary of "+art.GUID); err != nil {
 			t.Fatal(err)
 		}
 		if err := store.SetInterestScore(1, art.ID, 8); err != nil {
@@ -97,7 +97,7 @@ func TestClusterSkipsTopicRefineOnEmptySummary(t *testing.T) {
 	embedArt(t, store, b, []float32{0.99, 0.05, 0})
 	embedArt(t, store, c, []float32{0.98, 0.1, 0}) // all three cluster together (>=3 → refine path)
 	for _, art := range []storage.Article{a, b, c} {
-		if err := store.UpdateArticleAISummary(1, art.ID, "summary of "+art.GUID); err != nil {
+		if err := store.UpdateArticleAISummary(art.ID, "summary of "+art.GUID); err != nil {
 			t.Fatal(err)
 		}
 		if err := store.SetInterestScore(1, art.ID, 8); err != nil {
