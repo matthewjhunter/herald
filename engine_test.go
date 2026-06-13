@@ -1,13 +1,27 @@
 package herald
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/matthewjhunter/herald/internal/feeds"
 	"github.com/matthewjhunter/herald/internal/storage"
 )
+
+// TestMain installs a permissive dial control for the entire test binary so
+// that httptest.NewServer (which binds to 127.0.0.1) is reachable for the
+// feed-quota tests that call SubscribeFeed against a local server.
+func TestMain(m *testing.M) {
+	restore := feeds.UsePermissiveDialForTesting()
+	defer restore()
+	os.Exit(m.Run())
+}
 
 func newTestEngine(t *testing.T) (*Engine, func()) {
 	t.Helper()
@@ -895,5 +909,142 @@ func TestSummarizationPromptIsGlobal(t *testing.T) {
 	}
 	if !hasSummarization(adminPrompts) {
 		t.Error("ListPrompts(0) must include the summarization prompt")
+	}
+}
+
+// --- Per-user quota tests ---
+
+// minimalRSSHandler returns an http.Handler serving a tiny valid RSS feed.
+const minimalRSS = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test Feed</title>
+    <item>
+      <guid>item-1</guid>
+      <title>Test Article</title>
+      <link>https://example.com/1</link>
+    </item>
+  </channel>
+</rss>`
+
+func rssHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		fmt.Fprint(w, minimalRSS)
+	})
+}
+
+func TestFeedQuota(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+	engine.config.Limits.MaxFeedsPerUser = 2
+
+	userID := int64(1)
+
+	srv1 := httptest.NewServer(rssHandler())
+	defer srv1.Close()
+	srv2 := httptest.NewServer(rssHandler())
+	defer srv2.Close()
+	srv3 := httptest.NewServer(rssHandler())
+	defer srv3.Close()
+
+	if err := engine.SubscribeFeed(userID, srv1.URL, "Feed 1"); err != nil {
+		t.Fatalf("first SubscribeFeed: %v", err)
+	}
+	if err := engine.SubscribeFeed(userID, srv2.URL, "Feed 2"); err != nil {
+		t.Fatalf("second SubscribeFeed: %v", err)
+	}
+
+	err := engine.SubscribeFeed(userID, srv3.URL, "Feed 3")
+	if err == nil {
+		t.Fatal("expected error on third SubscribeFeed (limit 2)")
+	}
+	if !strings.Contains(err.Error(), "limit reached") {
+		t.Errorf("error should contain 'limit reached', got: %v", err)
+	}
+
+	got, err := engine.GetUserFeeds(userID)
+	if err != nil {
+		t.Fatalf("GetUserFeeds: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("expected 2 feeds after quota block, got %d", len(got))
+	}
+}
+
+func TestFilterRuleQuota(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+	engine.config.Limits.MaxFilterRulesPerUser = 1
+
+	userID := int64(1)
+
+	_, err := engine.AddFilterRule(userID, FilterRule{Axis: "author", Value: "Alice", Score: 1})
+	if err != nil {
+		t.Fatalf("first AddFilterRule: %v", err)
+	}
+
+	_, err = engine.AddFilterRule(userID, FilterRule{Axis: "author", Value: "Bob", Score: 1})
+	if err == nil {
+		t.Fatal("expected error on second AddFilterRule (limit 1)")
+	}
+	if !strings.Contains(err.Error(), "limit reached") {
+		t.Errorf("error should contain 'limit reached', got: %v", err)
+	}
+}
+
+func TestNewsletterQuota(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+	engine.config.Limits.MaxNewslettersPerUser = 1
+
+	userID, err := engine.RegisterUser("testuser")
+	if err != nil {
+		t.Fatalf("RegisterUser: %v", err)
+	}
+
+	_, err = engine.CreateNewsletter(userID, "Weekly", "", "", "", storage.NewsletterConfig{})
+	if err != nil {
+		t.Fatalf("first CreateNewsletter: %v", err)
+	}
+
+	_, err = engine.CreateNewsletter(userID, "Daily", "", "", "", storage.NewsletterConfig{})
+	if err == nil {
+		t.Fatal("expected error on second CreateNewsletter (limit 1)")
+	}
+	if !strings.Contains(err.Error(), "limit reached") {
+		t.Errorf("error should contain 'limit reached', got: %v", err)
+	}
+}
+
+func TestQuotaUnbounded(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+	// limit 0 = unbounded for all three resources
+	engine.config.Limits.MaxFeedsPerUser = 0
+	engine.config.Limits.MaxFilterRulesPerUser = 0
+	engine.config.Limits.MaxNewslettersPerUser = 0
+
+	// Filter rules use userID=1 (no user FK on filter_rules)
+	filterUserID := int64(1)
+	for i := range 3 {
+		_, err := engine.AddFilterRule(filterUserID, FilterRule{
+			Axis: "author", Value: fmt.Sprintf("Author%d", i), Score: 1,
+		})
+		if err != nil {
+			t.Fatalf("AddFilterRule %d with limit=0: %v", i, err)
+		}
+	}
+
+	// Newsletters require the user to exist (FK to users table)
+	nlUserID, err := engine.RegisterUser("unbounded-user")
+	if err != nil {
+		t.Fatalf("RegisterUser: %v", err)
+	}
+	for i := range 3 {
+		_, err := engine.CreateNewsletter(nlUserID, fmt.Sprintf("NL%d", i), "", "", "", storage.NewsletterConfig{})
+		if err != nil {
+			t.Fatalf("CreateNewsletter %d with limit=0: %v", i, err)
+		}
 	}
 }

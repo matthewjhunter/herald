@@ -637,6 +637,15 @@ func (e *Engine) effectiveIncludeFeeds(userID int64, cfg storage.NewsletterConfi
 	return out
 }
 
+// overQuota returns a non-nil error if have >= limit, treating limit <= 0 as
+// unbounded. resource is used in the message ("feeds", "filter rules", ...).
+func overQuota(resource string, have, limit int) error {
+	if limit > 0 && have >= limit {
+		return fmt.Errorf("%s limit reached (%d); delete some before adding more", resource, limit)
+	}
+	return nil
+}
+
 // feedURLCandidates returns the URLs to attempt for a user-supplied feed
 // input. If the input already contains a scheme it's returned as-is (provided
 // the scheme is http or https); otherwise https:// is tried first and http://
@@ -670,6 +679,14 @@ func feedURLCandidates(input string) []string {
 // is unreachable or not a valid RSS/Atom feed. If the URL has no scheme,
 // https:// and http:// are tried in turn.
 func (e *Engine) SubscribeFeed(userID int64, rawURL, title string) error {
+	existingFeeds, err := e.GetUserFeeds(userID)
+	if err != nil {
+		return fmt.Errorf("check feed quota: %w", err)
+	}
+	if err := overQuota("feed", len(existingFeeds), e.config.Limits.MaxFeedsPerUser); err != nil {
+		return err
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -993,6 +1010,13 @@ func (e *Engine) DisbandGroup(userID, groupID int64) error {
 
 // CreateNewsletter creates a new newsletter definition for a user.
 func (e *Engine) CreateNewsletter(userID int64, name, schedule, emailRecipient, promptTemplate string, config storage.NewsletterConfig) (int64, error) {
+	existingNewsletters, err := e.GetUserNewsletters(userID)
+	if err != nil {
+		return 0, fmt.Errorf("check newsletter quota: %w", err)
+	}
+	if err := overQuota("newsletter", len(existingNewsletters), e.config.Limits.MaxNewslettersPerUser); err != nil {
+		return 0, err
+	}
 	if config.MaxArticles == 0 {
 		config.MaxArticles = 20
 	}
@@ -1730,6 +1754,13 @@ func (e *Engine) AddFilterRule(userID int64, rule FilterRule) (int64, error) {
 	}
 	if rule.Value == "" {
 		return 0, fmt.Errorf("filter rule value cannot be empty")
+	}
+	existingRules, err := e.GetFilterRules(userID, nil)
+	if err != nil {
+		return 0, fmt.Errorf("check filter rule quota: %w", err)
+	}
+	if err := overQuota("filter rule", len(existingRules), e.config.Limits.MaxFilterRulesPerUser); err != nil {
+		return 0, err
 	}
 	sr := &storage.FilterRule{
 		UserID: userID,
