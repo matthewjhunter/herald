@@ -431,68 +431,6 @@ func (h *handlers) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, h.validator.LogoutURL(), http.StatusFound)
 }
 
-// handleCallback completes the OIDC authorization code flow.
-// It validates the state nonce, exchanges the code for an access token via PKCE,
-// sets the JWT as an HttpOnly cookie, and redirects to the original URL.
-func (h *handlers) handleCallback(w http.ResponseWriter, r *http.Request) {
-	// A lazy client whose discovery is still pending cannot exchange the
-	// code; degrade this endpoint rather than 502ing mid-flow (#165).
-	if !h.validator.Ready() {
-		log.Printf("herald-web: callback received before provider discovery completed")
-		http.Error(w, "authentication temporarily unavailable", http.StatusServiceUnavailable)
-		return
-	}
-
-	code := r.URL.Query().Get("code")
-	stateParam := r.URL.Query().Get("state")
-
-	// Surface upstream errors (e.g. user denied access).
-	if errParam := r.URL.Query().Get("error"); errParam != "" {
-		log.Printf("herald-web: callback error from webauth: %s", errParam)
-		http.Error(w, "Authentication error: "+errParam, http.StatusUnauthorized)
-		return
-	}
-	if code == "" || stateParam == "" {
-		http.Error(w, "missing code or state", http.StatusBadRequest)
-		return
-	}
-
-	// Validate state nonce to prevent CSRF.
-	storedState := oidclient.FlowCookieValue(r, oidclient.CookieState)
-	if storedState == "" || storedState != stateParam {
-		http.Error(w, "invalid state parameter", http.StatusBadRequest)
-		return
-	}
-
-	// Retrieve the PKCE verifier.
-	verifier := oidclient.FlowCookieValue(r, oidclient.CookieVerifier)
-	if verifier == "" {
-		http.Error(w, "missing PKCE verifier", http.StatusBadRequest)
-		return
-	}
-
-	// Determine where to send the user after login (defaults to root).
-	redirectTo := oidclient.FlowCookieValue(r, oidclient.CookieRedirect)
-	if redirectTo == "" {
-		redirectTo = "/"
-	}
-
-	// Exchange the authorization code for an access token.
-	accessToken, _, err := h.validator.ExchangeCode(r.Context(), code, verifier)
-	if err != nil {
-		log.Printf("herald-web: callback token exchange: %v", err)
-		http.Error(w, "Authentication failed", http.StatusBadGateway)
-		return
-	}
-
-	// Set the JWT as an HttpOnly session cookie and clear flow cookies.
-	secure := oidclient.IsSecure(r)
-	oidclient.SetSessionCookie(w, h.validator.CookieName(), accessToken, secure)
-	oidclient.ClearFlowCookies(w)
-
-	http.Redirect(w, r, redirectTo, http.StatusFound)
-}
-
 func (h *handlers) handleHome(w http.ResponseWriter, r *http.Request) {
 	user := userFromContext(r.Context())
 	uid := user.ID

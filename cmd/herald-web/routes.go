@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"io/fs"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -50,9 +51,13 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	h := &handlers{engine: engine, validator: validator, adminRole: adminRole, adminUsers: adminUsers}
 	auth := h.requireAuth
 
-	// Auth callback — receives the code from webauth, exchanges it for a JWT cookie.
-	mux.HandleFunc("GET /auth/callback", h.handleCallback,
-		smoke.Skip("OIDC callback; requires a code & state, not a bare GET"))
+	// Auth callback — receives the code from webauth, exchanges it for a JWT
+	// cookie via the shared oidclient handler. No OnAuthenticated hook: user
+	// provisioning happens in requireAuth on the next request.
+	mux.Handle("GET /auth/callback", validator.CallbackHandler(oidclient.CallbackOptions{
+		SanitizeRedirect: localPath,
+		Logf:             log.Printf,
+	}), smoke.Skip("OIDC callback; requires a code & state, not a bare GET"))
 
 	// OPML sync — token-authenticated, no JWT required.
 	mux.HandleFunc("GET /opml/{userID}/{token}", h.handleOPMLSync,
