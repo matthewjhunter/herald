@@ -1104,3 +1104,103 @@ func TestHandleNewsletterGenerate_Owner(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// --- Subscription gating tests (#162) ---
+
+func TestHandleArticleView_SubscriptionGated(t *testing.T) {
+	tf := newTestFixtures(t)
+	_, otherToken := secondTestUser(t, tf)
+
+	path := "/articles/" + itoa(tf.articleID)
+
+	// A non-subscriber cannot read the article.
+	rr := authedRequestAs(t, tf, otherToken, "GET", path)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("non-subscriber view: got %d, want %d", rr.Code, http.StatusNotFound)
+	}
+
+	// The subscriber can.
+	rr = authedRequest(t, tf, "GET", path, map[string]string{"HX-Request": "true"})
+	if rr.Code != http.StatusOK {
+		t.Errorf("subscriber view: got %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// Unknown IDs 404 for everyone.
+	rr = authedRequest(t, tf, "GET", "/articles/999999", nil)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("unknown article: got %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+func TestHandleArticleImage_SubscriptionGated(t *testing.T) {
+	tf := newTestFixtures(t)
+	_, otherToken := secondTestUser(t, tf)
+
+	png := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}
+	imageID, err := tf.store.StoreArticleImage(tf.articleID, "https://example.com/img.png", png, "image/png", 1, 1)
+	if err != nil {
+		t.Fatalf("StoreArticleImage: %v", err)
+	}
+	path := "/images/" + itoa(imageID)
+
+	// A non-subscriber cannot fetch the image.
+	rr := authedRequestAs(t, tf, otherToken, "GET", path)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("non-subscriber image: got %d, want %d", rr.Code, http.StatusNotFound)
+	}
+
+	// The subscriber gets the bytes with the stored MIME type.
+	rr = authedRequest(t, tf, "GET", path, nil)
+	if rr.Code != http.StatusOK {
+		t.Errorf("subscriber image: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "image/png" {
+		t.Errorf("Content-Type = %q, want image/png", ct)
+	}
+
+	// Unknown IDs 404 for everyone.
+	rr = authedRequest(t, tf, "GET", "/images/999999", nil)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("unknown image: got %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+func TestHandleStarToggle_SubscriptionGated(t *testing.T) {
+	tf := newTestFixtures(t)
+	otherID, otherToken := secondTestUser(t, tf)
+
+	path := "/articles/" + itoa(tf.articleID) + "/star"
+
+	// A non-subscriber cannot star the article (no form body: the handler
+	// defaults to starring, and the engine rejects before any write).
+	rr := authedRequestAs(t, tf, otherToken, "POST", path)
+	if rr.Code == http.StatusOK {
+		t.Errorf("non-subscriber star: got %d, want an error status", rr.Code)
+	}
+
+	// Prove no starred row was written: subscribe B afterwards (which would
+	// make any starred row visible) and check the starred list is empty.
+	if err := tf.store.SubscribeUserToFeed(otherID, tf.feedID); err != nil {
+		t.Fatalf("SubscribeUserToFeed: %v", err)
+	}
+	starred, err := tf.store.GetStarredArticles(otherID, 10, 0, nil)
+	if err != nil {
+		t.Fatalf("GetStarredArticles: %v", err)
+	}
+	if len(starred) != 0 {
+		t.Errorf("rejected star must not write a row, got %d starred", len(starred))
+	}
+
+	// The subscriber can star.
+	rr = authedRequestForm(t, tf, "POST", path, url.Values{"starred": {"true"}})
+	if rr.Code != http.StatusOK {
+		t.Errorf("subscriber star: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	starred, err = tf.store.GetStarredArticles(tf.userID, 10, 0, nil)
+	if err != nil {
+		t.Fatalf("GetStarredArticles A: %v", err)
+	}
+	if len(starred) != 1 || starred[0].ID != tf.articleID {
+		t.Errorf("expected article %d starred for the subscriber, got %v", tf.articleID, starred)
+	}
+}

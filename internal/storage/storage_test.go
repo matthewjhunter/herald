@@ -3002,3 +3002,31 @@ func TestFilterRuleUserScoping(t *testing.T) {
 		t.Errorf("expected 0 rules after owner delete, got %d", len(rules))
 	}
 }
+
+func TestUserSubscribedToArticleFeed(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		feedID, _ := store.AddFeed("https://example.com/feed", "Feed", "")
+		if err := store.SubscribeUserToFeed(1, feedID); err != nil {
+			t.Fatalf("subscribe: %v", err)
+		}
+		now := time.Now()
+		articleID, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "g", Title: "g",
+			URL: "https://example.com/g", PublishedDate: &now})
+
+		// Subscriber sees the article's feed.
+		ok, err := store.UserSubscribedToArticleFeed(1, articleID)
+		if err != nil || !ok {
+			t.Errorf("subscriber = (%v, %v), want (true, nil)", ok, err)
+		}
+		// Non-subscriber does not.
+		ok, err = store.UserSubscribedToArticleFeed(2, articleID)
+		if err != nil || ok {
+			t.Errorf("non-subscriber = (%v, %v), want (false, nil)", ok, err)
+		}
+		// Nonexistent article is false, nil.
+		ok, err = store.UserSubscribedToArticleFeed(1, 999999)
+		if err != nil || ok {
+			t.Errorf("unknown article = (%v, %v), want (false, nil)", ok, err)
+		}
+	})
+}

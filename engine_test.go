@@ -209,7 +209,15 @@ func TestGetArticleForUser(t *testing.T) {
 		t.Errorf("AISummary: got %q", article.AISummary)
 	}
 
-	// The summary is a property of the article (#162): every user sees it.
+	// A non-subscriber cannot read the article at all (#162).
+	if _, err := engine.GetArticleForUser(2, articleID); err == nil {
+		t.Fatal("expected error for a user not subscribed to the feed")
+	}
+
+	// The summary is a property of the article (#162): every subscriber sees it.
+	if err := engine.store.SubscribeUserToFeed(2, feedID); err != nil {
+		t.Fatalf("SubscribeUserToFeed: %v", err)
+	}
 	article, err = engine.GetArticleForUser(2, articleID)
 	if err != nil {
 		t.Fatalf("GetArticleForUser user 2: %v", err)
