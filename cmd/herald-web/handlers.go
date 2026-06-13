@@ -1311,14 +1311,16 @@ func (h *handlers) handleFeedTagRemove(w http.ResponseWriter, r *http.Request) {
 	h.renderFeedTagsCell(w, uid, feedID)
 }
 
-// handleArticleImage serves a cached article image by its ID.
+// handleArticleImage serves a cached article image by its ID. Only users
+// subscribed to the owning article's feed can fetch it (#162).
 func (h *handlers) handleArticleImage(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
 	imageID, err := strconv.ParseInt(r.PathValue("imageID"), 10, 64)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	img, err := h.engine.GetArticleImage(imageID)
+	img, err := h.engine.GetArticleImageForUser(uid, imageID)
 	if err != nil || img == nil {
 		http.NotFound(w, r)
 		return

@@ -1834,11 +1834,6 @@ func (e *Engine) GetArticleImageMap(articleID int64) (map[string]int64, error) {
 	return e.store.GetArticleImageMap(articleID)
 }
 
-// GetArticleImage returns a cached image by its ID.
-func (e *Engine) GetArticleImage(imageID int64) (*storage.ArticleImage, error) {
-	return e.store.GetArticleImage(imageID)
-}
-
 // GetArticleImageForUser returns a cached image by its ID when the user is
 // subscribed to the owning article's feed. No access reads as nil, nil —
 // indistinguishable from a missing image, so the handler 404s either way.
