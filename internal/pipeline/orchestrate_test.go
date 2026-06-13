@@ -150,3 +150,55 @@ func TestRunSkipsWhenBreakerOpen(t *testing.T) {
 		t.Fatalf("expected no security calls with breaker open, got %d", fake.secCalls)
 	}
 }
+
+// TestRunSummariesOncePerArticleAcrossUsers proves the cost model of #162:
+// with two subscribers to the same feed, the global pass makes exactly one
+// SummarizeArticle call per article, and the per-user pipelines make none.
+func TestRunSummariesOncePerArticleAcrossUsers(t *testing.T) {
+	fake := happyAI()
+	st, store, feedID := newHarness(t, fake)
+	if err := store.SubscribeUserToFeed(2, feedID); err != nil {
+		t.Fatalf("subscribe user 2: %v", err)
+	}
+
+	a := seed(t, store, feedID, "a", "body a")
+	b := seed(t, store, feedID, "b", "body b")
+	for _, art := range []storage.Article{a, b} {
+		if err := store.ScreenArticleSecurity(art.ID, 9, "ok", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	n, err := st.RunSummaries(context.Background())
+	if err != nil {
+		t.Fatalf("RunSummaries: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("expected 2 articles summarized, got %d", n)
+	}
+	if fake.sumCalls != 2 {
+		t.Fatalf("expected exactly 1 model call per article (2 total), got %d", fake.sumCalls)
+	}
+
+	// A second global pass finds nothing to do.
+	if n, err := st.RunSummaries(context.Background()); err != nil || n != 0 {
+		t.Fatalf("second RunSummaries = (%d, %v), want (0, nil)", n, err)
+	}
+
+	// The per-user pipelines never call the summarizer.
+	for _, uid := range []int64{1, 2} {
+		userStage := &Stage{
+			Store:     store,
+			AI:        fake,
+			Cfg:       st.Cfg,
+			Formatter: st.Formatter,
+			UserID:    uid,
+		}
+		if err := userStage.Run(context.Background()); err != nil {
+			t.Fatalf("Run user %d: %v", uid, err)
+		}
+	}
+	if fake.sumCalls != 2 {
+		t.Fatalf("per-user runs must not summarize; calls went from 2 to %d", fake.sumCalls)
+	}
+}

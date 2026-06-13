@@ -842,3 +842,50 @@ func TestGetGroupArticlesCrossUser(t *testing.T) {
 		t.Errorf("unexpected group: %+v", group)
 	}
 }
+
+func TestSummarizationPromptIsGlobal(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	// A regular user can neither set nor reset the summarization prompt.
+	if err := engine.SetPrompt(1, "summarization", "mine: {{.Content}}", nil, nil); err == nil ||
+		!strings.Contains(err.Error(), "global") {
+		t.Fatalf("expected global-prompt rejection for SetPrompt, got %v", err)
+	}
+	if err := engine.ResetPrompt(1, "summarization"); err == nil ||
+		!strings.Contains(err.Error(), "global") {
+		t.Fatalf("expected global-prompt rejection for ResetPrompt, got %v", err)
+	}
+
+	// The admin (user 0) can.
+	if err := engine.SetPrompt(0, "summarization", "admin: {{.Content}}", nil, nil); err != nil {
+		t.Fatalf("admin SetPrompt: %v", err)
+	}
+	if err := engine.ResetPrompt(0, "summarization"); err != nil {
+		t.Fatalf("admin ResetPrompt: %v", err)
+	}
+
+	// ListPrompts hides the type from regular users and shows it to the admin.
+	hasSummarization := func(prompts []PromptInfo) bool {
+		for _, p := range prompts {
+			if p.Type == "summarization" {
+				return true
+			}
+		}
+		return false
+	}
+	userPrompts, err := engine.ListPrompts(1)
+	if err != nil {
+		t.Fatalf("ListPrompts(1): %v", err)
+	}
+	if hasSummarization(userPrompts) {
+		t.Error("ListPrompts(1) must omit the summarization prompt")
+	}
+	adminPrompts, err := engine.ListPrompts(0)
+	if err != nil {
+		t.Fatalf("ListPrompts(0): %v", err)
+	}
+	if !hasSummarization(adminPrompts) {
+		t.Error("ListPrompts(0) must include the summarization prompt")
+	}
+}
