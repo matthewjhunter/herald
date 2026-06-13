@@ -429,6 +429,39 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		}
 	}
 
+	// Migrate article_summaries from per-user (user_id, article_id) PK to
+	// per-article (#162): a summary is a property of the article, like the
+	// security verdict (#141). Detect the old schema by the presence of a
+	// user_id column. The dedup prefers a real summary over a skip marker
+	// ((ai_summary = '') ASC), then the lowest user_id — the same tiebreak
+	// philosophy as the #141 backfill.
+	if needsArticleSummariesMigration(db) {
+		migrationSQL := `
+			CREATE TABLE article_summaries_new (
+				article_id INTEGER PRIMARY KEY,
+				ai_summary TEXT NOT NULL,
+				skip_reason TEXT,
+				generated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
+			);
+			INSERT INTO article_summaries_new (article_id, ai_summary, skip_reason, generated_at)
+			SELECT article_id, ai_summary, skip_reason, generated_at
+			FROM (
+				SELECT *, ROW_NUMBER() OVER (
+					PARTITION BY article_id
+					ORDER BY (ai_summary = '') ASC, user_id ASC
+				) AS rn
+				FROM article_summaries
+			) WHERE rn = 1;
+			DROP TABLE article_summaries;
+			ALTER TABLE article_summaries_new RENAME TO article_summaries;
+		`
+		if _, err := db.Exec(migrationSQL); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to migrate article_summaries: %w", err)
+		}
+	}
+
 	return &SQLiteStore{db: &tracedDB{DB: db}}, nil
 }
 
@@ -454,6 +487,30 @@ func needsReadStateMigration(db *sql.DB) bool {
 		}
 	}
 	return true // table exists but has no user_id column
+}
+
+// needsArticleSummariesMigration checks whether article_summaries still uses
+// the old per-user shape (a user_id column is present). Returns false for
+// fresh databases that already have the per-article schema (#162).
+func needsArticleSummariesMigration(db *sql.DB) bool {
+	rows, err := db.Query("PRAGMA table_info(article_summaries)")
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return false
+		}
+		if name == "user_id" {
+			return true // old per-user shape — rebuild to per-article
+		}
+	}
+	return false
 }
 
 // scanFeeds scans a *sql.Rows result set into a []Feed slice.

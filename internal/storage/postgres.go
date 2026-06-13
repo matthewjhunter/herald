@@ -160,6 +160,45 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 			return nil, fmt.Errorf("failed to run postgres migration: %w", err)
 		}
 	}
+
+	// Migrate article_summaries from per-user (user_id, article_id) PK to
+	// per-article (#162) — mirrors the SQLite rebuild. The dedup prefers a
+	// real summary over a skip marker, then the lowest user_id.
+	var summariesPerUser bool
+	if err := db.QueryRow(
+		`SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'article_summaries' AND column_name = 'user_id'
+		)`).Scan(&summariesPerUser); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to inspect article_summaries schema: %w", err)
+	}
+	if summariesPerUser {
+		if _, err := db.Exec(`
+			CREATE TABLE article_summaries_new (
+				article_id   BIGINT PRIMARY KEY,
+				ai_summary   TEXT NOT NULL,
+				skip_reason  TEXT,
+				generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
+			);
+			INSERT INTO article_summaries_new (article_id, ai_summary, skip_reason, generated_at)
+			SELECT article_id, ai_summary, skip_reason, generated_at
+			FROM (
+				SELECT *, ROW_NUMBER() OVER (
+					PARTITION BY article_id
+					ORDER BY (ai_summary = '') ASC, user_id ASC
+				) AS rn
+				FROM article_summaries
+			) t WHERE rn = 1;
+			DROP TABLE article_summaries;
+			ALTER TABLE article_summaries_new RENAME TO article_summaries;
+		`); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to migrate article_summaries: %w", err)
+		}
+	}
+
 	return &PostgresStore{db: &tracedDB{DB: db, useRebind: true}}, nil
 }
 
