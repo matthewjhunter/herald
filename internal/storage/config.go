@@ -16,6 +16,9 @@ type Config struct {
 		CurationModel string        `yaml:"curation_model"`
 		Timeout       time.Duration `yaml:"timeout"`
 		MaxParallel   int           `yaml:"max_parallel"`
+		// MaxConcurrent bounds the number of in-flight generate() calls in this
+		// process. <= 0 means unbounded (no gate).
+		MaxConcurrent int `yaml:"max_concurrent"`
 	} `yaml:"ollama"`
 
 	Thresholds struct {
@@ -114,6 +117,7 @@ func DefaultConfig() *Config {
 	cfg.Ollama.SecurityModel = "gemma3:4b"
 	cfg.Ollama.CurationModel = "llama3.1:8b"
 	cfg.Ollama.Timeout = 2 * time.Minute
+	cfg.Ollama.MaxConcurrent = 8
 	cfg.Summarization.MinArticleLength = 200
 	cfg.Summarization.MaxSummaryLength = 500
 	cfg.Grouping.Enabled = true
