@@ -535,6 +535,14 @@ func TestHandleFeedsManage(t *testing.T) {
 	if strings.Contains(body, ">Unscored<") {
 		t.Error("feeds page should no longer use the misleading Unscored header")
 	}
+	// type="url" triggers browser validation that rejects scheme-less input
+	// like "example.com/feed.xml" before the server can add the prefix.
+	if strings.Contains(body, `type="url"`) {
+		t.Error(`subscribe form must not use type="url"; the server handles scheme-less URLs`)
+	}
+	if !strings.Contains(body, `inputmode="url"`) {
+		t.Error(`subscribe URL input should keep inputmode="url" for mobile keyboards`)
+	}
 }
 
 func TestHandleSettings(t *testing.T) {

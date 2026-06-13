@@ -1,9 +1,8 @@
 // herald-mcp is a standalone, read-only MCP server for the Herald content
 // engine. It connects directly to Herald's SQLite database, serving article
-// and feed tools over JSON-RPC stdio. Designed to run as a per-persona MCP
-// server alongside majordomo-mcp.
+// and feed tools over JSON-RPC stdio.
 //
-// It does no feed fetching or AI processing — that is the `herald daemon`'s
+// It does no feed fetching or AI processing -- that is the `herald daemon`'s
 // job. herald-mcp only reads the database the daemon populates.
 package main
 
@@ -21,7 +20,7 @@ import (
 
 func main() {
 	home, _ := os.UserHomeDir()
-	defaultDB := filepath.Join(home, ".local", "share", "majordomo", "mcp", "herald", "herald.db")
+	defaultDB := filepath.Join(home, ".local", "share", "herald", "herald.db")
 
 	dbPath := flag.String("db", defaultDB, "path to herald database")
 	ollamaURL := flag.String("ollama", "http://localhost:11434", "Ollama base URL")

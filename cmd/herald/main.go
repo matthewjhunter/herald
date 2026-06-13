@@ -318,10 +318,9 @@ func processCmd() *cobra.Command {
 
 			result.HighInterest = len(highInterestArticles)
 
-			// Use Majordomo format for JSON output, traditional format for others
+			// Use structured cron output format for JSON, traditional format for others
 			if outputFormat == "json" {
-				// Output in Majordomo CommandOutput format
-				return formatter.OutputMajordomoResult(result, userID, highInterestArticles)
+				return formatter.OutputCronResult(result, userID, highInterestArticles)
 			}
 
 			// Output result summary (text/human formats)
