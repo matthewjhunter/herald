@@ -122,8 +122,8 @@ type Store interface {
 	GetUnreadArticles(limit int) ([]Article, error)
 	GetArticle(articleID int64) (*Article, error)
 	GetArticlesByInterestScore(userID int64, threshold float64, limit, offset int, filterThreshold *int) ([]Article, []float64, error)
-	GetUnreadArticlesForUser(userID int64, limit, offset int, filterThreshold *int) ([]Article, error)
-	GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int, filterThreshold *int) ([]Article, error)
+	GetUnreadArticlesForUser(userID int64, limit, offset int, filterThreshold *int, includeRead bool) ([]Article, error)
+	GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int, filterThreshold *int, includeRead bool) ([]Article, error)
 	GetUnscoredArticleCount(userID int64) (int, error)
 	GetUnsummarizedArticleCount() (int, error)
 	GetUnsummarizedScoredArticles(securityThreshold float64, limit int) ([]Article, error)
@@ -185,7 +185,7 @@ type Store interface {
 	FindArticleGroup(articleID, userID int64) (*int64, error)
 
 	// Group virtual feed operations
-	GetUnreadGroupArticles(userID, groupID int64, limit, offset int, filterThreshold *int) ([]Article, error)
+	GetUnreadGroupArticles(userID, groupID int64, limit, offset int, filterThreshold *int, includeRead bool) ([]Article, error)
 	GetGroupStats(userID int64) ([]GroupStats, error)
 	SetGroupMuted(groupID int64, muted bool) error
 	IsGroupMuted(groupID int64) (bool, error)

@@ -50,6 +50,8 @@ type Article struct {
 	LinkedURL       string // outbound link extracted from a link-blog post
 	LinkedContent   string // readability content fetched from LinkedURL
 	SecurityFlagged bool   // true when article passed the medium security threshold but not the full threshold
+	Read            bool   // requesting user's read state; only set by queries that select read_state.read
+	Starred         bool   // requesting user's starred state; only set by queries that select read_state.starred
 }
 
 type ArticleSummary struct {
@@ -1892,16 +1894,18 @@ func (s *SQLiteStore) FindArticleGroup(articleID, userID int64) (*int64, error) 
 }
 
 // GetUnreadGroupArticles returns unread articles belonging to a specific group.
-func (s *SQLiteStore) GetUnreadGroupArticles(userID, groupID int64, limit, offset int, filterThreshold *int) ([]Article, error) {
+func (s *SQLiteStore) GetUnreadGroupArticles(userID, groupID int64, limit, offset int, filterThreshold *int, includeRead bool) ([]Article, error) {
 	filterSQL, filterArgs := filterScoreClause(userID, filterThreshold)
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date
+		       a.author, a.published_date, a.fetched_date,
+		       COALESCE(a.security_flagged, 0) AS security_flagged,
+		       COALESCE(rs.read, 0) AS is_read, COALESCE(rs.starred, 0) AS is_starred
 		FROM articles a
 		JOIN article_group_members agm ON a.id = agm.article_id
 		JOIN article_groups ag ON agm.group_id = ag.id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
-		WHERE agm.group_id = ? AND ag.user_id = ? AND (rs.article_id IS NULL OR rs.read = 0)
+		WHERE agm.group_id = ? AND ag.user_id = ?` + readFilterClause(includeRead) + `
 		` + filterSQL + `
 		ORDER BY a.published_date DESC
 		LIMIT ? OFFSET ?
@@ -1915,14 +1919,9 @@ func (s *SQLiteStore) GetUnreadGroupArticles(userID, groupID int64, limit, offse
 	}
 	defer rows.Close()
 
-	var articles []Article
-	for rows.Next() {
-		var a Article
-		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
-			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate); err != nil {
-			return nil, fmt.Errorf("failed to scan article: %w", err)
-		}
-		articles = append(articles, a)
+	articles, err := scanArticlesWithReadState(rows)
+	if err != nil {
+		return nil, err
 	}
 	return articles, rows.Err()
 }
@@ -2522,16 +2521,17 @@ func (s *SQLiteStore) GetUngroupedEmbeddedArticles(userID int64, model string, s
 }
 
 // GetUnreadArticlesForUser returns unread articles from feeds the user subscribes to
-func (s *SQLiteStore) GetUnreadArticlesForUser(userID int64, limit, offset int, filterThreshold *int) ([]Article, error) {
+func (s *SQLiteStore) GetUnreadArticlesForUser(userID int64, limit, offset int, filterThreshold *int, includeRead bool) ([]Article, error) {
 	filterSQL, filterArgs := filterScoreClause(userID, filterThreshold)
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date,
-		       COALESCE(a.security_flagged, 0) AS security_flagged
+		       COALESCE(a.security_flagged, 0) AS security_flagged,
+		       COALESCE(rs.read, 0) AS is_read, COALESCE(rs.starred, 0) AS is_starred
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
-		WHERE uf.user_id = ? AND (rs.article_id IS NULL OR rs.read = 0)
+		WHERE uf.user_id = ?` + readFilterClause(includeRead) + `
 		AND NOT EXISTS (
 			SELECT 1 FROM article_group_members agm
 			JOIN article_groups ag ON agm.group_id = ag.id
@@ -2550,30 +2550,25 @@ func (s *SQLiteStore) GetUnreadArticlesForUser(userID int64, limit, offset int, 
 	}
 	defer rows.Close()
 
-	var articles []Article
-	for rows.Next() {
-		var a Article
-		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
-			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate,
-			&a.SecurityFlagged); err != nil {
-			return nil, fmt.Errorf("failed to scan article: %w", err)
-		}
-		articles = append(articles, a)
+	articles, err := scanArticlesWithReadState(rows)
+	if err != nil {
+		return nil, err
 	}
 	return articles, rows.Err()
 }
 
 // GetUnreadArticlesByFeed returns unread articles for a user filtered to a specific feed.
-func (s *SQLiteStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int, filterThreshold *int) ([]Article, error) {
+func (s *SQLiteStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int, filterThreshold *int, includeRead bool) ([]Article, error) {
 	filterSQL, filterArgs := filterScoreClause(userID, filterThreshold)
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date,
-		       COALESCE(a.security_flagged, 0) AS security_flagged
+		       COALESCE(a.security_flagged, 0) AS security_flagged,
+		       COALESCE(rs.read, 0) AS is_read, COALESCE(rs.starred, 0) AS is_starred
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
-		WHERE uf.user_id = ? AND a.feed_id = ? AND (rs.article_id IS NULL OR rs.read = 0)
+		WHERE uf.user_id = ? AND a.feed_id = ?` + readFilterClause(includeRead) + `
 		AND NOT EXISTS (
 			SELECT 1 FROM article_group_members agm
 			JOIN article_groups ag ON agm.group_id = ag.id
@@ -2592,15 +2587,9 @@ func (s *SQLiteStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, offse
 	}
 	defer rows.Close()
 
-	var articles []Article
-	for rows.Next() {
-		var a Article
-		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
-			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate,
-			&a.SecurityFlagged); err != nil {
-			return nil, fmt.Errorf("failed to scan article: %w", err)
-		}
-		articles = append(articles, a)
+	articles, err := scanArticlesWithReadState(rows)
+	if err != nil {
+		return nil, err
 	}
 	return articles, rows.Err()
 }
@@ -2684,7 +2673,9 @@ func (s *SQLiteStore) GetStarredArticles(userID int64, limit, offset int, filter
 	filterSQL, filterArgs := filterScoreClause(userID, filterThreshold)
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date
+		       a.author, a.published_date, a.fetched_date,
+		       COALESCE(a.security_flagged, 0) AS security_flagged,
+		       COALESCE(rs.read, 0) AS is_read, COALESCE(rs.starred, 0) AS is_starred
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
@@ -2702,14 +2693,9 @@ func (s *SQLiteStore) GetStarredArticles(userID int64, limit, offset int, filter
 	}
 	defer rows.Close()
 
-	var articles []Article
-	for rows.Next() {
-		var a Article
-		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
-			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate); err != nil {
-			return nil, fmt.Errorf("failed to scan article: %w", err)
-		}
-		articles = append(articles, a)
+	articles, err := scanArticlesWithReadState(rows)
+	if err != nil {
+		return nil, err
 	}
 	return articles, rows.Err()
 }
@@ -2743,6 +2729,18 @@ func filterScoreClause(userID int64, threshold *int) (string, []any) {
 		) >= ?
 	)`
 	return sql, []any{userID, userID, *threshold}
+}
+
+// readFilterClause returns the WHERE fragment that restricts a list query to
+// unread articles. When includeRead is true it returns an empty string so the
+// query also returns articles the user has already read. It assumes the query
+// LEFT JOINs read_state aliased as rs. Backend-agnostic (plain SQL text), so
+// both the SQLite and Postgres queries share it.
+func readFilterClause(includeRead bool) string {
+	if includeRead {
+		return ""
+	}
+	return " AND (rs.article_id IS NULL OR rs.read = 0)"
 }
 
 // --- Article metadata methods ---
@@ -3158,19 +3156,22 @@ func (s *SQLiteStore) MarkArticleImagesCached(articleID int64) error {
 func (s *SQLiteStore) SearchArticlesFTS(userID int64, query string, limit, offset int) ([]Article, error) {
 	rows, err := s.db.Query(`
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date
+		       a.author, a.published_date, a.fetched_date,
+		       COALESCE(a.security_flagged, 0) AS security_flagged,
+		       COALESCE(rs.read, 0) AS is_read, COALESCE(rs.starred, 0) AS is_starred
 		FROM articles a
 		JOIN articles_fts fts ON fts.rowid = a.id
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = ?
 		WHERE uf.user_id = ? AND articles_fts MATCH ?
 		ORDER BY rank
 		LIMIT ? OFFSET ?`,
-		userID, query, limit, offset)
+		userID, userID, query, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("fts search: %w", err)
 	}
 	defer rows.Close()
-	return scanArticles(rows)
+	return scanArticlesWithReadState(rows)
 }
 
 // StoreArticleEmbedding upserts a successful embedding vector. Resets

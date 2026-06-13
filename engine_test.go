@@ -129,7 +129,7 @@ func TestGetUnreadArticlesEmpty(t *testing.T) {
 	engine, cleanup := newTestEngine(t)
 	defer cleanup()
 
-	articles, err := engine.GetUnreadArticles(1, 10, 0)
+	articles, err := engine.GetUnreadArticles(1, 10, 0, false)
 	if err != nil {
 		t.Fatalf("GetUnreadArticles: %v", err)
 	}

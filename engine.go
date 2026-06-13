@@ -198,9 +198,11 @@ func (e *Engine) FetchAllFeeds(ctx context.Context) (*FetchResult, error) {
 	}, nil
 }
 
-// GetUnreadArticles returns unread articles for a user, up to limit starting at offset.
-func (e *Engine) GetUnreadArticles(userID int64, limit, offset int) ([]Article, error) {
-	articles, err := e.store.GetUnreadArticlesForUser(userID, limit, offset, e.resolveFilterThreshold(userID))
+// GetUnreadArticles returns articles for a user, up to limit starting at offset.
+// When includeRead is true, already-read articles are returned alongside unread
+// ones (each carrying its Read/Starred state); otherwise only unread are returned.
+func (e *Engine) GetUnreadArticles(userID int64, limit, offset int, includeRead bool) ([]Article, error) {
+	articles, err := e.store.GetUnreadArticlesForUser(userID, limit, offset, e.resolveFilterThreshold(userID), includeRead)
 	if err != nil {
 		return nil, err
 	}
@@ -216,9 +218,10 @@ func (e *Engine) GetStarredArticles(userID int64, limit, offset int) ([]Article,
 	return articlesFromInternal(articles), nil
 }
 
-// GetUnreadArticlesByFeed returns unread articles for a user filtered to a specific feed.
-func (e *Engine) GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int) ([]Article, error) {
-	articles, err := e.store.GetUnreadArticlesByFeed(userID, feedID, limit, offset, e.resolveFilterThreshold(userID))
+// GetUnreadArticlesByFeed returns articles for a user filtered to a specific feed.
+// When includeRead is true, read articles are included alongside unread ones.
+func (e *Engine) GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int, includeRead bool) ([]Article, error) {
+	articles, err := e.store.GetUnreadArticlesByFeed(userID, feedID, limit, offset, e.resolveFilterThreshold(userID), includeRead)
 	if err != nil {
 		return nil, err
 	}
@@ -545,6 +548,12 @@ func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, er
 // MarkArticleRead marks an article as read.
 func (e *Engine) MarkArticleRead(userID, articleID int64) error {
 	return e.store.UpdateReadState(userID, articleID, true, nil, nil, nil, nil)
+}
+
+// SetArticleRead sets the read state of an article for a user to an explicit
+// value, allowing an article to be marked unread again (e.g. a manual toggle).
+func (e *Engine) SetArticleRead(userID, articleID int64, read bool) error {
+	return e.store.UpdateReadState(userID, articleID, read, nil, nil, nil, nil)
 }
 
 // MarkArticlesRead marks a list of articles as read.
@@ -946,9 +955,10 @@ func (e *Engine) GetGroupArticles(userID, groupID int64) (*ArticleGroup, error) 
 	return ag, nil
 }
 
-// GetUnreadGroupArticles returns unread articles belonging to a group.
-func (e *Engine) GetUnreadGroupArticles(userID, groupID int64, limit, offset int) ([]Article, error) {
-	articles, err := e.store.GetUnreadGroupArticles(userID, groupID, limit, offset, e.resolveFilterThreshold(userID))
+// GetUnreadGroupArticles returns articles belonging to a group. When includeRead
+// is true, read articles are included alongside unread ones.
+func (e *Engine) GetUnreadGroupArticles(userID, groupID int64, limit, offset int, includeRead bool) ([]Article, error) {
+	articles, err := e.store.GetUnreadGroupArticles(userID, groupID, limit, offset, e.resolveFilterThreshold(userID), includeRead)
 	if err != nil {
 		return nil, err
 	}
@@ -1866,6 +1876,8 @@ func articleFromInternal(a storage.Article) Article {
 		LinkedURL:       a.LinkedURL,
 		LinkedContent:   a.LinkedContent,
 		SecurityFlagged: a.SecurityFlagged,
+		Read:            a.Read,
+		Starred:         a.Starred,
 	}
 }
 

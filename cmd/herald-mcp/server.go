@@ -120,7 +120,7 @@ func registerTools(s *mcp.Server, hs *heraldServer) {
 			return jsonResult(result)
 		}
 
-		articles, err := hs.engine.GetUnreadArticles(userID, limit, offset)
+		articles, err := hs.engine.GetUnreadArticles(userID, limit, offset, false)
 		if err != nil {
 			return errResult("%v", err)
 		}

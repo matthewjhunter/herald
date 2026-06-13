@@ -20,6 +20,35 @@
         }
     }
 
+    // Graceful auth-expiry handling. When the session cookie expires, any
+    // request (including the periodic background sidebar refresh) gets a 401
+    // with an HX-Redirect header. Left to htmx, that header triggers a full
+    // page navigation to the login flow -- yanking the user off whatever
+    // article they were reading. Instead we cancel htmx's response handling
+    // and surface a non-destructive "reconnect" banner, preserving the
+    // reading pane until the user chooses to re-authenticate.
+    (function() {
+        var banner = document.getElementById('reconnect-banner');
+        var btn = document.getElementById('reconnect-btn');
+        var loginURL = '/';
+
+        document.body.addEventListener('htmx:beforeOnLoad', function(e) {
+            var xhr = e.detail && e.detail.xhr;
+            if (!xhr || xhr.status !== 401) return;
+            // Cancelling beforeOnLoad stops htmx from swapping content AND from
+            // honouring the HX-Redirect header, so the page stays put.
+            e.preventDefault();
+            loginURL = xhr.getResponseHeader('HX-Redirect') || loginURL;
+            if (banner) banner.hidden = false;
+        });
+
+        if (btn) {
+            btn.addEventListener('click', function() {
+                window.location.href = loginURL;
+            });
+        }
+    })();
+
     // Intercept sidebar link clicks to capture the current selection
     document.addEventListener('click', function(e) {
         var link = e.target.closest('#sidebar nav a[hx-get]');
@@ -302,7 +331,14 @@
         applyState();
     })();
 
-    // Hide-read articles toggle
+    // Hide-read articles toggle.
+    //
+    // "Hide read" (the default) fetches only unread articles, matching the
+    // server's default. "Show read" re-fetches the list with show_read=1 so
+    // already-read articles -- including ones read in a previous session --
+    // come back, rendered faded. The choice is authoritative for every request
+    // that loads the article list (initial load, sidebar navigation, infinite
+    // scroll) via the htmx:configRequest hook below, so it survives navigation.
     (function() {
         var STORAGE_KEY = 'herald-hide-read';
         var list = document.getElementById('article-list');
@@ -314,14 +350,34 @@
 
         function applyState() {
             var hiding = isHiding();
+            // The CSS class still hides rows marked read in-session (the
+            // hx-on::after-request handler on each row), so an article you open
+            // while hiding disappears without a refetch.
             if (list) list.classList.toggle('hide-read', hiding);
             if (btn) btn.textContent = hiding ? 'Show read' : 'Hide read';
         }
+
+        // Make the toggle authoritative for every article-list request,
+        // regardless of the URL htmx started from.
+        document.body.addEventListener('htmx:configRequest', function(e) {
+            if (e.detail.path !== '/articles') return;
+            if (isHiding()) {
+                delete e.detail.parameters['show_read'];
+            } else {
+                e.detail.parameters['show_read'] = '1';
+            }
+        });
 
         if (btn) {
             btn.addEventListener('click', function() {
                 localStorage.setItem(STORAGE_KEY, isHiding() ? 'false' : 'true');
                 applyState();
+                // Re-fetch the current view; configRequest adds/removes
+                // show_read, and the OOB sidebar refreshes in the same swap.
+                if (window.htmx) {
+                    var url = '/articles' + (window._heraldSidebarQuery || '');
+                    htmx.ajax('GET', url, { target: '#article-list', swap: 'innerHTML' });
+                }
             });
         }
 

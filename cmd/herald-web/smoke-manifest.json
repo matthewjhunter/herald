@@ -99,6 +99,17 @@
     },
     {
       "method": "POST",
+      "pattern": "/articles/{articleID}/read",
+      "effect": "mutating",
+      "example_params": {
+        "articleID": "1"
+      },
+      "request_body": "read=false",
+      "content_type": "application/x-www-form-urlencoded",
+      "complete": true
+    },
+    {
+      "method": "POST",
       "pattern": "/articles/{articleID}/star",
       "effect": "mutating",
       "example_params": {

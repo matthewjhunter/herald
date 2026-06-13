@@ -55,6 +55,11 @@ type Article struct {
 	LinkedURL       string     `json:"linked_url,omitempty"`
 	LinkedContent   string     `json:"linked_content,omitempty"`
 	SecurityFlagged bool       `json:"security_flagged,omitempty"`
+	// Read and Starred reflect the requesting user's per-article state
+	// (from read_state). They are only populated by the list/search queries
+	// that select them; single-article fetches leave them zero.
+	Read    bool `json:"read,omitempty"`
+	Starred bool `json:"starred,omitempty"`
 }
 
 // Feed represents an RSS/Atom feed subscription.
