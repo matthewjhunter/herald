@@ -791,3 +791,54 @@ func TestFeedURLCandidates(t *testing.T) {
 		}
 	}
 }
+
+func TestMuteGroupCrossUser(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	groupID, err := engine.store.CreateArticleGroup(1, "Owned by user 1")
+	if err != nil {
+		t.Fatalf("CreateArticleGroup: %v", err)
+	}
+
+	if err := engine.MuteGroup(2, groupID); err == nil {
+		t.Fatal("expected error muting another user's group")
+	}
+	muted, err := engine.store.IsGroupMuted(groupID)
+	if err != nil {
+		t.Fatalf("IsGroupMuted: %v", err)
+	}
+	if muted {
+		t.Error("group should not be muted after cross-user MuteGroup")
+	}
+
+	// The owner can mute it.
+	if err := engine.MuteGroup(1, groupID); err != nil {
+		t.Fatalf("owner MuteGroup: %v", err)
+	}
+	if muted, _ := engine.store.IsGroupMuted(groupID); !muted {
+		t.Error("group should be muted after owner MuteGroup")
+	}
+}
+
+func TestGetGroupArticlesCrossUser(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	groupID, err := engine.store.CreateArticleGroup(1, "Owned by user 1")
+	if err != nil {
+		t.Fatalf("CreateArticleGroup: %v", err)
+	}
+
+	if _, err := engine.GetGroupArticles(2, groupID); err == nil {
+		t.Fatal("expected error reading another user's group")
+	}
+
+	group, err := engine.GetGroupArticles(1, groupID)
+	if err != nil {
+		t.Fatalf("owner GetGroupArticles: %v", err)
+	}
+	if group.ID != groupID || group.Topic != "Owned by user 1" {
+		t.Errorf("unexpected group: %+v", group)
+	}
+}

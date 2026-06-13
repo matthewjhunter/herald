@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -144,6 +145,14 @@ func defaultTokenHandler(issuerURL *string) http.HandlerFunc {
 // (no token endpoint). Returns the client and a valid JWT for the test user.
 func newTestValidator(t *testing.T) (*oidclient.Client, string) {
 	t.Helper()
+	client, issueToken := newTestValidatorIssuer(t)
+	return client, issueToken("test-sub-1", "tester@example.com", "Tester")
+}
+
+// newTestValidatorIssuer is like newTestValidator but returns the token
+// minting function so tests can authenticate as additional users.
+func newTestValidatorIssuer(t *testing.T) (*oidclient.Client, func(sub, email, name string) string) {
+	t.Helper()
 	srv, issueToken := fakeOIDCProvider(t, nil)
 
 	client, err := oidclient.New(context.Background(), oidclient.Config{
@@ -153,9 +162,7 @@ func newTestValidator(t *testing.T) (*oidclient.Client, string) {
 	if err != nil {
 		t.Fatalf("oidclient.New: %v", err)
 	}
-
-	token := issueToken("test-sub-1", "tester@example.com", "Tester")
-	return client, token
+	return client, issueToken
 }
 
 // newTestValidatorWithOIDC creates an oidclient.Client with OIDC flow configured
@@ -189,23 +196,35 @@ func newTestValidatorWithOIDC(t *testing.T, tokenHandler http.HandlerFunc) *oidc
 
 // testFixtures holds all resources for a handler integration test.
 type testFixtures struct {
-	router    http.Handler
-	engine    *herald.Engine
-	store     *storage.SQLiteStore
-	userID    int64
-	feedID    int64
-	articleID int64
-	jwtToken  string // valid JWT for the test user
+	router     http.Handler
+	engine     *herald.Engine
+	store      *storage.SQLiteStore
+	userID     int64
+	feedID     int64
+	articleID  int64
+	jwtToken   string                               // valid JWT for the test user
+	issueToken func(sub, email, name string) string // mints JWTs for additional users
 }
 
 func newTestFixtures(t *testing.T) *testFixtures {
 	t.Helper()
+	return newTestFixturesWith(t, nil)
+}
+
+// newTestFixturesWith builds the standard fixtures, letting the caller tweak
+// the engine config (e.g. point SummaryBaseURL at a fake cloud gateway).
+func newTestFixturesWith(t *testing.T, mutate func(*herald.EngineConfig)) *testFixtures {
+	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 
-	engine, err := herald.NewEngine(herald.EngineConfig{
+	engCfg := herald.EngineConfig{
 		DBPath:   dbPath,
 		ReadOnly: true,
-	})
+	}
+	if mutate != nil {
+		mutate(&engCfg)
+	}
+	engine, err := herald.NewEngine(engCfg)
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
@@ -244,7 +263,8 @@ func newTestFixtures(t *testing.T) *testFixtures {
 		t.Fatalf("AddArticle: %v", err)
 	}
 
-	validator, jwtToken := newTestValidator(t)
+	validator, issueToken := newTestValidatorIssuer(t)
+	jwtToken := issueToken("test-sub-1", "tester@example.com", "Tester")
 	router := newRouter(engine, validator, "", nil)
 
 	t.Cleanup(func() {
@@ -253,14 +273,36 @@ func newTestFixtures(t *testing.T) *testFixtures {
 	})
 
 	return &testFixtures{
-		router:    router,
-		engine:    engine,
-		store:     st,
-		userID:    user.ID,
-		feedID:    feedID,
-		articleID: articleID,
-		jwtToken:  jwtToken,
+		router:     router,
+		engine:     engine,
+		store:      st,
+		userID:     user.ID,
+		feedID:     feedID,
+		articleID:  articleID,
+		jwtToken:   jwtToken,
+		issueToken: issueToken,
 	}
+}
+
+// secondTestUser provisions a second OIDC user and returns its ID and a JWT
+// minted for it, for cross-user authorization tests.
+func secondTestUser(t *testing.T, tf *testFixtures) (int64, string) {
+	t.Helper()
+	u, err := tf.engine.GetOrProvisionOIDCUser("test-sub-2", "Other", "other@example.com")
+	if err != nil {
+		t.Fatalf("GetOrProvisionOIDCUser other: %v", err)
+	}
+	return u.ID, tf.issueToken("test-sub-2", "other@example.com", "Other")
+}
+
+// authedRequestAs makes a test HTTP request authenticated with the given JWT.
+func authedRequestAs(t *testing.T, tf *testFixtures, token, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, nil)
+	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: token})
+	rr := httptest.NewRecorder()
+	tf.router.ServeHTTP(rr, req)
+	return rr
 }
 
 // request makes a test HTTP request.
@@ -937,5 +979,128 @@ func TestHandleProcessingStatus(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("status page missing %q", want)
 		}
+	}
+}
+
+// --- Cross-user ownership tests ---
+
+func TestHandleFilterDelete_CrossUser(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	ruleID, err := tf.store.AddFilterRule(&storage.FilterRule{
+		UserID: tf.userID, Axis: "author", Value: "Alice", Score: 5,
+	})
+	if err != nil {
+		t.Fatalf("AddFilterRule: %v", err)
+	}
+	_, otherToken := secondTestUser(t, tf)
+
+	// Another user cannot delete the rule.
+	rr := authedRequestAs(t, tf, otherToken, "DELETE", "/filters/"+itoa(ruleID))
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("cross-user delete: got %d, want %d", rr.Code, http.StatusNotFound)
+	}
+	rules, err := tf.engine.GetFilterRules(tf.userID, nil)
+	if err != nil {
+		t.Fatalf("GetFilterRules: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("rule should survive cross-user delete, got %d rules", len(rules))
+	}
+
+	// The owner can.
+	rr = authedRequest(t, tf, "DELETE", "/filters/"+itoa(ruleID), nil)
+	if rr.Code != http.StatusOK {
+		t.Errorf("owner delete: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	rules, _ = tf.engine.GetFilterRules(tf.userID, nil)
+	if len(rules) != 0 {
+		t.Errorf("expected 0 rules after owner delete, got %d", len(rules))
+	}
+}
+
+func TestHandleNewsletterGenerate_CrossUser(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	nlID, err := tf.store.CreateNewsletter(&storage.Newsletter{
+		UserID: tf.userID, Name: "Mine", Schedule: "manual",
+		Config: storage.NewsletterConfig{MaxArticles: 10},
+	})
+	if err != nil {
+		t.Fatalf("CreateNewsletter: %v", err)
+	}
+	otherID, otherToken := secondTestUser(t, tf)
+
+	rr := authedRequestAs(t, tf, otherToken, "POST", "/newsletters/"+itoa(nlID)+"/generate")
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("cross-user generate: got %d, want %d", rr.Code, http.StatusNotFound)
+	}
+
+	// The victim's newsletter is untouched and no digest row was created for
+	// either user.
+	nl, err := tf.store.GetNewsletter(nlID)
+	if err != nil {
+		t.Fatalf("GetNewsletter: %v", err)
+	}
+	if nl.LastGeneratedAt != nil {
+		t.Errorf("last_generated_at advanced by cross-user generate: %v", nl.LastGeneratedAt)
+	}
+	for _, uid := range []int64{tf.userID, otherID} {
+		if s, _ := tf.store.GetLatestAISummary(uid); s != nil {
+			t.Errorf("unexpected ai_summaries row for user %d: %+v", uid, s)
+		}
+	}
+}
+
+func TestHandleNewsletterGenerate_Owner(t *testing.T) {
+	// Fake cloud gateway so AISummaryEnabled() is true and the background
+	// FinishAISummary finishes quickly against a live endpoint.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		delta, _ := json.Marshal(map[string]any{
+			"choices": []map[string]any{{"delta": map[string]any{
+				"content": `{"headline":"H","body":"<p>b</p>"}`,
+			}}},
+		})
+		fmt.Fprintf(w, "data: %s\n\n", delta)
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	tf := newTestFixturesWith(t, func(cfg *herald.EngineConfig) {
+		cfg.SummaryBaseURL = srv.URL
+	})
+
+	nlID, err := tf.store.CreateNewsletter(&storage.Newsletter{
+		UserID: tf.userID, Name: "Mine", Schedule: "manual",
+		Config: storage.NewsletterConfig{MaxArticles: 10},
+	})
+	if err != nil {
+		t.Fatalf("CreateNewsletter: %v", err)
+	}
+
+	rr := authedRequest(t, tf, "POST", "/newsletters/"+itoa(nlID)+"/generate", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("owner generate: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	if !strings.Contains(rr.Body.String(), "Generating") {
+		t.Errorf("expected Generating fragment, got %q", rr.Body.String())
+	}
+
+	// Wait for the background FinishAISummary goroutine to settle before the
+	// fixtures tear down (avoids racing engine.Close).
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		inprog, err := tf.store.GetInProgressAISummary(tf.userID)
+		if err != nil {
+			t.Fatalf("GetInProgressAISummary: %v", err)
+		}
+		if inprog == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("summary still in progress after 5s")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

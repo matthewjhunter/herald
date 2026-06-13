@@ -2966,3 +2966,39 @@ func TestCycleStats(t *testing.T) {
 		t.Fatalf("limit=1 returned %d rows", len(one))
 	}
 }
+
+func TestFilterRuleUserScoping(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	id, err := store.AddFilterRule(&FilterRule{UserID: 1, Axis: "author", Value: "Alice", Score: 5})
+	if err != nil {
+		t.Fatalf("AddFilterRule: %v", err)
+	}
+
+	// Another user can neither update nor delete the rule.
+	if err := store.UpdateFilterRuleScore(2, id, 10); err == nil {
+		t.Error("expected error updating another user's rule")
+	}
+	if err := store.DeleteFilterRule(2, id); err == nil {
+		t.Error("expected error deleting another user's rule")
+	}
+	rules, err := store.GetFilterRules(1, nil)
+	if err != nil {
+		t.Fatalf("GetFilterRules: %v", err)
+	}
+	if len(rules) != 1 || rules[0].Score != 5 {
+		t.Fatalf("rule should survive cross-user mutations unchanged, got %+v", rules)
+	}
+
+	// The owner can do both.
+	if err := store.UpdateFilterRuleScore(1, id, 10); err != nil {
+		t.Fatalf("owner UpdateFilterRuleScore: %v", err)
+	}
+	if err := store.DeleteFilterRule(1, id); err != nil {
+		t.Fatalf("owner DeleteFilterRule: %v", err)
+	}
+	if rules, _ := store.GetFilterRules(1, nil); len(rules) != 0 {
+		t.Errorf("expected 0 rules after owner delete, got %d", len(rules))
+	}
+}
