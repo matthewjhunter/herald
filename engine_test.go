@@ -470,7 +470,7 @@ func TestFilterRulesCRUD(t *testing.T) {
 	}
 
 	// Update score
-	if err := engine.UpdateFilterRule(id, 10); err != nil {
+	if err := engine.UpdateFilterRule(userID, id, 10); err != nil {
 		t.Fatalf("UpdateFilterRule: %v", err)
 	}
 	rules, _ = engine.GetFilterRules(userID, nil)
@@ -479,7 +479,7 @@ func TestFilterRulesCRUD(t *testing.T) {
 	}
 
 	// Delete
-	if err := engine.DeleteFilterRule(id); err != nil {
+	if err := engine.DeleteFilterRule(userID, id); err != nil {
 		t.Fatalf("DeleteFilterRule: %v", err)
 	}
 	rules, _ = engine.GetFilterRules(userID, nil)

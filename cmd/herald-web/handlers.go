@@ -1801,8 +1801,8 @@ func (h *handlers) handleFilterDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.engine.DeleteFilterRule(ruleID); err != nil {
-		h.renderError(w, http.StatusInternalServerError, "Failed to delete rule")
+	if err := h.engine.DeleteFilterRule(uid, ruleID); err != nil {
+		h.renderError(w, http.StatusNotFound, "Rule not found")
 		return
 	}
 

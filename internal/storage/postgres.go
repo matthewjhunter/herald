@@ -1417,18 +1417,24 @@ func (s *PostgresStore) GetFilterRules(userID int64, feedID *int64) ([]FilterRul
 	return rules, rows.Err()
 }
 
-func (s *PostgresStore) UpdateFilterRuleScore(ruleID int64, score int) error {
-	_, err := s.db.Exec("UPDATE filter_rules SET score = ? WHERE id = ?", score, ruleID)
+func (s *PostgresStore) UpdateFilterRuleScore(userID, ruleID int64, score int) error {
+	res, err := s.db.Exec("UPDATE filter_rules SET score = ? WHERE id = ? AND user_id = ?", score, ruleID, userID)
 	if err != nil {
 		return fmt.Errorf("update filter rule score: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("filter rule %d not found for user %d", ruleID, userID)
 	}
 	return nil
 }
 
-func (s *PostgresStore) DeleteFilterRule(ruleID int64) error {
-	_, err := s.db.Exec("DELETE FROM filter_rules WHERE id = ?", ruleID)
+func (s *PostgresStore) DeleteFilterRule(userID, ruleID int64) error {
+	res, err := s.db.Exec("DELETE FROM filter_rules WHERE id = ? AND user_id = ?", ruleID, userID)
 	if err != nil {
 		return fmt.Errorf("delete filter rule: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("filter rule %d not found for user %d", ruleID, userID)
 	}
 	return nil
 }

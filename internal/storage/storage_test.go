@@ -1006,7 +1006,7 @@ func TestFilterRulesCRUD(t *testing.T) {
 	}
 
 	// Update score
-	if err := store.UpdateFilterRuleScore(id1, 10); err != nil {
+	if err := store.UpdateFilterRuleScore(1, id1, 10); err != nil {
 		t.Fatalf("UpdateFilterRuleScore: %v", err)
 	}
 	rules, _ = store.GetFilterRules(1, nil)
@@ -1031,7 +1031,7 @@ func TestFilterRulesCRUD(t *testing.T) {
 	}
 
 	// Delete
-	if err := store.DeleteFilterRule(id2); err != nil {
+	if err := store.DeleteFilterRule(1, id2); err != nil {
 		t.Fatalf("DeleteFilterRule: %v", err)
 	}
 	rules, _ = store.GetFilterRules(1, nil)

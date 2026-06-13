@@ -154,8 +154,8 @@ type Store interface {
 	// Filter rules
 	AddFilterRule(rule *FilterRule) (int64, error)
 	GetFilterRules(userID int64, feedID *int64) ([]FilterRule, error)
-	UpdateFilterRuleScore(ruleID int64, score int) error
-	DeleteFilterRule(ruleID int64) error
+	UpdateFilterRuleScore(userID, ruleID int64, score int) error
+	DeleteFilterRule(userID, ruleID int64) error
 	HasFilterRules(userID int64) (bool, error)
 
 	// Article summaries

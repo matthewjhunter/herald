@@ -1711,14 +1711,14 @@ func (e *Engine) GetFilterRules(userID int64, feedID *int64) ([]FilterRule, erro
 	return result, nil
 }
 
-// UpdateFilterRule updates the score of an existing filter rule.
-func (e *Engine) UpdateFilterRule(ruleID int64, score int) error {
-	return e.store.UpdateFilterRuleScore(ruleID, score)
+// UpdateFilterRule updates the score of a filter rule owned by the user.
+func (e *Engine) UpdateFilterRule(userID, ruleID int64, score int) error {
+	return e.store.UpdateFilterRuleScore(userID, ruleID, score)
 }
 
-// DeleteFilterRule deletes a filter rule by ID.
-func (e *Engine) DeleteFilterRule(ruleID int64) error {
-	return e.store.DeleteFilterRule(ruleID)
+// DeleteFilterRule deletes a filter rule by ID, scoped to the owning user.
+func (e *Engine) DeleteFilterRule(userID, ruleID int64) error {
+	return e.store.DeleteFilterRule(userID, ruleID)
 }
 
 // GetFeedMetadata returns discoverable authors and categories for a feed.

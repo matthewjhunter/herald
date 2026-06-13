@@ -2824,20 +2824,26 @@ func (s *SQLiteStore) GetFilterRules(userID int64, feedID *int64) ([]FilterRule,
 	return rules, rows.Err()
 }
 
-// UpdateFilterRuleScore updates the score of an existing filter rule.
-func (s *SQLiteStore) UpdateFilterRuleScore(ruleID int64, score int) error {
-	_, err := s.db.Exec("UPDATE filter_rules SET score = ? WHERE id = ?", score, ruleID)
+// UpdateFilterRuleScore updates the score of an existing filter rule owned by the user.
+func (s *SQLiteStore) UpdateFilterRuleScore(userID, ruleID int64, score int) error {
+	res, err := s.db.Exec("UPDATE filter_rules SET score = ? WHERE id = ? AND user_id = ?", score, ruleID, userID)
 	if err != nil {
 		return fmt.Errorf("update filter rule score: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("filter rule %d not found for user %d", ruleID, userID)
 	}
 	return nil
 }
 
-// DeleteFilterRule deletes a filter rule by ID.
-func (s *SQLiteStore) DeleteFilterRule(ruleID int64) error {
-	_, err := s.db.Exec("DELETE FROM filter_rules WHERE id = ?", ruleID)
+// DeleteFilterRule deletes a filter rule by ID, scoped to the owning user.
+func (s *SQLiteStore) DeleteFilterRule(userID, ruleID int64) error {
+	res, err := s.db.Exec("DELETE FROM filter_rules WHERE id = ? AND user_id = ?", ruleID, userID)
 	if err != nil {
 		return fmt.Errorf("delete filter rule: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("filter rule %d not found for user %d", ruleID, userID)
 	}
 	return nil
 }
