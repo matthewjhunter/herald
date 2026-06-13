@@ -114,16 +114,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_tags_unique ON feed_tags(user_id, fee
 CREATE INDEX IF NOT EXISTS idx_feed_tags_user_tag ON feed_tags(user_id, lower(tag));
 
 CREATE TABLE IF NOT EXISTS article_summaries (
-    user_id      BIGINT NOT NULL DEFAULT 1,
-    article_id   BIGINT NOT NULL,
+    article_id   BIGINT PRIMARY KEY,
     ai_summary   TEXT NOT NULL,
     skip_reason  TEXT,
     generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (user_id, article_id),
     FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
 );
-
-CREATE INDEX IF NOT EXISTS idx_article_summaries_article ON article_summaries(article_id);
 
 CREATE TABLE IF NOT EXISTS article_groups (
     id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

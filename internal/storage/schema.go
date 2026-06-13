@@ -108,16 +108,12 @@ CREATE TABLE IF NOT EXISTS feed_tags (
 CREATE INDEX IF NOT EXISTS idx_feed_tags_user_tag ON feed_tags(user_id, tag);
 
 CREATE TABLE IF NOT EXISTS article_summaries (
-    user_id INTEGER NOT NULL DEFAULT 1,
-    article_id INTEGER NOT NULL,
+    article_id INTEGER PRIMARY KEY,
     ai_summary TEXT NOT NULL,
     skip_reason TEXT,
     generated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, article_id),
     FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
 );
-
-CREATE INDEX IF NOT EXISTS idx_article_summaries_article ON article_summaries(article_id);
 
 CREATE TABLE IF NOT EXISTS article_groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
