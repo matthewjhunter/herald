@@ -53,7 +53,6 @@ type Article struct {
 }
 
 type ArticleSummary struct {
-	UserID      int64
 	ArticleID   int64
 	AISummary   string
 	GeneratedAt time.Time
@@ -1402,18 +1401,19 @@ func (s *SQLiteStore) GetArticlesByInterestScore(userID int64, threshold float64
 	return articles, scores, rows.Err()
 }
 
-// UpdateArticleAISummary stores the AI-generated summary for an article (per-user).
+// UpdateArticleAISummary stores the AI-generated summary for an article. The
+// summary is a property of the article, shared by all subscribers (#162).
 // Clears any prior skip_reason so a previously-skipped article that later
 // summarizes successfully transitions back to a normal cached row.
-func (s *SQLiteStore) UpdateArticleAISummary(userID, articleID int64, aiSummary string) error {
+func (s *SQLiteStore) UpdateArticleAISummary(articleID int64, aiSummary string) error {
 	_, err := s.db.Exec(
-		`INSERT INTO article_summaries (user_id, article_id, ai_summary, skip_reason)
-		 VALUES (?, ?, ?, NULL)
-		 ON CONFLICT(user_id, article_id) DO UPDATE SET
+		`INSERT INTO article_summaries (article_id, ai_summary, skip_reason)
+		 VALUES (?, ?, NULL)
+		 ON CONFLICT(article_id) DO UPDATE SET
 		   ai_summary = excluded.ai_summary,
 		   skip_reason = NULL,
 		   generated_at = CURRENT_TIMESTAMP`,
-		userID, articleID, aiSummary,
+		articleID, aiSummary,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update AI summary: %w", err)
@@ -1425,14 +1425,14 @@ func (s *SQLiteStore) UpdateArticleAISummary(userID, articleID int64, aiSummary 
 // (e.g., the model can't compress content shorter than the input). Stores an
 // empty ai_summary plus a non-null skip_reason so the article drops out of the
 // backfill set and isn't retried each cycle.
-func (s *SQLiteStore) MarkSummarizationSkipped(userID, articleID int64, reason string) error {
+func (s *SQLiteStore) MarkSummarizationSkipped(articleID int64, reason string) error {
 	_, err := s.db.Exec(
-		`INSERT INTO article_summaries (user_id, article_id, ai_summary, skip_reason)
-		 VALUES (?, ?, '', ?)
-		 ON CONFLICT(user_id, article_id) DO UPDATE SET
+		`INSERT INTO article_summaries (article_id, ai_summary, skip_reason)
+		 VALUES (?, '', ?)
+		 ON CONFLICT(article_id) DO UPDATE SET
 		   skip_reason = excluded.skip_reason,
 		   generated_at = CURRENT_TIMESTAMP`,
-		userID, articleID, reason,
+		articleID, reason,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to mark summarization skipped: %w", err)
@@ -1440,13 +1440,13 @@ func (s *SQLiteStore) MarkSummarizationSkipped(userID, articleID int64, reason s
 	return nil
 }
 
-// GetArticleSummary retrieves the AI summary for an article for a specific user
-func (s *SQLiteStore) GetArticleSummary(userID, articleID int64) (*ArticleSummary, error) {
+// GetArticleSummary retrieves the shared AI summary for an article.
+func (s *SQLiteStore) GetArticleSummary(articleID int64) (*ArticleSummary, error) {
 	var as ArticleSummary
 	err := s.db.QueryRow(
-		"SELECT user_id, article_id, ai_summary, generated_at FROM article_summaries WHERE user_id = ? AND article_id = ?",
-		userID, articleID,
-	).Scan(&as.UserID, &as.ArticleID, &as.AISummary, &as.GeneratedAt)
+		"SELECT article_id, ai_summary, generated_at FROM article_summaries WHERE article_id = ?",
+		articleID,
+	).Scan(&as.ArticleID, &as.AISummary, &as.GeneratedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -1483,10 +1483,10 @@ func (s *SQLiteStore) GetFeedStats(userID int64) ([]FeedStats, error) {
 		JOIN user_feeds uf ON uf.feed_id = f.id AND uf.user_id = ?
 		JOIN articles a ON a.feed_id = f.id
 		LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = ?
-		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id AND asumm.user_id = ?
+		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id
 		GROUP BY f.id, uf.user_title
 		ORDER BY COALESCE(uf.user_title, f.title)`,
-		userID, userID, userID,
+		userID, userID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get feed stats: %w", err)
@@ -1551,11 +1551,12 @@ func (s *SQLiteStore) GetProcessingStats(userID int64) (*ProcessingStats, error)
 		return nil, fmt.Errorf("get processing stats (funnel): %w", err)
 	}
 
+	// Summaries are per-article and shared by all subscribers (#162), so these
+	// two funnel numbers are global, like the security columns above.
 	err = s.db.QueryRow(`
 		SELECT
-			(SELECT COUNT(*) FROM article_summaries WHERE user_id = ? AND ai_summary <> ''),
-			(SELECT COUNT(*) FROM article_summaries WHERE user_id = ? AND COALESCE(skip_reason, '') <> '')`,
-		userID, userID,
+			(SELECT COUNT(*) FROM article_summaries WHERE ai_summary <> ''),
+			(SELECT COUNT(*) FROM article_summaries WHERE COALESCE(skip_reason, '') <> '')`,
 	).Scan(&p.Summarized, &p.SummarizeSkipped)
 	if err != nil {
 		return nil, fmt.Errorf("get processing stats (summaries): %w", err)
@@ -2369,17 +2370,16 @@ func (s *SQLiteStore) GetUnscoredArticleCount(userID int64) (int, error) {
 	return count, nil
 }
 
-// GetUnsummarizedArticleCount returns the number of articles from the user's
-// subscribed feeds that have no AI summary yet (pending content summarization).
-func (s *SQLiteStore) GetUnsummarizedArticleCount(userID int64) (int, error) {
+// GetUnsummarizedArticleCount returns the number of articles that have no
+// shared AI summary yet (pending content summarization). Global, like the
+// summarize pass itself (#162).
+func (s *SQLiteStore) GetUnsummarizedArticleCount() (int, error) {
 	var count int
 	err := s.db.QueryRow(`
 		SELECT COUNT(*)
 		FROM articles a
-		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id AND asumm.user_id = ?
-		WHERE uf.user_id = ? AND asumm.article_id IS NULL`,
-		userID, userID,
+		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id
+		WHERE asumm.article_id IS NULL`,
 	).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("get unsummarized article count: %w", err)
@@ -2387,24 +2387,22 @@ func (s *SQLiteStore) GetUnsummarizedArticleCount(userID int64) (int, error) {
 	return count, nil
 }
 
-// GetUnsummarizedScoredArticles returns articles that have been AI-scored with
-// a passing security score but lack a cached AI summary. Used by the daemon's
-// summary backfill pass to re-attempt summarization that failed transiently
-// (e.g., Ollama timeout, garbled output) during the original scoring cycle.
-func (s *SQLiteStore) GetUnsummarizedScoredArticles(userID int64, securityThreshold float64, limit int) ([]Article, error) {
+// GetUnsummarizedScoredArticles returns articles that passed the security
+// screen but lack a cached AI summary. Global — the summary is a property of
+// the article, shared by all subscribers (#162) — so this drives the daemon's
+// once-per-cycle summarize pass, mirroring GetUnscreenedArticles.
+func (s *SQLiteStore) GetUnsummarizedScoredArticles(securityThreshold float64, limit int) ([]Article, error) {
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date
 		FROM articles a
-		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id AND asumm.user_id = uf.user_id
-		WHERE uf.user_id = ?
-		  AND a.security_score >= ?
+		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id
+		WHERE a.security_score >= ?
 		  AND asumm.article_id IS NULL
 		ORDER BY a.published_date DESC
 		LIMIT ?
 	`
-	rows, err := s.db.Query(query, userID, securityThreshold, limit)
+	rows, err := s.db.Query(query, securityThreshold, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get unsummarized scored articles: %w", err)
 	}

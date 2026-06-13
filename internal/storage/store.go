@@ -123,8 +123,8 @@ type Store interface {
 	GetUnreadArticlesForUser(userID int64, limit, offset int, filterThreshold *int) ([]Article, error)
 	GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int, filterThreshold *int) ([]Article, error)
 	GetUnscoredArticleCount(userID int64) (int, error)
-	GetUnsummarizedArticleCount(userID int64) (int, error)
-	GetUnsummarizedScoredArticles(userID int64, securityThreshold float64, limit int) ([]Article, error)
+	GetUnsummarizedArticleCount() (int, error)
+	GetUnsummarizedScoredArticles(securityThreshold float64, limit int) ([]Article, error)
 	GetUnscoredCurationArticles(userID int64, securityThreshold float64, limit int) ([]Article, error)
 	GetUngroupedEmbeddedArticles(userID int64, model string, securityThreshold float64, since time.Time, limit int) ([]Article, error)
 	GetArticlesNeedingFullText(limit int) ([]Article, error)
@@ -158,10 +158,10 @@ type Store interface {
 	DeleteFilterRule(userID, ruleID int64) error
 	HasFilterRules(userID int64) (bool, error)
 
-	// Article summaries
-	UpdateArticleAISummary(userID, articleID int64, aiSummary string) error
-	MarkSummarizationSkipped(userID, articleID int64, reason string) error
-	GetArticleSummary(userID, articleID int64) (*ArticleSummary, error)
+	// Article summaries (per-article, shared by all subscribers — #162)
+	UpdateArticleAISummary(articleID int64, aiSummary string) error
+	MarkSummarizationSkipped(articleID int64, reason string) error
+	GetArticleSummary(articleID int64) (*ArticleSummary, error)
 
 	// Feed stats
 	GetFeedStats(userID int64) ([]FeedStats, error)

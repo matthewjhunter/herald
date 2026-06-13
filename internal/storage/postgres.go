@@ -998,18 +998,16 @@ func (s *PostgresStore) GetUnscoredArticleCount(userID int64) (int, error) {
 	return count, nil
 }
 
-func (s *PostgresStore) GetUnsummarizedScoredArticles(userID int64, securityThreshold float64, limit int) ([]Article, error) {
+func (s *PostgresStore) GetUnsummarizedScoredArticles(securityThreshold float64, limit int) ([]Article, error) {
 	rows, err := s.db.Query(`
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date
 		FROM articles a
-		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id AND asumm.user_id = uf.user_id
-		WHERE uf.user_id = ?
-		  AND a.security_score >= ?
+		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id
+		WHERE a.security_score >= ?
 		  AND asumm.article_id IS NULL
 		ORDER BY a.published_date DESC
-		LIMIT ?`, userID, securityThreshold, limit)
+		LIMIT ?`, securityThreshold, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get unsummarized scored articles: %w", err)
 	}
@@ -1146,15 +1144,13 @@ func (s *PostgresStore) GetUngroupedEmbeddedArticles(userID int64, model string,
 	return scanArticles(rows)
 }
 
-func (s *PostgresStore) GetUnsummarizedArticleCount(userID int64) (int, error) {
+func (s *PostgresStore) GetUnsummarizedArticleCount() (int, error) {
 	var count int
 	err := s.db.QueryRow(`
 		SELECT COUNT(*)
 		FROM articles a
-		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id AND asumm.user_id = ?
-		WHERE uf.user_id = ? AND asumm.article_id IS NULL`,
-		userID, userID,
+		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id
+		WHERE asumm.article_id IS NULL`,
 	).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("get unsummarized article count: %w", err)
@@ -1489,15 +1485,15 @@ func (s *PostgresStore) HasFilterRules(userID int64) (bool, error) {
 
 // --- Article summaries ---
 
-func (s *PostgresStore) UpdateArticleAISummary(userID, articleID int64, aiSummary string) error {
+func (s *PostgresStore) UpdateArticleAISummary(articleID int64, aiSummary string) error {
 	_, err := s.db.Exec(
-		`INSERT INTO article_summaries (user_id, article_id, ai_summary, skip_reason)
-		 VALUES (?, ?, ?, NULL)
-		 ON CONFLICT(user_id, article_id) DO UPDATE SET
+		`INSERT INTO article_summaries (article_id, ai_summary, skip_reason)
+		 VALUES (?, ?, NULL)
+		 ON CONFLICT(article_id) DO UPDATE SET
 		   ai_summary = EXCLUDED.ai_summary,
 		   skip_reason = NULL,
 		   generated_at = NOW()`,
-		userID, articleID, aiSummary,
+		articleID, aiSummary,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update AI summary: %w", err)
@@ -1505,14 +1501,14 @@ func (s *PostgresStore) UpdateArticleAISummary(userID, articleID int64, aiSummar
 	return nil
 }
 
-func (s *PostgresStore) MarkSummarizationSkipped(userID, articleID int64, reason string) error {
+func (s *PostgresStore) MarkSummarizationSkipped(articleID int64, reason string) error {
 	_, err := s.db.Exec(
-		`INSERT INTO article_summaries (user_id, article_id, ai_summary, skip_reason)
-		 VALUES (?, ?, '', ?)
-		 ON CONFLICT (user_id, article_id) DO UPDATE SET
+		`INSERT INTO article_summaries (article_id, ai_summary, skip_reason)
+		 VALUES (?, '', ?)
+		 ON CONFLICT (article_id) DO UPDATE SET
 		   skip_reason = EXCLUDED.skip_reason,
 		   generated_at = NOW()`,
-		userID, articleID, reason,
+		articleID, reason,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to mark summarization skipped: %w", err)
@@ -1520,12 +1516,12 @@ func (s *PostgresStore) MarkSummarizationSkipped(userID, articleID int64, reason
 	return nil
 }
 
-func (s *PostgresStore) GetArticleSummary(userID, articleID int64) (*ArticleSummary, error) {
+func (s *PostgresStore) GetArticleSummary(articleID int64) (*ArticleSummary, error) {
 	var as ArticleSummary
 	err := s.db.QueryRow(
-		"SELECT user_id, article_id, ai_summary, generated_at FROM article_summaries WHERE user_id = ? AND article_id = ?",
-		userID, articleID,
-	).Scan(&as.UserID, &as.ArticleID, &as.AISummary, &as.GeneratedAt)
+		"SELECT article_id, ai_summary, generated_at FROM article_summaries WHERE article_id = ?",
+		articleID,
+	).Scan(&as.ArticleID, &as.AISummary, &as.GeneratedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -1562,11 +1558,12 @@ func (s *PostgresStore) GetProcessingStats(userID int64) (*ProcessingStats, erro
 		return nil, fmt.Errorf("get processing stats (funnel): %w", err)
 	}
 
+	// Summaries are per-article and shared by all subscribers (#162), so these
+	// two funnel numbers are global, like the security columns above.
 	err = s.db.QueryRow(`
 		SELECT
-			(SELECT COUNT(*) FROM article_summaries WHERE user_id = ? AND ai_summary <> ''),
-			(SELECT COUNT(*) FROM article_summaries WHERE user_id = ? AND COALESCE(skip_reason, '') <> '')`,
-		userID, userID,
+			(SELECT COUNT(*) FROM article_summaries WHERE ai_summary <> ''),
+			(SELECT COUNT(*) FROM article_summaries WHERE COALESCE(skip_reason, '') <> '')`,
 	).Scan(&p.Summarized, &p.SummarizeSkipped)
 	if err != nil {
 		return nil, fmt.Errorf("get processing stats (summaries): %w", err)
@@ -1650,10 +1647,10 @@ func (s *PostgresStore) GetFeedStats(userID int64) ([]FeedStats, error) {
 		JOIN user_feeds uf ON uf.feed_id = f.id AND uf.user_id = ?
 		JOIN articles a ON a.feed_id = f.id
 		LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = ?
-		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id AND asumm.user_id = ?
+		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id
 		GROUP BY f.id, uf.user_title
 		ORDER BY COALESCE(uf.user_title, f.title)`,
-		userID, userID, userID,
+		userID, userID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get feed stats: %w", err)
