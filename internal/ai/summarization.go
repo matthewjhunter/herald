@@ -9,8 +9,12 @@ import (
 
 // SummarizeArticle generates an AI summary for a single article.
 // maxSummaryLength is communicated to the model in the prompt; pass 0 to omit.
-func (p *AIProcessor) SummarizeArticle(ctx context.Context, userID int64, title, content string, maxSummaryLength int) (string, error) {
-	promptTemplate, err := p.promptLoader.GetPrompt(userID, PromptTypeSummarization)
+// The summary is a property of the article, shared by every subscriber (#162),
+// so it always uses the global summarization prompt/temperature (the user_id=0
+// admin override, then config, then default) — never a per-user prompt.
+func (p *AIProcessor) SummarizeArticle(ctx context.Context, title, content string, maxSummaryLength int) (string, error) {
+	const globalUser = int64(0)
+	promptTemplate, err := p.promptLoader.GetPrompt(globalUser, PromptTypeSummarization)
 	if err != nil {
 		return "", fmt.Errorf("failed to load summarization prompt: %w", err)
 	}
@@ -25,7 +29,7 @@ func (p *AIProcessor) SummarizeArticle(ctx context.Context, userID int64, title,
 		return "", fmt.Errorf("failed to render summarization prompt: %w", err)
 	}
 
-	temperature := p.promptLoader.GetTemperature(userID, PromptTypeSummarization)
+	temperature := p.promptLoader.GetTemperature(globalUser, PromptTypeSummarization)
 
 	callCtx, cancel := p.withCallTimeout(ctx)
 	defer cancel()

@@ -483,19 +483,23 @@ func doFetch(ctx context.Context) error {
 		formatter.Warning("skipping embedding backfill and group matching")
 	}
 
-	// Security screening is global: each article is screened once and the verdict
-	// is shared by every subscriber (#141), so run it once per cycle before the
-	// per-user pipelines rather than re-screening per user. One breaker check,
-	// not one per user (#111).
+	// Security screening and summarization are global: each article is screened
+	// and summarized once, with the verdict and summary shared by every
+	// subscriber (#141, #162), so run both once per cycle before the per-user
+	// pipelines rather than redoing them per user. One breaker check, not one
+	// per user (#111).
 	securityStage := newPipelineStage(store, processor, groupMatcher, formatter, cfg.DefaultUserID)
 	totalProcessed, err := securityStage.RunSecurity(ctx)
 	if err != nil {
 		formatter.Warning("security pass failed: %v", err)
 	}
+	if _, err := securityStage.RunSummaries(ctx); err != nil {
+		formatter.Warning("summarize pass failed: %v", err)
+	}
 
 	// Run the per-user pipeline for each subscribing user. It drives every stage
 	// from its own state-driven, newest-first query, reading the article-level
-	// security verdict to decide what to summarize/curate, so this cycle's freshly
+	// security verdict to decide what to curate, so this cycle's freshly
 	// screened articles are processed ahead of older backlog, and anything left
 	// pending from prior cycles drains the same way. Self-skips when the AI
 	// backend is unavailable.
