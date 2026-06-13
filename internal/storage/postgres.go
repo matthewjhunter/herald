@@ -961,16 +961,17 @@ func (s *PostgresStore) GetArticlesByInterestScore(userID int64, threshold float
 	return articles, scores, rows.Err()
 }
 
-func (s *PostgresStore) GetUnreadArticlesForUser(userID int64, limit, offset int, filterThreshold *int) ([]Article, error) {
+func (s *PostgresStore) GetUnreadArticlesForUser(userID int64, limit, offset int, filterThreshold *int, includeRead bool) ([]Article, error) {
 	filterSQL, filterArgs := filterScoreClausePG(userID, filterThreshold)
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date,
-		       COALESCE(a.security_flagged, FALSE) AS security_flagged
+		       COALESCE(a.security_flagged, FALSE) AS security_flagged,
+		       COALESCE(rs.read, FALSE) AS is_read, COALESCE(rs.starred, FALSE) AS is_starred
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
-		WHERE uf.user_id = ? AND (rs.article_id IS NULL OR rs.read = FALSE)
+		WHERE uf.user_id = ?` + readFilterClausePG(includeRead) + `
 		AND NOT EXISTS (
 			SELECT 1 FROM article_group_members agm
 			JOIN article_groups ag ON agm.group_id = ag.id
@@ -987,19 +988,20 @@ func (s *PostgresStore) GetUnreadArticlesForUser(userID int64, limit, offset int
 		return nil, fmt.Errorf("failed to get unread articles for user: %w", err)
 	}
 	defer rows.Close()
-	return scanArticlesWithFlags(rows)
+	return scanArticlesWithReadState(rows)
 }
 
-func (s *PostgresStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int, filterThreshold *int) ([]Article, error) {
+func (s *PostgresStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int, filterThreshold *int, includeRead bool) ([]Article, error) {
 	filterSQL, filterArgs := filterScoreClausePG(userID, filterThreshold)
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date,
-		       COALESCE(a.security_flagged, FALSE) AS security_flagged
+		       COALESCE(a.security_flagged, FALSE) AS security_flagged,
+		       COALESCE(rs.read, FALSE) AS is_read, COALESCE(rs.starred, FALSE) AS is_starred
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
-		WHERE uf.user_id = ? AND a.feed_id = ? AND (rs.article_id IS NULL OR rs.read = FALSE)
+		WHERE uf.user_id = ? AND a.feed_id = ?` + readFilterClausePG(includeRead) + `
 		AND NOT EXISTS (
 			SELECT 1 FROM article_group_members agm
 			JOIN article_groups ag ON agm.group_id = ag.id
@@ -1016,7 +1018,7 @@ func (s *PostgresStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, off
 		return nil, fmt.Errorf("failed to get unread articles by feed: %w", err)
 	}
 	defer rows.Close()
-	return scanArticlesWithFlags(rows)
+	return scanArticlesWithReadState(rows)
 }
 
 // GetUnscoredArticleCount counts the user's articles still in the AI funnel:
@@ -1239,7 +1241,9 @@ func (s *PostgresStore) GetStarredArticles(userID int64, limit, offset int, filt
 	filterSQL, filterArgs := filterScoreClausePG(userID, filterThreshold)
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date
+		       a.author, a.published_date, a.fetched_date,
+		       COALESCE(a.security_flagged, FALSE) AS security_flagged,
+		       COALESCE(rs.read, FALSE) AS is_read, COALESCE(rs.starred, FALSE) AS is_starred
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
 		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
@@ -1255,7 +1259,7 @@ func (s *PostgresStore) GetStarredArticles(userID int64, limit, offset int, filt
 		return nil, fmt.Errorf("failed to get starred articles: %w", err)
 	}
 	defer rows.Close()
-	return scanArticles(rows)
+	return scanArticlesWithReadState(rows)
 }
 
 // --- Article images ---
@@ -1910,16 +1914,18 @@ func (s *PostgresStore) FindArticleGroup(articleID, userID int64) (*int64, error
 	return &groupID, nil
 }
 
-func (s *PostgresStore) GetUnreadGroupArticles(userID, groupID int64, limit, offset int, filterThreshold *int) ([]Article, error) {
+func (s *PostgresStore) GetUnreadGroupArticles(userID, groupID int64, limit, offset int, filterThreshold *int, includeRead bool) ([]Article, error) {
 	filterSQL, filterArgs := filterScoreClausePG(userID, filterThreshold)
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date
+		       a.author, a.published_date, a.fetched_date,
+		       COALESCE(a.security_flagged, FALSE) AS security_flagged,
+		       COALESCE(rs.read, FALSE) AS is_read, COALESCE(rs.starred, FALSE) AS is_starred
 		FROM articles a
 		JOIN article_group_members agm ON a.id = agm.article_id
 		JOIN article_groups ag ON agm.group_id = ag.id
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
-		WHERE agm.group_id = ? AND ag.user_id = ? AND (rs.article_id IS NULL OR rs.read = FALSE)
+		WHERE agm.group_id = ? AND ag.user_id = ?` + readFilterClausePG(includeRead) + `
 		` + filterSQL + `
 		ORDER BY a.published_date DESC
 		LIMIT ? OFFSET ?`
@@ -1931,7 +1937,7 @@ func (s *PostgresStore) GetUnreadGroupArticles(userID, groupID int64, limit, off
 		return nil, fmt.Errorf("failed to get unread group articles: %w", err)
 	}
 	defer rows.Close()
-	return scanArticles(rows)
+	return scanArticlesWithReadState(rows)
 }
 
 func (s *PostgresStore) GetGroupStats(userID int64) ([]GroupStats, error) {
@@ -2764,18 +2770,21 @@ func (s *PostgresStore) GetFeedGroupMemberships(userID int64) (map[int64][]int64
 func (s *PostgresStore) SearchArticlesFTS(userID int64, query string, limit, offset int) ([]Article, error) {
 	rows, err := s.db.Query(s.db.prepare(`
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date
+		       a.author, a.published_date, a.fetched_date,
+		       COALESCE(a.security_flagged, FALSE) AS security_flagged,
+		       COALESCE(rs.read, FALSE) AS is_read, COALESCE(rs.starred, FALSE) AS is_starred
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = ?
 		WHERE uf.user_id = ? AND a.search_vector @@ websearch_to_tsquery('english', ?)
 		ORDER BY ts_rank_cd(a.search_vector, websearch_to_tsquery('english', ?)) DESC
 		LIMIT ? OFFSET ?`),
-		userID, query, query, limit, offset)
+		userID, userID, query, query, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("fts search: %w", err)
 	}
 	defer rows.Close()
-	return scanArticles(rows)
+	return scanArticlesWithReadState(rows)
 }
 
 // StoreArticleEmbedding upserts a successful embedding vector. Resets
@@ -3265,6 +3274,32 @@ func scanArticlesWithFlags(rows *sql.Rows) ([]Article, error) {
 		articles = append(articles, a)
 	}
 	return articles, rows.Err()
+}
+
+// scanArticlesWithReadState scans rows that include a security_flagged column
+// plus the per-user read and starred flags, in that order, after the standard
+// article fields. Used by the list queries that surface read/starred state.
+func scanArticlesWithReadState(rows *sql.Rows) ([]Article, error) {
+	var articles []Article
+	for rows.Next() {
+		var a Article
+		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
+			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate,
+			&a.SecurityFlagged, &a.Read, &a.Starred); err != nil {
+			return nil, fmt.Errorf("scan article: %w", err)
+		}
+		articles = append(articles, a)
+	}
+	return articles, rows.Err()
+}
+
+// readFilterClausePG is the Postgres counterpart to readFilterClause: it uses
+// boolean FALSE rather than the integer 0 SQLite tolerates for the read column.
+func readFilterClausePG(includeRead bool) string {
+	if includeRead {
+		return ""
+	}
+	return " AND (rs.article_id IS NULL OR rs.read = FALSE)"
 }
 
 // filterScoreClausePG is identical in logic to filterScoreClause but named

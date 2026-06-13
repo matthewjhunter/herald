@@ -213,6 +213,7 @@ type articleListData struct {
 	GroupHeadline string
 	GroupSummary  string
 	Starred       bool
+	ShowRead      bool
 }
 
 type articleRow struct {
@@ -596,6 +597,7 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 	feedID := parseInt64Param(r, "feed_id")
 	groupID := parseInt64Param(r, "group_id")
 	starred := r.URL.Query().Get("starred") == "1"
+	showRead := r.URL.Query().Get("show_read") == "1"
 
 	var articles []herald.Article
 	var err error
@@ -604,11 +606,11 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 	case starred:
 		articles, err = h.engine.GetStarredArticles(uid, limit+1, offset)
 	case groupID > 0:
-		articles, err = h.engine.GetUnreadGroupArticles(uid, groupID, limit+1, offset)
+		articles, err = h.engine.GetUnreadGroupArticles(uid, groupID, limit+1, offset, showRead)
 	case feedID > 0:
-		articles, err = h.engine.GetUnreadArticlesByFeed(uid, feedID, limit+1, offset)
+		articles, err = h.engine.GetUnreadArticlesByFeed(uid, feedID, limit+1, offset, showRead)
 	default:
-		articles, err = h.engine.GetUnreadArticles(uid, limit+1, offset)
+		articles, err = h.engine.GetUnreadArticles(uid, limit+1, offset, showRead)
 	}
 
 	if err != nil {
@@ -636,6 +638,7 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 		FeedID:     feedID,
 		GroupID:    groupID,
 		Starred:    starred,
+		ShowRead:   showRead,
 	}
 
 	// Load group summary banner when viewing a group
@@ -654,6 +657,8 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 			FeedTitle:        feedTitles[a.FeedID],
 			PublishedDateFmt: formatDate(bestDate(a.PublishedDate, &a.FetchedDate)),
 			SecurityFlagged:  a.SecurityFlagged,
+			Read:             a.Read,
+			Starred:          a.Starred,
 		})
 	}
 

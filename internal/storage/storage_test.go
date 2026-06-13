@@ -547,7 +547,7 @@ func TestGetUnreadArticlesForUser(t *testing.T) {
 		URL: "https://example.com/b/1", PublishedDate: &now,
 	})
 
-	articles, err := store.GetUnreadArticlesForUser(1, 10, 0, nil)
+	articles, err := store.GetUnreadArticlesForUser(1, 10, 0, nil, false)
 	if err != nil {
 		t.Fatalf("GetUnreadArticlesForUser failed: %v", err)
 	}
@@ -556,6 +556,66 @@ func TestGetUnreadArticlesForUser(t *testing.T) {
 	}
 	if articles[0].Title != "Feed A Article" {
 		t.Errorf("expected Feed A Article, got %q", articles[0].Title)
+	}
+}
+
+func TestGetArticlesIncludeReadAndFlags(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feed, _ := store.AddFeed("https://example.com/a", "Feed A", "")
+	store.SubscribeUserToFeed(1, feed)
+
+	now := time.Now()
+	readID, _ := store.AddArticle(&Article{
+		FeedID: feed, GUID: "r1", Title: "Read Article",
+		URL: "https://example.com/a/read", PublishedDate: &now,
+	})
+	unreadID, _ := store.AddArticle(&Article{
+		FeedID: feed, GUID: "u1", Title: "Unread Article",
+		URL: "https://example.com/a/unread", PublishedDate: &now,
+	})
+
+	// Mark one read and star it; leave the other untouched.
+	if err := store.UpdateReadState(1, readID, true, nil, nil, nil, nil); err != nil {
+		t.Fatalf("UpdateReadState: %v", err)
+	}
+	if err := store.UpdateStarred(1, readID, true); err != nil {
+		t.Fatalf("UpdateStarred: %v", err)
+	}
+
+	// Default (includeRead=false): only the unread article, flagged unread.
+	unread, err := store.GetUnreadArticlesForUser(1, 10, 0, nil, false)
+	if err != nil {
+		t.Fatalf("GetUnreadArticlesForUser(false): %v", err)
+	}
+	if len(unread) != 1 {
+		t.Fatalf("includeRead=false: expected 1 article, got %d", len(unread))
+	}
+	if unread[0].ID != unreadID {
+		t.Errorf("includeRead=false: expected unread article %d, got %d", unreadID, unread[0].ID)
+	}
+	if unread[0].Read {
+		t.Error("includeRead=false: unread article should have Read=false")
+	}
+
+	// includeRead=true: both articles, each carrying correct Read/Starred state.
+	all, err := store.GetUnreadArticlesForUser(1, 10, 0, nil, true)
+	if err != nil {
+		t.Fatalf("GetUnreadArticlesForUser(true): %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("includeRead=true: expected 2 articles, got %d", len(all))
+	}
+	flags := map[int64]Article{}
+	for _, a := range all {
+		flags[a.ID] = a
+	}
+	if got := flags[readID]; !got.Read || !got.Starred {
+		t.Errorf("read article: expected Read && Starred, got Read=%v Starred=%v", got.Read, got.Starred)
+	}
+	if got := flags[unreadID]; got.Read || got.Starred {
+		t.Errorf("unread article: expected !Read && !Starred, got Read=%v Starred=%v", got.Read, got.Starred)
 	}
 }
 
@@ -1086,7 +1146,7 @@ func TestFilteredArticleQueries(t *testing.T) {
 	store.AddFilterRule(&FilterRule{UserID: 1, Axis: "category", Value: "Security", Score: 3})
 
 	// Without filter (nil threshold) — both articles returned
-	articles, err := store.GetUnreadArticlesForUser(1, 10, 0, nil)
+	articles, err := store.GetUnreadArticlesForUser(1, 10, 0, nil, false)
 	if err != nil {
 		t.Fatalf("GetUnreadArticlesForUser (nil threshold): %v", err)
 	}
@@ -1096,14 +1156,14 @@ func TestFilteredArticleQueries(t *testing.T) {
 
 	// With threshold=0 — both articles returned (0 means disabled)
 	zero := 0
-	articles, _ = store.GetUnreadArticlesForUser(1, 10, 0, &zero)
+	articles, _ = store.GetUnreadArticlesForUser(1, 10, 0, &zero, false)
 	if len(articles) != 2 {
 		t.Errorf("threshold=0: expected 2 articles, got %d", len(articles))
 	}
 
 	// With threshold=1 — only a1 passes (score 8 >= 1), a2 has score 0
 	one := 1
-	articles, _ = store.GetUnreadArticlesForUser(1, 10, 0, &one)
+	articles, _ = store.GetUnreadArticlesForUser(1, 10, 0, &one, false)
 	if len(articles) != 1 {
 		t.Errorf("threshold=1: expected 1 article, got %d", len(articles))
 	}
@@ -1113,7 +1173,7 @@ func TestFilteredArticleQueries(t *testing.T) {
 
 	// With threshold=10 — neither passes (max score is 8)
 	ten := 10
-	articles, _ = store.GetUnreadArticlesForUser(1, 10, 0, &ten)
+	articles, _ = store.GetUnreadArticlesForUser(1, 10, 0, &ten, false)
 	if len(articles) != 0 {
 		t.Errorf("threshold=10: expected 0 articles, got %d", len(articles))
 	}
@@ -1135,7 +1195,7 @@ func TestFilteredQueriesNoRulesPassthrough(t *testing.T) {
 	// User has no filter rules, but threshold is set — should still pass through
 	// because NOT EXISTS (SELECT 1 FROM filter_rules WHERE user_id=1) is true
 	threshold := 5
-	articles, err := store.GetUnreadArticlesForUser(1, 10, 0, &threshold)
+	articles, err := store.GetUnreadArticlesForUser(1, 10, 0, &threshold, false)
 	if err != nil {
 		t.Fatalf("GetUnreadArticlesForUser with threshold but no rules: %v", err)
 	}
@@ -1351,7 +1411,7 @@ func TestPostgresBackend(t *testing.T) {
 		store.AddFilterRule(&FilterRule{UserID: 2, Axis: "author", Value: "FilterAuthor", Score: 5})
 
 		one := 1
-		arts, err := store.GetUnreadArticlesForUser(2, 10, 0, &one)
+		arts, err := store.GetUnreadArticlesForUser(2, 10, 0, &one, false)
 		if err != nil {
 			t.Fatalf("GetUnreadArticlesForUser with filter: %v", err)
 		}
@@ -1476,7 +1536,7 @@ func TestMigrateStore(t *testing.T) {
 	dstArts, _ := dst.GetUnreadArticles(100)
 	_ = dstArts
 	// Find article in dst by feed
-	dstFeedArts, _ := dst.GetUnreadArticlesByFeed(1, dstFeedID, 10, 0, nil)
+	dstFeedArts, _ := dst.GetUnreadArticlesByFeed(1, dstFeedID, 10, 0, nil, false)
 	_ = dstFeedArts
 
 	pref, err := dst.GetUserPreference(1, "theme")
@@ -1639,7 +1699,7 @@ func TestGroupVirtualFeed(t *testing.T) {
 	store.AddArticleToGroup(groupID, art2)
 
 	// Verify grouped articles are excluded from feed queries
-	unread, err := store.GetUnreadArticlesForUser(1, 100, 0, nil)
+	unread, err := store.GetUnreadArticlesForUser(1, 100, 0, nil, false)
 	if err != nil {
 		t.Fatalf("GetUnreadArticlesForUser: %v", err)
 	}
@@ -1651,7 +1711,7 @@ func TestGroupVirtualFeed(t *testing.T) {
 	}
 
 	// Verify grouped articles excluded from feed-specific queries too
-	feedArticles, err := store.GetUnreadArticlesByFeed(1, feedID, 100, 0, nil)
+	feedArticles, err := store.GetUnreadArticlesByFeed(1, feedID, 100, 0, nil, false)
 	if err != nil {
 		t.Fatalf("GetUnreadArticlesByFeed: %v", err)
 	}
@@ -1660,7 +1720,7 @@ func TestGroupVirtualFeed(t *testing.T) {
 	}
 
 	// Verify group articles are returned by GetUnreadGroupArticles
-	groupArticles, err := store.GetUnreadGroupArticles(1, groupID, 100, 0, nil)
+	groupArticles, err := store.GetUnreadGroupArticles(1, groupID, 100, 0, nil, false)
 	if err != nil {
 		t.Fatalf("GetUnreadGroupArticles: %v", err)
 	}
@@ -1713,7 +1773,7 @@ func TestGroupVirtualFeed(t *testing.T) {
 	if err := store.DisbandGroup(groupID); err != nil {
 		t.Fatalf("DisbandGroup: %v", err)
 	}
-	unread, _ = store.GetUnreadArticlesForUser(1, 100, 0, nil)
+	unread, _ = store.GetUnreadArticlesForUser(1, 100, 0, nil, false)
 	if len(unread) != 3 {
 		t.Errorf("expected 3 articles after disband, got %d", len(unread))
 	}
