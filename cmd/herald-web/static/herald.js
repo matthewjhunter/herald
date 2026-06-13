@@ -20,6 +20,35 @@
         }
     }
 
+    // Graceful auth-expiry handling. When the session cookie expires, any
+    // request (including the periodic background sidebar refresh) gets a 401
+    // with an HX-Redirect header. Left to htmx, that header triggers a full
+    // page navigation to the login flow -- yanking the user off whatever
+    // article they were reading. Instead we cancel htmx's response handling
+    // and surface a non-destructive "reconnect" banner, preserving the
+    // reading pane until the user chooses to re-authenticate.
+    (function() {
+        var banner = document.getElementById('reconnect-banner');
+        var btn = document.getElementById('reconnect-btn');
+        var loginURL = '/';
+
+        document.body.addEventListener('htmx:beforeOnLoad', function(e) {
+            var xhr = e.detail && e.detail.xhr;
+            if (!xhr || xhr.status !== 401) return;
+            // Cancelling beforeOnLoad stops htmx from swapping content AND from
+            // honouring the HX-Redirect header, so the page stays put.
+            e.preventDefault();
+            loginURL = xhr.getResponseHeader('HX-Redirect') || loginURL;
+            if (banner) banner.hidden = false;
+        });
+
+        if (btn) {
+            btn.addEventListener('click', function() {
+                window.location.href = loginURL;
+            });
+        }
+    })();
+
     // Intercept sidebar link clicks to capture the current selection
     document.addEventListener('click', function(e) {
         var link = e.target.closest('#sidebar nav a[hx-get]');

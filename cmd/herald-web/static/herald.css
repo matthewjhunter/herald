@@ -1,5 +1,31 @@
 /* Herald Web UI Layout */
 
+/* Session-expired reconnect banner. Shown when a background request gets a
+   401 so we can keep the reading pane intact instead of redirecting away. */
+.reconnect-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    padding: 0.5rem 1rem;
+    background: var(--pico-del-color, #b03a2e);
+    color: #fff;
+    font-size: 0.9rem;
+    text-align: center;
+}
+
+.reconnect-banner[hidden] {
+    display: none;
+}
+
+.reconnect-banner button {
+    margin: 0;
+    padding: 0.2rem 0.8rem;
+    font-size: 0.85rem;
+    --pico-color: #fff;
+    --pico-border-color: #fff;
+}
+
 /* Main app grid: sidebar + resize handle + content */
 .app-grid {
     display: grid;
