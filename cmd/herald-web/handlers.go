@@ -411,8 +411,12 @@ func formatDate(t *time.Time) string {
 }
 
 const (
-	maxPageLimit = 500
-	maxOffset    = 1000000
+	maxPageLimit      = 500
+	maxOffset         = 1000000
+	maxFeedURLLen     = 2048
+	maxTitleLen       = 512
+	maxPromptLen      = 20000
+	maxFilterValueLen = 512
 )
 
 // parseIntParam parses an integer query parameter. If maxVal > 0 and the
@@ -1077,6 +1081,14 @@ func (h *handlers) handleFeedDiscover(w http.ResponseWriter, r *http.Request) {
 		h.renderDiscoverResult(w, rawURL, nil, "Feed URL is required")
 		return
 	}
+	if len(rawURL) > maxFeedURLLen {
+		h.renderDiscoverResult(w, rawURL, nil, "Feed URL is too long")
+		return
+	}
+	if len(title) > maxTitleLen {
+		h.renderDiscoverResult(w, rawURL, nil, "Feed title is too long")
+		return
+	}
 
 	// Happy path: URL is already a valid feed.
 	if err := h.engine.SubscribeFeed(uid, rawURL, title); err == nil {
@@ -1090,8 +1102,9 @@ func (h *handlers) handleFeedDiscover(w http.ResponseWriter, r *http.Request) {
 
 	discovered, err := h.engine.DiscoverFeeds(ctx, rawURL)
 	if err != nil {
+		log.Printf("herald-web: feed discover failed for %q: %v", rawURL, err)
 		h.renderDiscoverResult(w, rawURL, nil,
-			fmt.Sprintf("Could not reach %s: %v", rawURL, err))
+			"Could not reach that URL. Check the address and try again.")
 		return
 	}
 	if len(discovered) == 0 {
@@ -1143,9 +1156,18 @@ func (h *handlers) handleFeedSubscribe(w http.ResponseWriter, r *http.Request) {
 		h.renderError(w, http.StatusBadRequest, "Feed URL is required")
 		return
 	}
+	if len(url) > maxFeedURLLen {
+		h.renderError(w, http.StatusBadRequest, "Feed URL is too long")
+		return
+	}
+	if len(title) > maxTitleLen {
+		h.renderError(w, http.StatusBadRequest, "Feed title is too long")
+		return
+	}
 
 	if err := h.engine.SubscribeFeed(uid, url, title); err != nil {
-		h.renderError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to subscribe: %v", err))
+		log.Printf("herald-web: subscribe failed for user %d: %v", uid, err)
+		h.renderError(w, http.StatusBadRequest, "Could not subscribe to that feed. Check the URL and try again.")
 		return
 	}
 
@@ -1313,7 +1335,8 @@ func (h *handlers) handleOPMLImport(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 
 	if err := h.engine.ImportOPMLReader(f, uid); err != nil {
-		h.renderError(w, http.StatusBadRequest, fmt.Sprintf("Failed to import OPML: %v", err))
+		log.Printf("herald-web: OPML import failed for user %d: %v", uid, err)
+		h.renderError(w, http.StatusBadRequest, "Failed to import OPML. Check that the file is valid.")
 		return
 	}
 
@@ -1408,6 +1431,10 @@ func (h *handlers) handleUserPromptSave(w http.ResponseWriter, r *http.Request) 
 		h.renderError(w, http.StatusBadRequest, "Prompt template cannot be empty")
 		return
 	}
+	if len(tmpl) > maxPromptLen {
+		h.renderError(w, http.StatusBadRequest, "Prompt template is too long")
+		return
+	}
 
 	var modelPtr *string
 	if m := strings.TrimSpace(r.FormValue("model")); m != "" {
@@ -1415,7 +1442,8 @@ func (h *handlers) handleUserPromptSave(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.engine.SetPrompt(uid, promptType, tmpl, nil, modelPtr); err != nil {
-		h.renderError(w, http.StatusBadRequest, fmt.Sprintf("Failed to save prompt: %v", err))
+		log.Printf("herald-web: save prompt failed for user %d type %q: %v", uid, promptType, err)
+		h.renderError(w, http.StatusBadRequest, "Failed to save prompt.")
 		return
 	}
 
@@ -1438,7 +1466,8 @@ func (h *handlers) handleUserPromptReset(w http.ResponseWriter, r *http.Request)
 	promptType := r.PathValue("promptType")
 
 	if err := h.engine.ResetPrompt(uid, promptType); err != nil {
-		h.renderError(w, http.StatusBadRequest, fmt.Sprintf("Failed to reset prompt: %v", err))
+		log.Printf("herald-web: reset prompt failed for user %d type %q: %v", uid, promptType, err)
+		h.renderError(w, http.StatusBadRequest, "Failed to reset prompt.")
 		return
 	}
 
@@ -1639,6 +1668,10 @@ func (h *handlers) handleAdminPromptSave(w http.ResponseWriter, r *http.Request)
 		h.renderError(w, http.StatusBadRequest, "Prompt template cannot be empty")
 		return
 	}
+	if len(tmpl) > maxPromptLen {
+		h.renderError(w, http.StatusBadRequest, "Prompt template is too long")
+		return
+	}
 
 	var modelPtr *string
 	if m := strings.TrimSpace(r.FormValue("model")); m != "" {
@@ -1646,7 +1679,8 @@ func (h *handlers) handleAdminPromptSave(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := h.engine.SetPrompt(0, promptType, tmpl, nil, modelPtr); err != nil {
-		h.renderError(w, http.StatusBadRequest, fmt.Sprintf("Failed to save global prompt: %v", err))
+		log.Printf("herald-web: save global prompt failed for type %q: %v", promptType, err)
+		h.renderError(w, http.StatusBadRequest, "Failed to save global prompt.")
 		return
 	}
 
@@ -1659,7 +1693,8 @@ func (h *handlers) handleAdminPromptReset(w http.ResponseWriter, r *http.Request
 	promptType := r.PathValue("promptType")
 
 	if err := h.engine.ResetPrompt(0, promptType); err != nil {
-		h.renderError(w, http.StatusBadRequest, fmt.Sprintf("Failed to reset global prompt: %v", err))
+		log.Printf("herald-web: reset global prompt failed for type %q: %v", promptType, err)
+		h.renderError(w, http.StatusBadRequest, "Failed to reset global prompt.")
 		return
 	}
 
@@ -1724,6 +1759,11 @@ func (h *handlers) handleFilterAdd(w http.ResponseWriter, r *http.Request) {
 	scoreStr := r.FormValue("score")
 	feedIDStr := r.FormValue("feed_id")
 
+	if len(value) > maxFilterValueLen {
+		h.renderError(w, http.StatusBadRequest, "Filter value is too long")
+		return
+	}
+
 	score, err := strconv.Atoi(scoreStr)
 	if err != nil {
 		h.renderError(w, http.StatusBadRequest, "Invalid score")
@@ -1743,7 +1783,8 @@ func (h *handlers) handleFilterAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := h.engine.AddFilterRule(uid, rule); err != nil {
-		h.renderError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to add rule: %v", err))
+		log.Printf("herald-web: add filter rule failed for user %d: %v", uid, err)
+		h.renderError(w, http.StatusBadRequest, "Could not add filter rule. Check the values and try again.")
 		return
 	}
 
@@ -1780,7 +1821,8 @@ func (h *handlers) handleFilterThreshold(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := h.engine.SetPreference(uid, "filter_threshold", v); err != nil {
-		h.renderError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save threshold: %v", err))
+		log.Printf("herald-web: save filter_threshold failed for user %d: %v", uid, err)
+		h.renderError(w, http.StatusInternalServerError, "Failed to save threshold.")
 		return
 	}
 
