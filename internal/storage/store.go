@@ -68,6 +68,8 @@ type Store interface {
 	CreateUserWithOIDC(name, email, sub string) (*User, error)
 	UpdateUserOIDCEmail(id int64, email string) error
 	ListUsers() ([]User, error)
+	// DeleteUser removes a user and all rows they own, atomically.
+	DeleteUser(userID int64) error
 
 	// User prompts
 	GetUserPrompt(userID int64, promptType string) (string, error)

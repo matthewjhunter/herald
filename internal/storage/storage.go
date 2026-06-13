@@ -718,6 +718,33 @@ func (s *SQLiteStore) ListUsers() ([]User, error) {
 	return users, rows.Err()
 }
 
+// DeleteUser removes a user and everything they own, atomically. Tables that
+// lack a users FK are deleted explicitly; tables with ON DELETE CASCADE are
+// handled automatically when the users row is removed.
+func (s *SQLiteStore) DeleteUser(userID int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("delete user: begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	stmts := []string{
+		"DELETE FROM read_state WHERE user_id = ?",
+		"DELETE FROM user_preferences WHERE user_id = ?",
+		"DELETE FROM user_feeds WHERE user_id = ?",
+		"DELETE FROM feed_tags WHERE user_id = ?",
+		"DELETE FROM user_prompts WHERE user_id = ?",
+		"DELETE FROM filter_rules WHERE user_id = ?",
+		"DELETE FROM article_groups WHERE user_id = ?", // cascades article_group_members + group_summaries
+		"DELETE FROM users WHERE id = ?",               // cascades fever_credentials, newsletters+issues, ai_summaries
+	}
+	for _, q := range stmts {
+		if _, err := tx.Exec(q, userID); err != nil {
+			return fmt.Errorf("delete user (%q): %w", q, err)
+		}
+	}
+	return tx.Commit()
+}
+
 // User prompt management
 
 // GetUserPrompt retrieves a user's custom prompt template
