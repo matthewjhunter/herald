@@ -424,20 +424,18 @@
     // scroll) via the htmx:configRequest hook below, so it survives navigation.
     (function() {
         var STORAGE_KEY = 'herald-hide-read';
-        var list = document.getElementById('article-list');
         var btn = document.getElementById('hide-read-btn');
 
         function isHiding() {
             return localStorage.getItem(STORAGE_KEY) !== 'false';
         }
 
+        // Reflect the current mode in the button label. Read articles are not
+        // hidden in-session -- a clicked article stays, dimmed, until the list
+        // is refetched (configRequest below drops show_read in hide-read mode,
+        // so the server-side unread filter removes it on the next fetch).
         function applyState() {
-            var hiding = isHiding();
-            // The CSS class still hides rows marked read in-session (the
-            // hx-on::after-request handler on each row), so an article you open
-            // while hiding disappears without a refetch.
-            if (list) list.classList.toggle('hide-read', hiding);
-            if (btn) btn.textContent = hiding ? 'Show read' : 'Hide read';
+            if (btn) btn.textContent = isHiding() ? 'Show read' : 'Hide read';
         }
 
         // Make the toggle authoritative for every article-list request,

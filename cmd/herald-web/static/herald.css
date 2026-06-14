@@ -162,13 +162,11 @@
     border-left: 3px solid var(--pico-primary);
 }
 
+/* Read articles only dim; they stay in place until the list is refetched
+   (e.g. switching feeds), at which point the server-side unread filter drops
+   them in hide-read mode. Clicking an article never removes it in-session. */
 .article-row.read {
     opacity: 0.6;
-}
-
-/* Hide read articles when toggle active */
-#article-list.hide-read .article-row.read {
-    display: none;
 }
 
 .article-row h4 {
