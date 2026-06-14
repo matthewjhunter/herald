@@ -49,7 +49,10 @@
         }
     })();
 
-    // Intercept sidebar link clicks to capture the current selection
+    // Intercept sidebar link clicks to capture the current selection and clear
+    // the reading pane. (The clear replaces the per-link hx-on:click handlers,
+    // which the CSP -- no 'unsafe-eval' -- would otherwise block htmx from
+    // compiling. See the htmx:afterRequest dispatcher below.)
     document.addEventListener('click', function(e) {
         var link = e.target.closest('#sidebar nav a[hx-get]');
         if (!link) return;
@@ -57,6 +60,86 @@
         var qIdx = url.indexOf('?');
         window._heraldSidebarQuery = qIdx >= 0 ? url.substring(qIdx) : '';
         heraldUpdateSidebarRefreshURL();
+        window.heraldClearReadingPane();
+    });
+
+    // CSP-safe replacements for inline hx-on::after-request handlers. The app's
+    // Content-Security-Policy omits 'unsafe-eval', which htmx requires to
+    // compile hx-on attribute bodies via new Function(); those handlers fail
+    // silently. This single delegated listener reproduces each one without eval.
+    // Behaviors opt in via class or data-* attribute on the requesting element.
+    document.body.addEventListener('htmx:afterRequest', function(e) {
+        var d = e.detail || {};
+        var elt = d.elt;
+        if (!elt || !elt.matches) return;
+        var ok = d.successful;
+
+        // Article / summary row selection. Both row kinds carry .article-row;
+        // only real article rows (data-article-id) get marked read and refresh
+        // the sidebar counts.
+        if (elt.classList.contains('article-row')) {
+            document.querySelectorAll('.article-row').forEach(function(r) {
+                r.classList.remove('active');
+            });
+            elt.classList.add('active');
+            if (elt.hasAttribute('data-article-id')) {
+                elt.classList.add('read');
+                if (window.htmx) htmx.trigger(document.body, 'feeds-changed');
+            }
+        }
+
+        // Everything below only runs after a successful request.
+        if (!ok) return;
+
+        // Refresh sidebar unread counts (e.g. the reading-pane read/unread toggle).
+        if (elt.matches('[data-feeds-changed]') && window.htmx) {
+            htmx.trigger(document.body, 'feeds-changed');
+        }
+
+        // Transient "Saved!" confirmation on a settings/admin form.
+        if (elt.matches('[data-saved-feedback]')) {
+            var btn = elt.querySelector('[data-save-btn]');
+            if (btn) {
+                btn.textContent = 'Saved!';
+                setTimeout(function() { btn.textContent = 'Save'; }, 2000);
+            }
+        }
+
+        // "Mark all as read" summary button: confirm and lock.
+        if (elt.matches('[data-mark-read-feedback]')) {
+            elt.textContent = 'Marked read';
+            elt.disabled = true;
+        }
+
+        // OPML sync token regenerated: drop the new URL into its field and select it.
+        var tokenSel = elt.getAttribute('data-opml-token-field');
+        if (tokenSel && d.xhr) {
+            var field = document.querySelector(tokenSel);
+            if (field) {
+                field.value = d.xhr.responseText;
+                field.select();
+            }
+        }
+
+        // Reset a form after a successful submit.
+        if (elt.matches('[data-reset-on-success]') && typeof elt.reset === 'function') {
+            elt.reset();
+        }
+
+        // Filter add-rule form: reset and clear the dependent value field.
+        if (elt.matches('[data-filter-reset]')) {
+            if (typeof elt.reset === 'function') elt.reset();
+            var vf = document.getElementById('value-field');
+            if (vf) {
+                vf.innerHTML = '<select name="value" id="value-select" required>' +
+                    '<option value="">— select feed and axis first —</option></select>';
+            }
+        }
+
+        // Reload the page (run last; it tears everything down).
+        if (elt.matches('[data-reload-on-success]')) {
+            window.location.reload();
+        }
     });
 
     // Theme toggle
