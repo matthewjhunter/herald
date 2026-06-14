@@ -14,8 +14,7 @@
             <strong>{{.Label}}</strong>
             {{if .IsCustom}}<small style="color:var(--pico-primary);">&nbsp;(global override active)</small>{{else}}<small class="secondary">&nbsp;(using embedded default)</small>{{end}}
         </header>
-        <form hx-post="/admin/prompts/{{.Type}}" hx-swap="none"
-              hx-on::after-request="if(event.detail.successful){var b=this.querySelector('[data-save-btn]');b.textContent='Saved!';setTimeout(()=>b.textContent='Save',2000);}">
+        <form hx-post="/admin/prompts/{{.Type}}" hx-swap="none" data-saved-feedback>
             <textarea name="template" rows="8" style="font-family:monospace;font-size:0.85em;">{{.Template}}</textarea>
             <label style="margin-top:0.5rem;font-size:0.9em;">Model</label>
             {{if .AvailableModels}}
@@ -33,7 +32,7 @@
                 <button type="button" class="outline secondary" style="margin:0;"
                         hx-delete="/admin/prompts/{{.Type}}"
                         hx-confirm="Reset '{{.Label}}' to embedded default?"
-                        hx-on::after-request="if(event.detail.successful) window.location.reload();">
+                        data-reload-on-success>
                     Reset to Embedded Default
                 </button>
                 {{end}}

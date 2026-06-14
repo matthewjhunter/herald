@@ -16,13 +16,13 @@
     <button class="outline secondary" style="font-size:0.85em;"
             hx-post="/settings/opml-token"
             hx-swap="none"
-            hx-on::after-request="if(event.detail.successful){document.querySelector('#opml-url-field').value=event.detail.xhr.responseText; document.querySelector('#opml-url-field').select();}">
+            data-opml-token-field="#opml-url-field">
         Regenerate URL
     </button>
     {{else}}
     <button hx-post="/settings/opml-token"
             hx-swap="none"
-            hx-on::after-request="if(event.detail.successful) window.location.reload();">
+            data-reload-on-success>
         Generate sync URL
     </button>
     {{end}}
@@ -49,7 +49,7 @@
                         class="outline secondary" style="margin:0;"
                         hx-delete="/settings/fever" hx-swap="none"
                         hx-confirm="Remove Fever API access?"
-                        hx-on::after-request="if(event.detail.successful) window.location.reload();">
+                        data-reload-on-success>
                     Remove
                 </button>
             </div>

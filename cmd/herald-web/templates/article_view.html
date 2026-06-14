@@ -53,7 +53,7 @@
             hx-post="/articles/{{.ID}}/read"
             hx-swap="outerHTML"
             hx-vals='{"read":"{{if .Read}}false{{else}}true{{end}}"}'
-            hx-on::after-request="htmx.trigger(document.body, 'feeds-changed')">
+            data-feeds-changed>
         {{if .Read}}Mark unread{{else}}Mark read{{end}}
     </button>
 </div>
