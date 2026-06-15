@@ -20,7 +20,7 @@
     <hr>
     <button class="outline secondary" hx-post="/summary/{{.ID}}/mark-read" hx-swap="none"
             hx-confirm="Mark all {{.ArticleCount}} summarized articles as read?"
-            hx-on::after-request="if(event.detail.successful){this.textContent='Marked read';this.disabled=true;}">
+            data-mark-read-feedback>
         Mark all {{.ArticleCount}} as read
     </button>
     {{end}}

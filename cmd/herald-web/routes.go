@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"io/fs"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -50,9 +51,13 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	h := &handlers{engine: engine, validator: validator, adminRole: adminRole, adminUsers: adminUsers}
 	auth := h.requireAuth
 
-	// Auth callback — receives the code from webauth, exchanges it for a JWT cookie.
-	mux.HandleFunc("GET /auth/callback", h.handleCallback,
-		smoke.Skip("OIDC callback; requires a code & state, not a bare GET"))
+	// Auth callback — receives the code from webauth, exchanges it for a JWT
+	// cookie via the shared oidclient handler. No OnAuthenticated hook: user
+	// provisioning happens in requireAuth on the next request.
+	mux.Handle("GET /auth/callback", validator.CallbackHandler(oidclient.CallbackOptions{
+		SanitizeRedirect: localPath,
+		Logf:             log.Printf,
+	}), smoke.Skip("OIDC callback; requires a code & state, not a bare GET"))
 
 	// OPML sync — token-authenticated, no JWT required.
 	mux.HandleFunc("GET /opml/{userID}/{token}", h.handleOPMLSync,
@@ -88,6 +93,7 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.Handle("GET /sidebar", auth(http.HandlerFunc(h.handleSidebar)))
 	mux.Handle("POST /articles/mark-all-read", auth(http.HandlerFunc(h.handleMarkAllRead)), smoke.Form(url.Values{"ids": {"1"}}))
 	mux.Handle("POST /articles/{articleID}/star", auth(http.HandlerFunc(h.handleStarToggle)), smoke.Example("articleID", "1"), smoke.Form(url.Values{"starred": {"true"}}))
+	mux.Handle("POST /articles/{articleID}/read", auth(http.HandlerFunc(h.handleReadToggle)), smoke.Example("articleID", "1"), smoke.Form(url.Values{"read": {"false"}}))
 	mux.Handle("GET /images/{imageID}", auth(http.HandlerFunc(h.handleArticleImage)), smoke.Example("imageID", "1"))
 	mux.Handle("GET /feeds/{feedID}/favicon", auth(http.HandlerFunc(h.handleFeedFavicon)), smoke.Example("feedID", "1"))
 	mux.Handle("GET /feeds/export.opml", auth(http.HandlerFunc(h.handleOPMLExport)))
@@ -133,9 +139,10 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	// Ollama model list (used by prompt settings pages).
 	mux.Handle("GET /api/ollama/models", auth(http.HandlerFunc(h.handleOllamaModels)))
 
-	// Per-user AI prompt customization. save targets "summarization"; reset
-	// targets the seeded "curation" prompt so the two don't interact.
-	mux.Handle("POST /settings/prompts/{promptType}", auth(http.HandlerFunc(h.handleUserPromptSave)), smoke.Example("promptType", "summarization"), smoke.Form(url.Values{"template": {"Summarize: {{.Content}}"}}))
+	// Per-user AI prompt customization. save targets "group_summary"
+	// ("summarization" is admin-global since #162); reset targets the seeded
+	// "curation" prompt so the two don't interact.
+	mux.Handle("POST /settings/prompts/{promptType}", auth(http.HandlerFunc(h.handleUserPromptSave)), smoke.Example("promptType", "group_summary"), smoke.Form(url.Values{"template": {"Summarize the group: {{.Articles}}"}}))
 	mux.Handle("DELETE /settings/prompts/{promptType}", auth(http.HandlerFunc(h.handleUserPromptReset)), smoke.Example("promptType", "curation"))
 
 	// Admin-only routes.
@@ -147,6 +154,8 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.Handle("DELETE /admin/prompts/{promptType}", auth(adminAuth(http.HandlerFunc(h.handleAdminPromptReset))), smoke.Example("promptType", "curation"))
 	mux.Handle("GET /admin/digest", auth(adminAuth(http.HandlerFunc(h.handleAdminDigest))))
 	mux.Handle("POST /admin/digest", auth(adminAuth(http.HandlerFunc(h.handleAdminDigest))), smoke.Form(url.Values{"header": {"<p>Header</p>"}, "footer": {"<p>Footer</p>"}}))
+	mux.Handle("GET /admin/users", auth(adminAuth(http.HandlerFunc(h.handleAdminUsers))))
+	mux.Handle("DELETE /admin/users/{userID}", auth(adminAuth(http.HandlerFunc(h.handleAdminUserDelete))), smoke.Example("userID", "1"), smoke.Status(400))
 
 	// Smoke manifest introspection — emits the recorded RouteSpecs as JSON for
 	// the smolder runner. Gated on SMOKE_MANIFEST because it enumerates the

@@ -58,7 +58,7 @@ func (f *fakeAI) SecurityCheck(_ context.Context, title, content string) (*ai.Se
 	return &ai.SecurityResult{Safe: true, Score: 9}, nil
 }
 
-func (f *fakeAI) SummarizeArticle(_ context.Context, _ int64, title, content string, _ int) (string, error) {
+func (f *fakeAI) SummarizeArticle(_ context.Context, title, content string, _ int) (string, error) {
 	f.mu.Lock()
 	f.sumCalls++
 	f.mu.Unlock()
@@ -274,7 +274,7 @@ func TestSummarizeStage(t *testing.T) {
 		if len(out) != 1 {
 			t.Fatalf("expected article to advance, got %v", ids(out))
 		}
-		got, _ := store.GetArticleSummary(1, a.ID)
+		got, _ := store.GetArticleSummary(a.ID)
 		if got == nil || got.AISummary != "good summary" {
 			t.Fatalf("summary not cached: %+v", got)
 		}
@@ -288,7 +288,7 @@ func TestSummarizeStage(t *testing.T) {
 		if len(out) != 0 {
 			t.Fatalf("garbled summary must not advance the article, got %v", ids(out))
 		}
-		if got, _ := store.GetArticleSummary(1, a.ID); got != nil {
+		if got, _ := store.GetArticleSummary(a.ID); got != nil {
 			t.Fatalf("garbled summary must not be cached, got %+v", got)
 		}
 	})
@@ -304,7 +304,7 @@ func TestSummarizeStage(t *testing.T) {
 			t.Fatalf("deterministically-skipped article should still advance, got %v", ids(out))
 		}
 		// Marked skipped (summary row exists) so it won't be retried.
-		got, _ := store.GetArticleSummary(1, a.ID)
+		got, _ := store.GetArticleSummary(a.ID)
 		if got == nil {
 			t.Fatal("expected a skip row recorded for the over-length summary")
 		}
@@ -313,7 +313,7 @@ func TestSummarizeStage(t *testing.T) {
 	t.Run("already-summarized article passes through without a model call", func(t *testing.T) {
 		a := seed(t, store, feedID, "cached", "body")
 		mustPass(a)
-		if err := store.UpdateArticleAISummary(1, a.ID, "preexisting"); err != nil {
+		if err := store.UpdateArticleAISummary(a.ID, "preexisting"); err != nil {
 			t.Fatal(err)
 		}
 		before := st.AI.(*fakeAI).sumCalls
@@ -347,7 +347,7 @@ func TestCurateStage(t *testing.T) {
 		if len(cur) != 0 {
 			t.Fatalf("curated article should leave the curation queue, got %v", ids(cur))
 		}
-		scored, _ := store.GetUnsummarizedScoredArticles(1, 7.0, 10)
+		scored, _ := store.GetUnsummarizedScoredArticles(7.0, 10)
 		if len(scored) != 1 {
 			t.Fatalf("security score must survive curation, got %v", ids(scored))
 		}

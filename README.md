@@ -36,7 +36,7 @@ Security and editorial judgment are different problems that benefit from differe
 - Vector-based article clustering across sources using cosine similarity
 - Per-user interest keywords, thresholds, and read state
 - Customizable AI prompts with 3-tier fallback: database → config → embedded defaults
-- Article summarization with per-user caching
+- Article summarization, cached once per article and shared by all users
 - Conditional feed fetching (ETag / Last-Modified) to minimize bandwidth
 - Formatted notification output for high-interest articles
 - MCP server for AI persona access (26 tools)

@@ -54,6 +54,22 @@
     },
     {
       "method": "GET",
+      "pattern": "/admin/users",
+      "effect": "read_only",
+      "complete": true
+    },
+    {
+      "method": "DELETE",
+      "pattern": "/admin/users/{userID}",
+      "effect": "mutating",
+      "example_params": {
+        "userID": "1"
+      },
+      "expect_status": 400,
+      "complete": true
+    },
+    {
+      "method": "GET",
       "pattern": "/api/ollama/models",
       "effect": "read_only",
       "complete": true
@@ -79,6 +95,17 @@
       "example_params": {
         "articleID": "1"
       },
+      "complete": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/articles/{articleID}/read",
+      "effect": "mutating",
+      "example_params": {
+        "articleID": "1"
+      },
+      "request_body": "read=false",
+      "content_type": "application/x-www-form-urlencoded",
       "complete": true
     },
     {
@@ -422,9 +449,9 @@
       "pattern": "/settings/prompts/{promptType}",
       "effect": "mutating",
       "example_params": {
-        "promptType": "summarization"
+        "promptType": "group_summary"
       },
-      "request_body": "template=Summarize%3A+%7B%7B.Content%7D%7D",
+      "request_body": "template=Summarize+the+group%3A+%7B%7B.Articles%7D%7D",
       "content_type": "application/x-www-form-urlencoded",
       "complete": true
     },

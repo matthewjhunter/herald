@@ -34,29 +34,42 @@ func (s *Stage) RunSecurity(ctx context.Context) (int, error) {
 	return processed, err
 }
 
+// RunSummaries summarizes every security-passed article that lacks a cached
+// summary, exactly once, globally. Like the security verdict (#141), the
+// summary is a property of the article, shared by all subscribers (#162), so
+// this runs once per cycle rather than once per user — one breaker check,
+// draining the global queue newest-first. Returns the number of articles that
+// now carry a usable summary (or a recorded skip) after this call.
+func (s *Stage) RunSummaries(ctx context.Context) (int, error) {
+	if !s.AI.BackendAvailable() {
+		s.Formatter.Warning("pipeline: skipping summarize pass — AI backend unavailable (breaker open)")
+		return 0, nil
+	}
+	processed := 0
+	err := s.drain(
+		func(limit int) ([]storage.Article, error) {
+			return s.Store.GetUnsummarizedScoredArticles(s.Cfg.Thresholds.SecurityScore, limit)
+		},
+		func(arts []storage.Article) { processed += len(s.Summarize(ctx, arts)) },
+	)
+	return processed, err
+}
+
 // Run executes the per-user pipeline: it drives each stage from its own
 // state-driven query, in order, so any pending article advances one stage at a
-// time. Security screening is NOT here — it is the global RunSecurity pass,
-// which runs once per cycle before the per-user pipelines. This pipeline starts
-// at summarize, reading the article-level security verdict to decide which
-// articles it processes for this user. Every query is newest-first, so fresh
-// articles are processed ahead of older backlog; work left by prior cycles
-// drains the same way. The whole run is skipped when the LLM backend is
-// unavailable.
+// time. Security screening and summarization are NOT here — they are the
+// global RunSecurity and RunSummaries passes, which run once per cycle before
+// the per-user pipelines. This pipeline starts at curation, reading the
+// article-level security verdict to decide which articles it scores for this
+// user. Every query is newest-first, so fresh articles are processed ahead of
+// older backlog; work left by prior cycles drains the same way. The whole run
+// is skipped when the LLM backend is unavailable.
 func (s *Stage) Run(ctx context.Context) error {
 	if !s.AI.BackendAvailable() {
 		s.Formatter.Warning("pipeline: skipping run for user %d — AI backend unavailable (breaker open)", s.UserID)
 		return nil
 	}
 
-	if err := s.drain(
-		func(limit int) ([]storage.Article, error) {
-			return s.Store.GetUnsummarizedScoredArticles(s.UserID, s.Cfg.Thresholds.SecurityScore, limit)
-		},
-		func(arts []storage.Article) { s.Summarize(ctx, arts) },
-	); err != nil {
-		return err
-	}
 	if err := s.drain(
 		func(limit int) ([]storage.Article, error) {
 			return s.Store.GetUnscoredCurationArticles(s.UserID, s.Cfg.Thresholds.SecurityScore, limit)

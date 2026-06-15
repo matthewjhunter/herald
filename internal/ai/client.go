@@ -74,6 +74,11 @@ type openAIClient struct {
 	// to half-open. Exposed as a field for tests.
 	breakerCooldown time.Duration
 
+	// sem bounds the number of in-flight generate() calls in this process.
+	// nil when unbounded (MaxConcurrent <= 0). A buffered channel is the
+	// idiomatic counting semaphore.
+	sem chan struct{}
+
 	mu             sync.Mutex
 	consecutive4xx int
 	circuitOpen    bool
@@ -81,13 +86,17 @@ type openAIClient struct {
 	lastStatus     int
 }
 
-func newOpenAIClient(baseURL, apiKey string) *openAIClient {
-	return &openAIClient{
+func newOpenAIClient(baseURL, apiKey string, maxConcurrent int) *openAIClient {
+	c := &openAIClient{
 		baseURL:         strings.TrimRight(baseURL, "/"),
 		apiKey:          apiKey,
 		httpClient:      &http.Client{},
 		breakerCooldown: defaultBreakerCooldown,
 	}
+	if maxConcurrent > 0 {
+		c.sem = make(chan struct{}, maxConcurrent)
+	}
+	return c
 }
 
 // tripBreaker increments the consecutive 4xx counter and trips the circuit
@@ -189,6 +198,15 @@ func (c *openAIClient) generate(ctx context.Context, model, prompt string, tempe
 		return "", &ClientError{
 			StatusCode: 0,
 			Body:       fmt.Sprintf("circuit breaker open — AI calls blocked after repeated HTTP %d responses; retrying after cooldown", status),
+		}
+	}
+
+	if c.sem != nil {
+		select {
+		case c.sem <- struct{}{}:
+			defer func() { <-c.sem }()
+		case <-ctx.Done():
+			return "", ctx.Err()
 		}
 	}
 
