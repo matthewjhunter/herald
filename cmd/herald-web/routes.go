@@ -3,7 +3,6 @@ package main
 import (
 	"embed"
 	"io/fs"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -48,16 +47,20 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)),
 		smoke.Skip("static file server subtree"))
 
-	h := &handlers{engine: engine, validator: validator, adminRole: adminRole, adminUsers: adminUsers}
+	h := &handlers{
+		engine:     engine,
+		validator:  validator,
+		sessions:   newSessionManager(engine, validator),
+		adminRole:  adminRole,
+		adminUsers: adminUsers,
+	}
 	auth := h.requireAuth
 
-	// Auth callback — receives the code from webauth, exchanges it for a JWT
-	// cookie via the shared oidclient handler. No OnAuthenticated hook: user
-	// provisioning happens in requireAuth on the next request.
-	mux.Handle("GET /auth/callback", validator.CallbackHandler(oidclient.CallbackOptions{
-		SanitizeRedirect: localPath,
-		Logf:             log.Printf,
-	}), smoke.Skip("OIDC callback; requires a code & state, not a bare GET"))
+	// Auth callback — receives the code from webauth, exchanges it for tokens,
+	// and persists them to a server-side session keyed by an opaque cookie id
+	// (#173). User provisioning happens in requireAuth on the next request.
+	mux.Handle("GET /auth/callback", http.HandlerFunc(h.handleCallback),
+		smoke.Skip("OIDC callback; requires a code & state, not a bare GET"))
 
 	// OPML sync — token-authenticated, no JWT required.
 	mux.HandleFunc("GET /opml/{userID}/{token}", h.handleOPMLSync,
@@ -68,8 +71,12 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.HandleFunc("POST /fever/", h.handleFever,
 		smoke.Skip("Fever API sync endpoint; own api_key auth, POST"))
 
-	// Logout — no auth check needed; just redirects to webauth logout.
-	mux.HandleFunc("GET /auth/logout", h.handleLogout)
+	// Logout — no auth check needed; revokes the server-side session and
+	// redirects to webauth logout. Skipped by smoke: it deletes the session
+	// keyed by the probe's cookie, which would break every later authed probe
+	// sharing that session (#173).
+	mux.HandleFunc("GET /auth/logout", h.handleLogout,
+		smoke.Skip("destructive: deletes the caller's server-side session"))
 
 	// Full-page routes.
 	mux.Handle("GET /{$}", auth(http.HandlerFunc(h.handleHome)))
