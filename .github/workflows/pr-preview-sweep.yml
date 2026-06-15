@@ -1,0 +1,20 @@
+name: PR Preview Sweep
+
+# Thin caller: the sweep logic lives in infodancer/workflows so a fix lands
+# once for every site. See that repo's README for the inputs.
+on:
+  schedule:
+    - cron: "33 4 * * *" # daily
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  sweep:
+    uses: infodancer/workflows/.github/workflows/pr-preview-sweep.yml@v0.1.0
+    with:
+      slug: herald
+      image: ghcr.io/matthewjhunter/herald
+      runner: '["self-hosted", "linux", "docker-web"]'
