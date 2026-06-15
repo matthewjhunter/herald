@@ -157,7 +157,10 @@ func TestSmokeRoutesAuthenticated(t *testing.T) {
 
 	ctx := context.Background()
 	manifest := mux.Registry().Manifest()
-	cookie := "test_jwt=" + token
+	// requireAuth resolves the cookie to a server-side session, so the probe
+	// must carry an opaque session id (not the raw JWT) keyed to a stored
+	// session for the smoke user (#173).
+	cookie := "test_jwt=" + createTestSession(t, engine, token)
 
 	// Pass 1: reads, concurrently. Concurrency is the point -- it re-exercises
 	// the path that surfaced the template-init race -- so leave it at the

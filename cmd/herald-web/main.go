@@ -99,7 +99,11 @@ func main() {
 		ClientID:    clientID,
 		ClientName:  "Herald",
 		CallbackURL: callbackURL,
-		Logf:        log.Printf,
+		// Request a refresh token so the session can be renewed server-side
+		// without an interactive redirect (#173). The token is stored only in
+		// the herald DB and never reaches the browser.
+		OfflineAccess: true,
+		Logf:          log.Printf,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "herald-web: %v\n", err)
@@ -125,6 +129,11 @@ func main() {
 	defer engine.Close()
 
 	mux := newRouter(engine, validator, cfg.Admin.Role, cfg.Admin.Users)
+
+	// Sweep expired sessions hourly for the lifetime of the server (#173).
+	sweepCtx, stopSweep := context.WithCancel(context.Background())
+	defer stopSweep()
+	go sweepExpiredSessions(sweepCtx, engine, time.Hour)
 
 	srv := &http.Server{
 		Addr:         listenAddr,

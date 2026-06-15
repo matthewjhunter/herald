@@ -307,4 +307,21 @@ CREATE TABLE IF NOT EXISTS cycle_stats (
     ai_backend_available BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE INDEX IF NOT EXISTS idx_cycle_stats_completed ON cycle_stats(completed_at DESC);
+
+-- Server-side OIDC sessions (#173). The browser holds only id (the opaque
+-- session cookie); access_token and refresh_token never leave the server. The
+-- refresh token rotates on every renewal and is the high-value credential.
+-- Not user_id-keyed: a session exists from the callback (which records the OIDC
+-- sub) before the Herald user row is provisioned on the first authed request.
+CREATE TABLE IF NOT EXISTS sessions (
+    id              TEXT PRIMARY KEY,
+    user_sub        TEXT NOT NULL,
+    access_token    TEXT NOT NULL,
+    refresh_token   TEXT NOT NULL,
+    access_expiry   TIMESTAMPTZ NOT NULL,
+    absolute_expiry TIMESTAMPTZ NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_used_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_absolute_expiry ON sessions(absolute_expiry);
 `

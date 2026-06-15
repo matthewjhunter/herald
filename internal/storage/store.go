@@ -71,6 +71,17 @@ type Store interface {
 	// DeleteUser removes a user and all rows they own, atomically.
 	DeleteUser(userID int64) error
 
+	// Sessions -- server-side OIDC session store. The browser holds only the
+	// opaque session id; the access and refresh tokens stay here. The refresh
+	// token rotates on every use, so renewal is a CAS (RotateSessionTokens)
+	// guarded by an in-process lock in the web layer.
+	CreateSession(s *Session) error
+	GetSession(id string) (*Session, error)
+	RotateSessionTokens(id, accessToken, newRefreshToken string, accessExpiry time.Time, expectedRefreshToken string) (bool, error)
+	TouchSession(id string, lastUsed time.Time) error
+	DeleteSession(id string) error
+	DeleteExpiredSessions(now time.Time) (int64, error)
+
 	// User prompts
 	GetUserPrompt(userID int64, promptType string) (string, error)
 	GetUserPromptTemperature(userID int64, promptType string) (float64, error)

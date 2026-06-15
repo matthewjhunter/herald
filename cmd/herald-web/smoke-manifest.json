@@ -130,6 +130,7 @@
       "method": "GET",
       "pattern": "/auth/logout",
       "effect": "read_only",
+      "skip": "destructive: deletes the caller's server-side session",
       "complete": true
     },
     {

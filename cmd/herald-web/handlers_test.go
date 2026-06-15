@@ -202,8 +202,45 @@ type testFixtures struct {
 	userID     int64
 	feedID     int64
 	articleID  int64
-	jwtToken   string                               // valid JWT for the test user
+	jwtToken   string                               // valid access-token JWT for the test user
+	sessionID  string                               // opaque session-id cookie for the test user (#173)
 	issueToken func(sub, email, name string) string // mints JWTs for additional users
+}
+
+// createTestSession persists a server-side session whose access token is the
+// given JWT and returns the opaque session id to send as the cookie -- the same
+// shape the OIDC callback produces, so requireAuth's validate path runs exactly
+// as in production. The session's user_sub is read from the token's sub claim.
+func createTestSession(t *testing.T, engine *herald.Engine, accessToken string) string {
+	t.Helper()
+	id, err := newSessionID()
+	if err != nil {
+		t.Fatalf("newSessionID: %v", err)
+	}
+	now := time.Now()
+	if err := engine.CreateSession(&storage.Session{
+		ID:             id,
+		UserSub:        tokenSub(t, accessToken),
+		AccessToken:    accessToken,
+		RefreshToken:   "test-refresh-" + id,
+		AccessExpiry:   now.Add(time.Hour),
+		AbsoluteExpiry: now.Add(24 * time.Hour),
+	}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	return id
+}
+
+// tokenSub extracts the sub claim from a JWT without verifying it -- used only
+// to label the test session row, not for any auth decision.
+func tokenSub(t *testing.T, token string) string {
+	t.Helper()
+	parsed, _, err := jwt.NewParser().ParseUnverified(token, jwt.MapClaims{})
+	if err != nil {
+		t.Fatalf("parse test token: %v", err)
+	}
+	sub, _ := parsed.Claims.(jwt.MapClaims)["sub"].(string)
+	return sub
 }
 
 func newTestFixtures(t *testing.T) *testFixtures {
@@ -280,6 +317,7 @@ func newTestFixturesWith(t *testing.T, mutate func(*herald.EngineConfig)) *testF
 		feedID:     feedID,
 		articleID:  articleID,
 		jwtToken:   jwtToken,
+		sessionID:  createTestSession(t, engine, jwtToken),
 		issueToken: issueToken,
 	}
 }
@@ -295,11 +333,13 @@ func secondTestUser(t *testing.T, tf *testFixtures) (int64, string) {
 	return u.ID, tf.issueToken("test-sub-2", "other@example.com", "Other")
 }
 
-// authedRequestAs makes a test HTTP request authenticated with the given JWT.
+// authedRequestAs makes a test HTTP request authenticated as the user the given
+// JWT identifies. It stands up a server-side session for that token so the
+// request carries the opaque session cookie requireAuth now expects.
 func authedRequestAs(t *testing.T, tf *testFixtures, token, method, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, nil)
-	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: token})
+	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: createTestSession(t, tf.engine, token)})
 	rr := httptest.NewRecorder()
 	tf.router.ServeHTTP(rr, req)
 	return rr
@@ -321,7 +361,7 @@ func request(t *testing.T, handler http.Handler, method, path string, headers ma
 func authedRequest(t *testing.T, tf *testFixtures, method, path string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, nil)
-	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: tf.jwtToken})
+	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: tf.sessionID})
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
@@ -335,7 +375,7 @@ func authedRequestForm(t *testing.T, tf *testFixtures, method, path string, form
 	body := form.Encode()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: tf.jwtToken})
+	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: tf.sessionID})
 	rr := httptest.NewRecorder()
 	tf.router.ServeHTTP(rr, req)
 	return rr
@@ -799,7 +839,7 @@ func itoa(n int64) string {
 
 // --- Callback handler tests ---
 
-func TestHandleCallback_SetsJWTCookie(t *testing.T) {
+func TestHandleCallback_SetsSessionCookie(t *testing.T) {
 	tf := newTestFixtures(t)
 
 	validator := newTestValidatorWithOIDC(t, nil)
@@ -1317,7 +1357,7 @@ func TestSecurityHeaders(t *testing.T) {
 	wrapped := securityHeaders(tf.router)
 
 	req := httptest.NewRequest("GET", "/", nil)
-	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: tf.jwtToken})
+	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: tf.sessionID})
 	rr := httptest.NewRecorder()
 	wrapped.ServeHTTP(rr, req)
 
@@ -1373,6 +1413,7 @@ func newAdminFixtures(t *testing.T) *testFixtures {
 		store:      st,
 		userID:     user.ID,
 		jwtToken:   jwtToken,
+		sessionID:  createTestSession(t, engine, jwtToken),
 		issueToken: issueToken,
 	}
 }
