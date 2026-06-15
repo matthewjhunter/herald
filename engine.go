@@ -493,6 +493,38 @@ func (e *Engine) Store() storage.Store {
 	return e.store
 }
 
+// --- Sessions (server-side OIDC session store, #173) ---
+//
+// Typed passthroughs so the web layer drives the live auth path through the
+// Engine rather than the diagnostic Store() handle. The refresh token never
+// leaves the server; see internal/storage.Session.
+
+// CreateSession persists a new server-side session.
+func (e *Engine) CreateSession(s *storage.Session) error { return e.store.CreateSession(s) }
+
+// GetSession looks up a session by opaque id. Returns storage.ErrSessionNotFound
+// when absent.
+func (e *Engine) GetSession(id string) (*storage.Session, error) { return e.store.GetSession(id) }
+
+// RotateSessionTokens compare-and-swaps the stored tokens on the refresh token,
+// persisting the rotated credential only if expectedRefreshToken still matches.
+func (e *Engine) RotateSessionTokens(id, accessToken, newRefreshToken string, accessExpiry time.Time, expectedRefreshToken string) (bool, error) {
+	return e.store.RotateSessionTokens(id, accessToken, newRefreshToken, accessExpiry, expectedRefreshToken)
+}
+
+// TouchSession bumps the session's last-used timestamp.
+func (e *Engine) TouchSession(id string, lastUsed time.Time) error {
+	return e.store.TouchSession(id, lastUsed)
+}
+
+// DeleteSession removes a session (logout / revocation).
+func (e *Engine) DeleteSession(id string) error { return e.store.DeleteSession(id) }
+
+// DeleteExpiredSessions sweeps sessions past their absolute TTL.
+func (e *Engine) DeleteExpiredSessions(now time.Time) (int64, error) {
+	return e.store.DeleteExpiredSessions(now)
+}
+
 // ResetStuckEmbeddings clears the retry budget on rows stuck at
 // EmbedMaxAttempts for the configured embedding model. errorPattern is
 // an optional SQL LIKE pattern (use "" for unfiltered) that narrows
