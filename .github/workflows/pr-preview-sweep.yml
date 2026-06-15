@@ -1,19 +1,7 @@
 name: PR Preview Sweep
 
-# Reconciliation safety net for per-PR preview artifacts.
-#
-# pr-preview.yml creates an isolated database (herald_pr_<N>), container, and
-# image per open PR; pr-cleanup.yml tears them down when the PR closes. But
-# event-driven cleanup is best-effort: a missed `closed` event, a runner
-# outage, or a swallowed failure (e.g. cleanup running where it can't reach the
-# database) leaves orphans behind that accumulate on the shared Postgres server.
-#
-# This sweep reconciles: for every per-PR artifact still present, if the PR is
-# no longer open it drops the database, container, and image. It is
-# conservative -- it only acts on PRs GitHub reports CLOSED or MERGED, and skips
-# anything whose state it cannot determine, so an open preview is never torn
-# down. The database drop is not error-swallowed, so a real failure surfaces.
-
+# Thin caller: the sweep logic lives in infodancer/workflows so a fix lands
+# once for every site. See that repo's README for the inputs.
 on:
   schedule:
     - cron: "33 4 * * *" # daily
@@ -25,43 +13,8 @@ permissions:
 
 jobs:
   sweep:
-    runs-on: [self-hosted, linux, docker-web]
-    steps:
-      - name: Drop preview artifacts for closed PRs
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          # Candidate PR numbers from every artifact type so an orphan of any
-          # kind (db / container / image) is caught.
-          prs=$( {
-            docker exec postgres psql -U postgres -tAc \
-              "SELECT datname FROM pg_database WHERE datname ~ '^herald_pr_[0-9]+$'" \
-              | sed -E 's/^herald_pr_//'
-            docker ps -a --filter 'name=herald-pr-' --format '{{.Names}}' \
-              | sed -E 's/^herald-pr-//'
-            docker images 'ghcr.io/matthewjhunter/herald' --format '{{.Tag}}' \
-              | sed -nE 's/^pr-([0-9]+)$/\1/p'
-          } | grep -E '^[0-9]+$' | sort -u )
-
-          for pr in $prs; do
-            state=$(gh pr view "$pr" --repo "${{ github.repository }}" \
-                      --json state -q .state 2>/dev/null || echo "")
-            case "$state" in
-              OPEN)
-                echo "keep PR #$pr (open)"
-                ;;
-              CLOSED|MERGED)
-                echo "sweep PR #$pr ($state)"
-                docker rm -f "herald-pr-$pr" 2>/dev/null || true
-                docker rmi "ghcr.io/matthewjhunter/herald:pr-$pr" 2>/dev/null || true
-                # Not silenced: a failure to drop the DB must not be hidden.
-                docker exec postgres psql -U postgres \
-                  -c "DROP DATABASE IF EXISTS \"herald_pr_$pr\" WITH (FORCE)"
-                ;;
-              *)
-                echo "skip PR #$pr (state unknown: '${state}') -- not dropping"
-                ;;
-            esac
-          done
+    uses: infodancer/workflows/.github/workflows/pr-preview-sweep.yml@v1
+    with:
+      slug: herald
+      image: ghcr.io/matthewjhunter/herald
+      runner: '["self-hosted", "linux", "docker-web"]'
