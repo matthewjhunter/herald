@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   sweep:
-    uses: infodancer/workflows/.github/workflows/pr-preview-sweep.yml@v1
+    uses: infodancer/workflows/.github/workflows/pr-preview-sweep.yml@v0.1.0
     with:
       slug: herald
       image: ghcr.io/matthewjhunter/herald
