@@ -118,6 +118,10 @@ per-article digests. The `herald-mcp` server has been removed.
   subscribe form accepts scheme-less feed URLs. Invalid `filter_threshold`
   input returns 400 instead of 500.
 
+- **A Log out link in the nav.** `/auth/logout` existed but nothing in the UI
+  reached it; it now appears in the shared nav and ends the session
+  server-side.
+
 ## [0.2.0] - 2026-05-30
 
 Roughly three months of work since v0.1.0: a PostgreSQL backend, full-text
