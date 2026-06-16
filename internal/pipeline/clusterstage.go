@@ -185,7 +185,7 @@ func (s *Stage) nameGroup(ctx context.Context, groupID int64) {
 	var inputs []ai.GroupSummaryInput
 	var maxScore float64
 	for _, a := range arts {
-		summary, err := s.Store.GetArticleSummary(s.UserID, a.ID)
+		summary, err := s.Store.GetArticleSummary(a.ID)
 		if err != nil || summary == nil {
 			continue
 		}

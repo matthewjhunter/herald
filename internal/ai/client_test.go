@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,7 +26,7 @@ func TestGenerateReportsBackendUnavailable(t *testing.T) {
 			w.Write([]byte(`{"error":"model not found"}`))
 		}))
 		defer srv.Close()
-		_, err := newOpenAIClient(srv.URL, "k").generate(ctx, "m", "hi", 0.7)
+		_, err := newOpenAIClient(srv.URL, "k", 0).generate(ctx, "m", "hi", 0.7)
 		if !errors.Is(err, ErrBackendUnavailable) {
 			t.Fatalf("4xx: errors.Is(ErrBackendUnavailable) = false; err=%T %v", err, err)
 		}
@@ -37,7 +38,7 @@ func TestGenerateReportsBackendUnavailable(t *testing.T) {
 			w.Write([]byte("upstream down"))
 		}))
 		defer srv.Close()
-		_, err := newOpenAIClient(srv.URL, "k").generate(ctx, "m", "hi", 0.7)
+		_, err := newOpenAIClient(srv.URL, "k", 0).generate(ctx, "m", "hi", 0.7)
 		if !errors.Is(err, ErrBackendUnavailable) {
 			t.Fatalf("5xx: errors.Is(ErrBackendUnavailable) = false; err=%T %v", err, err)
 		}
@@ -48,7 +49,7 @@ func TestGenerateReportsBackendUnavailable(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 		url := srv.URL
 		srv.Close()
-		_, err := newOpenAIClient(url, "k").generate(ctx, "m", "hi", 0.7)
+		_, err := newOpenAIClient(url, "k", 0).generate(ctx, "m", "hi", 0.7)
 		if !errors.Is(err, ErrBackendUnavailable) {
 			t.Fatalf("transport: errors.Is(ErrBackendUnavailable) = false; err=%T %v", err, err)
 		}
@@ -60,7 +61,7 @@ func TestGenerateReportsBackendUnavailable(t *testing.T) {
 			w.Write([]byte(`{"error":"unauthorized"}`))
 		}))
 		defer srv.Close()
-		c := newOpenAIClient(srv.URL, "bad")
+		c := newOpenAIClient(srv.URL, "bad", 0)
 		for range clientBreakerThreshold {
 			c.generate(ctx, "m", "hi", 0.7) //nolint:errcheck
 		}
@@ -84,7 +85,7 @@ func TestBackendAvailableTracksBreaker(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newOpenAIClient(srv.URL, "bad")
+	c := newOpenAIClient(srv.URL, "bad", 0)
 	c.breakerCooldown = 10 * time.Millisecond
 	p := &AIProcessor{client: c}
 	ctx := context.Background()
@@ -116,7 +117,7 @@ func TestCircuitBreakerTripsAfterConsecutive4xx(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newOpenAIClient(srv.URL, "bad-key")
+	c := newOpenAIClient(srv.URL, "bad-key", 0)
 	ctx := context.Background()
 
 	// First clientBreakerThreshold calls should each return ClientError.
@@ -165,7 +166,7 @@ func TestCircuitBreakerResetsOnSuccess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newOpenAIClient(srv.URL, "key")
+	c := newOpenAIClient(srv.URL, "key", 0)
 	ctx := context.Background()
 
 	// Run up to threshold-1 failures.
@@ -210,7 +211,7 @@ func TestCircuitBreakerHalfOpenAfterCooldown(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newOpenAIClient(srv.URL, "key")
+	c := newOpenAIClient(srv.URL, "key", 0)
 	c.breakerCooldown = 50 * time.Millisecond
 	ctx := context.Background()
 
@@ -261,7 +262,7 @@ func TestCircuitBreakerRecoversFrom401(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newOpenAIClient(srv.URL, "bad-key")
+	c := newOpenAIClient(srv.URL, "bad-key", 0)
 	c.breakerCooldown = 50 * time.Millisecond
 	ctx := context.Background()
 
@@ -312,7 +313,7 @@ func TestCircuitBreakerIgnores5xx(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newOpenAIClient(srv.URL, "key")
+	c := newOpenAIClient(srv.URL, "key", 0)
 	ctx := context.Background()
 
 	// 5xx errors should NOT trip the breaker.
@@ -349,7 +350,7 @@ func TestGenerate_SendsMaxTokens(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newOpenAIClient(srv.URL, "")
+	c := newOpenAIClient(srv.URL, "", 0)
 	if _, err := c.generate(context.Background(), "test-model", "hello", 0.1); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -414,5 +415,131 @@ func TestExtractJSON_EmptyAndPlainText(t *testing.T) {
 	}
 	if got := extractJSON("nothing useful here"); got != "nothing useful here" {
 		t.Errorf("no-brace input: got %q", got)
+	}
+}
+
+// TestSemaphoreCeilingEnforced verifies that a client with maxConcurrent=2
+// never sends more than 2 concurrent requests to the backend, even when 5
+// goroutines call generate simultaneously.
+func TestSemaphoreCeilingEnforced(t *testing.T) {
+	const ceiling = 2
+	const goroutines = 5
+
+	var (
+		inflight    atomic.Int32
+		maxObserved atomic.Int32
+		release     = make(chan struct{})
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		cur := inflight.Add(1)
+		defer inflight.Add(-1)
+
+		// Record the maximum seen.
+		for {
+			old := maxObserved.Load()
+			if cur <= old || maxObserved.CompareAndSwap(old, cur) {
+				break
+			}
+		}
+
+		// Block until the test releases all handlers.
+		<-release
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	c := newOpenAIClient(srv.URL, "", ceiling)
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	for range goroutines {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.generate(ctx, "m", "p", 0.1) //nolint:errcheck
+		}()
+	}
+
+	// Give goroutines time to reach the server and fill the semaphore.
+	time.Sleep(100 * time.Millisecond)
+
+	// Unblock all handlers.
+	close(release)
+	wg.Wait()
+
+	if got := maxObserved.Load(); got > ceiling {
+		t.Errorf("max concurrent requests = %d, want <= %d", got, ceiling)
+	}
+}
+
+// TestSemaphoreUnboundedWhenZero verifies that maxConcurrent=0 leaves sem nil
+// (no gate) and that generate still works.
+func TestSemaphoreUnboundedWhenZero(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	c := newOpenAIClient(srv.URL, "", 0)
+	if c.sem != nil {
+		t.Fatal("expected sem == nil for maxConcurrent=0")
+	}
+
+	result, err := c.generate(context.Background(), "m", "p", 0.1)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if result != "ok" {
+		t.Errorf("result = %q, want %q", result, "ok")
+	}
+}
+
+// TestSemaphoreContextCancelWhileWaiting verifies that a generate call whose
+// context is already cancelled returns promptly with ctx.Err() rather than
+// blocking on a full semaphore.
+func TestSemaphoreContextCancelWhileWaiting(t *testing.T) {
+	// hold blocks the one slot so the second call must wait.
+	hold := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-hold
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer func() {
+		close(hold)
+		srv.Close()
+	}()
+
+	c := newOpenAIClient(srv.URL, "", 1)
+
+	// Fill the single semaphore slot with a blocking call.
+	bgCtx := context.Background()
+	ready := make(chan struct{})
+	go func() {
+		// Signal that we're about to call generate, then call it.
+		close(ready)
+		c.generate(bgCtx, "m", "p", 0.1) //nolint:errcheck
+	}()
+	<-ready
+	// Give the goroutine time to acquire the slot.
+	time.Sleep(20 * time.Millisecond)
+
+	// Now try to generate with an already-cancelled context.
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := c.generate(cancelledCtx, "m", "p", 0.1)
+	if err == nil {
+		t.Fatal("expected error from cancelled context, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got: %v", err)
 	}
 }

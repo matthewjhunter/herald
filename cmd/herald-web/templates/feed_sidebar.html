@@ -1,27 +1,19 @@
 {{define "feed_sidebar_content"}}
 <nav>
-    <a href="#" hx-get="/articles" hx-target="#article-list" hx-swap="innerHTML"
-       hx-on:click="heraldClearReadingPane()"
-       class="{{if and (not .ActiveFeed) (not .ActiveStarred) (not .ActiveGroup)}}active{{end}}">
+    <a href="#" hx-get="/articles" hx-target="#article-list" hx-swap="innerHTML"       class="{{if and (not .ActiveFeed) (not .ActiveStarred) (not .ActiveGroup)}}active{{end}}">
         All Articles
         {{if .TotalUnread}}<span class="unread-count">{{.TotalUnread}}</span>{{end}}
     </a>
-    <a href="#" hx-get="/articles?starred=1" hx-target="#article-list" hx-swap="innerHTML"
-       hx-on:click="heraldClearReadingPane()"
-       class="{{if .ActiveStarred}}active{{end}}">
+    <a href="#" hx-get="/articles?starred=1" hx-target="#article-list" hx-swap="innerHTML"       class="{{if .ActiveStarred}}active{{end}}">
         Starred
     </a>
-    <a href="#" hx-get="/summary" hx-target="#article-list" hx-swap="innerHTML"
-       hx-on:click="heraldClearReadingPane()"
-       class="{{if .ActiveSummary}}active{{end}}">
+    <a href="#" hx-get="/summary" hx-target="#article-list" hx-swap="innerHTML"       class="{{if .ActiveSummary}}active{{end}}">
         AI Summary
     </a>
     {{if .Groups}}
     <hr>
     {{range .Groups}}
-    <a href="#" hx-get="/articles?group_id={{.GroupID}}" hx-target="#article-list" hx-swap="innerHTML"
-       hx-on:click="heraldClearReadingPane()"
-       class="{{if eq $.ActiveGroup .GroupID}}active{{end}}"
+    <a href="#" hx-get="/articles?group_id={{.GroupID}}" hx-target="#article-list" hx-swap="innerHTML"       class="{{if eq $.ActiveGroup .GroupID}}active{{end}}"
        data-group-id="{{.GroupID}}" data-group-title="{{.DisplayName}}">
         {{.DisplayName}}
         {{if .UnreadArticles}}<span class="unread-count">{{.UnreadArticles}}</span>{{end}}
@@ -30,9 +22,7 @@
     {{end}}
     <hr>
     {{range .Feeds}}
-    <a href="#" hx-get="/articles?feed_id={{.FeedID}}" hx-target="#article-list" hx-swap="innerHTML"
-       hx-on:click="heraldClearReadingPane()"
-       class="{{if eq $.ActiveFeed .FeedID}}active{{end}}"
+    <a href="#" hx-get="/articles?feed_id={{.FeedID}}" hx-target="#article-list" hx-swap="innerHTML"       class="{{if eq $.ActiveFeed .FeedID}}active{{end}}"
        data-feed-id="{{.FeedID}}" data-feed-title="{{.FeedTitle}}">
         {{.FeedTitle}}
         {{if .UnreadArticles}}<span class="unread-count">{{.UnreadArticles}}</span>{{end}}

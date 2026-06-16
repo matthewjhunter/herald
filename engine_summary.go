@@ -115,6 +115,12 @@ func (e *Engine) BeginAISummary(userID int64, newsletterID *int64) (id int64, pr
 	if e.summarizer == nil {
 		return 0, "", fmt.Errorf("AI summary not configured")
 	}
+	if newsletterID != nil {
+		nl, nerr := e.store.GetNewsletter(*newsletterID)
+		if nerr != nil || nl == nil || nl.UserID != userID {
+			return 0, "", fmt.Errorf("newsletter not found or not owned by user")
+		}
+	}
 	if inprog, ierr := e.store.GetInProgressAISummary(userID); ierr == nil && inprog != nil {
 		return inprog.ID, "", fmt.Errorf("a summary is already generating")
 	}

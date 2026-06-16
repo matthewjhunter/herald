@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
@@ -80,8 +81,15 @@ func claimsFromContext(ctx context.Context) *oidclient.Claims {
 // and enforces that the {userID} in the URL matches the authenticated user.
 func (h *handlers) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		claims, err := h.validator.ValidateCookie(r)
+		claims, err := h.sessions.authenticate(r)
 		if err != nil {
+			// errNoSession is the expected unauthenticated case; anything else
+			// (a failed renewal, a transient store error) also lands the user at
+			// login, but is logged so a real fault is diagnosable rather than a
+			// silent re-auth loop.
+			if !errors.Is(err, errNoSession) {
+				log.Printf("herald-web: session authenticate: %v", err)
+			}
 			// While the lazy OIDC client has not completed discovery it can
 			// neither validate cookies nor build an authorize URL; degrade to
 			// 503 rather than bouncing users to a broken IdP (#165).
@@ -131,6 +139,22 @@ func (h *handlers) requireAuth(next http.Handler) http.Handler {
 		ctx := withUser(r.Context(), user)
 		ctx = withClaims(ctx, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// securityHeaders sets conservative security response headers on every
+// response. The CSP currently permits inline scripts/styles because some
+// templates use them; tightening script-src with nonces is a follow-up.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		h.Set("Content-Security-Policy",
+			"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'")
+		h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		next.ServeHTTP(w, r)
 	})
 }
 

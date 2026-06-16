@@ -293,3 +293,41 @@ func TestGenerateForConfig(t *testing.T) {
 		t.Fatalf("chrome not wrapped: %s", wrapped)
 	}
 }
+
+func TestBeginAISummaryNewsletterOwnership(t *testing.T) {
+	srv := digestServer(t)
+	defer srv.Close()
+	store, err := storage.NewSQLiteStore(filepath.Join(t.TempDir(), "h.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	userA, _ := store.CreateUser("a")
+	userB, _ := store.CreateUser("b")
+	nlID, err := store.CreateNewsletter(&storage.Newsletter{
+		UserID: userA, Name: "A digest", Schedule: "manual",
+		Config: storage.NewsletterConfig{MaxArticles: 10},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := &Engine{
+		store:      store,
+		summarizer: ai.NewCloudSummarizer(srv.URL, "", "m", time.Minute, false),
+		config:     storage.DefaultConfig(),
+	}
+
+	// Another user cannot generate against A's newsletter config.
+	if _, _, err := e.BeginAISummary(userB, &nlID); err == nil || !strings.Contains(err.Error(), "not owned") {
+		t.Fatalf("expected not-owned error, got %v", err)
+	}
+	if inprog, _ := store.GetInProgressAISummary(userB); inprog != nil {
+		t.Errorf("no generating row should exist for user B, got %+v", inprog)
+	}
+
+	// The owner can.
+	if _, _, err := e.BeginAISummary(userA, &nlID); err != nil {
+		t.Fatalf("owner BeginAISummary: %v", err)
+	}
+}

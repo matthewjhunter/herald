@@ -108,16 +108,12 @@ CREATE TABLE IF NOT EXISTS feed_tags (
 CREATE INDEX IF NOT EXISTS idx_feed_tags_user_tag ON feed_tags(user_id, tag);
 
 CREATE TABLE IF NOT EXISTS article_summaries (
-    user_id INTEGER NOT NULL DEFAULT 1,
-    article_id INTEGER NOT NULL,
+    article_id INTEGER PRIMARY KEY,
     ai_summary TEXT NOT NULL,
     skip_reason TEXT,
     generated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, article_id),
     FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
 );
-
-CREATE INDEX IF NOT EXISTS idx_article_summaries_article ON article_summaries(article_id);
 
 CREATE TABLE IF NOT EXISTS article_groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -308,4 +304,21 @@ CREATE TABLE IF NOT EXISTS cycle_stats (
     ai_backend_available BOOLEAN NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_cycle_stats_completed ON cycle_stats(completed_at DESC);
+
+-- Server-side OIDC sessions (#173). The browser holds only id (the opaque
+-- session cookie); access_token and refresh_token never leave the server. The
+-- refresh token rotates on every renewal and is the high-value credential.
+-- Not user_id-keyed: a session exists from the callback (which records the OIDC
+-- sub) before the Herald user row is provisioned on the first authed request.
+CREATE TABLE IF NOT EXISTS sessions (
+    id              TEXT PRIMARY KEY,
+    user_sub        TEXT NOT NULL,
+    access_token    TEXT NOT NULL,
+    refresh_token   TEXT NOT NULL,
+    access_expiry   DATETIME NOT NULL,
+    absolute_expiry DATETIME NOT NULL,
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_absolute_expiry ON sessions(absolute_expiry);
 `

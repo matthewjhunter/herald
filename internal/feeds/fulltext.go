@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"math/rand/v2"
 	"net/http"
@@ -315,7 +316,7 @@ func fetchReadableContent(ctx context.Context, client *http.Client, articleURL s
 
 	httpClient := client
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 20 * time.Second}
+		httpClient = newSafeClient(20 * time.Second)
 	}
 
 	resp, err := httpClient.Do(req)
@@ -335,7 +336,8 @@ func fetchReadableContent(ctx context.Context, client *http.Client, articleURL s
 		return "", fmt.Errorf("non-HTML content-type %q for %s", ct, articleURL)
 	}
 
-	article, err := readability.FromReader(resp.Body, parsedURL)
+	const maxArticleBytes = 10 << 20 // 10 MB cap for full-text extraction.
+	article, err := readability.FromReader(io.LimitReader(resp.Body, maxArticleBytes), parsedURL)
 	if err != nil {
 		return "", fmt.Errorf("readability parse: %w", err)
 	}

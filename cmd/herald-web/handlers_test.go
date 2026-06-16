@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -144,6 +145,14 @@ func defaultTokenHandler(issuerURL *string) http.HandlerFunc {
 // (no token endpoint). Returns the client and a valid JWT for the test user.
 func newTestValidator(t *testing.T) (*oidclient.Client, string) {
 	t.Helper()
+	client, issueToken := newTestValidatorIssuer(t)
+	return client, issueToken("test-sub-1", "tester@example.com", "Tester")
+}
+
+// newTestValidatorIssuer is like newTestValidator but returns the token
+// minting function so tests can authenticate as additional users.
+func newTestValidatorIssuer(t *testing.T) (*oidclient.Client, func(sub, email, name string) string) {
+	t.Helper()
 	srv, issueToken := fakeOIDCProvider(t, nil)
 
 	client, err := oidclient.New(context.Background(), oidclient.Config{
@@ -153,9 +162,7 @@ func newTestValidator(t *testing.T) (*oidclient.Client, string) {
 	if err != nil {
 		t.Fatalf("oidclient.New: %v", err)
 	}
-
-	token := issueToken("test-sub-1", "tester@example.com", "Tester")
-	return client, token
+	return client, issueToken
 }
 
 // newTestValidatorWithOIDC creates an oidclient.Client with OIDC flow configured
@@ -189,23 +196,72 @@ func newTestValidatorWithOIDC(t *testing.T, tokenHandler http.HandlerFunc) *oidc
 
 // testFixtures holds all resources for a handler integration test.
 type testFixtures struct {
-	router    http.Handler
-	engine    *herald.Engine
-	store     *storage.SQLiteStore
-	userID    int64
-	feedID    int64
-	articleID int64
-	jwtToken  string // valid JWT for the test user
+	router     http.Handler
+	engine     *herald.Engine
+	store      *storage.SQLiteStore
+	userID     int64
+	feedID     int64
+	articleID  int64
+	jwtToken   string                               // valid access-token JWT for the test user
+	sessionID  string                               // opaque session-id cookie for the test user (#173)
+	issueToken func(sub, email, name string) string // mints JWTs for additional users
+}
+
+// createTestSession persists a server-side session whose access token is the
+// given JWT and returns the opaque session id to send as the cookie -- the same
+// shape the OIDC callback produces, so requireAuth's validate path runs exactly
+// as in production. The session's user_sub is read from the token's sub claim.
+func createTestSession(t *testing.T, engine *herald.Engine, accessToken string) string {
+	t.Helper()
+	id, err := newSessionID()
+	if err != nil {
+		t.Fatalf("newSessionID: %v", err)
+	}
+	now := time.Now()
+	if err := engine.CreateSession(&storage.Session{
+		ID:             id,
+		UserSub:        tokenSub(t, accessToken),
+		AccessToken:    accessToken,
+		RefreshToken:   "test-refresh-" + id,
+		AccessExpiry:   now.Add(time.Hour),
+		AbsoluteExpiry: now.Add(24 * time.Hour),
+	}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	return id
+}
+
+// tokenSub extracts the sub claim from a JWT without verifying it -- used only
+// to label the test session row, not for any auth decision.
+func tokenSub(t *testing.T, token string) string {
+	t.Helper()
+	parsed, _, err := jwt.NewParser().ParseUnverified(token, jwt.MapClaims{})
+	if err != nil {
+		t.Fatalf("parse test token: %v", err)
+	}
+	sub, _ := parsed.Claims.(jwt.MapClaims)["sub"].(string)
+	return sub
 }
 
 func newTestFixtures(t *testing.T) *testFixtures {
 	t.Helper()
+	return newTestFixturesWith(t, nil)
+}
+
+// newTestFixturesWith builds the standard fixtures, letting the caller tweak
+// the engine config (e.g. point SummaryBaseURL at a fake cloud gateway).
+func newTestFixturesWith(t *testing.T, mutate func(*herald.EngineConfig)) *testFixtures {
+	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 
-	engine, err := herald.NewEngine(herald.EngineConfig{
+	engCfg := herald.EngineConfig{
 		DBPath:   dbPath,
 		ReadOnly: true,
-	})
+	}
+	if mutate != nil {
+		mutate(&engCfg)
+	}
+	engine, err := herald.NewEngine(engCfg)
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
@@ -244,7 +300,8 @@ func newTestFixtures(t *testing.T) *testFixtures {
 		t.Fatalf("AddArticle: %v", err)
 	}
 
-	validator, jwtToken := newTestValidator(t)
+	validator, issueToken := newTestValidatorIssuer(t)
+	jwtToken := issueToken("test-sub-1", "tester@example.com", "Tester")
 	router := newRouter(engine, validator, "", nil)
 
 	t.Cleanup(func() {
@@ -253,14 +310,39 @@ func newTestFixtures(t *testing.T) *testFixtures {
 	})
 
 	return &testFixtures{
-		router:    router,
-		engine:    engine,
-		store:     st,
-		userID:    user.ID,
-		feedID:    feedID,
-		articleID: articleID,
-		jwtToken:  jwtToken,
+		router:     router,
+		engine:     engine,
+		store:      st,
+		userID:     user.ID,
+		feedID:     feedID,
+		articleID:  articleID,
+		jwtToken:   jwtToken,
+		sessionID:  createTestSession(t, engine, jwtToken),
+		issueToken: issueToken,
 	}
+}
+
+// secondTestUser provisions a second OIDC user and returns its ID and a JWT
+// minted for it, for cross-user authorization tests.
+func secondTestUser(t *testing.T, tf *testFixtures) (int64, string) {
+	t.Helper()
+	u, err := tf.engine.GetOrProvisionOIDCUser("test-sub-2", "Other", "other@example.com")
+	if err != nil {
+		t.Fatalf("GetOrProvisionOIDCUser other: %v", err)
+	}
+	return u.ID, tf.issueToken("test-sub-2", "other@example.com", "Other")
+}
+
+// authedRequestAs makes a test HTTP request authenticated as the user the given
+// JWT identifies. It stands up a server-side session for that token so the
+// request carries the opaque session cookie requireAuth now expects.
+func authedRequestAs(t *testing.T, tf *testFixtures, token, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, nil)
+	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: createTestSession(t, tf.engine, token)})
+	rr := httptest.NewRecorder()
+	tf.router.ServeHTTP(rr, req)
+	return rr
 }
 
 // request makes a test HTTP request.
@@ -279,7 +361,7 @@ func request(t *testing.T, handler http.Handler, method, path string, headers ma
 func authedRequest(t *testing.T, tf *testFixtures, method, path string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, nil)
-	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: tf.jwtToken})
+	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: tf.sessionID})
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
@@ -293,7 +375,7 @@ func authedRequestForm(t *testing.T, tf *testFixtures, method, path string, form
 	body := form.Encode()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: tf.jwtToken})
+	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: tf.sessionID})
 	rr := httptest.NewRecorder()
 	tf.router.ServeHTTP(rr, req)
 	return rr
@@ -502,6 +584,47 @@ func TestHandleStarToggle(t *testing.T) {
 	}
 }
 
+func TestHandleReadToggle(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	path := "/articles/" + itoa(tf.articleID) + "/read"
+
+	// Mark unread: button should now offer to mark read again, and the
+	// article should reappear in the user's unread list.
+	rr := authedRequestForm(t, tf, "POST", path, url.Values{"read": {"false"}})
+	if rr.Code != http.StatusOK {
+		t.Errorf("mark-unread status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	if !strings.Contains(rr.Body.String(), "Mark read") {
+		t.Errorf("response should offer to mark read, got %q", rr.Body.String())
+	}
+	unread, err := tf.engine.GetUnreadArticles(tf.userID, 10, 0, false)
+	if err != nil {
+		t.Fatalf("GetUnreadArticles: %v", err)
+	}
+	if len(unread) != 1 || unread[0].ID != tf.articleID {
+		t.Errorf("expected article %d back in unread list, got %d articles", tf.articleID, len(unread))
+	}
+
+	// Mark read again: button offers to mark unread, article leaves the list.
+	rr = authedRequestForm(t, tf, "POST", path, url.Values{"read": {"true"}})
+	if rr.Code != http.StatusOK {
+		t.Errorf("mark-read status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	if !strings.Contains(rr.Body.String(), "Mark unread") {
+		t.Errorf("response should offer to mark unread, got %q", rr.Body.String())
+	}
+	unread, _ = tf.engine.GetUnreadArticles(tf.userID, 10, 0, false)
+	if len(unread) != 0 {
+		t.Errorf("expected no unread articles after marking read, got %d", len(unread))
+	}
+	// But it is returned when read articles are included, flagged read.
+	all, _ := tf.engine.GetUnreadArticles(tf.userID, 10, 0, true)
+	if len(all) != 1 || !all[0].Read {
+		t.Errorf("expected 1 read article with includeRead, got %d", len(all))
+	}
+}
+
 func TestHandleSidebar(t *testing.T) {
 	tf := newTestFixtures(t)
 
@@ -665,19 +788,31 @@ func TestBestDate(t *testing.T) {
 }
 
 func TestParseIntParam(t *testing.T) {
-	req := httptest.NewRequest("GET", "/?limit=25&bad=abc&neg=-5", nil)
+	req := httptest.NewRequest("GET", "/?limit=25&bad=abc&neg=-5&huge=9999", nil)
 
-	if v := parseIntParam(req, "limit", 10); v != 25 {
+	// Basic cases (no cap)
+	if v := parseIntParam(req, "limit", 10, 0); v != 25 {
 		t.Errorf("limit: got %d, want 25", v)
 	}
-	if v := parseIntParam(req, "missing", 10); v != 10 {
+	if v := parseIntParam(req, "missing", 10, 0); v != 10 {
 		t.Errorf("missing: got %d, want 10", v)
 	}
-	if v := parseIntParam(req, "bad", 10); v != 10 {
+	if v := parseIntParam(req, "bad", 10, 0); v != 10 {
 		t.Errorf("bad: got %d, want 10", v)
 	}
-	if v := parseIntParam(req, "neg", 10); v != 10 {
+	if v := parseIntParam(req, "neg", 10, 0); v != 10 {
 		t.Errorf("neg: got %d, want 10", v)
+	}
+
+	// Cap cases
+	if v := parseIntParam(req, "huge", 10, 100); v != 100 {
+		t.Errorf("over-max: got %d, want 100 (capped)", v)
+	}
+	if v := parseIntParam(req, "limit", 10, 50); v != 25 {
+		t.Errorf("under-max: got %d, want 25", v)
+	}
+	if v := parseIntParam(req, "missing", 10, 5); v != 10 {
+		t.Errorf("missing with cap: got %d, want 10 (default)", v)
 	}
 }
 
@@ -704,7 +839,7 @@ func itoa(n int64) string {
 
 // --- Callback handler tests ---
 
-func TestHandleCallback_SetsJWTCookie(t *testing.T) {
+func TestHandleCallback_SetsSessionCookie(t *testing.T) {
 	tf := newTestFixtures(t)
 
 	validator := newTestValidatorWithOIDC(t, nil)
@@ -937,5 +1072,435 @@ func TestHandleProcessingStatus(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("status page missing %q", want)
 		}
+	}
+}
+
+// --- Cross-user ownership tests ---
+
+func TestHandleFilterDelete_CrossUser(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	ruleID, err := tf.store.AddFilterRule(&storage.FilterRule{
+		UserID: tf.userID, Axis: "author", Value: "Alice", Score: 5,
+	})
+	if err != nil {
+		t.Fatalf("AddFilterRule: %v", err)
+	}
+	_, otherToken := secondTestUser(t, tf)
+
+	// Another user cannot delete the rule.
+	rr := authedRequestAs(t, tf, otherToken, "DELETE", "/filters/"+itoa(ruleID))
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("cross-user delete: got %d, want %d", rr.Code, http.StatusNotFound)
+	}
+	rules, err := tf.engine.GetFilterRules(tf.userID, nil)
+	if err != nil {
+		t.Fatalf("GetFilterRules: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("rule should survive cross-user delete, got %d rules", len(rules))
+	}
+
+	// The owner can.
+	rr = authedRequest(t, tf, "DELETE", "/filters/"+itoa(ruleID), nil)
+	if rr.Code != http.StatusOK {
+		t.Errorf("owner delete: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	rules, _ = tf.engine.GetFilterRules(tf.userID, nil)
+	if len(rules) != 0 {
+		t.Errorf("expected 0 rules after owner delete, got %d", len(rules))
+	}
+}
+
+func TestHandleNewsletterGenerate_CrossUser(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	nlID, err := tf.store.CreateNewsletter(&storage.Newsletter{
+		UserID: tf.userID, Name: "Mine", Schedule: "manual",
+		Config: storage.NewsletterConfig{MaxArticles: 10},
+	})
+	if err != nil {
+		t.Fatalf("CreateNewsletter: %v", err)
+	}
+	otherID, otherToken := secondTestUser(t, tf)
+
+	rr := authedRequestAs(t, tf, otherToken, "POST", "/newsletters/"+itoa(nlID)+"/generate")
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("cross-user generate: got %d, want %d", rr.Code, http.StatusNotFound)
+	}
+
+	// The victim's newsletter is untouched and no digest row was created for
+	// either user.
+	nl, err := tf.store.GetNewsletter(nlID)
+	if err != nil {
+		t.Fatalf("GetNewsletter: %v", err)
+	}
+	if nl.LastGeneratedAt != nil {
+		t.Errorf("last_generated_at advanced by cross-user generate: %v", nl.LastGeneratedAt)
+	}
+	for _, uid := range []int64{tf.userID, otherID} {
+		if s, _ := tf.store.GetLatestAISummary(uid); s != nil {
+			t.Errorf("unexpected ai_summaries row for user %d: %+v", uid, s)
+		}
+	}
+}
+
+func TestHandleNewsletterGenerate_Owner(t *testing.T) {
+	// Fake cloud gateway so AISummaryEnabled() is true and the background
+	// FinishAISummary finishes quickly against a live endpoint.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		delta, _ := json.Marshal(map[string]any{
+			"choices": []map[string]any{{"delta": map[string]any{
+				"content": `{"headline":"H","body":"<p>b</p>"}`,
+			}}},
+		})
+		fmt.Fprintf(w, "data: %s\n\n", delta)
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	tf := newTestFixturesWith(t, func(cfg *herald.EngineConfig) {
+		cfg.SummaryBaseURL = srv.URL
+	})
+
+	nlID, err := tf.store.CreateNewsletter(&storage.Newsletter{
+		UserID: tf.userID, Name: "Mine", Schedule: "manual",
+		Config: storage.NewsletterConfig{MaxArticles: 10},
+	})
+	if err != nil {
+		t.Fatalf("CreateNewsletter: %v", err)
+	}
+
+	rr := authedRequest(t, tf, "POST", "/newsletters/"+itoa(nlID)+"/generate", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("owner generate: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	if !strings.Contains(rr.Body.String(), "Generating") {
+		t.Errorf("expected Generating fragment, got %q", rr.Body.String())
+	}
+
+	// Wait for the background FinishAISummary goroutine to settle before the
+	// fixtures tear down (avoids racing engine.Close).
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		inprog, err := tf.store.GetInProgressAISummary(tf.userID)
+		if err != nil {
+			t.Fatalf("GetInProgressAISummary: %v", err)
+		}
+		if inprog == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("summary still in progress after 5s")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// --- Subscription gating tests (#162) ---
+
+func TestHandleArticleView_SubscriptionGated(t *testing.T) {
+	tf := newTestFixtures(t)
+	_, otherToken := secondTestUser(t, tf)
+
+	path := "/articles/" + itoa(tf.articleID)
+
+	// A non-subscriber cannot read the article.
+	rr := authedRequestAs(t, tf, otherToken, "GET", path)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("non-subscriber view: got %d, want %d", rr.Code, http.StatusNotFound)
+	}
+
+	// The subscriber can.
+	rr = authedRequest(t, tf, "GET", path, map[string]string{"HX-Request": "true"})
+	if rr.Code != http.StatusOK {
+		t.Errorf("subscriber view: got %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// Unknown IDs 404 for everyone.
+	rr = authedRequest(t, tf, "GET", "/articles/999999", nil)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("unknown article: got %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+func TestHandleArticleImage_SubscriptionGated(t *testing.T) {
+	tf := newTestFixtures(t)
+	_, otherToken := secondTestUser(t, tf)
+
+	png := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}
+	imageID, err := tf.store.StoreArticleImage(tf.articleID, "https://example.com/img.png", png, "image/png", 1, 1)
+	if err != nil {
+		t.Fatalf("StoreArticleImage: %v", err)
+	}
+	path := "/images/" + itoa(imageID)
+
+	// A non-subscriber cannot fetch the image.
+	rr := authedRequestAs(t, tf, otherToken, "GET", path)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("non-subscriber image: got %d, want %d", rr.Code, http.StatusNotFound)
+	}
+
+	// The subscriber gets the bytes with the stored MIME type.
+	rr = authedRequest(t, tf, "GET", path, nil)
+	if rr.Code != http.StatusOK {
+		t.Errorf("subscriber image: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "image/png" {
+		t.Errorf("Content-Type = %q, want image/png", ct)
+	}
+
+	// Unknown IDs 404 for everyone.
+	rr = authedRequest(t, tf, "GET", "/images/999999", nil)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("unknown image: got %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+func TestHandleStarToggle_SubscriptionGated(t *testing.T) {
+	tf := newTestFixtures(t)
+	otherID, otherToken := secondTestUser(t, tf)
+
+	path := "/articles/" + itoa(tf.articleID) + "/star"
+
+	// A non-subscriber cannot star the article (no form body: the handler
+	// defaults to starring, and the engine rejects before any write).
+	rr := authedRequestAs(t, tf, otherToken, "POST", path)
+	if rr.Code == http.StatusOK {
+		t.Errorf("non-subscriber star: got %d, want an error status", rr.Code)
+	}
+
+	// Prove no starred row was written: subscribe B afterwards (which would
+	// make any starred row visible) and check the starred list is empty.
+	if err := tf.store.SubscribeUserToFeed(otherID, tf.feedID); err != nil {
+		t.Fatalf("SubscribeUserToFeed: %v", err)
+	}
+	starred, err := tf.store.GetStarredArticles(otherID, 10, 0, nil)
+	if err != nil {
+		t.Fatalf("GetStarredArticles: %v", err)
+	}
+	if len(starred) != 0 {
+		t.Errorf("rejected star must not write a row, got %d starred", len(starred))
+	}
+
+	// The subscriber can star.
+	rr = authedRequestForm(t, tf, "POST", path, url.Values{"starred": {"true"}})
+	if rr.Code != http.StatusOK {
+		t.Errorf("subscriber star: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	starred, err = tf.store.GetStarredArticles(tf.userID, 10, 0, nil)
+	if err != nil {
+		t.Fatalf("GetStarredArticles A: %v", err)
+	}
+	if len(starred) != 1 || starred[0].ID != tf.articleID {
+		t.Errorf("expected article %d starred for the subscriber, got %v", tf.articleID, starred)
+	}
+}
+
+// --- Plan 007: input validation and security headers ---
+
+// TestPromptSaveLengthCap asserts that a prompt template exceeding maxPromptLen
+// gets a 400 and is not persisted.
+func TestPromptSaveLengthCap(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// "curation" is a valid user-settable prompt type.
+	overlong := strings.Repeat("x", maxPromptLen+1)
+	rr := authedRequestForm(t, tf, "POST", "/settings/prompts/curation", url.Values{
+		"template": {overlong},
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("overlong prompt: got %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+
+	// A prompt at exactly the limit must be accepted.
+	atLimit := strings.Repeat("x", maxPromptLen)
+	rr = authedRequestForm(t, tf, "POST", "/settings/prompts/curation", url.Values{
+		"template": {atLimit},
+	})
+	if rr.Code != http.StatusOK {
+		t.Errorf("at-limit prompt: got %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+// TestSubscribeGenericError asserts that a feed-subscribe failure returns 400
+// and does not expose raw error detail (dial strings, DNS, etc.) to the client.
+func TestSubscribeGenericError(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// 127.0.0.1:1 is an unreachable loopback address that the SSRF dial guard
+	// or TCP stack will reject immediately. We don't care which layer rejects
+	// it -- we just want the error to be generic in the response body.
+	// Route is POST /feeds (not /feeds/subscribe).
+	rr := authedRequestForm(t, tf, "POST", "/feeds", url.Values{
+		"url": {"http://127.0.0.1:1/feed.xml"},
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("failed subscribe: got %d, want 400", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, leak := range []string{"dial", "lookup", "connection refused", "connect:", "127.0.0.1"} {
+		if strings.Contains(strings.ToLower(body), leak) {
+			t.Errorf("response body leaks internal detail %q: %s", leak, body)
+		}
+	}
+}
+
+// TestSecurityHeaders asserts that every authenticated response carries the
+// required security headers when the securityHeaders middleware is applied.
+func TestSecurityHeaders(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// securityHeaders is wired in main.go but not in newRouter. Wrap manually
+	// here to test the middleware in isolation.
+	wrapped := securityHeaders(tf.router)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: tf.sessionID})
+	rr := httptest.NewRecorder()
+	wrapped.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /: got %d, want 200", rr.Code)
+	}
+
+	want := map[string]string{
+		"X-Content-Type-Options":  "nosniff",
+		"X-Frame-Options":         "DENY",
+		"Content-Security-Policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'",
+	}
+	for header, wantVal := range want {
+		if got := rr.Header().Get(header); got != wantVal {
+			t.Errorf("%s: got %q, want %q", header, got, wantVal)
+		}
+	}
+}
+
+// newAdminFixtures builds test fixtures where the test user has admin access.
+func newAdminFixtures(t *testing.T) *testFixtures {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	engine, err := herald.NewEngine(herald.EngineConfig{DBPath: dbPath, ReadOnly: true})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	st, err := storage.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+
+	user, err := engine.GetOrProvisionOIDCUser("test-sub-1", "Tester", "tester@example.com")
+	if err != nil {
+		t.Fatalf("GetOrProvisionOIDCUser: %v", err)
+	}
+
+	validator, issueToken := newTestValidatorIssuer(t)
+	jwtToken := issueToken("test-sub-1", "tester@example.com", "Tester")
+	// Grant admin by listing the test user's email in adminUsers.
+	router := newRouter(engine, validator, "", []string{"tester@example.com"})
+
+	t.Cleanup(func() {
+		engine.Close()
+		st.Close()
+	})
+
+	return &testFixtures{
+		router:     router,
+		engine:     engine,
+		store:      st,
+		userID:     user.ID,
+		jwtToken:   jwtToken,
+		sessionID:  createTestSession(t, engine, jwtToken),
+		issueToken: issueToken,
+	}
+}
+
+// TestHandleAdminUsers_NonAdminForbidden confirms that a non-admin request to
+// GET /admin/users gets 403.
+func TestHandleAdminUsers_NonAdminForbidden(t *testing.T) {
+	tf := newTestFixtures(t) // no admin email in router
+	rr := authedRequest(t, tf, "GET", "/admin/users", nil)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("GET /admin/users non-admin: got %d, want 403", rr.Code)
+	}
+}
+
+// TestHandleAdminUserDelete_NonAdminForbidden confirms that a non-admin DELETE
+// is rejected with 403 and the user row is not removed.
+func TestHandleAdminUserDelete_NonAdminForbidden(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// Provision a second user to try to delete.
+	target, err := tf.engine.GetOrProvisionOIDCUser("target-sub", "Target", "target@example.com")
+	if err != nil {
+		t.Fatalf("GetOrProvisionOIDCUser target: %v", err)
+	}
+
+	rr := authedRequest(t, tf, "DELETE", "/admin/users/"+itoa(target.ID), nil)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("DELETE /admin/users/{id} non-admin: got %d, want 403", rr.Code)
+	}
+
+	// Confirm the user still exists.
+	users, err := tf.engine.ListUsers()
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	found := false
+	for _, u := range users {
+		if u.ID == target.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("target user should still exist after rejected non-admin delete")
+	}
+}
+
+// TestHandleAdminUserDelete_AdminSuccess confirms that an admin can delete a
+// non-reserved user and that the user is gone afterwards.
+func TestHandleAdminUserDelete_AdminSuccess(t *testing.T) {
+	tf := newAdminFixtures(t)
+
+	// Provision a target user (will get id > 1 because tf.userID is 1).
+	target, err := tf.engine.GetOrProvisionOIDCUser("target-sub", "Target", "target@example.com")
+	if err != nil {
+		t.Fatalf("GetOrProvisionOIDCUser target: %v", err)
+	}
+	if target.ID == tf.userID {
+		t.Fatalf("test assumption broken: target and admin are the same user")
+	}
+
+	rr := authedRequest(t, tf, "DELETE", "/admin/users/"+itoa(target.ID), nil)
+	// Expect a redirect (303) or 200 -- the handler sets HX-Redirect then 303.
+	if rr.Code != http.StatusSeeOther && rr.Code != http.StatusOK {
+		t.Errorf("DELETE /admin/users/{id} admin: got %d, want 303 or 200", rr.Code)
+	}
+
+	// Confirm the target user is gone.
+	users, err := tf.engine.ListUsers()
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	for _, u := range users {
+		if u.ID == target.ID {
+			t.Errorf("target user %d still exists after admin delete", target.ID)
+		}
+	}
+}
+
+// TestHandleAdminUserDelete_ReservedUserRejected confirms that deleting the
+// default/reserved user returns 400.
+func TestHandleAdminUserDelete_ReservedUserRejected(t *testing.T) {
+	tf := newAdminFixtures(t)
+
+	// tf.userID is user 1, which is the DefaultUserID (reserved).
+	rr := authedRequest(t, tf, "DELETE", "/admin/users/"+itoa(tf.userID), nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("DELETE reserved user: got %d, want 400", rr.Code)
 	}
 }

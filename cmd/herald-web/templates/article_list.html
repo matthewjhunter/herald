@@ -11,7 +11,7 @@
 {{end}}
 {{if .HasMore}}
 <div class="scroll-sentinel"
-     hx-get="/articles?offset={{.NextOffset}}{{if $.FeedID}}&feed_id={{$.FeedID}}{{end}}{{if $.GroupID}}&group_id={{$.GroupID}}{{end}}{{if $.Starred}}&starred=1{{end}}"
+     hx-get="/articles?offset={{.NextOffset}}{{if $.FeedID}}&feed_id={{$.FeedID}}{{end}}{{if $.GroupID}}&group_id={{$.GroupID}}{{end}}{{if $.Starred}}&starred=1{{end}}{{if $.ShowRead}}&show_read=1{{end}}"
      hx-trigger="intersect root:#article-list"
      hx-swap="outerHTML">
     Loading more...

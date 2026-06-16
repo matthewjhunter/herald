@@ -547,7 +547,7 @@ func TestGetUnreadArticlesForUser(t *testing.T) {
 		URL: "https://example.com/b/1", PublishedDate: &now,
 	})
 
-	articles, err := store.GetUnreadArticlesForUser(1, 10, 0, nil)
+	articles, err := store.GetUnreadArticlesForUser(1, 10, 0, nil, false)
 	if err != nil {
 		t.Fatalf("GetUnreadArticlesForUser failed: %v", err)
 	}
@@ -556,6 +556,66 @@ func TestGetUnreadArticlesForUser(t *testing.T) {
 	}
 	if articles[0].Title != "Feed A Article" {
 		t.Errorf("expected Feed A Article, got %q", articles[0].Title)
+	}
+}
+
+func TestGetArticlesIncludeReadAndFlags(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	feed, _ := store.AddFeed("https://example.com/a", "Feed A", "")
+	store.SubscribeUserToFeed(1, feed)
+
+	now := time.Now()
+	readID, _ := store.AddArticle(&Article{
+		FeedID: feed, GUID: "r1", Title: "Read Article",
+		URL: "https://example.com/a/read", PublishedDate: &now,
+	})
+	unreadID, _ := store.AddArticle(&Article{
+		FeedID: feed, GUID: "u1", Title: "Unread Article",
+		URL: "https://example.com/a/unread", PublishedDate: &now,
+	})
+
+	// Mark one read and star it; leave the other untouched.
+	if err := store.UpdateReadState(1, readID, true, nil, nil, nil, nil); err != nil {
+		t.Fatalf("UpdateReadState: %v", err)
+	}
+	if err := store.UpdateStarred(1, readID, true); err != nil {
+		t.Fatalf("UpdateStarred: %v", err)
+	}
+
+	// Default (includeRead=false): only the unread article, flagged unread.
+	unread, err := store.GetUnreadArticlesForUser(1, 10, 0, nil, false)
+	if err != nil {
+		t.Fatalf("GetUnreadArticlesForUser(false): %v", err)
+	}
+	if len(unread) != 1 {
+		t.Fatalf("includeRead=false: expected 1 article, got %d", len(unread))
+	}
+	if unread[0].ID != unreadID {
+		t.Errorf("includeRead=false: expected unread article %d, got %d", unreadID, unread[0].ID)
+	}
+	if unread[0].Read {
+		t.Error("includeRead=false: unread article should have Read=false")
+	}
+
+	// includeRead=true: both articles, each carrying correct Read/Starred state.
+	all, err := store.GetUnreadArticlesForUser(1, 10, 0, nil, true)
+	if err != nil {
+		t.Fatalf("GetUnreadArticlesForUser(true): %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("includeRead=true: expected 2 articles, got %d", len(all))
+	}
+	flags := map[int64]Article{}
+	for _, a := range all {
+		flags[a.ID] = a
+	}
+	if got := flags[readID]; !got.Read || !got.Starred {
+		t.Errorf("read article: expected Read && Starred, got Read=%v Starred=%v", got.Read, got.Starred)
+	}
+	if got := flags[unreadID]; got.Read || got.Starred {
+		t.Errorf("unread article: expected !Read && !Starred, got Read=%v Starred=%v", got.Read, got.Starred)
 	}
 }
 
@@ -571,7 +631,7 @@ func TestArticleSummary(t *testing.T) {
 	})
 
 	// No summary initially
-	summary, err := store.GetArticleSummary(1, articleID)
+	summary, err := store.GetArticleSummary(articleID)
 	if err != nil {
 		t.Fatalf("GetArticleSummary failed: %v", err)
 	}
@@ -580,12 +640,12 @@ func TestArticleSummary(t *testing.T) {
 	}
 
 	// Set a summary
-	if err := store.UpdateArticleAISummary(1, articleID, "This is an AI summary"); err != nil {
+	if err := store.UpdateArticleAISummary(articleID, "This is an AI summary"); err != nil {
 		t.Fatalf("UpdateArticleAISummary failed: %v", err)
 	}
 
 	// Retrieve it
-	summary, err = store.GetArticleSummary(1, articleID)
+	summary, err = store.GetArticleSummary(articleID)
 	if err != nil {
 		t.Fatalf("GetArticleSummary failed: %v", err)
 	}
@@ -595,8 +655,8 @@ func TestArticleSummary(t *testing.T) {
 	if summary.AISummary != "This is an AI summary" {
 		t.Errorf("summary = %q, want %q", summary.AISummary, "This is an AI summary")
 	}
-	if summary.UserID != 1 || summary.ArticleID != articleID {
-		t.Errorf("summary IDs mismatch: user=%d article=%d", summary.UserID, summary.ArticleID)
+	if summary.ArticleID != articleID {
+		t.Errorf("summary article ID mismatch: article=%d", summary.ArticleID)
 	}
 }
 
@@ -1006,7 +1066,7 @@ func TestFilterRulesCRUD(t *testing.T) {
 	}
 
 	// Update score
-	if err := store.UpdateFilterRuleScore(id1, 10); err != nil {
+	if err := store.UpdateFilterRuleScore(1, id1, 10); err != nil {
 		t.Fatalf("UpdateFilterRuleScore: %v", err)
 	}
 	rules, _ = store.GetFilterRules(1, nil)
@@ -1031,7 +1091,7 @@ func TestFilterRulesCRUD(t *testing.T) {
 	}
 
 	// Delete
-	if err := store.DeleteFilterRule(id2); err != nil {
+	if err := store.DeleteFilterRule(1, id2); err != nil {
 		t.Fatalf("DeleteFilterRule: %v", err)
 	}
 	rules, _ = store.GetFilterRules(1, nil)
@@ -1086,7 +1146,7 @@ func TestFilteredArticleQueries(t *testing.T) {
 	store.AddFilterRule(&FilterRule{UserID: 1, Axis: "category", Value: "Security", Score: 3})
 
 	// Without filter (nil threshold) — both articles returned
-	articles, err := store.GetUnreadArticlesForUser(1, 10, 0, nil)
+	articles, err := store.GetUnreadArticlesForUser(1, 10, 0, nil, false)
 	if err != nil {
 		t.Fatalf("GetUnreadArticlesForUser (nil threshold): %v", err)
 	}
@@ -1096,14 +1156,14 @@ func TestFilteredArticleQueries(t *testing.T) {
 
 	// With threshold=0 — both articles returned (0 means disabled)
 	zero := 0
-	articles, _ = store.GetUnreadArticlesForUser(1, 10, 0, &zero)
+	articles, _ = store.GetUnreadArticlesForUser(1, 10, 0, &zero, false)
 	if len(articles) != 2 {
 		t.Errorf("threshold=0: expected 2 articles, got %d", len(articles))
 	}
 
 	// With threshold=1 — only a1 passes (score 8 >= 1), a2 has score 0
 	one := 1
-	articles, _ = store.GetUnreadArticlesForUser(1, 10, 0, &one)
+	articles, _ = store.GetUnreadArticlesForUser(1, 10, 0, &one, false)
 	if len(articles) != 1 {
 		t.Errorf("threshold=1: expected 1 article, got %d", len(articles))
 	}
@@ -1113,7 +1173,7 @@ func TestFilteredArticleQueries(t *testing.T) {
 
 	// With threshold=10 — neither passes (max score is 8)
 	ten := 10
-	articles, _ = store.GetUnreadArticlesForUser(1, 10, 0, &ten)
+	articles, _ = store.GetUnreadArticlesForUser(1, 10, 0, &ten, false)
 	if len(articles) != 0 {
 		t.Errorf("threshold=10: expected 0 articles, got %d", len(articles))
 	}
@@ -1135,7 +1195,7 @@ func TestFilteredQueriesNoRulesPassthrough(t *testing.T) {
 	// User has no filter rules, but threshold is set — should still pass through
 	// because NOT EXISTS (SELECT 1 FROM filter_rules WHERE user_id=1) is true
 	threshold := 5
-	articles, err := store.GetUnreadArticlesForUser(1, 10, 0, &threshold)
+	articles, err := store.GetUnreadArticlesForUser(1, 10, 0, &threshold, false)
 	if err != nil {
 		t.Fatalf("GetUnreadArticlesForUser with threshold but no rules: %v", err)
 	}
@@ -1351,7 +1411,7 @@ func TestPostgresBackend(t *testing.T) {
 		store.AddFilterRule(&FilterRule{UserID: 2, Axis: "author", Value: "FilterAuthor", Score: 5})
 
 		one := 1
-		arts, err := store.GetUnreadArticlesForUser(2, 10, 0, &one)
+		arts, err := store.GetUnreadArticlesForUser(2, 10, 0, &one, false)
 		if err != nil {
 			t.Fatalf("GetUnreadArticlesForUser with filter: %v", err)
 		}
@@ -1411,7 +1471,7 @@ func TestMigrateStore(t *testing.T) {
 
 	src.StoreArticleAuthors(artID, []ArticleAuthor{{Name: "Author One", Email: "a@b.com"}})
 	src.StoreArticleCategories(artID, []string{"Security"})
-	src.UpdateArticleAISummary(1, artID, "AI summary text")
+	src.UpdateArticleAISummary(artID, "AI summary text")
 
 	groupID, _ := src.CreateArticleGroup(1, "Cluster")
 	src.AddArticleToGroup(groupID, artID)
@@ -1476,7 +1536,7 @@ func TestMigrateStore(t *testing.T) {
 	dstArts, _ := dst.GetUnreadArticles(100)
 	_ = dstArts
 	// Find article in dst by feed
-	dstFeedArts, _ := dst.GetUnreadArticlesByFeed(1, dstFeedID, 10, 0, nil)
+	dstFeedArts, _ := dst.GetUnreadArticlesByFeed(1, dstFeedID, 10, 0, nil, false)
 	_ = dstFeedArts
 
 	pref, err := dst.GetUserPreference(1, "theme")
@@ -1639,7 +1699,7 @@ func TestGroupVirtualFeed(t *testing.T) {
 	store.AddArticleToGroup(groupID, art2)
 
 	// Verify grouped articles are excluded from feed queries
-	unread, err := store.GetUnreadArticlesForUser(1, 100, 0, nil)
+	unread, err := store.GetUnreadArticlesForUser(1, 100, 0, nil, false)
 	if err != nil {
 		t.Fatalf("GetUnreadArticlesForUser: %v", err)
 	}
@@ -1651,7 +1711,7 @@ func TestGroupVirtualFeed(t *testing.T) {
 	}
 
 	// Verify grouped articles excluded from feed-specific queries too
-	feedArticles, err := store.GetUnreadArticlesByFeed(1, feedID, 100, 0, nil)
+	feedArticles, err := store.GetUnreadArticlesByFeed(1, feedID, 100, 0, nil, false)
 	if err != nil {
 		t.Fatalf("GetUnreadArticlesByFeed: %v", err)
 	}
@@ -1660,7 +1720,7 @@ func TestGroupVirtualFeed(t *testing.T) {
 	}
 
 	// Verify group articles are returned by GetUnreadGroupArticles
-	groupArticles, err := store.GetUnreadGroupArticles(1, groupID, 100, 0, nil)
+	groupArticles, err := store.GetUnreadGroupArticles(1, groupID, 100, 0, nil, false)
 	if err != nil {
 		t.Fatalf("GetUnreadGroupArticles: %v", err)
 	}
@@ -1713,7 +1773,7 @@ func TestGroupVirtualFeed(t *testing.T) {
 	if err := store.DisbandGroup(groupID); err != nil {
 		t.Fatalf("DisbandGroup: %v", err)
 	}
-	unread, _ = store.GetUnreadArticlesForUser(1, 100, 0, nil)
+	unread, _ = store.GetUnreadArticlesForUser(1, 100, 0, nil, false)
 	if len(unread) != 3 {
 		t.Errorf("expected 3 articles after disband, got %d", len(unread))
 	}
@@ -1797,7 +1857,7 @@ func TestGetUnsummarizedScoredArticles(t *testing.T) {
 		URL: "https://example.com/1", PublishedDate: &now,
 	})
 	store.ScreenArticleSecurity(a1, 10.0, "", false)
-	store.UpdateArticleAISummary(1, a1, "an existing summary")
+	store.UpdateArticleAISummary(a1, "an existing summary")
 
 	// Article 2: scored, passed security, NO summary — included.
 	a2, _ := store.AddArticle(&Article{
@@ -1825,11 +1885,11 @@ func TestGetUnsummarizedScoredArticles(t *testing.T) {
 		URL: "https://example.com/5", PublishedDate: &now,
 	})
 	store.ScreenArticleSecurity(a5, 10.0, "", false)
-	if err := store.MarkSummarizationSkipped(1, a5, "summary longer than content"); err != nil {
+	if err := store.MarkSummarizationSkipped(a5, "summary longer than content"); err != nil {
 		t.Fatalf("MarkSummarizationSkipped: %v", err)
 	}
 
-	got, err := store.GetUnsummarizedScoredArticles(1, 7.0, 100)
+	got, err := store.GetUnsummarizedScoredArticles(7.0, 100)
 	if err != nil {
 		t.Fatalf("GetUnsummarizedScoredArticles: %v", err)
 	}
@@ -1844,7 +1904,7 @@ func TestGetUnsummarizedScoredArticles(t *testing.T) {
 	// a1 has a summary row, a5 has a sentinel row — both are excluded.
 	// a2 (scored, no summary), a3 (security-failed, no summary row written),
 	// and a4 (never scored, no summary row) are all counted.
-	count, err := store.GetUnsummarizedArticleCount(1)
+	count, err := store.GetUnsummarizedArticleCount()
 	if err != nil {
 		t.Fatalf("GetUnsummarizedArticleCount: %v", err)
 	}
@@ -2765,7 +2825,7 @@ func TestSetInterestScorePreservesSecurity(t *testing.T) {
 		// Security score must survive (>= 7.0), so the article still qualifies as
 		// security-passed for the summary stage. If SetInterestScore had nulled it,
 		// this query would return nothing.
-		scored, err := store.GetUnsummarizedScoredArticles(1, 7.0, 10)
+		scored, err := store.GetUnsummarizedScoredArticles(7.0, 10)
 		if err != nil {
 			t.Fatalf("GetUnsummarizedScoredArticles: %v", err)
 		}
@@ -2878,7 +2938,7 @@ func TestGetProcessingStats(t *testing.T) {
 	if err := store.SetInterestScore(1, a2, 7); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.UpdateArticleAISummary(1, a2, "a real summary"); err != nil {
+	if err := store.UpdateArticleAISummary(a2, "a real summary"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2886,7 +2946,7 @@ func TestGetProcessingStats(t *testing.T) {
 	if err := store.ScreenArticleSecurity(a3, 3, "unsafe", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.MarkSummarizationSkipped(1, a3, "too short"); err != nil {
+	if err := store.MarkSummarizationSkipped(a3, "too short"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2965,4 +3025,306 @@ func TestCycleStats(t *testing.T) {
 	if one, _ := store.GetRecentCycleStats(1); len(one) != 1 {
 		t.Fatalf("limit=1 returned %d rows", len(one))
 	}
+}
+
+func TestFilterRuleUserScoping(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	id, err := store.AddFilterRule(&FilterRule{UserID: 1, Axis: "author", Value: "Alice", Score: 5})
+	if err != nil {
+		t.Fatalf("AddFilterRule: %v", err)
+	}
+
+	// Another user can neither update nor delete the rule.
+	if err := store.UpdateFilterRuleScore(2, id, 10); err == nil {
+		t.Error("expected error updating another user's rule")
+	}
+	if err := store.DeleteFilterRule(2, id); err == nil {
+		t.Error("expected error deleting another user's rule")
+	}
+	rules, err := store.GetFilterRules(1, nil)
+	if err != nil {
+		t.Fatalf("GetFilterRules: %v", err)
+	}
+	if len(rules) != 1 || rules[0].Score != 5 {
+		t.Fatalf("rule should survive cross-user mutations unchanged, got %+v", rules)
+	}
+
+	// The owner can do both.
+	if err := store.UpdateFilterRuleScore(1, id, 10); err != nil {
+		t.Fatalf("owner UpdateFilterRuleScore: %v", err)
+	}
+	if err := store.DeleteFilterRule(1, id); err != nil {
+		t.Fatalf("owner DeleteFilterRule: %v", err)
+	}
+	if rules, _ := store.GetFilterRules(1, nil); len(rules) != 0 {
+		t.Errorf("expected 0 rules after owner delete, got %d", len(rules))
+	}
+}
+
+func TestUserSubscribedToArticleFeed(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		feedID, _ := store.AddFeed("https://example.com/feed", "Feed", "")
+		if err := store.SubscribeUserToFeed(1, feedID); err != nil {
+			t.Fatalf("subscribe: %v", err)
+		}
+		now := time.Now()
+		articleID, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "g", Title: "g",
+			URL: "https://example.com/g", PublishedDate: &now})
+
+		// Subscriber sees the article's feed.
+		ok, err := store.UserSubscribedToArticleFeed(1, articleID)
+		if err != nil || !ok {
+			t.Errorf("subscriber = (%v, %v), want (true, nil)", ok, err)
+		}
+		// Non-subscriber does not.
+		ok, err = store.UserSubscribedToArticleFeed(2, articleID)
+		if err != nil || ok {
+			t.Errorf("non-subscriber = (%v, %v), want (false, nil)", ok, err)
+		}
+		// Nonexistent article is false, nil.
+		ok, err = store.UserSubscribedToArticleFeed(1, 999999)
+		if err != nil || ok {
+			t.Errorf("unknown article = (%v, %v), want (false, nil)", ok, err)
+		}
+	})
+}
+
+// TestDeleteUser verifies that DeleteUser removes rows in every per-user table
+// and leaves other users' data untouched.
+func TestDeleteUser(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		// Create two users. User 2 is the one we will delete; user 3 acts as a
+		// bystander whose rows must survive.
+		delID, err := store.CreateUser("DeleteMe")
+		if err != nil {
+			t.Fatalf("CreateUser del: %v", err)
+		}
+		keepID, err := store.CreateUser("KeepMe")
+		if err != nil {
+			t.Fatalf("CreateUser keep: %v", err)
+		}
+
+		// Seed a feed and article used by both users.
+		feedID, err := store.AddFeed("https://example.com/feed", "Test Feed", "")
+		if err != nil {
+			t.Fatalf("AddFeed: %v", err)
+		}
+		pub := time.Now().Add(-time.Hour)
+		articleID, err := store.AddArticle(&Article{
+			FeedID: feedID, GUID: "del-test-guid", Title: "T",
+			URL: "https://example.com/a", PublishedDate: &pub,
+		})
+		if err != nil {
+			t.Fatalf("AddArticle: %v", err)
+		}
+
+		// --- Seed per-user rows for the deleted user ---
+
+		// read_state
+		if err := store.SubscribeUserToFeed(delID, feedID); err != nil {
+			t.Fatalf("subscribe del: %v", err)
+		}
+		score := 0.8
+		if err := store.UpdateReadState(delID, articleID, false, &score, &score, nil, nil); err != nil {
+			t.Fatalf("UpdateReadState del: %v", err)
+		}
+
+		// user_preferences
+		if err := store.SetUserPreference(delID, "theme", "dark"); err != nil {
+			t.Fatalf("SetUserPreference del: %v", err)
+		}
+
+		// feed_tags
+		if err := store.AddFeedTag(delID, feedID, "testtag"); err != nil {
+			t.Fatalf("AddFeedTag del: %v", err)
+		}
+
+		// user_prompts
+		if err := store.SetUserPrompt(delID, "curation", "custom prompt", nil, nil); err != nil {
+			t.Fatalf("SetUserPrompt del: %v", err)
+		}
+
+		// filter_rules
+		ruleID, err := store.AddFilterRule(&FilterRule{UserID: delID, Axis: "author", Value: "spam", Score: -100})
+		if err != nil {
+			t.Fatalf("AddFilterRule del: %v", err)
+		}
+		if ruleID == 0 {
+			t.Fatal("expected non-zero rule id")
+		}
+
+		// article_groups (+ article_group_members cascade)
+		groupID, err := store.CreateArticleGroup(delID, "TestGroup")
+		if err != nil {
+			t.Fatalf("CreateArticleGroup del: %v", err)
+		}
+		if err := store.AddArticleToGroup(groupID, articleID); err != nil {
+			t.Fatalf("AddArticleToGroup del: %v", err)
+		}
+		if err := store.UpdateGroupSummary(groupID, "head", "body", 1, nil); err != nil {
+			t.Fatalf("UpdateGroupSummary del: %v", err)
+		}
+
+		// fever_credentials (ON DELETE CASCADE from users)
+		if err := store.SetFeverCredential(delID, "test-api-key"); err != nil {
+			t.Fatalf("SetFeverCredential del: %v", err)
+		}
+
+		// newsletters + newsletter_issues (ON DELETE CASCADE from users)
+		nlID, err := store.CreateNewsletter(&Newsletter{
+			UserID: delID, Name: "Test NL", Schedule: "manual",
+			Config: NewsletterConfig{MaxArticles: 10},
+		})
+		if err != nil {
+			t.Fatalf("CreateNewsletter del: %v", err)
+		}
+		issueID, err := store.CreateNewsletterIssue(&NewsletterIssue{
+			NewsletterID: nlID, Headline: "iss1", ContentHTML: "<p>body</p>",
+		})
+		if err != nil {
+			t.Fatalf("CreateNewsletterIssue del: %v", err)
+		}
+		if issueID == 0 {
+			t.Fatal("expected non-zero issue id")
+		}
+
+		// ai_summaries (ON DELETE CASCADE from users)
+		sumID, err := store.CreateAISummary(&AISummary{
+			UserID: delID, Model: "test-model", Prompt: "test prompt",
+		})
+		if err != nil {
+			t.Fatalf("CreateAISummary del: %v", err)
+		}
+		if sumID == 0 {
+			t.Fatal("expected non-zero summary id")
+		}
+
+		// --- Seed bystander rows for the kept user ---
+		if err := store.SubscribeUserToFeed(keepID, feedID); err != nil {
+			t.Fatalf("subscribe keep: %v", err)
+		}
+		if err := store.UpdateReadState(keepID, articleID, false, &score, &score, nil, nil); err != nil {
+			t.Fatalf("UpdateReadState keep: %v", err)
+		}
+		if err := store.SetUserPreference(keepID, "theme", "light"); err != nil {
+			t.Fatalf("SetUserPreference keep: %v", err)
+		}
+		if err := store.SetUserPrompt(keepID, "curation", "keep prompt", nil, nil); err != nil {
+			t.Fatalf("SetUserPrompt keep: %v", err)
+		}
+		keepNlID, err := store.CreateNewsletter(&Newsletter{
+			UserID: keepID, Name: "Keep NL", Schedule: "manual",
+			Config: NewsletterConfig{MaxArticles: 5},
+		})
+		if err != nil {
+			t.Fatalf("CreateNewsletter keep: %v", err)
+		}
+		if keepNlID == 0 {
+			t.Fatal("expected non-zero keep newsletter id")
+		}
+
+		// --- Delete the target user ---
+		if err := store.DeleteUser(delID); err != nil {
+			t.Fatalf("DeleteUser: %v", err)
+		}
+
+		// --- Assert: deleted user's rows are gone in every table ---
+
+		// users row
+		users, _ := store.ListUsers()
+		for _, u := range users {
+			if u.ID == delID {
+				t.Errorf("deleted user row still present: id=%d", delID)
+			}
+		}
+
+		// read_state
+		feeds, _ := store.GetUserFeeds(delID)
+		if len(feeds) != 0 {
+			t.Errorf("user_feeds: expected 0 for deleted user, got %d", len(feeds))
+		}
+
+		// user_preferences
+		prefs, _ := store.GetAllUserPreferences(delID)
+		if len(prefs) != 0 {
+			t.Errorf("user_preferences: expected 0 for deleted user, got %d", len(prefs))
+		}
+
+		// feed_tags
+		tags, _ := store.GetUserTags(delID)
+		if len(tags) != 0 {
+			t.Errorf("feed_tags: expected 0 for deleted user, got %d", len(tags))
+		}
+
+		// user_prompts
+		prompts, _ := store.ListUserPrompts(delID)
+		if len(prompts) != 0 {
+			t.Errorf("user_prompts: expected 0 for deleted user, got %d", len(prompts))
+		}
+
+		// filter_rules
+		rules, _ := store.GetFilterRules(delID, nil)
+		if len(rules) != 0 {
+			t.Errorf("filter_rules: expected 0 for deleted user, got %d", len(rules))
+		}
+
+		// article_groups + cascade of article_group_members and group_summaries
+		groups, _ := store.GetUserGroups(delID)
+		if len(groups) != 0 {
+			t.Errorf("article_groups: expected 0 for deleted user, got %d", len(groups))
+		}
+		// The group row is gone, so GetGroupSummary should not find it.
+		if gs, err := store.GetGroupSummary(groupID); err == nil && gs != nil {
+			t.Errorf("group_summaries: expected gone after group delete, got headline=%q", gs.Headline)
+		}
+
+		// fever_credentials (cascaded via users FK)
+		if u, err := store.GetUserByFeverAPIKey("test-api-key"); err == nil && u != nil {
+			t.Errorf("fever_credentials: expected gone after user delete")
+		}
+
+		// newsletters + newsletter_issues (cascaded via users FK)
+		nls, _ := store.GetUserNewsletters(delID)
+		if len(nls) != 0 {
+			t.Errorf("newsletters: expected 0 for deleted user, got %d", len(nls))
+		}
+		// newsletter_issues cascade is confirmed by the newsletter itself being gone;
+		// no direct API to query issues by newsletter after the newsletter is deleted.
+
+		// ai_summaries (cascaded via users FK)
+		if s, err := store.GetAISummary(delID, sumID); err == nil && s != nil {
+			t.Errorf("ai_summaries: expected gone after user delete, got id=%d", s.ID)
+		}
+
+		// --- Assert: bystander (kept user) rows are untouched ---
+		keepFeeds, _ := store.GetUserFeeds(keepID)
+		if len(keepFeeds) == 0 {
+			t.Errorf("user_feeds: kept user's feeds should survive deletion of other user")
+		}
+		keepPrefs, _ := store.GetAllUserPreferences(keepID)
+		if len(keepPrefs) == 0 {
+			t.Errorf("user_preferences: kept user's prefs should survive")
+		}
+		keepPrompts, _ := store.ListUserPrompts(keepID)
+		if len(keepPrompts) == 0 {
+			t.Errorf("user_prompts: kept user's prompts should survive")
+		}
+		keepNls, _ := store.GetUserNewsletters(keepID)
+		if len(keepNls) == 0 {
+			t.Errorf("newsletters: kept user's newsletters should survive")
+		}
+	})
+}
+
+// TestDeleteUserIdemptotent confirms that deleting a non-existent user
+// succeeds without error (all DELETEs match 0 rows, which is fine).
+func TestDeleteUserIdempotent(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		// No user with id 99999 exists; DeleteUser should not error.
+		if err := store.DeleteUser(99999); err != nil {
+			t.Errorf("DeleteUser non-existent user: want nil, got %v", err)
+		}
+	})
 }

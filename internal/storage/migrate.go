@@ -64,7 +64,7 @@ func MigrateStore(ctx context.Context, src, dst Store) (*MigrateStats, error) {
 		{"user_prompts", func() error { return migrateUserPrompts(ctx, srcDB, dst, userMap, stats) }},
 		{"article_authors", func() error { return migrateArticleAuthors(ctx, srcDB, dst, articleMap) }},
 		{"article_categories", func() error { return migrateArticleCategories(ctx, srcDB, dst, articleMap) }},
-		{"article_summaries", func() error { return migrateArticleSummaries(ctx, srcDB, dst, userMap, articleMap) }},
+		{"article_summaries", func() error { return migrateArticleSummaries(ctx, srcDB, dst, articleMap) }},
 		{"article_groups", func() error { return migrateArticleGroups(ctx, srcDB, dst, userMap, articleMap, groupMap, stats) }},
 		{"filter_rules", func() error { return migrateFilterRules(ctx, srcDB, dst, userMap, feedMap, stats) }},
 		{"fever_credentials", func() error { return migrateFeverCredentials(ctx, srcDB, dst, userMap, stats) }},
@@ -625,29 +625,36 @@ func migrateArticleCategories(ctx context.Context, src *tracedDB, dst Store, art
 	return nil
 }
 
-func migrateArticleSummaries(ctx context.Context, src *tracedDB, dst Store, userMap, articleMap map[int64]int64) error {
+// migrateArticleSummaries copies the per-article summary rows (#162). The
+// source is always opened through NewSQLiteStore/NewPostgresStore, which
+// rebuild any old per-user table to per-article shape before we read it.
+func migrateArticleSummaries(ctx context.Context, src *tracedDB, dst Store, articleMap map[int64]int64) error {
 	rows, err := src.QueryContext(ctx,
-		"SELECT user_id, article_id, ai_summary FROM article_summaries ORDER BY user_id, article_id")
+		"SELECT article_id, ai_summary, COALESCE(skip_reason, '') FROM article_summaries ORDER BY article_id")
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var srcUserID, srcArticleID int64
-		var summary string
-		if err := rows.Scan(&srcUserID, &srcArticleID, &summary); err != nil {
+		var srcArticleID int64
+		var summary, skipReason string
+		if err := rows.Scan(&srcArticleID, &summary, &skipReason); err != nil {
 			return err
-		}
-		dstUserID, ok := userMap[srcUserID]
-		if !ok {
-			continue
 		}
 		dstArticleID, ok := articleMap[srcArticleID]
 		if !ok {
 			continue
 		}
-		if err := dst.UpdateArticleAISummary(dstUserID, dstArticleID, summary); err != nil {
+		// Preserve skip markers (empty summary + reason = "tried, rejected,
+		// don't retry") instead of flattening them into empty summaries.
+		if summary == "" && skipReason != "" {
+			if err := dst.MarkSummarizationSkipped(dstArticleID, skipReason); err != nil {
+				return fmt.Errorf("MarkSummarizationSkipped: %w", err)
+			}
+			continue
+		}
+		if err := dst.UpdateArticleAISummary(dstArticleID, summary); err != nil {
 			return fmt.Errorf("UpdateArticleAISummary: %w", err)
 		}
 	}
