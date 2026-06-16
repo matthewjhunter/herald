@@ -22,12 +22,12 @@ Herald is designed around three principles:
 │  └──────────┘  └──────────────┘  └────────────┘  └──────────┘  │
 └───────────────────────────────┬─────────────────────────────────┘
                                 │
-              ┌─────────────────┼─────────────────┐
-              │                 │                  │
-         ┌────┴────┐    ┌───────┴──────┐   ┌──────┴──────┐
-         │   CLI   │    │  MCP Server  │   │   Web UI    │
-         │ herald  │    │ herald-mcp   │   │ herald-web  │
-         └─────────┘    └──────────────┘   └─────────────┘
+                    ┌─────────────┴─────────────┐
+                    │                           │
+               ┌────┴────┐                ┌─────┴───────┐
+               │   CLI   │                │   Web UI    │
+               │ herald  │                │ herald-web  │
+               └─────────┘                └─────────────┘
 ```
 
 ### Fetcher (`internal/feeds`)
@@ -93,7 +93,7 @@ The security model receives article title and truncated content (2000 chars). Th
 
 The security model's purpose is purely protective — it does not score relevance or filter by topic. An article about a controversial subject is not inherently unsafe. Only content that appears to be attempting to manipulate downstream AI processing is flagged.
 
-The security prompt is not user-customizable via the MCP tools. This is intentional: allowing a persona to modify the security prompt would create an obvious prompt injection vector.
+The security prompt is not user-customizable. This is intentional: allowing a user to modify the security prompt would create an obvious prompt injection vector.
 
 ### Interest Curation
 
@@ -181,28 +181,7 @@ The five prompt types are:
 
 Each prompt type also has a configurable temperature following the same 3-tier fallback.
 
-The `security` prompt type is intentionally excluded from MCP access — it cannot be viewed or modified through the MCP tools. The `summarization` prompt is global: summaries are shared per-article, so only the admin (user 0) override applies and per-user customization is rejected.
-
-## MCP Integration
-
-`herald-mcp` is a read-only MCP server: it serves article, feed, and preference tools over stdio using the [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk), reading the database that the `herald daemon` populates. It does no feed fetching or AI processing of its own. All tools accept an optional `speaker` parameter that resolves to a registered user ID, enabling multi-user access from a single MCP server instance.
-
-Tool categories:
-
-| Category | Tools |
-|----------|-------|
-| Articles | `articles_unread`, `articles_get`, `articles_mark_read`, `article_star` |
-| Feeds | `feeds_list`, `feed_subscribe`, `feed_unsubscribe`, `feed_rename`, `feed_stats`, `feed_metadata` |
-| Groups | `article_groups`, `article_group_get` |
-| Preferences | `preferences_get`, `preference_set` |
-| Prompts | `prompts_list`, `prompt_get`, `prompt_set`, `prompt_reset` |
-| Filter rules | `filter_rules_list`, `filter_rule_add`, `filter_rule_update`, `filter_rule_delete` |
-| Users | `user_register`, `user_list` |
-| Briefing | `briefing` |
-
-The `briefing` tool generates a formatted markdown digest of high-interest unread articles, intended for delivery as a voice briefing.
-
-Feed fetching and AI processing are the `herald daemon`'s responsibility; `herald-mcp` reads the results. Run a daemon (or `herald fetch`) against the same database to keep it populated.
+The `security` prompt type is intentionally excluded from user customization — it cannot be viewed or modified through the web UI or config overrides. The `summarization` prompt is global: summaries are shared per-article, so only the admin (user 0) override applies and per-user customization is rejected.
 
 ## Design Decisions
 
@@ -220,4 +199,4 @@ Persistent article grouping uses vector embeddings and cosine similarity rather 
 
 ### Config-Driven AI Prompts
 
-Prompts are treated as configuration, not code. Users can customize every prompt type (except security) through the MCP tools or config file without modifying source code. The 3-tier fallback ensures embedded defaults always work out of the box, config-file overrides apply globally, and per-user database overrides allow individual customization in multi-user deployments.
+Prompts are treated as configuration, not code. Users can customize every prompt type (except security) through the web UI or config file without modifying source code. The 3-tier fallback ensures embedded defaults always work out of the box, config-file overrides apply globally, and per-user database overrides allow individual customization in multi-user deployments.
