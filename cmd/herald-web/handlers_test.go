@@ -452,6 +452,11 @@ func TestHandleHome(t *testing.T) {
 	if !strings.Contains(body, "Test Feed") {
 		t.Error("home page should contain feed title")
 	}
+	// The shared nav must expose a way to end the session (#173 made logout
+	// revoke the server-side session; without this link it is unreachable).
+	if !strings.Contains(body, `href="/auth/logout"`) {
+		t.Error("home page nav should contain a log out link")
+	}
 }
 
 func TestHandleHome_Unauthenticated(t *testing.T) {
