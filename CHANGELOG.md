@@ -7,6 +7,121 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-16
+
+About two weeks of work since v0.2.0, aimed squarely at making Herald safe to
+run as a multi-user, publicly reachable service. The bulk is a security and
+isolation pass — SSRF-guarded fetching, per-user authorization and resource
+caps, and OIDC sessions that renew server-side — alongside a rewrite of the AI
+pipeline into discrete stages and a consolidation of summaries into shared
+per-article digests. The `herald-mcp` server has been removed.
+
+### Added
+
+- **Multi-user support.** Per-user read and starred state, per-user feed tags
+  with a tag-grouped picker, and admin endpoints to list and delete users
+  (with a reserved-user guard that refuses to delete user 1). Read/unread is
+  managed from the reading pane, and the show/hide-read toggle is served from
+  the database rather than computed client-side.
+
+- **AI summaries and scheduled digests.** A dated AI Summary browser (list
+  pane plus reader), the Newsletters page reworked into a digest-config
+  editor, and config-scoped digests the daemon generates on a schedule.
+  Digests render as plain HTML with a configurable input-token budget, and a
+  cloud streaming summary client lets summary generation run against an
+  OpenAI-compatible endpoint independent of the local Ollama pipeline.
+
+- **Staged AI pipeline.** The monolithic processing path is replaced by
+  discrete security, curate, summarize, embed, and cluster stages behind a
+  single Run path with fresh/backfill orchestration; the daemon runs on it. A
+  Processing Status tab shows the pipeline funnel and persisted per-cycle
+  throughput.
+
+- **Semantic search in the web UI** with cross-encoder reranking over the
+  per-article embeddings.
+
+- **Server-side OIDC session renewal (#173).** The browser holds only an
+  opaque session id; the access and refresh tokens live in the Herald
+  database. Sessions renew via the refresh-token grant instead of dying at
+  access-token expiry, with per-session single-flighted renewal so concurrent
+  requests cannot both spend the rotating refresh token and trip the identity
+  provider's replay detection.
+
+- **Deployment surface.** A `/health` liveness endpoint, `HERALD_DB_DSN` for
+  database configuration, a per-PR preview pipeline, and an in-process authed
+  smoke-test harness that probes every route in the manifest.
+
+### Changed
+
+- **The security verdict is a property of the article, not the user (#141).**
+  An article is screened once and the verdict is shared by every subscriber,
+  moving `security_score` / `security_reason` / `security_flagged` off per-user
+  `read_state` and onto `articles`.
+
+- **Summaries are per-article and shared.** The summarization prompt is now
+  global — only the admin (user 0) override applies — and each article is
+  summarized once in a global pipeline pass, with the result shared across all
+  subscribers.
+
+- **OIDC hardening.** herald-web boots even when the identity provider is
+  unreachable (`oidclient.NewLazy`), so an IdP outage costs sign-in only,
+  never startup; the callback flow adopts the shared oidclient
+  `CallbackHandler` / `Exchange` path; oidclient is bumped through v0.4.0.
+
+- **Clustering simplified.** `GroupMatcher` is reduced to an embedder with the
+  dead matching code removed, and the cluster cohort is restricted to
+  security-passed articles so rejected content never reaches grouping.
+
+- **Toolchain and dependencies.** Go 1.26.4; `modernc.org/sqlite` and
+  `jackc/pgx` bumps. Remaining "Majordomo" branding removed from code and
+  docs.
+
+### Removed
+
+- **`herald-mcp` removed (#168).** The read-only MCP server, its tool surface,
+  and the MCP Go SDK dependency are gone. herald-web is now the supported
+  interface for everything the MCP server exposed, and the unauthenticated
+  `speaker` impersonation surface it carried is removed with it.
+
+### Security
+
+- **SSRF-guarded feed fetching (#162).** All feed fetches route through an HTTP
+  client that refuses to dial private, loopback, and link-local addresses.
+
+- **Cross-user authorization closed across the board (#162).** Filter-rule
+  update/delete, group mute/read, and newsletter generation are scoped to the
+  owning user; article reads, cached images, and starring are gated on feed
+  subscription; the OPML sync token uses a constant-time compare.
+
+- **Resource and abuse bounds (#162).** Per-user caps on feeds, filter rules,
+  and newsletters (enforced on OPML import too), and a process-global ceiling
+  on concurrent Ollama calls. A `securityHeaders` middleware, input-length
+  caps, and pagination caps are applied to herald-web, and internal errors are
+  no longer leaked in responses.
+
+- **Refresh tokens never reach the browser (#173)**, and htmx interactions
+  work under a no-eval Content-Security-Policy.
+
+### Fixed
+
+- **Crash on upgrade from the unscreened index (#152).** The partial security
+  index is created by a migration after its column is guaranteed, rather than
+  in the schema script that runs on every open.
+
+- **Data race in lazy template-tree initialization.**
+
+- **PromptLoader reads overrides on all backends**, and pre-migration feeds get
+  their `site_url` backfilled by a forced full fetch.
+
+- **Reading-pane fixes.** Read articles dim in place instead of vanishing on
+  click, the pane survives session expiry instead of redirecting, and the
+  subscribe form accepts scheme-less feed URLs. Invalid `filter_threshold`
+  input returns 400 instead of 500.
+
+- **A Log out link in the nav.** `/auth/logout` existed but nothing in the UI
+  reached it; it now appears in the shared nav and ends the session
+  server-side.
+
 ## [0.2.0] - 2026-05-30
 
 Roughly three months of work since v0.1.0: a PostgreSQL backend, full-text
