@@ -316,8 +316,9 @@ CREATE INDEX IF NOT EXISTS idx_cycle_stats_completed ON cycle_stats(completed_at
 CREATE TABLE IF NOT EXISTS sessions (
     id              TEXT PRIMARY KEY,
     user_sub        TEXT NOT NULL,
-    access_token    TEXT NOT NULL,
-    refresh_token   TEXT NOT NULL,
+    access_token    BYTEA NOT NULL,
+    refresh_token   BYTEA NOT NULL,
+    version         BIGINT NOT NULL DEFAULT 0,
     access_expiry   TIMESTAMPTZ NOT NULL,
     absolute_expiry TIMESTAMPTZ NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
