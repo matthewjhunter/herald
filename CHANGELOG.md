@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Postgres-only.** The SQLite backend has been removed; herald now runs
+  exclusively on PostgreSQL (`jackc/pgx/v5`). `NewStore` requires a `postgres://`
+  DSN. The `migrate-db` SQLite<->Postgres bridge command is gone (use `pg_dump`
+  for Postgres-to-Postgres copies). This is the first step toward standardizing
+  the query layer on sqlc (#182). Self-hosters on the old SQLite backend should
+  export and load into Postgres before upgrading; `config`/compose samples now
+  default to a Postgres DSN.
+
 ## [0.3.0] - 2026-06-16
 
 About two weeks of work since v0.2.0, aimed squarely at making Herald safe to

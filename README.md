@@ -46,7 +46,7 @@ Security and editorial judgment are different problems that benefit from differe
 ## Architecture
 
 ```
-RSS/Atom Feeds → Fetcher → Parser → SQLite
+RSS/Atom Feeds → Fetcher → Parser → PostgreSQL
                                        |
                                Security Check (Gemma)
                                        |

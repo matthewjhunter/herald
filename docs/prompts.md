@@ -150,8 +150,8 @@ cat internal/ai/prompts/security.txt
 cat config/config.yaml
 
 # Check database (per-user)
-sqlite3 ~/.local/share/herald/feeds.db \
-  "SELECT user_id, prompt_type, temperature FROM user_prompts;"
+psql "$HERALD_DB_DSN" \
+  -c "SELECT user_id, prompt_type, temperature FROM user_prompts;"
 ```
 
 ## Writing Custom Prompts
@@ -254,8 +254,8 @@ prompts:
 Check the tier priority:
 ```bash
 # 1. Check database (highest priority)
-sqlite3 ~/.local/share/herald/feeds.db \
-  "SELECT * FROM user_prompts WHERE user_id = 1;"
+psql "$HERALD_DB_DSN" \
+  -c "SELECT * FROM user_prompts WHERE user_id = 1;"
 
 # 2. Check config file
 grep -A 5 "prompts:" config/config.yaml
@@ -285,7 +285,7 @@ If you were using an older version with hardcoded prompts:
 ```yaml
 # Nothing needed - embedded defaults are used
 database:
-  path: ./herald.db
+  path: postgres://localhost:5432/herald?sslmode=disable
 
 ollama:
   base_url: http://localhost:11434

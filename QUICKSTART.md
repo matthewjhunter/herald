@@ -134,7 +134,7 @@ Check logs and error messages:
 
 Review database:
 ```bash
-sqlite3 herald.db "SELECT * FROM feeds"
+psql "$HERALD_DB_DSN" -c "SELECT * FROM feeds"
 ```
 
 ## Success Criteria

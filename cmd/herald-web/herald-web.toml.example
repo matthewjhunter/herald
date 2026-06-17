@@ -1,8 +1,8 @@
 # herald-web configuration
 # Copy to herald-web.toml and edit before running.
 
-# Path to the SQLite database written by the herald CLI/poller.
-db   = "/var/lib/herald/herald.db"
+# PostgreSQL DSN shared with the herald CLI/poller. herald is Postgres-only.
+db   = "postgres://localhost:5432/herald?sslmode=disable"
 
 # TCP address to listen on.
 addr = ":8080"

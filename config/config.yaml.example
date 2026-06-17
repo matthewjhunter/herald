@@ -2,8 +2,8 @@
 # Copy this file to config.yaml and customize
 
 database:
-  # Path to SQLite database file
-  path: ./herald.db
+  # PostgreSQL DSN (postgres:// or postgresql:// URL). herald is Postgres-only.
+  path: postgres://localhost:5432/herald?sslmode=disable
 
 ollama:
   # Ollama API base URL (chat models only — see embedding env vars below).

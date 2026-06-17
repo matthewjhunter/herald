@@ -1,24 +1,44 @@
 services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: herald
+      POSTGRES_USER: herald
+      POSTGRES_PASSWORD: herald
+    volumes:
+      - herald-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U herald"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   herald-web:
     build: .
-    command: herald-web --db /data/herald.db --addr :8080
+    command: herald-web --addr :8080
+    environment:
+      # herald-web reads the DSN from HERALD_DB_DSN; 'postgres' is the service name.
+      HERALD_DB_DSN: postgres://herald:herald@postgres:5432/herald?sslmode=disable
     ports:
       - "8080:8080"
-    volumes:
-      - herald-data:/data
     restart: unless-stopped
     depends_on:
-      - herald-fetcher
+      postgres:
+        condition: service_healthy
 
   herald-fetcher:
     build: .
-    command: herald daemon --config /etc/herald/config.yaml --interval 5m
+    command: herald daemon --config /etc/herald/config.docker.yaml --interval 5m
     volumes:
-      - herald-data:/data
+      # config.docker.yaml sets database.path to the postgres service DSN.
       - ./config:/etc/herald:ro
     restart: unless-stopped
     depends_on:
-      - ollama
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
 
   ollama:
     image: ollama/ollama:latest

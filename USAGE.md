@@ -328,7 +328,7 @@ Direct SQL queries for analysis:
 
 ```bash
 # Most popular feeds
-sqlite3 herald.db "
+psql "$HERALD_DB_DSN" -c "
 SELECT f.title, COUNT(*) as articles
 FROM articles a
 JOIN feeds f ON a.feed_id = f.id
@@ -337,7 +337,7 @@ ORDER BY articles DESC
 LIMIT 10"
 
 # Average interest scores by feed
-sqlite3 herald.db "
+psql "$HERALD_DB_DSN" -c "
 SELECT f.title, AVG(rs.interest_score) as avg_score
 FROM read_state rs
 JOIN articles a ON rs.article_id = a.id
@@ -347,7 +347,7 @@ GROUP BY f.id
 ORDER BY avg_score DESC"
 
 # Most interesting articles
-sqlite3 herald.db "
+psql "$HERALD_DB_DSN" -c "
 SELECT a.title, a.url, rs.interest_score
 FROM articles a
 JOIN read_state rs ON a.id = rs.article_id
@@ -361,11 +361,11 @@ LIMIT 20"
 Track what you've read:
 
 ```bash
-sqlite3 herald.db -header -csv "
+psql "$HERALD_DB_DSN" --csv -c "
 SELECT a.title, a.url, a.published_date, rs.interest_score
 FROM articles a
 JOIN read_state rs ON a.id = rs.article_id
-WHERE rs.read = 1
+WHERE rs.read
 ORDER BY rs.read_date DESC" > read_articles.csv
 ```
 
@@ -385,7 +385,7 @@ ORDER BY rs.read_date DESC" > read_articles.csv
 
 ```bash
 # Check feed URLs
-sqlite3 herald.db "SELECT * FROM feeds WHERE enabled = 1"
+psql "$HERALD_DB_DSN" -c "SELECT * FROM feeds WHERE enabled"
 
 # Test a feed manually
 curl https://example.com/feed.xml
