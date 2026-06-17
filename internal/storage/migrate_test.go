@@ -40,8 +40,28 @@ func TestMigrationsBuildAndAreIdempotent(t *testing.T) {
 	if err := db.QueryRow("SELECT max(version_id) FROM goose_db_version").Scan(&maxVersion); err != nil {
 		t.Fatalf("read goose version: %v", err)
 	}
-	if maxVersion != 1 {
-		t.Errorf("goose max version = %d, want 1", maxVersion)
+	if maxVersion != 2 {
+		t.Errorf("goose max version = %d, want 2", maxVersion)
+	}
+
+	// 0002 must leave sessions in the sealed-token shape: bytea tokens plus a
+	// version counter. This is the column set the production legacy table (TEXT
+	// tokens, no version) lacks, and the one 0001-alone cannot install over an
+	// existing table.
+	for col, wantType := range map[string]string{
+		"access_token":  "bytea",
+		"refresh_token": "bytea",
+		"version":       "bigint",
+	} {
+		var got string
+		if err := db.QueryRow(
+			`SELECT data_type FROM information_schema.columns
+			 WHERE table_name = 'sessions' AND column_name = $1`, col).Scan(&got); err != nil {
+			t.Fatalf("inspect sessions.%s: %v", col, err)
+		}
+		if got != wantType {
+			t.Errorf("sessions.%s type = %q, want %q", col, got, wantType)
+		}
 	}
 
 	// Data from before the reopen survived (no rebuild/drop).
