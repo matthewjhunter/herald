@@ -6,7 +6,7 @@ require (
 	codeberg.org/readeck/go-readability/v2 v2.1.1
 	github.com/BurntSushi/toml v1.6.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/infodancer/oidclient v0.5.0
+	github.com/infodancer/oidclient v0.6.0
 	github.com/infodancer/smoke v0.1.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/matthewjhunter/go-embedding v0.4.6
@@ -14,7 +14,7 @@ require (
 	github.com/mmcdole/gofeed v1.3.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/net v0.55.0
-	golang.org/x/sync v0.20.0
+	golang.org/x/sync v0.21.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.52.0
 )
