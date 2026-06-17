@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/infodancer/smoke"
 	herald "github.com/matthewjhunter/herald"
 	"github.com/matthewjhunter/herald/internal/storage"
+	"github.com/matthewjhunter/herald/internal/storagetest"
 )
 
 // smokePNG is an arbitrary non-empty image blob. The image/favicon handlers
@@ -33,7 +33,8 @@ var smokePNG = []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}
 // admin (via the adminUsers email fallback) so /admin/* routes return 200 rather
 // than 403.
 func TestSmokeRoutesAuthenticated(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "smoke.db")
+	dbPath, dropSchema := storagetest.DSN(t)
+	t.Cleanup(dropSchema)
 
 	// herald-web runs read-only in production; mirror that. Incidental writes
 	// (e.g. auto-mark-read) are best-effort and ignored by the handlers.
@@ -43,9 +44,9 @@ func TestSmokeRoutesAuthenticated(t *testing.T) {
 	}
 	t.Cleanup(func() { engine.Close() })
 
-	st, err := storage.NewSQLiteStore(dbPath)
+	st, err := storage.NewStore(dbPath)
 	if err != nil {
-		t.Fatalf("NewSQLiteStore: %v", err)
+		t.Fatalf("NewStore: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
 

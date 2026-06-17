@@ -52,7 +52,7 @@ func main() {
 	configPath := flag.String("config", "", "path to TOML config file")
 
 	// CLI flags — all default to \"\" so config file values take effect when flags are omitted.
-	dbPath := flag.String("db", "", "path to SQLite database (default ./herald.db)")
+	dbPath := flag.String("db", "", "PostgreSQL DSN (default postgres://localhost:5432/herald)")
 	addr := flag.String("addr", "", "listen address (default :8080)")
 
 	// Auth flags.
@@ -74,7 +74,7 @@ func main() {
 	// Merge: CLI flag wins over env var, env over config file, config over the
 	// hardcoded default. HERALD_DB_DSN lets a deployment (e.g. the per-PR
 	// preview) supply the DSN without putting it on the command line.
-	db := mergeString(*dbPath, mergeString(os.Getenv("HERALD_DB_DSN"), mergeString(cfg.DB, "./herald.db")))
+	db := mergeString(*dbPath, mergeString(os.Getenv("HERALD_DB_DSN"), mergeString(cfg.DB, "postgres://localhost:5432/herald?sslmode=disable")))
 	listenAddr := mergeString(*addr, mergeString(cfg.Addr, ":8080"))
 	issuerURL := mergeString(*webauthIssuer, cfg.Webauth.IssuerURL)
 	webauthBaseURL := mergeString(*webauthURL, cfg.Webauth.WebauthURL)

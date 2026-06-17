@@ -13,7 +13,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -24,6 +23,7 @@ import (
 	"github.com/infodancer/oidclient/session"
 	herald "github.com/matthewjhunter/herald"
 	"github.com/matthewjhunter/herald/internal/storage"
+	"github.com/matthewjhunter/herald/internal/storagetest"
 )
 
 // testKey is generated once per test binary run.
@@ -216,7 +216,7 @@ func newTestValidatorWithOIDC(t *testing.T, tokenHandler http.HandlerFunc) *oidc
 type testFixtures struct {
 	router     http.Handler
 	engine     *herald.Engine
-	store      *storage.SQLiteStore
+	store      storage.Store
 	userID     int64
 	feedID     int64
 	articleID  int64
@@ -279,7 +279,8 @@ func newTestFixtures(t *testing.T) *testFixtures {
 // the engine config (e.g. point SummaryBaseURL at a fake cloud gateway).
 func newTestFixturesWith(t *testing.T, mutate func(*herald.EngineConfig)) *testFixtures {
 	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "test.db")
+	dbPath, dropSchema := storagetest.DSN(t)
+	t.Cleanup(dropSchema)
 
 	engCfg := herald.EngineConfig{
 		DBPath:   dbPath,
@@ -293,9 +294,9 @@ func newTestFixturesWith(t *testing.T, mutate func(*herald.EngineConfig)) *testF
 		t.Fatalf("NewEngine: %v", err)
 	}
 
-	st, err := storage.NewSQLiteStore(dbPath)
+	st, err := storage.NewStore(dbPath)
 	if err != nil {
-		t.Fatalf("NewSQLiteStore: %v", err)
+		t.Fatalf("NewStore: %v", err)
 	}
 
 	// Provision the OIDC user that matches the test JWT sub claim.
@@ -1412,16 +1413,17 @@ func TestSecurityHeaders(t *testing.T) {
 // newAdminFixtures builds test fixtures where the test user has admin access.
 func newAdminFixtures(t *testing.T) *testFixtures {
 	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "test.db")
+	dbPath, dropSchema := storagetest.DSN(t)
+	t.Cleanup(dropSchema)
 
 	engine, err := herald.NewEngine(herald.EngineConfig{DBPath: dbPath, ReadOnly: true})
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
 
-	st, err := storage.NewSQLiteStore(dbPath)
+	st, err := storage.NewStore(dbPath)
 	if err != nil {
-		t.Fatalf("NewSQLiteStore: %v", err)
+		t.Fatalf("NewStore: %v", err)
 	}
 
 	user, err := engine.GetOrProvisionOIDCUser("test-sub-1", "Tester", "tester@example.com")

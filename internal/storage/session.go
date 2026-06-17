@@ -114,18 +114,6 @@ func sessionDeleteExpired(db *tracedDB, now time.Time) (int64, error) {
 	return n, nil
 }
 
-// --- SQLiteStore ---
-
-func (s *SQLiteStore) CreateSession(sess *Session) error      { return sessionCreate(s.db, sess) }
-func (s *SQLiteStore) GetSession(id string) (*Session, error) { return sessionGet(s.db, id) }
-func (s *SQLiteStore) RotateSessionTokens(id string, accessToken, newRefreshToken []byte, accessExpiry time.Time, expectVersion int64) (bool, error) {
-	return sessionRotate(s.db, id, accessToken, newRefreshToken, accessExpiry, expectVersion)
-}
-func (s *SQLiteStore) DeleteSession(id string) error { return sessionDelete(s.db, id) }
-func (s *SQLiteStore) DeleteExpiredSessions(now time.Time) (int64, error) {
-	return sessionDeleteExpired(s.db, now)
-}
-
 // --- PostgresStore ---
 
 func (s *PostgresStore) CreateSession(sess *Session) error      { return sessionCreate(s.db, sess) }

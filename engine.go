@@ -487,8 +487,8 @@ func (e *Engine) EmbeddingModel() string {
 }
 
 // Store returns the underlying storage handle. Intended for diagnostic
-// commands that need direct table access (embedding-drift sampling,
-// migrate-db). Live request paths should call the typed Engine methods.
+// commands that need direct table access (e.g. embedding-drift sampling).
+// Live request paths should call the typed Engine methods.
 func (e *Engine) Store() storage.Store {
 	return e.store
 }

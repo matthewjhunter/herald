@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/matthewjhunter/herald/internal/storage"
+	"github.com/matthewjhunter/herald/internal/storagetest"
 )
 
 func init() {
@@ -634,14 +634,10 @@ func TestFetchFullTextForArticles_SkipsSuppressedURL(t *testing.T) {
 
 // helpers
 
-func newFullTextTestStore(t *testing.T) *storage.SQLiteStore {
+func newFullTextTestStore(t *testing.T) storage.Store {
 	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	store, err := storage.NewSQLiteStore(dbPath)
-	if err != nil {
-		t.Fatalf("NewSQLiteStore: %v", err)
-	}
-	t.Cleanup(func() { store.Close() })
+	store, cleanup := storagetest.NewStore(t)
+	t.Cleanup(cleanup)
 	return store
 }
 

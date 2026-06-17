@@ -5,13 +5,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/matthewjhunter/herald/internal/feeds"
 	"github.com/matthewjhunter/herald/internal/storage"
+	"github.com/matthewjhunter/herald/internal/storagetest"
 )
 
 // TestMain installs a permissive dial control for the entire test binary so
@@ -25,15 +25,16 @@ func TestMain(m *testing.M) {
 
 func newTestEngine(t *testing.T) (*Engine, func()) {
 	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "test.db")
+	dbPath, dropSchema := storagetest.DSN(t)
 	engine, err := NewEngine(EngineConfig{
 		DBPath:        dbPath,
 		OllamaBaseURL: "http://localhost:11434",
 	})
 	if err != nil {
+		dropSchema()
 		t.Fatalf("NewEngine: %v", err)
 	}
-	return engine, func() { engine.Close() }
+	return engine, func() { engine.Close(); dropSchema() }
 }
 
 func TestNewEngine(t *testing.T) {
@@ -52,7 +53,8 @@ func TestNewEngine(t *testing.T) {
 }
 
 func TestNewEngineDefaults(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
+	dbPath, dropSchema := storagetest.DSN(t)
+	defer dropSchema()
 	engine, err := NewEngine(EngineConfig{DBPath: dbPath})
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
