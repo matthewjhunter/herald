@@ -11,18 +11,21 @@ import (
 var ErrSessionNotFound = errors.New("storage: session not found")
 
 // Session is a server-side OIDC session. The browser holds only the opaque ID
-// (as a cookie); the access and refresh tokens never leave the server. The
-// refresh token is the long-lived, high-value credential and rotates on every
-// use -- see RotateSessionTokens for the persistence contract.
+// (as a cookie); the access and refresh tokens never leave the server. Both
+// tokens are stored as AES-GCM ciphertext (the oidclient/session Manager seals
+// them before they reach this layer and opens them after a read), so the token
+// fields are opaque bytes here, never plaintext JWTs. The refresh token is the
+// long-lived, high-value credential and rotates on every use -- see
+// RotateSessionTokens for the persistence contract.
 type Session struct {
 	ID             string    // opaque session id; the cookie value
 	UserSub        string    // OIDC subject claim of the authenticated user
-	AccessToken    string    // current access-token JWT, validated per request
-	RefreshToken   string    // current refresh token; rotates on every Refresh
+	AccessToken    []byte    // sealed access token, validated per request
+	RefreshToken   []byte    // sealed refresh token; rotates on every Refresh
+	Version        int64     // monotonic rotation counter; the CAS guard
 	AccessExpiry   time.Time // access-token expiry (drives proactive renewal)
 	AbsoluteExpiry time.Time // hard session TTL; honored regardless of renewal
 	CreatedAt      time.Time
-	LastUsedAt     time.Time
 }
 
 // sessionCreate inserts a new session row. The ? placeholders are rewritten to
@@ -48,12 +51,12 @@ func sessionCreate(db *tracedDB, s *Session) error {
 func sessionGet(db *tracedDB, id string) (*Session, error) {
 	var s Session
 	err := db.QueryRow(`
-		SELECT id, user_sub, access_token, refresh_token,
-		       access_expiry, absolute_expiry, created_at, last_used_at
+		SELECT id, user_sub, access_token, refresh_token, version,
+		       access_expiry, absolute_expiry, created_at
 		FROM sessions WHERE id = ?`, id,
 	).Scan(
-		&s.ID, &s.UserSub, &s.AccessToken, &s.RefreshToken,
-		&s.AccessExpiry, &s.AbsoluteExpiry, &s.CreatedAt, &s.LastUsedAt,
+		&s.ID, &s.UserSub, &s.AccessToken, &s.RefreshToken, &s.Version,
+		&s.AccessExpiry, &s.AbsoluteExpiry, &s.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrSessionNotFound
@@ -64,18 +67,21 @@ func sessionGet(db *tracedDB, id string) (*Session, error) {
 	return &s, nil
 }
 
-// sessionRotate is a compare-and-swap on the refresh token: it writes the new
-// tokens only if the stored refresh token still equals expectedRefreshToken.
-// This is the cross-instance guard behind the in-process refresh lock -- a
-// worker that read a refresh token another instance has since rotated loses the
-// CAS (ok=false) and must re-read rather than overwrite the winner's tokens.
-func sessionRotate(db *tracedDB, id, accessToken, newRefreshToken string, accessExpiry time.Time, expectedRefreshToken string) (bool, error) {
+// sessionRotate is a compare-and-swap on the version counter: it writes the new
+// tokens and version=expectVersion+1 only if the stored version still equals
+// expectVersion. Encrypted token bytes have no stable value to compare against,
+// so the monotonic version is the CAS key. This is the cross-instance guard
+// behind the in-process refresh lock -- a worker that read a version another
+// instance has since rotated past loses the CAS (ok=false) and must re-read
+// rather than overwrite the winner's tokens.
+func sessionRotate(db *tracedDB, id string, accessToken, newRefreshToken []byte, accessExpiry time.Time, expectVersion int64) (bool, error) {
 	res, err := db.Exec(`
 		UPDATE sessions
-		SET access_token = ?, refresh_token = ?, access_expiry = ?, last_used_at = ?
-		WHERE id = ? AND refresh_token = ?`,
+		SET access_token = ?, refresh_token = ?, access_expiry = ?,
+		    version = version + 1, last_used_at = ?
+		WHERE id = ? AND version = ?`,
 		accessToken, newRefreshToken, accessExpiry.UTC(), time.Now().UTC(),
-		id, expectedRefreshToken,
+		id, expectVersion,
 	)
 	if err != nil {
 		return false, fmt.Errorf("rotate session tokens: %w", err)
@@ -85,18 +91,6 @@ func sessionRotate(db *tracedDB, id, accessToken, newRefreshToken string, access
 		return false, fmt.Errorf("rotate session tokens: rows affected: %w", err)
 	}
 	return n > 0, nil
-}
-
-// sessionTouch bumps last_used_at for idle-tracking. Best-effort: a missing row
-// is not an error.
-func sessionTouch(db *tracedDB, id string, lastUsed time.Time) error {
-	if _, err := db.Exec(
-		"UPDATE sessions SET last_used_at = ? WHERE id = ?",
-		lastUsed.UTC(), id,
-	); err != nil {
-		return fmt.Errorf("touch session: %w", err)
-	}
-	return nil
 }
 
 // sessionDelete removes a session (logout). Deleting a missing id is a no-op.
@@ -124,11 +118,8 @@ func sessionDeleteExpired(db *tracedDB, now time.Time) (int64, error) {
 
 func (s *SQLiteStore) CreateSession(sess *Session) error      { return sessionCreate(s.db, sess) }
 func (s *SQLiteStore) GetSession(id string) (*Session, error) { return sessionGet(s.db, id) }
-func (s *SQLiteStore) RotateSessionTokens(id, accessToken, newRefreshToken string, accessExpiry time.Time, expectedRefreshToken string) (bool, error) {
-	return sessionRotate(s.db, id, accessToken, newRefreshToken, accessExpiry, expectedRefreshToken)
-}
-func (s *SQLiteStore) TouchSession(id string, lastUsed time.Time) error {
-	return sessionTouch(s.db, id, lastUsed)
+func (s *SQLiteStore) RotateSessionTokens(id string, accessToken, newRefreshToken []byte, accessExpiry time.Time, expectVersion int64) (bool, error) {
+	return sessionRotate(s.db, id, accessToken, newRefreshToken, accessExpiry, expectVersion)
 }
 func (s *SQLiteStore) DeleteSession(id string) error { return sessionDelete(s.db, id) }
 func (s *SQLiteStore) DeleteExpiredSessions(now time.Time) (int64, error) {
@@ -139,11 +130,8 @@ func (s *SQLiteStore) DeleteExpiredSessions(now time.Time) (int64, error) {
 
 func (s *PostgresStore) CreateSession(sess *Session) error      { return sessionCreate(s.db, sess) }
 func (s *PostgresStore) GetSession(id string) (*Session, error) { return sessionGet(s.db, id) }
-func (s *PostgresStore) RotateSessionTokens(id, accessToken, newRefreshToken string, accessExpiry time.Time, expectedRefreshToken string) (bool, error) {
-	return sessionRotate(s.db, id, accessToken, newRefreshToken, accessExpiry, expectedRefreshToken)
-}
-func (s *PostgresStore) TouchSession(id string, lastUsed time.Time) error {
-	return sessionTouch(s.db, id, lastUsed)
+func (s *PostgresStore) RotateSessionTokens(id string, accessToken, newRefreshToken []byte, accessExpiry time.Time, expectVersion int64) (bool, error) {
+	return sessionRotate(s.db, id, accessToken, newRefreshToken, accessExpiry, expectVersion)
 }
 func (s *PostgresStore) DeleteSession(id string) error { return sessionDelete(s.db, id) }
 func (s *PostgresStore) DeleteExpiredSessions(now time.Time) (int64, error) {

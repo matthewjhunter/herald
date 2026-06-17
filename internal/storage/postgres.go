@@ -199,6 +199,32 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 		}
 	}
 
+	// Sessions moved from plaintext TEXT tokens to sealed BYTEA tokens plus a
+	// version counter (oidclient/session adoption). SchemaPostgres above created
+	// the table on a fresh DB, so an absent version column means an existing
+	// table predates the change: its plaintext rows can no longer decrypt and the
+	// column types changed, so it is dropped and recreated. Sessions are
+	// ephemeral auth state -- the only cost is one re-authentication per user.
+	var sessionsHaveVersion bool
+	if err := db.QueryRow(
+		`SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'sessions' AND column_name = 'version'
+		)`).Scan(&sessionsHaveVersion); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to inspect sessions schema: %w", err)
+	}
+	if !sessionsHaveVersion {
+		if _, err := db.Exec("DROP TABLE IF EXISTS sessions"); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to drop legacy sessions table: %w", err)
+		}
+		if _, err := db.Exec(SchemaPostgres); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to recreate sessions table: %w", err)
+		}
+	}
+
 	return &PostgresStore{db: &tracedDB{DB: db, useRebind: true}}, nil
 }
 

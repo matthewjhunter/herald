@@ -14,12 +14,14 @@ func runSessionStoreTests(t *testing.T, store Store) {
 
 	now := time.Now().UTC().Truncate(time.Second)
 
+	// Tokens are opaque bytes at this layer (sealed by the web tier). The tests
+	// use readable byte strings as stand-ins; the store treats them as blobs.
 	newSession := func(id, sub, refresh string) *Session {
 		return &Session{
 			ID:             id,
 			UserSub:        sub,
-			AccessToken:    "access-" + id,
-			RefreshToken:   refresh,
+			AccessToken:    []byte("access-" + id),
+			RefreshToken:   []byte(refresh),
 			AccessExpiry:   now.Add(5 * time.Minute),
 			AbsoluteExpiry: now.Add(24 * time.Hour),
 		}
@@ -34,8 +36,11 @@ func runSessionStoreTests(t *testing.T, store Store) {
 		if err != nil {
 			t.Fatalf("GetSession: %v", err)
 		}
-		if got.UserSub != "user-1" || got.AccessToken != "access-sess-roundtrip" || got.RefreshToken != "refresh-0" {
+		if got.UserSub != "user-1" || string(got.AccessToken) != "access-sess-roundtrip" || string(got.RefreshToken) != "refresh-0" {
 			t.Fatalf("round trip mismatch: %+v", got)
+		}
+		if got.Version != 0 {
+			t.Errorf("new session Version = %d, want 0", got.Version)
 		}
 		if !got.AccessExpiry.Equal(s.AccessExpiry) {
 			t.Errorf("AccessExpiry: got %v want %v", got.AccessExpiry, s.AccessExpiry)
@@ -52,13 +57,13 @@ func runSessionStoreTests(t *testing.T, store Store) {
 		}
 	})
 
-	t.Run("rotate CAS succeeds when refresh token matches", func(t *testing.T) {
+	t.Run("rotate CAS succeeds when version matches", func(t *testing.T) {
 		s := newSession("sess-cas-ok", "user-2", "refresh-A")
 		if err := store.CreateSession(s); err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
 		newExpiry := now.Add(10 * time.Minute)
-		ok, err := store.RotateSessionTokens("sess-cas-ok", "access-new", "refresh-B", newExpiry, "refresh-A")
+		ok, err := store.RotateSessionTokens("sess-cas-ok", []byte("access-new"), []byte("refresh-B"), newExpiry, 0)
 		if err != nil {
 			t.Fatalf("RotateSessionTokens: %v", err)
 		}
@@ -69,32 +74,36 @@ func runSessionStoreTests(t *testing.T, store Store) {
 		if err != nil {
 			t.Fatalf("GetSession: %v", err)
 		}
-		if got.AccessToken != "access-new" || got.RefreshToken != "refresh-B" {
+		if string(got.AccessToken) != "access-new" || string(got.RefreshToken) != "refresh-B" {
 			t.Fatalf("tokens not rotated: %+v", got)
+		}
+		if got.Version != 1 {
+			t.Errorf("Version after rotate = %d, want 1", got.Version)
 		}
 		if !got.AccessExpiry.Equal(newExpiry) {
 			t.Errorf("AccessExpiry not updated: got %v want %v", got.AccessExpiry, newExpiry)
 		}
 	})
 
-	t.Run("rotate CAS loses when refresh token already rotated", func(t *testing.T) {
+	t.Run("rotate CAS loses when version already advanced", func(t *testing.T) {
 		s := newSession("sess-cas-stale", "user-3", "refresh-current")
 		if err := store.CreateSession(s); err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
-		// Another worker already rotated; our expected token is stale.
-		ok, err := store.RotateSessionTokens("sess-cas-stale", "access-x", "refresh-x", now.Add(time.Minute), "refresh-STALE")
+		// Another worker already rotated to version 1; our expected version is
+		// stale (we still hold 1 while the row sits at 0, so the CAS misses).
+		ok, err := store.RotateSessionTokens("sess-cas-stale", []byte("access-x"), []byte("refresh-x"), now.Add(time.Minute), 1)
 		if err != nil {
 			t.Fatalf("RotateSessionTokens: %v", err)
 		}
 		if ok {
-			t.Fatal("expected rotation to lose on stale refresh token")
+			t.Fatal("expected rotation to lose on stale version")
 		}
 		got, err := store.GetSession("sess-cas-stale")
 		if err != nil {
 			t.Fatalf("GetSession: %v", err)
 		}
-		if got.RefreshToken != "refresh-current" {
+		if string(got.RefreshToken) != "refresh-current" {
 			t.Fatalf("stale rotation must not overwrite: %+v", got)
 		}
 	})

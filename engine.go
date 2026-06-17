@@ -506,15 +506,10 @@ func (e *Engine) CreateSession(s *storage.Session) error { return e.store.Create
 // when absent.
 func (e *Engine) GetSession(id string) (*storage.Session, error) { return e.store.GetSession(id) }
 
-// RotateSessionTokens compare-and-swaps the stored tokens on the refresh token,
-// persisting the rotated credential only if expectedRefreshToken still matches.
-func (e *Engine) RotateSessionTokens(id, accessToken, newRefreshToken string, accessExpiry time.Time, expectedRefreshToken string) (bool, error) {
-	return e.store.RotateSessionTokens(id, accessToken, newRefreshToken, accessExpiry, expectedRefreshToken)
-}
-
-// TouchSession bumps the session's last-used timestamp.
-func (e *Engine) TouchSession(id string, lastUsed time.Time) error {
-	return e.store.TouchSession(id, lastUsed)
+// RotateSessionTokens compare-and-swaps the stored tokens on the version
+// counter, persisting the rotated credential only if expectVersion still matches.
+func (e *Engine) RotateSessionTokens(id string, accessToken, newRefreshToken []byte, accessExpiry time.Time, expectVersion int64) (bool, error) {
+	return e.store.RotateSessionTokens(id, accessToken, newRefreshToken, accessExpiry, expectVersion)
 }
 
 // DeleteSession removes a session (logout / revocation).

@@ -5,12 +5,14 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -19,6 +21,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/infodancer/oidclient"
+	"github.com/infodancer/oidclient/session"
 	herald "github.com/matthewjhunter/herald"
 	"github.com/matthewjhunter/herald/internal/storage"
 )
@@ -34,6 +37,21 @@ func init() {
 	if err != nil {
 		panic("failed to generate test RSA key: " + err.Error())
 	}
+	// Pin a deterministic session encryption key so the Manager built inside
+	// newRouter and the helpers that pre-seed session rows (createTestSession)
+	// seal and open tokens under the same keyring.
+	os.Setenv("HERALD_SESSION_ENC_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+}
+
+// testSessionKeyring builds the keyring from the pinned test key, matching the
+// one newRouter constructs, so pre-seeded session tokens decrypt in the Manager.
+func testSessionKeyring(t *testing.T) *session.Keyring {
+	t.Helper()
+	kr, err := newSessionKeyring(os.Getenv("HERALD_SESSION_ENC_KEY"))
+	if err != nil {
+		t.Fatalf("newSessionKeyring: %v", err)
+	}
+	return kr
 }
 
 // fakeOIDCProvider starts an httptest.Server that serves OIDC discovery, JWKS,
@@ -213,16 +231,25 @@ type testFixtures struct {
 // as in production. The session's user_sub is read from the token's sub claim.
 func createTestSession(t *testing.T, engine *herald.Engine, accessToken string) string {
 	t.Helper()
-	id, err := newSessionID()
-	if err != nil {
-		t.Fatalf("newSessionID: %v", err)
+	var idBytes [32]byte
+	if _, err := rand.Read(idBytes[:]); err != nil {
+		t.Fatalf("session id: %v", err)
+	}
+	id := hex.EncodeToString(idBytes[:])
+	kr := testSessionKeyring(t)
+	sealTok := func(tok string) []byte {
+		b, err := kr.Seal([]byte(tok), []byte(id))
+		if err != nil {
+			t.Fatalf("seal token: %v", err)
+		}
+		return b
 	}
 	now := time.Now()
 	if err := engine.CreateSession(&storage.Session{
 		ID:             id,
 		UserSub:        tokenSub(t, accessToken),
-		AccessToken:    accessToken,
-		RefreshToken:   "test-refresh-" + id,
+		AccessToken:    sealTok(accessToken),
+		RefreshToken:   sealTok("test-refresh-" + id),
 		AccessExpiry:   now.Add(time.Hour),
 		AbsoluteExpiry: now.Add(24 * time.Hour),
 	}); err != nil {

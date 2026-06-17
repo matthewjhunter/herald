@@ -463,7 +463,50 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		}
 	}
 
+	// Sessions moved from plaintext TEXT tokens to sealed BLOB tokens plus a
+	// version counter (oidclient/session adoption). Old rows hold plaintext that
+	// can no longer decrypt and the column types changed, so an existing table is
+	// dropped and recreated from the current schema. Sessions are ephemeral auth
+	// state: the only cost is that any logged-in user re-authenticates once.
+	if needsSessionEncMigration(db) {
+		if _, err := db.Exec("DROP TABLE IF EXISTS sessions"); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to drop legacy sessions table: %w", err)
+		}
+		if _, err := db.Exec(Schema); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to recreate sessions table: %w", err)
+		}
+	}
+
 	return &SQLiteStore{db: &tracedDB{DB: db}}, nil
+}
+
+// needsSessionEncMigration reports whether the sessions table predates the
+// sealed-token schema -- it exists but has no version column. A fresh database
+// (table already carries version) and a database with no sessions table both
+// return false.
+func needsSessionEncMigration(db *sql.DB) bool {
+	rows, err := db.Query("PRAGMA table_info(sessions)")
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+
+	sawColumn := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return false
+		}
+		sawColumn = true
+		if name == "version" {
+			return false // already migrated
+		}
+	}
+	return sawColumn // table exists (had columns) but no version column
 }
 
 // needsReadStateMigration checks whether the read_state table uses the old

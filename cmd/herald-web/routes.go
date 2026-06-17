@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/infodancer/oidclient"
+	"github.com/infodancer/oidclient/session"
 	"github.com/infodancer/smoke"
 	herald "github.com/matthewjhunter/herald"
 )
@@ -47,10 +48,28 @@ func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)),
 		smoke.Skip("static file server subtree"))
 
+	// The server-side session manager needs a validator (it is the Renewer and
+	// names the session cookie); the smoke-manifest test builds a router with a
+	// nil validator only to read the route registry, never to serve, so a nil
+	// manager is fine there. The at-rest key comes from the host secret store via
+	// HERALD_SESSION_ENC_KEY; an absent/invalid key degrades to an ephemeral key
+	// (newSessionKeyring) rather than failing, so this never blocks boot.
+	var sessions *session.Manager
+	if validator != nil {
+		kr, err := newSessionKeyring(os.Getenv("HERALD_SESSION_ENC_KEY"))
+		if err != nil {
+			panic("herald-web: build session keyring: " + err.Error())
+		}
+		sessions, err = newSessionManager(engine, validator, kr)
+		if err != nil {
+			panic("herald-web: build session manager: " + err.Error())
+		}
+	}
+
 	h := &handlers{
 		engine:     engine,
 		validator:  validator,
-		sessions:   newSessionManager(engine, validator),
+		sessions:   sessions,
 		adminRole:  adminRole,
 		adminUsers: adminUsers,
 	}
