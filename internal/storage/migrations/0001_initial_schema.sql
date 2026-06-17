@@ -1,8 +1,12 @@
-package storage
+-- +goose Up
+--
+-- Baseline schema for herald (Postgres-only). This is the full current schema,
+-- so it doubles as the goose baseline: every statement is idempotent (IF NOT
+-- EXISTS / CREATE OR REPLACE / a duplicate_object guard), so running it against
+-- the existing production database -- which already has this exact shape from
+-- the pre-goose in-process migrations -- is a no-op, while a fresh database is
+-- built from empty. Later migrations (0002+) are ordinary, non-idempotent steps.
 
-// SchemaPostgres is the PostgreSQL database schema for Herald.
-// All statements are idempotent (IF NOT EXISTS / CREATE EXTENSION IF NOT EXISTS).
-const SchemaPostgres = `
 CREATE EXTENSION IF NOT EXISTS citext;
 
 CREATE TABLE IF NOT EXISTS feeds (
@@ -46,16 +50,15 @@ CREATE TABLE IF NOT EXISTS articles (
     security_flagged  BOOLEAN NOT NULL DEFAULT FALSE,
     security_screened_at TIMESTAMPTZ,
     security_attempts INTEGER NOT NULL DEFAULT 0,
+    -- Full-text search vector, populated by the trigger below.
+    search_vector     tsvector,
     FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE,
     UNIQUE(feed_id, guid)
 );
 
 CREATE INDEX IF NOT EXISTS idx_articles_published ON articles(published_date DESC);
--- idx_articles_unscreened (the partial index driving the security pass) is
--- created by the migrations, not here. On an upgrade-in-place the CREATE TABLE
--- above is a no-op, so security_screened_at does not exist until the ALTER
--- migration adds it; creating a WHERE security_screened_at IS NULL index in this
--- script would fail. The migration creates it after the column is guaranteed.
+CREATE INDEX IF NOT EXISTS idx_articles_unscreened ON articles(published_date DESC) WHERE security_screened_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_articles_search_vector ON articles USING gin(search_vector);
 
 CREATE TABLE IF NOT EXISTS users (
     id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -76,6 +79,7 @@ CREATE TABLE IF NOT EXISTS read_state (
     ai_scored        BOOLEAN NOT NULL DEFAULT FALSE,
     ai_retries       INTEGER NOT NULL DEFAULT 0,
     security_flagged BOOLEAN NOT NULL DEFAULT FALSE,
+    security_reason  TEXT,
     PRIMARY KEY (user_id, article_id),
     FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
 );
@@ -96,6 +100,7 @@ CREATE TABLE IF NOT EXISTS user_feeds (
     user_id       BIGINT NOT NULL DEFAULT 1,
     feed_id       BIGINT NOT NULL,
     subscribed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user_title    TEXT,
     PRIMARY KEY (user_id, feed_id),
     FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE
 );
@@ -325,4 +330,30 @@ CREATE TABLE IF NOT EXISTS sessions (
     last_used_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_absolute_expiry ON sessions(absolute_expiry);
-`
+
+-- Full-text search: a trigger keeps articles.search_vector in sync with the
+-- weighted title/summary/content/linked_content text.
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION articles_search_vector_update() RETURNS trigger AS $$
+BEGIN
+    NEW.search_vector :=
+        setweight(to_tsvector('english', COALESCE(NEW.title, '')), 'A') ||
+        setweight(to_tsvector('english', COALESCE(NEW.summary, '')), 'B') ||
+        setweight(to_tsvector('english', COALESCE(NEW.content, '')), 'C') ||
+        setweight(to_tsvector('english', COALESCE(NEW.linked_content, '')), 'D');
+    RETURN NEW;
+END $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+DO $$ BEGIN
+    CREATE TRIGGER articles_search_vector_trigger
+        BEFORE INSERT OR UPDATE OF title, content, summary, linked_content ON articles
+        FOR EACH ROW EXECUTE FUNCTION articles_search_vector_update();
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+-- +goose StatementEnd
+
+-- +goose Down
+-- No down migration: 0001 is the baseline.
+SELECT 1;

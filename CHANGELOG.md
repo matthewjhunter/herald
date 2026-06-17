@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Schema migrations via goose.** The Postgres schema is now managed by
+  [goose](https://github.com/pressly/goose) migrations embedded under
+  `internal/storage/migrations/`, replacing the hand-rolled in-process
+  `SchemaPostgres` + idempotent-`ALTER` sequence. `NewPostgresStore` runs
+  `goose up` on open. The `0001` baseline is fully idempotent and produces a
+  schema identical to the previous path, so it is a no-op against the existing
+  production database. New `task migrate:status` / `task migrate:create`
+  helpers manage migrations.
 - **Postgres-only.** The SQLite backend has been removed; herald now runs
   exclusively on PostgreSQL (`jackc/pgx/v5`). `NewStore` requires a `postgres://`
   DSN. The `migrate-db` SQLite<->Postgres bridge command is gone (use `pg_dump`
