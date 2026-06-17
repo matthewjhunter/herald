@@ -139,7 +139,7 @@ The `ClusterArticles` method provides an alternative clustering path for batch l
 
 ## Storage
 
-PostgreSQL schema managed by `internal/storage/schema_postgres.go`. Key tables:
+PostgreSQL schema managed by [goose](https://github.com/pressly/goose) migrations embedded under `internal/storage/migrations/`. `NewPostgresStore` runs `goose up` on every open, so a fresh database is built from the migrations and an already-current one is left untouched. `0001_initial_schema.sql` is the idempotent baseline (it doubles as a no-op against the pre-goose production database); later migrations are ordinary forward steps. Key tables:
 
 | Table | Purpose |
 |-------|---------|
