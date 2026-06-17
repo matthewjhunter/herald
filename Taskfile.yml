@@ -31,6 +31,18 @@ tasks:
     cmds:
       - go test -race -count=1 ./...
 
+  migrate:status:
+    desc: Show goose migration status (set DATABASE_URL to a postgres:// DSN)
+    cmds:
+      - go run github.com/pressly/goose/v3/cmd/goose@v3.27.1 -dir internal/storage/migrations postgres "{{.DATABASE_URL}}" status
+    vars:
+      DATABASE_URL: '{{.DATABASE_URL | default "postgres://localhost:5432/herald?sslmode=disable"}}'
+
+  migrate:create:
+    desc: Create a new goose migration (NAME=my_change)
+    cmds:
+      - go run github.com/pressly/goose/v3/cmd/goose@v3.27.1 -dir internal/storage/migrations -s create {{.NAME}} sql
+
   test-coverage:
     desc: Run tests with coverage report
     cmds:
