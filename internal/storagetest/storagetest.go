@@ -37,10 +37,14 @@ func DSN(t *testing.T) (string, func()) {
 	baseDSN := getBaseDSN(t)
 
 	raw := "test_" + t.Name()
-	schema := schemaSanitize.ReplaceAllString(strings.ToLower(raw), "_")
-	// Append a per-call counter so a test that provisions more than one store
-	// (or a subtest sharing a name prefix) gets a distinct schema.
-	schema = trunc(schema, 48) + "_" + strconv.FormatInt(schemaSeq.Add(1), 10)
+	base := schemaSanitize.ReplaceAllString(strings.ToLower(raw), "_")
+	// Name = base + pid + per-call counter. The pid keeps names distinct across
+	// the concurrent per-package test binaries `go test ./...` spawns; the
+	// counter distinguishes multiple stores within one test. The pid also makes
+	// names differ run-to-run in the common case, but a recycled pid plus a test
+	// that leaks its schema (skips cleanup) could still collide, so the schema is
+	// dropped first below.
+	schema := trunc(base, 30) + "_" + strconv.Itoa(os.Getpid()) + "_" + strconv.FormatInt(schemaSeq.Add(1), 10)
 
 	u, err := url.Parse(baseDSN)
 	if err != nil {
@@ -58,6 +62,12 @@ func DSN(t *testing.T) (string, func()) {
 		t.Fatalf("storagetest: open for schema setup: %v", err)
 	}
 	ensureCitext(setupDB)
+	// Drop any leftover from a leaked prior run before (re)creating, so a
+	// recycled pid + counter can't collide with a stale schema.
+	if _, err := setupDB.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE"); err != nil {
+		setupDB.Close()
+		t.Fatalf("storagetest: drop stale schema %q: %v", schema, err)
+	}
 	if _, err := setupDB.Exec("CREATE SCHEMA " + schema); err != nil {
 		setupDB.Close()
 		t.Fatalf("storagetest: create schema %q: %v", schema, err)

@@ -445,7 +445,9 @@ func TestGetFeedStatsEmpty(t *testing.T) {
 
 func TestClose(t *testing.T) {
 	engine, cleanup := newTestEngine(t)
-	_ = cleanup // don't use cleanup, test Close directly
+	// cleanup drops the test schema (and closes again, harmlessly); defer it so
+	// the schema is not leaked even though we exercise Close directly here.
+	defer cleanup()
 
 	err := engine.Close()
 	if err != nil {

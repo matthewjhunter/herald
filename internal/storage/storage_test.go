@@ -28,10 +28,13 @@ func testDSN(t *testing.T) (string, func()) {
 
 	raw := "test_" + t.Name()
 	schema := regexp.MustCompile(`[^a-z0-9_]`).ReplaceAllString(strings.ToLower(raw), "_")
-	if len(schema) > 48 {
-		schema = schema[:48]
+	if len(schema) > 30 {
+		schema = schema[:30]
 	}
-	schema += "_" + strconv.FormatInt(testSchemaSeq.Add(1), 10)
+	// pid keeps names distinct across concurrent per-package test binaries; the
+	// counter distinguishes multiple stores within one test. A stale schema from
+	// a leaked prior run is dropped before create below.
+	schema += "_" + strconv.Itoa(os.Getpid()) + "_" + strconv.FormatInt(testSchemaSeq.Add(1), 10)
 
 	u, err := url.Parse(baseDSN)
 	if err != nil {
@@ -51,6 +54,11 @@ func testDSN(t *testing.T) (string, func()) {
 	// CREATE EXTENSION IF NOT EXISTS races under concurrent first-creation; once
 	// citext exists in public the statement is a no-op, so tolerate the error.
 	setupDB.Exec("CREATE EXTENSION IF NOT EXISTS citext") //nolint:errcheck
+	// Drop any leftover from a leaked prior run before (re)creating.
+	if _, err := setupDB.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE"); err != nil {
+		setupDB.Close()
+		t.Fatalf("drop stale schema %q: %v", schema, err)
+	}
 	if _, err := setupDB.Exec("CREATE SCHEMA " + schema); err != nil {
 		setupDB.Close()
 		t.Fatalf("create schema %q: %v", schema, err)
