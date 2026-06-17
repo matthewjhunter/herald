@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +16,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/infodancer/oidclient"
+	"github.com/infodancer/oidclient/session"
 	herald "github.com/matthewjhunter/herald"
 	"github.com/matthewjhunter/herald/internal/storage"
 )
@@ -30,6 +34,44 @@ func newSessionTestEngine(t *testing.T) *herald.Engine {
 	}
 	t.Cleanup(func() { engine.Close() })
 	return engine
+}
+
+// testKeyring builds a single-key AES-256 keyring for sealing session tokens in
+// tests, matching what newSessionKeyring would produce from a configured key.
+func testKeyring(t *testing.T) *session.Keyring {
+	t.Helper()
+	kr := session.NewKeyring()
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatalf("rand: %v", err)
+	}
+	if err := kr.Add("k1", key); err != nil {
+		t.Fatalf("keyring Add: %v", err)
+	}
+	return kr
+}
+
+// newTestSessionID returns a fresh opaque session id (the cookie value and the
+// AAD the keyring seals against).
+func newTestSessionID(t *testing.T) string {
+	t.Helper()
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		t.Fatalf("rand: %v", err)
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// seal encrypts a token string under the session id, the way the Manager stores
+// it -- tests insert sessions directly to control expiry, so they must seal the
+// token bytes themselves rather than write plaintext.
+func seal(t *testing.T, kr *session.Keyring, id, token string) []byte {
+	t.Helper()
+	b, err := kr.Seal([]byte(token), []byte(id))
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	return b
 }
 
 // sessionTestEngines returns the engines the concurrent-refresh guard runs on.
@@ -55,8 +97,9 @@ func sessionTestEngines(t *testing.T) map[string]*herald.Engine {
 // requests at once; if two of them refresh the same expired session
 // concurrently they must not both spend the refresh token (the second spend
 // would trip replay detection and kill the session). The renewal is
-// single-flighted, so N concurrent requests must cause exactly one refresh
-// grant, all must succeed, and the rotated token must be persisted.
+// single-flighted and persisted under a version CAS, so N concurrent requests
+// must cause exactly one refresh grant, all must succeed, and the rotated token
+// must be persisted with the version advanced.
 func TestSessionRefresh_ConcurrentCollapsesToOneGrant(t *testing.T) {
 	for name, engine := range sessionTestEngines(t) {
 		t.Run(name, func(t *testing.T) {
@@ -127,20 +170,22 @@ func concurrentRefreshAssertion(t *testing.T, engine *herald.Engine) {
 		t.Fatalf("oidclient.New: %v", err)
 	}
 
-	sm := newSessionManager(engine, validator)
+	kr := testKeyring(t)
+	sm, err := newSessionManager(engine, validator, kr)
+	if err != nil {
+		t.Fatalf("newSessionManager: %v", err)
+	}
 
 	// A session whose access token has already expired, so every request takes
-	// the renewal path rather than the fast validate path.
-	id, err := newSessionID()
-	if err != nil {
-		t.Fatalf("newSessionID: %v", err)
-	}
+	// the renewal path rather than the fast validate path. Tokens are sealed
+	// under the id, exactly as the Manager stores them.
+	id := newTestSessionID(t)
 	now := time.Now()
 	if err := engine.CreateSession(&storage.Session{
 		ID:             id,
 		UserSub:        "test-sub-1",
-		AccessToken:    mintAccess(-time.Minute),
-		RefreshToken:   "refresh-0",
+		AccessToken:    seal(t, kr, id, mintAccess(-time.Minute)),
+		RefreshToken:   seal(t, kr, id, "refresh-0"),
 		AccessExpiry:   now.Add(-time.Minute),
 		AbsoluteExpiry: now.Add(24 * time.Hour),
 	}); err != nil {
@@ -159,7 +204,7 @@ func concurrentRefreshAssertion(t *testing.T, engine *herald.Engine) {
 			req := httptest.NewRequest("GET", "/", nil)
 			req.AddCookie(&http.Cookie{Name: "test_jwt", Value: id})
 			<-start
-			claims[i], errs[i] = sm.authenticate(req)
+			claims[i], errs[i] = sm.Authenticate(req)
 		}(i)
 	}
 	close(start) // release all goroutines at once
@@ -181,13 +226,21 @@ func concurrentRefreshAssertion(t *testing.T, engine *herald.Engine) {
 		t.Fatalf("refresh grants = %d, want exactly 1 (concurrent renewals must collapse to one)", got)
 	}
 
-	// The rotated token must be persisted; the spent one must be gone.
+	// The rotated token must be persisted under an advanced version; the spent
+	// one must be gone. Decrypt to confirm the stored token is the rotated one.
 	sess, err := engine.GetSession(id)
 	if err != nil {
 		t.Fatalf("GetSession after refresh: %v", err)
 	}
-	if sess.RefreshToken != "refresh-1" {
-		t.Errorf("stored refresh token = %q, want refresh-1 (rotated and persisted)", sess.RefreshToken)
+	if sess.Version != 1 {
+		t.Errorf("stored version = %d, want 1 (one rotation)", sess.Version)
+	}
+	gotRefresh, err := kr.Open(sess.RefreshToken, []byte(id))
+	if err != nil {
+		t.Fatalf("open stored refresh token: %v", err)
+	}
+	if string(gotRefresh) != "refresh-1" {
+		t.Errorf("stored refresh token = %q, want refresh-1 (rotated and persisted)", gotRefresh)
 	}
 	if !time.Now().Before(sess.AccessExpiry) {
 		t.Errorf("access expiry not advanced after refresh: %v", sess.AccessExpiry)
@@ -229,13 +282,17 @@ func TestSessionAuthenticate_FastPathNoRefresh(t *testing.T) {
 	}
 
 	engine := newSessionTestEngine(t)
-	sm := newSessionManager(engine, validator)
-	id, _ := newSessionID()
+	kr := testKeyring(t)
+	sm, err := newSessionManager(engine, validator, kr)
+	if err != nil {
+		t.Fatalf("newSessionManager: %v", err)
+	}
+	id := newTestSessionID(t)
 	now := time.Now()
 	if err := engine.CreateSession(&storage.Session{
 		ID: id, UserSub: "test-sub-1",
-		AccessToken:    mintAccess(),
-		RefreshToken:   "refresh-0",
+		AccessToken:    seal(t, kr, id, mintAccess()),
+		RefreshToken:   seal(t, kr, id, "refresh-0"),
 		AccessExpiry:   now.Add(time.Hour),
 		AbsoluteExpiry: now.Add(24 * time.Hour),
 	}); err != nil {
@@ -244,7 +301,7 @@ func TestSessionAuthenticate_FastPathNoRefresh(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: id})
-	claims, err := sm.authenticate(req)
+	claims, err := sm.Authenticate(req)
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
@@ -257,18 +314,22 @@ func TestSessionAuthenticate_FastPathNoRefresh(t *testing.T) {
 }
 
 // TestSessionAuthenticate_ExpiredSessionRejected confirms a session past its
-// absolute TTL is rejected (errNoSession) and deleted, regardless of token state.
+// absolute TTL is rejected (ErrNoSession) and deleted, regardless of token state.
 func TestSessionAuthenticate_ExpiredSessionRejected(t *testing.T) {
 	validator, _ := newTestValidatorIssuer(t)
 	engine := newSessionTestEngine(t)
-	sm := newSessionManager(engine, validator)
+	kr := testKeyring(t)
+	sm, err := newSessionManager(engine, validator, kr)
+	if err != nil {
+		t.Fatalf("newSessionManager: %v", err)
+	}
 
-	id, _ := newSessionID()
+	id := newTestSessionID(t)
 	now := time.Now()
 	if err := engine.CreateSession(&storage.Session{
 		ID: id, UserSub: "test-sub-1",
-		AccessToken:    "irrelevant",
-		RefreshToken:   "refresh-0",
+		AccessToken:    seal(t, kr, id, "irrelevant"),
+		RefreshToken:   seal(t, kr, id, "refresh-0"),
 		AccessExpiry:   now.Add(time.Hour),
 		AbsoluteExpiry: now.Add(-time.Second), // already past hard TTL
 	}); err != nil {
@@ -277,10 +338,50 @@ func TestSessionAuthenticate_ExpiredSessionRejected(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: id})
-	if _, err := sm.authenticate(req); err == nil {
-		t.Fatal("expected errNoSession for a past-TTL session")
+	if _, err := sm.Authenticate(req); err == nil {
+		t.Fatal("expected ErrNoSession for a past-TTL session")
 	}
 	if _, err := engine.GetSession(id); err == nil {
 		t.Error("expired session should have been deleted on rejection")
+	}
+}
+
+// TestNewSessionKeyring_FailOpen verifies the service never fails over a key
+// problem: a good key becomes the persistent "k1", while an absent or invalid
+// key degrades to an ephemeral key (still encrypting, just not surviving a
+// restart) rather than erroring. ActiveID reflects which path was taken.
+func TestNewSessionKeyring_FailOpen(t *testing.T) {
+	good := make([]byte, 32)
+	if _, err := rand.Read(good); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name       string
+		key        string
+		wantActive string
+	}{
+		{"valid key", base64.StdEncoding.EncodeToString(good), "k1"},
+		{"unset", "", "ephemeral"},
+		{"not base64", "@@@not-base64@@@", "ephemeral"},
+		{"wrong length", base64.StdEncoding.EncodeToString([]byte("too-short")), "ephemeral"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			kr, err := newSessionKeyring(tc.key)
+			if err != nil {
+				t.Fatalf("newSessionKeyring must not error on a key problem, got: %v", err)
+			}
+			if kr.ActiveID() != tc.wantActive {
+				t.Errorf("active key id = %q, want %q", kr.ActiveID(), tc.wantActive)
+			}
+			blob, err := kr.Seal([]byte("token"), []byte("sid"))
+			if err != nil {
+				t.Fatalf("Seal: %v", err)
+			}
+			got, err := kr.Open(blob, []byte("sid"))
+			if err != nil || string(got) != "token" {
+				t.Errorf("round trip: got %q, %v", got, err)
+			}
+		})
 	}
 }

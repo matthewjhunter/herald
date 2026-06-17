@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/infodancer/oidclient"
+	"github.com/infodancer/oidclient/session"
 	herald "github.com/matthewjhunter/herald"
 	"github.com/matthewjhunter/herald/internal/storage"
 )
@@ -28,7 +29,7 @@ import (
 type handlers struct {
 	engine     *herald.Engine
 	validator  *oidclient.Client
-	sessions   *sessionManager               // server-side OIDC session lifecycle (#173)
+	sessions   *session.Manager              // server-side OIDC session lifecycle (#173)
 	pages      map[string]*template.Template // per-page template sets
 	pagesOnce  sync.Once                     // guards lazy template parsing
 	adminRole  string                        // JWT role value that grants admin access (default: "admin")
@@ -457,7 +458,7 @@ func (h *handlers) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// the cookie and bounce to webauth's logout (#173). The refresh token is
 	// discarded with the row; oidclient exposes no IdP revocation endpoint, so
 	// it lapses at webauth on its own TTL.
-	h.sessions.destroy(w, r)
+	h.sessions.Destroy(w, r)
 	http.Redirect(w, r, h.validator.LogoutURL(), http.StatusFound)
 }
 

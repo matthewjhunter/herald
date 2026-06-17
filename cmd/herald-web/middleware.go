@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/infodancer/oidclient"
+	"github.com/infodancer/oidclient/session"
 	herald "github.com/matthewjhunter/herald"
 )
 
@@ -81,13 +82,13 @@ func claimsFromContext(ctx context.Context) *oidclient.Claims {
 // and enforces that the {userID} in the URL matches the authenticated user.
 func (h *handlers) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		claims, err := h.sessions.authenticate(r)
+		claims, err := h.sessions.Authenticate(r)
 		if err != nil {
-			// errNoSession is the expected unauthenticated case; anything else
-			// (a failed renewal, a transient store error) also lands the user at
-			// login, but is logged so a real fault is diagnosable rather than a
+			// session.ErrNoSession is the expected unauthenticated case; anything
+			// else (a failed renewal, a transient store error) also lands the user
+			// at login, but is logged so a real fault is diagnosable rather than a
 			// silent re-auth loop.
-			if !errors.Is(err, errNoSession) {
+			if !errors.Is(err, session.ErrNoSession) {
 				log.Printf("herald-web: session authenticate: %v", err)
 			}
 			// While the lazy OIDC client has not completed discovery it can
