@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -19,14 +18,17 @@ import (
 	"github.com/infodancer/oidclient/session"
 	herald "github.com/matthewjhunter/herald"
 	"github.com/matthewjhunter/herald/internal/storage"
+	"github.com/matthewjhunter/herald/internal/storagetest"
 )
 
-// newSessionTestEngine builds a bare read-only engine on a temp SQLite DB --
-// enough for the session-store path, no feeds or users required.
+// newSessionTestEngine builds a bare read-only engine on an isolated Postgres
+// schema -- enough for the session-store path, no feeds or users required.
 func newSessionTestEngine(t *testing.T) *herald.Engine {
 	t.Helper()
+	dsn, dropSchema := storagetest.DSN(t)
+	t.Cleanup(dropSchema)
 	engine, err := herald.NewEngine(herald.EngineConfig{
-		DBPath:   filepath.Join(t.TempDir(), "test.db"),
+		DBPath:   dsn,
 		ReadOnly: true,
 	})
 	if err != nil {
@@ -76,19 +78,15 @@ func seal(t *testing.T, kr *session.Keyring, id, token string) []byte {
 
 // sessionTestEngines returns the engines the concurrent-refresh guard runs on.
 //
-// SQLite only, deliberately. The guard also holds on Postgres -- and the race
-// it defends against is in fact sharper there, since Postgres MVCC reads do not
-// serialize the way SQLite's single writer does (verified manually by removing
-// the singleflight collapse and watching the Postgres path fail). It is not in
-// the automated matrix because the storage package's Postgres tests isolate via
-// per-schema search_path while SchemaPostgres does CREATE EXTENSION IF NOT
-// EXISTS citext; a web Postgres test running in parallel with those (go test
-// ./... parallelizes packages, and CI sets HERALD_TEST_DB_DSN) races on which
-// schema owns citext and flakes. SQLite gives a deterministic regression guard
-// without that cross-package contention.
+// Postgres, on an isolated per-test schema. The race the guard defends against
+// is sharp here: Postgres MVCC reads do not serialize the way a single writer
+// would (verified manually by removing the singleflight collapse and watching
+// this path fail), so it is the right backend for the regression guard. The
+// citext extension is provisioned in public by the storagetest helper, so the
+// per-schema search_path isolation no longer races across parallel packages.
 func sessionTestEngines(t *testing.T) map[string]*herald.Engine {
 	t.Helper()
-	return map[string]*herald.Engine{"sqlite": newSessionTestEngine(t)}
+	return map[string]*herald.Engine{"postgres": newSessionTestEngine(t)}
 }
 
 // TestSessionRefresh_ConcurrentCollapsesToOneGrant is the acceptance test for

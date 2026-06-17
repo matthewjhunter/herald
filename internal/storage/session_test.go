@@ -151,14 +151,8 @@ func runSessionStoreTests(t *testing.T, store Store) {
 	})
 }
 
-func TestSessionStoreSQLite(t *testing.T) {
+func TestSessionStore(t *testing.T) {
 	store, cleanup := newTestStore(t)
-	defer cleanup()
-	runSessionStoreTests(t, store)
-}
-
-func TestSessionStorePostgres(t *testing.T) {
-	store, cleanup := newPGTestStore(t)
 	defer cleanup()
 	runSessionStoreTests(t, store)
 }

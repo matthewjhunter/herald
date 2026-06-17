@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +14,7 @@ import (
 	"github.com/matthewjhunter/herald/internal/ai"
 	"github.com/matthewjhunter/herald/internal/output"
 	"github.com/matthewjhunter/herald/internal/storage"
+	"github.com/matthewjhunter/herald/internal/storagetest"
 )
 
 // fakeAI implements the AI interface with injectable verdicts/errors and call
@@ -80,11 +80,8 @@ func (f *fakeAI) CurateArticle(_ context.Context, _ int64, title, content string
 
 func newHarness(t *testing.T, fake *fakeAI) (*Stage, storage.Store, int64) {
 	t.Helper()
-	store, err := storage.NewSQLiteStore(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatalf("NewSQLiteStore: %v", err)
-	}
-	t.Cleanup(func() { store.Close() })
+	store, cleanup := storagetest.NewStore(t)
+	t.Cleanup(cleanup)
 
 	feedID, _ := store.AddFeed("https://example.com/feed", "Feed", "")
 	if err := store.SubscribeUserToFeed(1, feedID); err != nil {

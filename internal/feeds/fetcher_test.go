@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/matthewjhunter/herald/internal/storage"
+	"github.com/matthewjhunter/herald/internal/storagetest"
 	"github.com/mmcdole/gofeed"
 	ext "github.com/mmcdole/gofeed/extensions"
 )
@@ -25,14 +26,9 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func newTestStore(t *testing.T) (*storage.SQLiteStore, func()) {
+func newTestStore(t *testing.T) (storage.Store, func()) {
 	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	store, err := storage.NewSQLiteStore(dbPath)
-	if err != nil {
-		t.Fatalf("NewSQLiteStore failed: %v", err)
-	}
-	return store, func() { store.Close() }
+	return storagetest.NewStore(t)
 }
 
 func writeOPML(t *testing.T, content string) string {

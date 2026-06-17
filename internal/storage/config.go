@@ -6,6 +6,8 @@ type Config struct {
 	DefaultUserID int64 `yaml:"default_user_id"`
 
 	Database struct {
+		// Path is the PostgreSQL DSN (a postgres:// or postgresql:// URL). herald
+		// is Postgres-only; the field name is kept for config compatibility.
 		Path string `yaml:"path"`
 	} `yaml:"database"`
 
@@ -112,7 +114,7 @@ type Config struct {
 func DefaultConfig() *Config {
 	cfg := &Config{}
 	cfg.DefaultUserID = 1
-	cfg.Database.Path = "./herald.db"
+	cfg.Database.Path = "postgres://localhost:5432/herald?sslmode=disable"
 	cfg.Ollama.BaseURL = "http://localhost:11434"
 	cfg.Ollama.SecurityModel = "gemma3:4b"
 	cfg.Ollama.CurationModel = "llama3.1:8b"

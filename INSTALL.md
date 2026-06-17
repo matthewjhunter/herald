@@ -58,7 +58,8 @@ Edit `config/config.yaml`:
 
 ```yaml
 database:
-  path: ./herald.db  # Database location
+  # PostgreSQL DSN (herald is Postgres-only)
+  path: postgres://localhost:5432/herald?sslmode=disable
 
 ollama:
   base_url: http://localhost:11434
@@ -209,11 +210,10 @@ ollama list
 ### Database Issues
 
 ```bash
-# Check database file exists and is readable
-ls -lh herald.db
+# Check the database is reachable
+psql "$HERALD_DB_DSN" -c '\dt'
 
-# If corrupted, remove and re-fetch
-rm herald.db
+# Re-fetch
 ./herald fetch
 ```
 
@@ -251,7 +251,7 @@ Balance timeliness vs. resource usage:
 Periodically clean old read articles:
 
 ```bash
-sqlite3 herald.db "DELETE FROM articles WHERE id IN (SELECT article_id FROM read_state WHERE read = 1 AND read_date < datetime('now', '-30 days'))"
+psql "$HERALD_DB_DSN" -c "DELETE FROM articles WHERE id IN (SELECT article_id FROM read_state WHERE read AND read_date < now() - interval '30 days')"
 ```
 
 ## Uninstall
@@ -261,7 +261,7 @@ sqlite3 herald.db "DELETE FROM articles WHERE id IN (SELECT article_id FROM read
 make clean
 
 # Remove database
-rm -f herald.db
+dropdb herald   # or: psql -c 'DROP DATABASE herald'
 
 # Remove config
 rm -rf config/

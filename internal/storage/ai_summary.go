@@ -151,34 +151,6 @@ func getUnreadArticlesForSummary(db *tracedDB, userID int64, minSecurity, minInt
 	return scanArticles(rows)
 }
 
-// --- SQLiteStore methods ---
-
-func (s *SQLiteStore) CreateAISummary(a *AISummary) (int64, error) { return createAISummary(s.db, a) }
-func (s *SQLiteStore) UpdateAISummaryDone(id int64, headline, contentHTML string, ids []int64, inTok, outTok int) error {
-	return updateAISummaryDone(s.db, id, headline, contentHTML, ids, inTok, outTok)
-}
-func (s *SQLiteStore) UpdateAISummaryFailed(id int64, errMsg string) error {
-	return updateAISummaryFailed(s.db, id, errMsg)
-}
-func (s *SQLiteStore) GetLatestAISummary(userID int64) (*AISummary, error) {
-	return getLatestAISummary(s.db, userID)
-}
-func (s *SQLiteStore) GetInProgressAISummary(userID int64) (*AISummary, error) {
-	return getInProgressAISummary(s.db, userID)
-}
-func (s *SQLiteStore) GetAISummary(userID, id int64) (*AISummary, error) {
-	return getAISummary(s.db, userID, id)
-}
-func (s *SQLiteStore) GetAISummaries(userID int64, limit int) ([]AISummary, error) {
-	return getAISummaries(s.db, userID, limit)
-}
-func (s *SQLiteStore) GetAISummariesForNewsletter(userID, newsletterID int64, limit int) ([]AISummary, error) {
-	return getAISummariesForNewsletter(s.db, userID, newsletterID, limit)
-}
-func (s *SQLiteStore) GetUnreadArticlesForSummary(userID int64, minSecurity, minInterest float64, limit int) ([]Article, error) {
-	return getUnreadArticlesForSummary(s.db, userID, minSecurity, minInterest, limit)
-}
-
 // --- PostgresStore methods ---
 
 func (s *PostgresStore) CreateAISummary(a *AISummary) (int64, error) { return createAISummary(s.db, a) }

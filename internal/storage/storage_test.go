@@ -5,55 +5,59 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
-func newTestStore(t *testing.T) (Store, func()) {
-	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	store, err := NewSQLiteStore(dbPath)
-	if err != nil {
-		t.Fatalf("NewSQLiteStore failed: %v", err)
-	}
-	return store, func() { store.Close() }
-}
+var testSchemaSeq atomic.Int64
 
-// newPGTestStore opens a PostgreSQL store with an isolated schema for this
-// test. Skips automatically when HERALD_TEST_DB_DSN is not set.
-func newPGTestStore(t *testing.T) (Store, func()) {
+// testDSN provisions an isolated schema in the test database and returns a DSN
+// whose search_path points at it, plus a cleanup that drops the schema.
+// Reopening the returned DSN (via NewStore) sees the same data. Skips when
+// HERALD_TEST_DB_DSN is not set.
+func testDSN(t *testing.T) (string, func()) {
 	t.Helper()
 	baseDSN := os.Getenv("HERALD_TEST_DB_DSN")
 	if baseDSN == "" {
 		t.Skip("HERALD_TEST_DB_DSN not set; skipping postgres test")
 	}
 
-	// Build a safe schema name from the test name.
 	raw := "test_" + t.Name()
 	schema := regexp.MustCompile(`[^a-z0-9_]`).ReplaceAllString(strings.ToLower(raw), "_")
-	if len(schema) > 63 {
-		schema = schema[:63]
+	if len(schema) > 30 {
+		schema = schema[:30]
 	}
+	// pid keeps names distinct across concurrent per-package test binaries; the
+	// counter distinguishes multiple stores within one test. A stale schema from
+	// a leaked prior run is dropped before create below.
+	schema += "_" + strconv.Itoa(os.Getpid()) + "_" + strconv.FormatInt(testSchemaSeq.Add(1), 10)
 
-	// Inject search_path into DSN so the store sees only this schema.
 	u, err := url.Parse(baseDSN)
 	if err != nil {
 		t.Fatalf("parse HERALD_TEST_DB_DSN: %v", err)
 	}
 	q := u.Query()
-	q.Set("search_path", schema)
+	// Include public so the citext type (installed there) resolves while this
+	// test's own tables live in its private schema, first on the path.
+	q.Set("search_path", schema+",public")
 	u.RawQuery = q.Encode()
 	dsn := u.String()
 
-	// Create the schema first (using the base DSN without search_path).
 	setupDB, err := sql.Open("pgx", baseDSN)
 	if err != nil {
 		t.Fatalf("open postgres for schema setup: %v", err)
+	}
+	// CREATE EXTENSION IF NOT EXISTS races under concurrent first-creation; once
+	// citext exists in public the statement is a no-op, so tolerate the error.
+	setupDB.Exec("CREATE EXTENSION IF NOT EXISTS citext") //nolint:errcheck
+	// Drop any leftover from a leaked prior run before (re)creating.
+	if _, err := setupDB.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE"); err != nil {
+		setupDB.Close()
+		t.Fatalf("drop stale schema %q: %v", schema, err)
 	}
 	if _, err := setupDB.Exec("CREATE SCHEMA " + schema); err != nil {
 		setupDB.Close()
@@ -61,35 +65,34 @@ func newPGTestStore(t *testing.T) (Store, func()) {
 	}
 	setupDB.Close()
 
-	store, err := NewPostgresStore(dsn)
-	if err != nil {
-		t.Fatalf("NewPostgresStore: %v", err)
-	}
-
-	cleanup := func() {
-		store.Close()
+	return dsn, func() {
 		db, err := sql.Open("pgx", baseDSN)
 		if err == nil {
 			db.Exec("DROP SCHEMA " + schema + " CASCADE") //nolint:errcheck
 			db.Close()
 		}
 	}
-	return store, cleanup
 }
 
-func TestNewSQLiteStore(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-
-	store, err := NewSQLiteStore(dbPath)
+// newTestStore opens a Postgres-backed store with an isolated schema. herald is
+// Postgres-only; this skips when HERALD_TEST_DB_DSN is not set.
+func newTestStore(t *testing.T) (Store, func()) {
+	t.Helper()
+	dsn, dropSchema := testDSN(t)
+	store, err := NewStore(dsn)
 	if err != nil {
-		t.Fatalf("NewSQLiteStore failed: %v", err)
+		dropSchema()
+		t.Fatalf("NewStore: %v", err)
 	}
-	defer store.Close()
-
-	if store.db == nil {
-		t.Fatal("Database connection is nil")
+	return store, func() {
+		store.Close()
+		dropSchema()
 	}
 }
+
+// newPGTestStore is retained as an alias for the Postgres-specific tests that
+// reference it by name; newTestStore is now always Postgres-backed.
+func newPGTestStore(t *testing.T) (Store, func()) { return newTestStore(t) }
 
 func TestNewPostgresStorePoolLimits(t *testing.T) {
 	store, cleanup := newPGTestStore(t)
@@ -1448,237 +1451,6 @@ func TestPostgresBackend(t *testing.T) {
 	})
 }
 
-func TestMigrateStore(t *testing.T) {
-	src, cleanSrc := newTestStore(t)
-	defer cleanSrc()
-	dst, cleanDst := newTestStore(t)
-	defer cleanDst()
-
-	// Populate source.
-	feedID, _ := src.AddFeed("https://example.com/feed", "Test Feed", "desc")
-	src.SubscribeUserToFeed(1, feedID)
-
-	now := time.Now()
-	artID, _ := src.AddArticle(&Article{
-		FeedID: feedID, GUID: "mig-1", Title: "Migrated",
-		URL: "https://example.com/mig", PublishedDate: &now,
-	})
-
-	score, sec := 8.5, 9.0
-	src.UpdateReadState(1, artID, false, &score, &sec, nil, nil)
-	src.UpdateReadState(1, artID, true, nil, nil, nil, nil)
-	src.UpdateStarred(1, artID, true)
-
-	src.StoreArticleAuthors(artID, []ArticleAuthor{{Name: "Author One", Email: "a@b.com"}})
-	src.StoreArticleCategories(artID, []string{"Security"})
-	src.UpdateArticleAISummary(artID, "AI summary text")
-
-	groupID, _ := src.CreateArticleGroup(1, "Cluster")
-	src.AddArticleToGroup(groupID, artID)
-	src.AddArticleToGroup(groupID, artID) // idempotent
-
-	src.SetUserPreference(1, "theme", "dark")
-	temp := 0.5
-	src.SetUserPrompt(1, "scoring", "my prompt", &temp, nil)
-
-	// Migrate.
-	stats, err := MigrateStore(t.Context(), src, dst)
-	if err != nil {
-		t.Fatalf("MigrateStore: %v", err)
-	}
-
-	if stats.Feeds != 1 {
-		t.Errorf("feeds: got %d, want 1", stats.Feeds)
-	}
-	if stats.Articles != 1 {
-		t.Errorf("articles: got %d, want 1", stats.Articles)
-	}
-	if stats.ReadStates != 1 {
-		t.Errorf("read_states: got %d, want 1", stats.ReadStates)
-	}
-	if stats.Subscriptions != 1 {
-		t.Errorf("subscriptions: got %d, want 1", stats.Subscriptions)
-	}
-	if stats.Preferences != 1 {
-		t.Errorf("preferences: got %d, want 1", stats.Preferences)
-	}
-	if stats.Prompts != 1 {
-		t.Errorf("prompts: got %d, want 1", stats.Prompts)
-	}
-	if stats.Groups != 1 {
-		t.Errorf("groups: got %d, want 1", stats.Groups)
-	}
-
-	// Verify destination has the article and it is read.
-	unread, err := dst.GetUnreadArticles(10)
-	if err != nil {
-		t.Fatalf("GetUnreadArticles in dst: %v", err)
-	}
-	if len(unread) != 0 {
-		t.Errorf("expected 0 unread in dst (article was read), got %d", len(unread))
-	}
-
-	// Feed metadata preserved.
-	feeds, _ := dst.GetAllFeeds()
-	if len(feeds) != 1 || feeds[0].URL != "https://example.com/feed" {
-		t.Errorf("dst feed mismatch: %+v", feeds)
-	}
-
-	// Subscription preserved.
-	userFeeds, _ := dst.GetUserFeeds(1)
-	if len(userFeeds) != 1 {
-		t.Errorf("expected 1 user feed in dst, got %d", len(userFeeds))
-	}
-
-	// Summary preserved.
-	dstFeeds, _ := dst.GetAllFeeds()
-	dstFeedID := dstFeeds[0].ID
-	dstArts, _ := dst.GetUnreadArticles(100)
-	_ = dstArts
-	// Find article in dst by feed
-	dstFeedArts, _ := dst.GetUnreadArticlesByFeed(1, dstFeedID, 10, 0, nil, false)
-	_ = dstFeedArts
-
-	pref, err := dst.GetUserPreference(1, "theme")
-	if err != nil || pref != "dark" {
-		t.Errorf("preference: got %q %v, want dark", pref, err)
-	}
-
-	prompt, err := dst.GetUserPrompt(1, "scoring")
-	if err != nil || prompt != "my prompt" {
-		t.Errorf("prompt: got %q %v, want 'my prompt'", prompt, err)
-	}
-}
-
-// TestMigrationFromPreOIDCSchema verifies that NewSQLiteStore successfully opens
-// an existing database that was created before the oidc_sub/email columns were
-// added to the users table.  This is a regression test for the crash-loop
-// caused by the schema init trying to CREATE UNIQUE INDEX on a column that
-// didn't yet exist.
-func TestMigrationFromPreOIDCSchema(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "pre-oidc.db")
-
-	// Bootstrap an old-style database with the users table missing oidc_sub and email.
-	legacyDB, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("open legacy db: %v", err)
-	}
-	_, err = legacyDB.Exec(`
-		CREATE TABLE users (
-			id         INTEGER PRIMARY KEY AUTOINCREMENT,
-			name       TEXT NOT NULL UNIQUE COLLATE NOCASE,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)
-	`)
-	if err != nil {
-		t.Fatalf("create legacy users table: %v", err)
-	}
-	_, err = legacyDB.Exec(`INSERT INTO users (name) VALUES ('alice')`)
-	if err != nil {
-		t.Fatalf("insert legacy user: %v", err)
-	}
-	legacyDB.Close()
-
-	// NewSQLiteStore must not crash-loop on this database.
-	store, err := NewSQLiteStore(dbPath)
-	if err != nil {
-		t.Fatalf("NewSQLiteStore on pre-oidc schema: %v", err)
-	}
-	defer store.Close()
-
-	// The migrated users table must expose oidc_sub and email via the normal API.
-	users, err := store.ListUsers()
-	if err != nil {
-		t.Fatalf("ListUsers after migration: %v", err)
-	}
-	if len(users) != 1 || users[0].Name != "alice" {
-		t.Errorf("unexpected users after migration: %+v", users)
-	}
-	if users[0].OIDCSub != nil {
-		t.Errorf("expected nil OIDCSub for legacy user, got %v", users[0].OIDCSub)
-	}
-}
-
-// TestMigrationFromPre141Schema reproduces the upgrade-in-place failure where a
-// database created before #141 has an articles table without the security
-// columns. The schema script's CREATE TABLE IF NOT EXISTS is a no-op on the
-// existing table, so security_screened_at does not exist until the ALTER
-// migration adds it; a partial index referencing that column in the schema
-// script crashed startup with "no such column: security_screened_at". The index
-// now lives in the migrations, which run after the column is added.
-//
-// The existing per-article tests reopen a DB created by the current binary, so
-// the column is present from the first open and never exercise this path — this
-// test bootstraps a genuinely pre-#141 articles table by hand.
-func TestMigrationFromPre141Schema(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "pre-141.db")
-
-	// Bootstrap an old-style database: articles without any security_* columns,
-	// mirroring the schema that shipped before #141.
-	legacyDB, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("open legacy db: %v", err)
-	}
-	_, err = legacyDB.Exec(`
-		CREATE TABLE feeds (
-			id    INTEGER PRIMARY KEY AUTOINCREMENT,
-			url   TEXT NOT NULL UNIQUE,
-			title TEXT NOT NULL
-		);
-		CREATE TABLE articles (
-			id                INTEGER PRIMARY KEY AUTOINCREMENT,
-			feed_id           INTEGER NOT NULL,
-			guid              TEXT NOT NULL,
-			title             TEXT NOT NULL,
-			url               TEXT NOT NULL,
-			content           TEXT,
-			summary           TEXT,
-			author            TEXT,
-			published_date    DATETIME,
-			fetched_date      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			linked_url        TEXT NOT NULL DEFAULT '',
-			linked_content    TEXT NOT NULL DEFAULT '',
-			full_text_fetched BOOLEAN NOT NULL DEFAULT 0,
-			images_cached     BOOLEAN NOT NULL DEFAULT 0,
-			FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE,
-			UNIQUE(feed_id, guid)
-		);
-		INSERT INTO feeds (url, title) VALUES ('https://example.com/feed', 'Feed');
-		INSERT INTO articles (feed_id, guid, title, url)
-		    VALUES (1, 'a1', 'Old Article', 'https://example.com/a1');
-	`)
-	if err != nil {
-		t.Fatalf("create legacy articles table: %v", err)
-	}
-	legacyDB.Close()
-
-	// NewSQLiteStore must migrate in place, not crash on the missing column.
-	store, err := NewSQLiteStore(dbPath)
-	if err != nil {
-		t.Fatalf("NewSQLiteStore on pre-141 schema: %v", err)
-	}
-	defer store.Close()
-
-	// The security columns and the partial index must now exist.
-	var screened *time.Time
-	if err := store.db.QueryRow(
-		`SELECT security_screened_at FROM articles WHERE guid = 'a1'`,
-	).Scan(&screened); err != nil {
-		t.Fatalf("security_screened_at column missing after migration: %v", err)
-	}
-	if screened != nil {
-		t.Errorf("legacy article should be unscreened (NULL), got %v", screened)
-	}
-
-	var indexName string
-	if err := store.db.QueryRow(
-		`SELECT name FROM sqlite_master
-		 WHERE type = 'index' AND name = 'idx_articles_unscreened'`,
-	).Scan(&indexName); err != nil {
-		t.Fatalf("idx_articles_unscreened missing after migration: %v", err)
-	}
-}
-
 func TestGroupVirtualFeed(t *testing.T) {
 	store, cleanup := newTestStore(t)
 	defer cleanup()
@@ -2595,18 +2367,14 @@ func TestNewsletterCRUD(t *testing.T) {
 // eachStore runs fn against both backends: SQLite always, and Postgres when
 // HERALD_TEST_DB_DSN is set (otherwise that subtest skips). The staged
 // pipeline's new queries must behave identically on both.
+// eachStore runs fn against a fresh Postgres-backed store. It predates herald
+// going Postgres-only (it used to fan out across both backends); the signature
+// is kept so its many callers stay unchanged.
 func eachStore(t *testing.T, fn func(t *testing.T, store Store)) {
 	t.Helper()
-	t.Run("sqlite", func(t *testing.T) {
-		store, cleanup := newTestStore(t)
-		defer cleanup()
-		fn(t, store)
-	})
-	t.Run("postgres", func(t *testing.T) {
-		store, cleanup := newPGTestStore(t)
-		defer cleanup()
-		fn(t, store)
-	})
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+	fn(t, store)
 }
 
 func TestFeedTagsCRUD(t *testing.T) {

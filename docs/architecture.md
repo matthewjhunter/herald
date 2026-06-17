@@ -15,7 +15,7 @@ Herald is designed around three principles:
 │                           Engine                                 │
 │  ┌──────────┐  ┌──────────────┐  ┌────────────┐  ┌──────────┐  │
 │  │ Fetcher  │  │ AIProcessor  │  │GroupMatcher│  │  Store   │  │
-│  │          │  │              │  │            │  │ (SQLite) │  │
+│  │          │  │              │  │            │  │ (Postgres)│  │
 │  │ - HTTP   │  │ - Security   │  │ - Embed    │  │          │  │
 │  │ - OPML   │  │ - Curation   │  │ - Cosine   │  │ - Feeds  │  │
 │  │ - ETag   │  │ - Summary    │  │ - Centroid │  │ - State  │  │
@@ -50,7 +50,7 @@ Performs incremental vector-based article-to-group matching. Uses a local embedd
 
 ### Store (`internal/storage`)
 
-SQLite-backed persistence via `modernc.org/sqlite` (pure Go, no CGO). The `Store` interface abstracts all database operations. `SQLiteStore` is the production implementation.
+PostgreSQL-backed persistence via the `jackc/pgx/v5` driver (through `database/sql`). The `Store` interface abstracts all database operations; `PostgresStore` is the only implementation (herald is Postgres-only).
 
 ### Output Formatters (`internal/output`)
 
@@ -139,7 +139,7 @@ The `ClusterArticles` method provides an alternative clustering path for batch l
 
 ## Storage
 
-SQLite schema managed by `internal/storage/schema.go`. Key tables:
+PostgreSQL schema managed by `internal/storage/schema_postgres.go`. Key tables:
 
 | Table | Purpose |
 |-------|---------|

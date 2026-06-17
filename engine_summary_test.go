@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/matthewjhunter/herald/internal/ai"
 	"github.com/matthewjhunter/herald/internal/storage"
+	"github.com/matthewjhunter/herald/internal/storagetest"
 )
 
 func TestTruncateRunes(t *testing.T) {
@@ -47,11 +47,8 @@ func TestGenerateAISummary(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store, err := storage.NewSQLiteStore(filepath.Join(t.TempDir(), "h.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	store, cleanup := storagetest.NewStore(t)
+	defer cleanup()
 	uid, _ := store.CreateUser("u")
 	feedID, _ := store.AddFeed("https://example.com/feed", "Feed", "")
 	if err := store.SubscribeUserToFeed(uid, feedID); err != nil {
@@ -123,11 +120,8 @@ func TestGenerateAISummary(t *testing.T) {
 }
 
 func TestEffectiveIncludeFeeds(t *testing.T) {
-	store, err := storage.NewSQLiteStore(filepath.Join(t.TempDir(), "h.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	store, cleanup := storagetest.NewStore(t)
+	defer cleanup()
 	uid, _ := store.CreateUser("u")
 	f1, _ := store.AddFeed("https://a/feed", "A", "")
 	f2, _ := store.AddFeed("https://b/feed", "B", "")
@@ -183,7 +177,8 @@ func sameIDs(got, want []int64) bool {
 }
 
 func TestNewEngineSummaryOverrides(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "h.db")
+	dbPath, dropSchema := storagetest.DSN(t)
+	defer dropSchema()
 	e, err := NewEngine(EngineConfig{
 		DBPath:                 dbPath,
 		ReadOnly:               true,
@@ -204,7 +199,9 @@ func TestNewEngineSummaryOverrides(t *testing.T) {
 	}
 
 	// 0 must leave the default untouched, not zero the budget.
-	e2, err := NewEngine(EngineConfig{DBPath: filepath.Join(t.TempDir(), "h2.db"), ReadOnly: true})
+	dbPath2, dropSchema2 := storagetest.DSN(t)
+	defer dropSchema2()
+	e2, err := NewEngine(EngineConfig{DBPath: dbPath2, ReadOnly: true})
 	if err != nil {
 		t.Fatalf("NewEngine 2: %v", err)
 	}
@@ -226,11 +223,8 @@ func digestServer(t *testing.T) *httptest.Server {
 func TestGenerateForConfig(t *testing.T) {
 	srv := digestServer(t)
 	defer srv.Close()
-	store, err := storage.NewSQLiteStore(filepath.Join(t.TempDir(), "h.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	store, cleanup := storagetest.NewStore(t)
+	defer cleanup()
 	uid, _ := store.CreateUser("u")
 	feedA, _ := store.AddFeed("https://a.example/feed", "A", "")
 	feedB, _ := store.AddFeed("https://b.example/feed", "B", "")
@@ -297,11 +291,8 @@ func TestGenerateForConfig(t *testing.T) {
 func TestBeginAISummaryNewsletterOwnership(t *testing.T) {
 	srv := digestServer(t)
 	defer srv.Close()
-	store, err := storage.NewSQLiteStore(filepath.Join(t.TempDir(), "h.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	store, cleanup := storagetest.NewStore(t)
+	defer cleanup()
 	userA, _ := store.CreateUser("a")
 	userB, _ := store.CreateUser("b")
 	nlID, err := store.CreateNewsletter(&storage.Newsletter{
