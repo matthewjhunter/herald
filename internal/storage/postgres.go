@@ -2451,17 +2451,55 @@ func (s *PostgresStore) GetArticlesWithoutEmbeddings(model string, limit int) ([
 
 // --- Newsletter methods ---
 
+// newsletterFromRow maps a generated newsletters row to the domain type,
+// unmarshaling the stored config JSON.
+func newsletterFromRow(r db.Newsletter) Newsletter {
+	n := Newsletter{
+		ID:              r.ID,
+		UserID:          r.UserID,
+		Name:            r.Name,
+		Schedule:        r.Schedule,
+		PromptTemplate:  r.PromptTemplate,
+		EmailRecipient:  r.EmailRecipient,
+		Enabled:         r.Enabled,
+		LastGeneratedAt: r.LastGeneratedAt,
+		CreatedAt:       r.CreatedAt,
+		UpdatedAt:       r.UpdatedAt,
+	}
+	json.Unmarshal([]byte(r.ConfigJson), &n.Config) //nolint:errcheck
+	return n
+}
+
+// newsletterIssueFromRow maps a generated newsletter_issues row to the domain
+// type, unmarshaling the stored article-IDs JSON.
+func newsletterIssueFromRow(r db.NewsletterIssue) NewsletterIssue {
+	issue := NewsletterIssue{
+		ID:           r.ID,
+		NewsletterID: r.NewsletterID,
+		Headline:     r.Headline,
+		ContentHTML:  r.ContentHtml,
+		ContentText:  r.ContentText,
+		GeneratedAt:  r.GeneratedAt,
+		SentAt:       r.SentAt,
+	}
+	json.Unmarshal([]byte(r.ArticleIdsJson), &issue.ArticleIDs) //nolint:errcheck
+	return issue
+}
+
 func (s *PostgresStore) CreateNewsletter(n *Newsletter) (int64, error) {
 	configJSON, err := json.Marshal(n.Config)
 	if err != nil {
 		return 0, fmt.Errorf("marshal newsletter config: %w", err)
 	}
-	var id int64
-	err = s.db.QueryRow(s.db.prepare(`
-		INSERT INTO newsletters (user_id, name, schedule, config_json, prompt_template, email_recipient, enabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`),
-		n.UserID, n.Name, n.Schedule, string(configJSON), n.PromptTemplate, n.EmailRecipient, n.Enabled).Scan(&id)
-	return id, err
+	return s.q.CreateNewsletter(context.Background(), db.CreateNewsletterParams{
+		UserID:         n.UserID,
+		Name:           n.Name,
+		Schedule:       n.Schedule,
+		ConfigJson:     string(configJSON),
+		PromptTemplate: n.PromptTemplate,
+		EmailRecipient: n.EmailRecipient,
+		Enabled:        n.Enabled,
+	})
 }
 
 func (s *PostgresStore) UpdateNewsletter(n *Newsletter) error {
@@ -2469,188 +2507,141 @@ func (s *PostgresStore) UpdateNewsletter(n *Newsletter) error {
 	if err != nil {
 		return fmt.Errorf("marshal newsletter config: %w", err)
 	}
-	_, err = s.db.Exec(s.db.prepare(`
-		UPDATE newsletters
-		SET name = ?, schedule = ?, config_json = ?, prompt_template = ?,
-		    email_recipient = ?, enabled = ?, updated_at = NOW()
-		WHERE id = ?`),
-		n.Name, n.Schedule, string(configJSON), n.PromptTemplate, n.EmailRecipient, n.Enabled, n.ID)
-	return err
+	return s.q.UpdateNewsletter(context.Background(), db.UpdateNewsletterParams{
+		Name:           n.Name,
+		Schedule:       n.Schedule,
+		ConfigJson:     string(configJSON),
+		PromptTemplate: n.PromptTemplate,
+		EmailRecipient: n.EmailRecipient,
+		Enabled:        n.Enabled,
+		ID:             n.ID,
+	})
 }
 
 func (s *PostgresStore) DeleteNewsletter(newsletterID int64) error {
-	_, err := s.db.Exec(s.db.prepare(`DELETE FROM newsletters WHERE id = ?`), newsletterID)
-	return err
+	return s.q.DeleteNewsletter(context.Background(), newsletterID)
 }
 
 func (s *PostgresStore) GetNewsletter(newsletterID int64) (*Newsletter, error) {
-	var n Newsletter
-	var configJSON string
-	err := s.db.QueryRow(s.db.prepare(`
-		SELECT id, user_id, name, schedule, config_json, prompt_template,
-		       email_recipient, enabled, last_generated_at, created_at, updated_at
-		FROM newsletters WHERE id = ?`), newsletterID).Scan(
-		&n.ID, &n.UserID, &n.Name, &n.Schedule, &configJSON, &n.PromptTemplate,
-		&n.EmailRecipient, &n.Enabled, &n.LastGeneratedAt, &n.CreatedAt, &n.UpdatedAt)
+	r, err := s.q.GetNewsletter(context.Background(), newsletterID)
 	if err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
-	json.Unmarshal([]byte(configJSON), &n.Config) //nolint:errcheck
+	n := newsletterFromRow(r)
 	return &n, nil
 }
 
 func (s *PostgresStore) GetUserNewsletters(userID int64) ([]Newsletter, error) {
-	rows, err := s.db.Query(s.db.prepare(`
-		SELECT id, user_id, name, schedule, config_json, prompt_template,
-		       email_recipient, enabled, last_generated_at, created_at, updated_at
-		FROM newsletters WHERE user_id = ? ORDER BY name`), userID)
+	rows, err := s.q.GetUserNewsletters(context.Background(), userID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var newsletters []Newsletter
-	for rows.Next() {
-		var n Newsletter
-		var configJSON string
-		if err := rows.Scan(&n.ID, &n.UserID, &n.Name, &n.Schedule, &configJSON, &n.PromptTemplate,
-			&n.EmailRecipient, &n.Enabled, &n.LastGeneratedAt, &n.CreatedAt, &n.UpdatedAt); err != nil {
-			return nil, err
-		}
-		json.Unmarshal([]byte(configJSON), &n.Config) //nolint:errcheck
-		newsletters = append(newsletters, n)
+	newsletters := make([]Newsletter, len(rows))
+	for i, r := range rows {
+		newsletters[i] = newsletterFromRow(r)
 	}
-	return newsletters, rows.Err()
+	return newsletters, nil
 }
 
 func (s *PostgresStore) GetDueNewsletters(schedule string) ([]Newsletter, error) {
-	var interval string
+	var interval time.Duration
 	switch schedule {
 	case "hourly":
-		interval = "1 hour"
+		interval = time.Hour
 	case "daily":
-		interval = "1 day"
+		interval = 24 * time.Hour
 	default:
 		return nil, nil
 	}
-	rows, err := s.db.Query(s.db.prepare(`
-		SELECT id, user_id, name, schedule, config_json, prompt_template,
-		       email_recipient, enabled, last_generated_at, created_at, updated_at
-		FROM newsletters
-		WHERE enabled = TRUE AND schedule = ?
-		  AND (last_generated_at IS NULL OR last_generated_at < NOW() - ?::interval)`),
-		schedule, interval)
+	rows, err := s.q.GetDueNewsletters(context.Background(), db.GetDueNewslettersParams{
+		Schedule: schedule,
+		Cutoff:   time.Now().Add(-interval),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var newsletters []Newsletter
-	for rows.Next() {
-		var n Newsletter
-		var configJSON string
-		if err := rows.Scan(&n.ID, &n.UserID, &n.Name, &n.Schedule, &configJSON, &n.PromptTemplate,
-			&n.EmailRecipient, &n.Enabled, &n.LastGeneratedAt, &n.CreatedAt, &n.UpdatedAt); err != nil {
-			return nil, err
-		}
-		json.Unmarshal([]byte(configJSON), &n.Config) //nolint:errcheck
-		newsletters = append(newsletters, n)
+	newsletters := make([]Newsletter, len(rows))
+	for i, r := range rows {
+		newsletters[i] = newsletterFromRow(r)
 	}
-	return newsletters, rows.Err()
+	return newsletters, nil
 }
 
 func (s *PostgresStore) CreateNewsletterIssue(issue *NewsletterIssue) (int64, error) {
 	articleIDsJSON, _ := json.Marshal(issue.ArticleIDs) //nolint:errcheck
-	var id int64
-	err := s.db.QueryRow(s.db.prepare(`
-		INSERT INTO newsletter_issues (newsletter_id, headline, content_html, content_text, article_ids_json)
-		VALUES (?, ?, ?, ?, ?) RETURNING id`),
-		issue.NewsletterID, issue.Headline, issue.ContentHTML, issue.ContentText, string(articleIDsJSON)).Scan(&id)
-	return id, err
+	return s.q.CreateNewsletterIssue(context.Background(), db.CreateNewsletterIssueParams{
+		NewsletterID:   issue.NewsletterID,
+		Headline:       issue.Headline,
+		ContentHtml:    issue.ContentHTML,
+		ContentText:    issue.ContentText,
+		ArticleIdsJson: string(articleIDsJSON),
+	})
 }
 
 func (s *PostgresStore) GetNewsletterIssue(issueID int64) (*NewsletterIssue, error) {
-	var issue NewsletterIssue
-	var articleIDsJSON string
-	err := s.db.QueryRow(s.db.prepare(`
-		SELECT id, newsletter_id, headline, content_html, content_text, article_ids_json, generated_at, sent_at
-		FROM newsletter_issues WHERE id = ?`), issueID).Scan(
-		&issue.ID, &issue.NewsletterID, &issue.Headline, &issue.ContentHTML, &issue.ContentText,
-		&articleIDsJSON, &issue.GeneratedAt, &issue.SentAt)
+	r, err := s.q.GetNewsletterIssue(context.Background(), issueID)
 	if err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
-	json.Unmarshal([]byte(articleIDsJSON), &issue.ArticleIDs) //nolint:errcheck
+	issue := newsletterIssueFromRow(r)
 	return &issue, nil
 }
 
 func (s *PostgresStore) GetLatestNewsletterIssue(newsletterID int64) (*NewsletterIssue, error) {
-	var issue NewsletterIssue
-	var articleIDsJSON string
-	err := s.db.QueryRow(s.db.prepare(`
-		SELECT id, newsletter_id, headline, content_html, content_text, article_ids_json, generated_at, sent_at
-		FROM newsletter_issues WHERE newsletter_id = ?
-		ORDER BY generated_at DESC LIMIT 1`), newsletterID).Scan(
-		&issue.ID, &issue.NewsletterID, &issue.Headline, &issue.ContentHTML, &issue.ContentText,
-		&articleIDsJSON, &issue.GeneratedAt, &issue.SentAt)
+	r, err := s.q.GetLatestNewsletterIssue(context.Background(), newsletterID)
 	if err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
-	json.Unmarshal([]byte(articleIDsJSON), &issue.ArticleIDs) //nolint:errcheck
+	issue := newsletterIssueFromRow(r)
 	return &issue, nil
 }
 
 func (s *PostgresStore) GetNewsletterIssues(newsletterID int64, limit, offset int) ([]NewsletterIssue, error) {
-	rows, err := s.db.Query(s.db.prepare(`
-		SELECT id, newsletter_id, headline, content_text, generated_at, sent_at
-		FROM newsletter_issues WHERE newsletter_id = ?
-		ORDER BY generated_at DESC LIMIT ? OFFSET ?`),
-		newsletterID, limit, offset)
+	rows, err := s.q.GetNewsletterIssues(context.Background(), db.GetNewsletterIssuesParams{
+		NewsletterID: newsletterID,
+		Lim:          int32(limit),
+		Off:          int32(offset),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var issues []NewsletterIssue
-	for rows.Next() {
-		var issue NewsletterIssue
-		if err := rows.Scan(&issue.ID, &issue.NewsletterID, &issue.Headline,
-			&issue.ContentText, &issue.GeneratedAt, &issue.SentAt); err != nil {
-			return nil, err
+	issues := make([]NewsletterIssue, len(rows))
+	for i, r := range rows {
+		// The list query omits content_html and article_ids_json.
+		issues[i] = NewsletterIssue{
+			ID:           r.ID,
+			NewsletterID: r.NewsletterID,
+			Headline:     r.Headline,
+			ContentText:  r.ContentText,
+			GeneratedAt:  r.GeneratedAt,
+			SentAt:       r.SentAt,
 		}
-		issues = append(issues, issue)
 	}
-	return issues, rows.Err()
+	return issues, nil
 }
 
 func (s *PostgresStore) MarkNewsletterIssueSent(issueID int64) error {
-	_, err := s.db.Exec(s.db.prepare(`UPDATE newsletter_issues SET sent_at = NOW() WHERE id = ?`), issueID)
-	return err
+	return s.q.MarkNewsletterIssueSent(context.Background(), issueID)
 }
 
 func (s *PostgresStore) UpdateNewsletterLastGenerated(newsletterID int64) error {
-	_, err := s.db.Exec(s.db.prepare(`UPDATE newsletters SET last_generated_at = NOW() WHERE id = ?`), newsletterID)
-	return err
+	return s.q.UpdateNewsletterLastGenerated(context.Background(), newsletterID)
 }
 
 func (s *PostgresStore) GetNewsletterStats(userID int64) ([]NewsletterStats, error) {
-	rows, err := s.db.Query(s.db.prepare(`
-		SELECT n.id, n.name, COUNT(ni.id) AS issue_count
-		FROM newsletters n
-		LEFT JOIN newsletter_issues ni ON ni.newsletter_id = n.id
-		WHERE n.user_id = ? AND n.enabled = TRUE
-		GROUP BY n.id, n.name
-		ORDER BY n.name`), userID)
+	rows, err := s.q.GetNewsletterStats(context.Background(), userID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var stats []NewsletterStats
-	for rows.Next() {
-		var s NewsletterStats
-		if err := rows.Scan(&s.NewsletterID, &s.Name, &s.IssueCount); err != nil {
-			return nil, err
+	stats := make([]NewsletterStats, len(rows))
+	for i, r := range rows {
+		stats[i] = NewsletterStats{
+			NewsletterID: r.NewsletterID,
+			Name:         r.Name,
+			IssueCount:   r.IssueCount,
 		}
-		stats = append(stats, s)
 	}
-	return stats, rows.Err()
+	return stats, nil
 }
 
 func (s *PostgresStore) GetNewsletterArticles(userID int64, config *NewsletterConfig, since *time.Time, limit int) ([]Article, []float64, error) {
@@ -2711,7 +2702,7 @@ func (s *PostgresStore) GetNewsletterArticles(userID int64, config *NewsletterCo
 	query += ` ORDER BY rs.interest_score DESC LIMIT ?`
 	args = append(args, limit)
 
-	rows, err := s.db.Query(s.db.prepare(query), args...)
+	rows, err := s.pool.Query(context.Background(), rebindNumeric(query), args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get newsletter articles: %w", err)
 	}
@@ -2720,13 +2711,19 @@ func (s *PostgresStore) GetNewsletterArticles(userID int64, config *NewsletterCo
 	var articles []Article
 	var scores []float64
 	for rows.Next() {
-		var a Article
-		var score float64
-		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
-			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate, &score); err != nil {
+		var (
+			id, feedID               int64
+			guid, title, url         string
+			content, summary, author *string
+			published                *time.Time
+			fetched                  time.Time
+			score                    float64
+		)
+		if err := rows.Scan(&id, &feedID, &guid, &title, &url,
+			&content, &summary, &author, &published, &fetched, &score); err != nil {
 			return nil, nil, err
 		}
-		articles = append(articles, a)
+		articles = append(articles, coreArticle(id, feedID, guid, title, url, content, summary, author, published, fetched))
 		scores = append(scores, score)
 	}
 	return articles, scores, rows.Err()
