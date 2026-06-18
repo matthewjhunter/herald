@@ -46,7 +46,7 @@ ls internal/ai/prompts/
 
 ### Tier 2: Config File Overrides (System-Wide)
 
-Override prompts in `config.yaml`:
+Override prompts in `config.toml`:
 
 ```yaml
 prompts:
@@ -147,7 +147,7 @@ Check which prompts are being used:
 cat internal/ai/prompts/security.txt
 
 # Check config file
-cat config/config.yaml
+cat config/config.toml
 
 # Check database (per-user)
 psql "$HERALD_DB_DSN" \
@@ -258,7 +258,7 @@ psql "$HERALD_DB_DSN" \
   -c "SELECT * FROM user_prompts WHERE user_id = 1;"
 
 # 2. Check config file
-grep -A 5 "prompts:" config/config.yaml
+grep -A 5 "prompts:" config/config.toml
 
 # 3. Embedded defaults are always available
 ```

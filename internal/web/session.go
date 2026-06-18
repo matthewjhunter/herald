@@ -1,4 +1,4 @@
-package main
+package web
 
 import (
 	"context"
@@ -102,7 +102,7 @@ func newSessionKeyring(encKeyB64 string) (*session.Keyring, error) {
 // newSessionManager constructs the shared server-side session manager over the
 // Engine-backed store. AbsoluteTTL is left at the package default (30d). The
 // validator is the Renewer and supplies the session-cookie name, so it must be
-// non-nil; newRouter only builds a manager once a validator exists.
+// non-nil; NewRouter only builds a manager once a validator exists.
 func newSessionManager(engine *herald.Engine, validator *oidclient.Client, kr *session.Keyring) (*session.Manager, error) {
 	return session.New(session.Config{
 		Store:      heraldSessionStore{engine: engine},
@@ -117,7 +117,7 @@ func newSessionManager(engine *herald.Engine, validator *oidclient.Client, kr *s
 // (the Manager checks AbsoluteExpiry); this just keeps the table from growing.
 // It is pure row maintenance keyed on absolute_expiry, independent of token
 // encryption, so it runs straight off the Engine without the Manager.
-func sweepExpiredSessions(ctx context.Context, engine *herald.Engine, interval time.Duration) {
+func SweepExpiredSessions(ctx context.Context, engine *herald.Engine, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {

@@ -1,4 +1,4 @@
-package main
+package web
 
 import (
 	"os"
@@ -8,7 +8,7 @@ import (
 )
 
 // TestTemplatesAvoidEvalHTMX guards the CSP contract. The app's
-// Content-Security-Policy (see securityHeaders in middleware.go) deliberately
+// Content-Security-Policy (see SecurityHeaders in middleware.go) deliberately
 // omits 'unsafe-eval'. htmx compiles hx-on attribute bodies and js:-prefixed
 // hx-vals via new Function(), which that CSP blocks -- so any such usage fails
 // silently in the browser (the bug that motivated this test: clicking an

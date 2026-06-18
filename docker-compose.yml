@@ -22,9 +22,12 @@ services:
 
   herald-web:
     build: .
-    command: herald-web --addr :8080
+    command: herald serve --config /etc/herald/config.docker.toml --addr :8080
+    volumes:
+      # Unified TOML config shared with the daemon (web-only keys under [web]).
+      - ./config:/etc/herald:ro
     environment:
-      # herald-web reads the DSN from HERALD_DB_DSN; 'postgres' is the service name.
+      # Optional: supply DB DSN via env (overrides config). 'postgres' is the compose service.
       HERALD_DB_DSN: postgres://herald:herald@postgres:5432/herald?sslmode=disable
     ports:
       - "8080:8080"
@@ -35,9 +38,9 @@ services:
 
   herald-fetcher:
     build: .
-    command: herald daemon --config /etc/herald/config.docker.yaml --interval 5m
+    command: herald daemon --config /etc/herald/config.docker.toml --interval 5m
     volumes:
-      # config.docker.yaml sets database.path to the postgres service DSN.
+      # Unified TOML; database.path points at the postgres service.
       - ./config:/etc/herald:ro
     restart: unless-stopped
     depends_on:

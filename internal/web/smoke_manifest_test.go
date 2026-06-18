@@ -1,4 +1,4 @@
-package main
+package web
 
 import (
 	"bytes"
@@ -12,17 +12,17 @@ import (
 const smokeManifestPath = "smoke-manifest.json"
 
 // TestSmokeManifestUpToDate asserts the committed manifest matches the routes
-// newRouter actually registers. Regenerate after adding or changing routes:
+// NewRouter actually registers. Regenerate after adding or changing routes:
 //
-//	UPDATE_SMOKE_MANIFEST=1 go test ./cmd/herald-web/ -run TestSmokeManifestUpToDate
+//	UPDATE_SMOKE_MANIFEST=1 go test ./internal/web/ -run TestSmokeManifestUpToDate
 //
 // This is the drift gate for the route surface: a new route that isn't
 // reflected here fails CI until the manifest is regenerated (which also
-// surfaces the route to the smolder coverage gate). newRouter only records
+// surfaces the route to the smolder coverage gate). NewRouter only records
 // specs at registration time and never touches the engine/validator, so a nil
 // engine is sufficient to enumerate the surface without a database.
 func TestSmokeManifestUpToDate(t *testing.T) {
-	got, err := newRouter(nil, nil, "", nil).Registry().Manifest().MarshalJSON()
+	got, err := NewRouter(nil, nil, "", nil).Registry().Manifest().MarshalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}

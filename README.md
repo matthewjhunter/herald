@@ -65,7 +65,7 @@ See [docs/architecture.md](docs/architecture.md) for a detailed breakdown of eac
 | Binary | Purpose |
 |--------|---------|
 | `herald` | CLI for feed management, fetching, and reading |
-| `herald-web` | Read-only web interface for browsing articles |
+| `herald serve` | Read-only web interface for browsing articles (subcommand) |
 
 ## Getting Started
 
@@ -82,7 +82,7 @@ See [docs/architecture.md](docs/architecture.md) for a detailed breakdown of eac
 **Build**
 
 ```bash
-go install ./cmd/herald ./cmd/herald-web
+go install ./cmd/herald
 ```
 
 **Initialize configuration**
@@ -91,7 +91,7 @@ go install ./cmd/herald ./cmd/herald-web
 herald init-config
 ```
 
-This creates `config/config.yaml`. Edit it to set your Ollama URL, model names, thresholds, and interest keywords.
+This creates `config/config.toml`. Edit it to set your Ollama URL, model names, thresholds, and interest keywords.
 
 **Import feeds**
 
@@ -122,21 +122,20 @@ herald list --cluster --format=human   # grouped by topic
 
 ## Configuration
 
-Herald reads `config/config.yaml`. Key sections:
+Herald reads `config/config.toml`. Key sections:
 
-```yaml
-ollama:
-  base_url: http://localhost:11434
-  security_model: gemma3:4b
-  curation_model: llama3.1:8b
+```toml
+[ollama]
+base_url = "http://localhost:11434"
+security_model = "gemma3:4b"
+curation_model = "llama3.1:8b"
 
-thresholds:
-  interest_score: 8.0    # articles above this score trigger notifications
-  security_score: 7.0    # articles below this score are flagged unsafe
+[thresholds]
+interest_score = 8.0    # articles above this score trigger notifications
+security_score = 7.0    # articles below this score are flagged unsafe
 
-preferences:
-  keywords:
-    - security
+[preferences]
+keywords = ["security"]
     - AI
     - golang
 ```

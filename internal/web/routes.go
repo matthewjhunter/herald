@@ -1,4 +1,4 @@
-package main
+package web
 
 import (
 	"embed"
@@ -17,7 +17,7 @@ import (
 //go:embed templates static
 var embedded embed.FS
 
-// newRouter sets up all routes using Go 1.22+ enhanced routing.
+// NewRouter sets up all routes using Go 1.22+ enhanced routing.
 //
 // The mux is a smoke.Mux: a drop-in *http.ServeMux wrap that records a spec for
 // every registration so the route surface can be enumerated for black-box smoke
@@ -33,7 +33,7 @@ var embedded embed.FS
 // Fixture id convention: each seeded entity is the first row in a fresh DB, so
 // its id is 1; destructive writes target a dedicated second row (id 2) so they
 // don't delete what the read probes need. See TestSmokeRoutesAuthenticated.
-func newRouter(engine *herald.Engine, validator *oidclient.Client, adminRole string, adminUsers []string) *smoke.Mux {
+func NewRouter(engine *herald.Engine, validator *oidclient.Client, adminRole string, adminUsers []string) *smoke.Mux {
 	mux := smoke.NewMux()
 
 	// Liveness probe — no auth, no DB. Used by the PR-preview pipeline to wait

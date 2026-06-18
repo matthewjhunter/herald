@@ -1,4 +1,4 @@
-package main
+package web
 
 import (
 	"context"
@@ -33,7 +33,7 @@ func TestRouterDegradesWhileIdPUnreachable(t *testing.T) {
 		t.Fatalf("NewLazy with the IdP down must not fail: %v", err)
 	}
 
-	router := newRouter(tf.engine, validator, "", nil)
+	router := NewRouter(tf.engine, validator, "", nil)
 
 	cases := []struct {
 		method, path string

@@ -1,0 +1,42 @@
+# Docker compose unified config (TOML). Mounted at /etc/herald/config.docker.toml
+# for both `herald daemon` and `herald serve`.
+
+[database]
+# 'postgres' is the compose service name.
+path = "postgres://herald:herald@postgres:5432/herald?sslmode=disable"
+
+# Embedding is via env (HERALD_EMBED_* or EMBEDDING_*); see README.
+
+[ollama]
+base_url = "http://ollama:11434"
+security_model = "gemma3:4b"
+curation_model = "llama3.1:8b"
+
+[grouping]
+similarity_threshold = 0.75
+cluster_threshold = 0.75
+min_cluster_size = 2
+recency_window_hours = 48
+
+[thresholds]
+interest_score = 8.0
+security_score = 7.0
+
+[preferences]
+keywords = []
+
+# Web section — only read by `herald serve`.
+[web]
+addr = ":8080"
+
+# [web.webauth] and [web.admin] are typically supplied by the real deployment
+# (not committed here). For local docker testing with auth you would add:
+#
+# [web.webauth]
+# issuer_url = "https://webauth.example.com/t/mytenant"
+# client_id = "herald"
+# callback_url = "https://herald.example.com/auth/callback"
+#
+# [web.admin]
+# role = "admin"
+# users = ["dev@example.com"]

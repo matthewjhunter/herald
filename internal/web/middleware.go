@@ -1,4 +1,4 @@
-package main
+package web
 
 import (
 	"context"
@@ -143,10 +143,10 @@ func (h *handlers) requireAuth(next http.Handler) http.Handler {
 	})
 }
 
-// securityHeaders sets conservative security response headers on every
+// SecurityHeaders sets conservative security response headers on every
 // response. The CSP currently permits inline scripts/styles because some
 // templates use them; tightening script-src with nonces is a follow-up.
-func securityHeaders(next http.Handler) http.Handler {
+func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
@@ -159,8 +159,8 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// logging logs each request with method, path, status, and duration.
-func logging(next http.Handler) http.Handler {
+// Logging logs each request with method, path, status, and duration.
+func Logging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
@@ -169,8 +169,8 @@ func logging(next http.Handler) http.Handler {
 	})
 }
 
-// recovery catches panics and returns a 500.
-func recovery(next http.Handler) http.Handler {
+// Recovery catches panics and returns a 500.
+func Recovery(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {

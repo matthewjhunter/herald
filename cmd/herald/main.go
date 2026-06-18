@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	embedding "github.com/matthewjhunter/go-embedding"
 	herald "github.com/matthewjhunter/herald"
 	"github.com/matthewjhunter/herald/internal/ai"
@@ -15,7 +17,6 @@ import (
 	"github.com/matthewjhunter/herald/internal/pipeline"
 	"github.com/matthewjhunter/herald/internal/storage"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -77,7 +78,7 @@ func main() {
 		},
 	}
 
-	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "config file path (default: ./config/config.yaml)")
+	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "config file path (default: ./config/config.toml)")
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "format", "f", "json", "output format: json, text, human (default: json)")
 
 	rootCmd.AddCommand(createUserCmd())
@@ -86,6 +87,7 @@ func main() {
 	rootCmd.AddCommand(processCmd())
 	rootCmd.AddCommand(fetchCmd())
 	rootCmd.AddCommand(daemonCmd())
+	rootCmd.AddCommand(serveCmd())
 	rootCmd.AddCommand(listCmd())
 	rootCmd.AddCommand(readCmd())
 	rootCmd.AddCommand(initConfigCmd())
@@ -103,9 +105,9 @@ func main() {
 // defaultConfigPath is the search location for the config file when the
 // caller does not pass --config explicitly. Kept as a constant so tests
 // can refer to the same value without duplication.
-const defaultConfigPath = "./config/config.yaml"
+const defaultConfigPath = "./config/config.toml"
 
-// loadConfig reads the YAML config from configPath into the package-level
+// loadConfig reads the TOML config from configPath into the package-level
 // cfg, layered over storage.DefaultConfig (so unset fields keep their
 // defaults).
 //
@@ -135,8 +137,23 @@ func loadConfig() error {
 	}
 
 	cfg = storage.DefaultConfig()
-	if err := yaml.Unmarshal(data, cfg); err != nil {
+	md, err := toml.Decode(string(data), cfg)
+	if err != nil {
 		return fmt.Errorf("failed to parse config: %w", err)
+	}
+
+	// Warn loudly about keys present in the file but not in the config
+	// struct. These are silently ignored by the decoder, so without this a
+	// typo (security_modle) or a stale pre-unification layout (a top-level
+	// [webauth] that now lives under [web.webauth]) leaves the setting at its
+	// default with no clue why. See #197: the web keys moved under [web].
+	if undecoded := md.Undecoded(); len(undecoded) > 0 {
+		keys := make([]string, len(undecoded))
+		for i, k := range undecoded {
+			keys[i] = k.String()
+		}
+		fmt.Fprintf(os.Stderr, "Warning: ignoring %d unknown config key(s) in %s: %s\n",
+			len(keys), configPath, strings.Join(keys, ", "))
 	}
 
 	return nil
@@ -692,7 +709,7 @@ func initConfigCmd() *cobra.Command {
 
 			// Write default config
 			cfg := storage.DefaultConfig()
-			data, err := yaml.Marshal(cfg)
+			data, err := toml.Marshal(cfg)
 			if err != nil {
 				return fmt.Errorf("failed to marshal config: %w", err)
 			}

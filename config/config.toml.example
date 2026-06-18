@@ -1,0 +1,78 @@
+# Herald configuration (TOML)
+# Copy to config/config.toml (or point via --config) and customize.
+# TOML is the single supported format (unified daemon + web).
+
+default_user_id = 1
+
+[database]
+# PostgreSQL DSN (postgres:// or postgresql:// URL). herald is Postgres-only.
+path = "postgres://localhost:5432/herald?sslmode=disable"
+
+[ollama]
+# Ollama API base URL (chat models only — embedding uses env vars).
+base_url = "http://localhost:11434"
+
+# Security model - for content safety screening
+security_model = "gemma4"
+
+# Curation model - for interest scoring
+curation_model = "gemma4"
+
+# Embedding configuration is read from environment variables, not the config file.
+# See README.md / QUICKSTART.md for HERALD_EMBED_* and EMBEDDING_* variables.
+
+[thresholds]
+# Minimum interest score (0-10) to trigger notification
+interest_score = 8
+
+# Minimum security score (0-10) to consider article safe
+security_score = 7
+
+[preferences]
+# Keywords that indicate interesting topics
+keywords = ["technology", "security", "AI", "programming"]
+preferred_sources = []
+
+# Optional prompt overrides (Go templates). Leave unset to use embedded defaults.
+[prompts]
+# security = "..."
+# curation = "..."
+# summarization = "..."
+# group_summary = "..."
+# newsletter = "..."
+# summary = "..."
+
+[temperatures]
+security = 0.3
+curation = 0.5
+summarization = 0.3
+group_summary = 0.5
+# summary = 0.6
+
+# Optional AI summary (cloud) config. The key is via HERALD_SUMMARY_API_KEY env.
+[summary]
+# base_url = "https://nenya.example.net/v1"
+# model = "claude-sonnet-4-6"
+min_interest_score = 7.0
+min_security_score = 7.0
+max_input_tokens = 170000
+body_char_cap = 6000
+max_output_tokens = 16000
+timeout = "5m"
+disable_thinking = false
+
+# Web-only configuration (read by `herald serve`).
+[web]
+addr = ":8080"
+
+[web.webauth]
+# Required for login.
+issuer_url = "https://webauth.example.com/t/mytenant"
+client_id = "herald"
+callback_url = "https://herald.example.com/auth/callback"
+cookie = "infodancer_jwt"
+# webauth_url = "https://webauth.example.com"  # optional override
+
+[web.admin]
+role = "admin"
+# users = ["admin@example.com"]  # fallback when no role claim

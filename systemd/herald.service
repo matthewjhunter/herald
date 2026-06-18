@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/go/src/github.com/matthewjhunter/herald
-ExecStart=%h/go/src/github.com/matthewjhunter/herald/herald daemon --config %h/go/src/github.com/matthewjhunter/herald/config/config.yaml --interval 5m
+ExecStart=%h/go/src/github.com/matthewjhunter/herald/herald daemon --config %h/go/src/github.com/matthewjhunter/herald/config/config.toml --interval 5m
 Restart=on-failure
 RestartSec=30
 

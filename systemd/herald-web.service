@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/go/src/github.com/matthewjhunter/herald
-ExecStart=%h/go/src/github.com/matthewjhunter/herald/herald-web --db %h/go/src/github.com/matthewjhunter/herald/herald.db --addr :8080
+ExecStart=%h/go/src/github.com/matthewjhunter/herald/herald serve --config %h/go/src/github.com/matthewjhunter/herald/config/config.toml --addr :8080
 Restart=on-failure
 RestartSec=10
 

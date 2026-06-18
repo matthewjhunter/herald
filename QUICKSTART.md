@@ -92,7 +92,7 @@ Notifications fall back to stdout.
 ## Next Steps
 
 1. **Import your real feeds**: Export OPML from your current reader
-2. **Tune thresholds**: Edit `config/config.yaml` to adjust sensitivity
+2. **Tune thresholds**: Edit `config/config.toml` to adjust sensitivity
 3. **Set up cron**: Automate fetching (see INSTALL.md)
 4. **Customize preferences**: Add keywords and preferred sources
 
@@ -109,7 +109,7 @@ Notifications fall back to stdout.
 
 ## Configuration File
 
-Location: `config/config.yaml`
+Location: `config/config.toml`
 
 Key settings:
 - `thresholds.interest_score`: Notification threshold (default: 8.0)
@@ -141,7 +141,7 @@ psql "$HERALD_DB_DSN" -c "SELECT * FROM feeds"
 
 You're ready to go when:
 - ✅ Build completes without errors
-- ✅ Config file exists at `config/config.yaml`
+- ✅ Config file exists at `config/config.toml`
 - ✅ Feeds import successfully
 - ✅ Articles fetch and appear in list
 - ✅ Can mark articles as read

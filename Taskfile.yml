@@ -11,20 +11,14 @@ tasks:
       - task --list
 
   build:
-    desc: Build the application
+    desc: Build the application (includes serve subcommand)
     cmds:
       - echo "Building {{.BINARY}}..."
-      - go build -o {{.BINARY}} ./cmd/herald
-
-  build-web:
-    desc: Build the web application
-    cmds:
-      - echo "Building herald-web..."
-      - go build -ldflags "-X main.version=$(git rev-parse --short HEAD) -X main.buildTime=$(date -u +%Y-%m-%dT%H:%MZ)" -o herald-web ./cmd/herald-web
+      - go build -ldflags "-X github.com/matthewjhunter/herald/internal/web.version=$(git rev-parse --short HEAD) -X github.com/matthewjhunter/herald/internal/web.buildTime=$(date -u +%Y-%m-%dT%H:%MZ)" -o {{.BINARY}} ./cmd/herald
 
   build-all:
-    desc: Build all applications
-    deps: [build, build-web]
+    desc: Build the (unified) application
+    deps: [build]
 
   test:
     desc: Run tests with race detector
@@ -93,14 +87,14 @@ tasks:
       - govulncheck ./...
 
   smoke:gen:
-    desc: Regenerate the committed smoke route manifest from herald-web's routes.
+    desc: Regenerate the committed smoke route manifest from the web routes.
     cmds:
-      - UPDATE_SMOKE_MANIFEST=1 go test ./cmd/herald-web/ -run TestSmokeManifestUpToDate
+      - UPDATE_SMOKE_MANIFEST=1 go test ./internal/web/ -run TestSmokeManifestUpToDate
 
   smoke:gate:
     desc: List routes lacking smoke coverage (warn; pass MODE=fail to hard-gate).
     cmds:
-      - go tool smolder gate --manifest cmd/herald-web/smoke-manifest.json --mode {{.MODE | default "warn"}}
+      - go tool smolder gate --manifest internal/web/smoke-manifest.json --mode {{.MODE | default "warn"}}
 
   check:
     desc: Run all CI checks (test, vet, fmt, lint, vulncheck)
@@ -112,8 +106,8 @@ tasks:
       - task: vulncheck
 
   systemd:install:
-    desc: Install systemd user services for herald and herald-web
-    deps: [build, build-web]
+    desc: Install systemd user services for herald (daemon + serve)
+    deps: [build]
     cmds:
       - mkdir -p ~/.config/systemd/user
       - cp systemd/herald.service ~/.config/systemd/user/herald.service
@@ -123,19 +117,19 @@ tasks:
       - echo "Services installed. Run 'task systemd:start' to start them."
 
   systemd:start:
-    desc: Start herald and herald-web services
+    desc: Start herald (daemon) and herald-web (serve) services
     cmds:
       - systemctl --user start herald herald-web
       - systemctl --user status herald herald-web
 
   systemd:stop:
-    desc: Stop herald and herald-web services
+    desc: Stop herald (daemon) and herald-web (serve) services
     cmds:
       - systemctl --user stop herald herald-web
 
   systemd:restart:
-    desc: Rebuild all binaries and restart herald and herald-web services
-    deps: [build, build-web]
+    desc: Rebuild binary and restart herald services
+    deps: [build]
     cmds:
       - systemctl --user restart herald herald-web
 
@@ -161,7 +155,7 @@ tasks:
     desc: Remove build artifacts
     cmds:
       - echo "Cleaning..."
-      - rm -f {{.BINARY}} herald-web
+      - rm -f {{.BINARY}} herald-web  # herald-web name may linger from prior builds
       - rm -f *.db *.db-shm *.db-wal
       - rm -f internal/storage/test.db
       - rm -f coverage.out coverage.html
@@ -230,10 +224,10 @@ tasks:
       - ./{{.BINARY}} fetch
 
   run-web:
-    desc: Run the web application
-    deps: [build-web]
+    desc: Run the web application (herald serve)
+    deps: [build]
     cmds:
-      - ./herald-web --addr :8080
+      - ./{{.BINARY}} serve --addr :8080
 
   docker-build:
     desc: Build Docker images

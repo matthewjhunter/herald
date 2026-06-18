@@ -29,7 +29,7 @@ Creates a default configuration file.
 ./herald init-config
 
 # Use custom path
-./herald --config /path/to/config.yaml init-config
+./herald --config /path/to/config.toml init-config
 ```
 
 ### `import`
@@ -224,7 +224,7 @@ Process articles in batches:
 
 ### Keywords
 
-Add topics you care about in `config/config.yaml`:
+Add topics you care about in `config/config.toml`:
 
 ```yaml
 preferences:

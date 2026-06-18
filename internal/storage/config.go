@@ -3,111 +3,133 @@ package storage
 import "time"
 
 type Config struct {
-	DefaultUserID int64 `yaml:"default_user_id"`
+	DefaultUserID int64 `toml:"default_user_id"`
 
 	Database struct {
 		// Path is the PostgreSQL DSN (a postgres:// or postgresql:// URL). herald
 		// is Postgres-only; the field name is kept for config compatibility.
-		Path string `yaml:"path"`
-	} `yaml:"database"`
+		Path string `toml:"path"`
+	} `toml:"database"`
 
 	Ollama struct {
-		BaseURL       string        `yaml:"base_url"`
-		APIKey        string        `yaml:"api_key"`
-		SecurityModel string        `yaml:"security_model"`
-		CurationModel string        `yaml:"curation_model"`
-		Timeout       time.Duration `yaml:"timeout"`
-		MaxParallel   int           `yaml:"max_parallel"`
+		BaseURL       string        `toml:"base_url"`
+		APIKey        string        `toml:"api_key"`
+		SecurityModel string        `toml:"security_model"`
+		CurationModel string        `toml:"curation_model"`
+		Timeout       time.Duration `toml:"timeout"`
+		MaxParallel   int           `toml:"max_parallel"`
 		// MaxConcurrent bounds the number of in-flight generate() calls in this
 		// process. <= 0 means unbounded (no gate).
-		MaxConcurrent int `yaml:"max_concurrent"`
-	} `yaml:"ollama"`
+		MaxConcurrent int `toml:"max_concurrent"`
+	} `toml:"ollama"`
 
 	Thresholds struct {
-		InterestScore       float64 `yaml:"interest_score"`
-		SecurityScore       float64 `yaml:"security_score"`
-		SecurityMediumScore float64 `yaml:"security_medium_score"`
-	} `yaml:"thresholds"`
+		InterestScore       float64 `toml:"interest_score"`
+		SecurityScore       float64 `toml:"security_score"`
+		SecurityMediumScore float64 `toml:"security_medium_score"`
+	} `toml:"thresholds"`
 
 	Limits struct {
-		MaxFeedsPerUser       int `yaml:"max_feeds_per_user"`
-		MaxFilterRulesPerUser int `yaml:"max_filter_rules_per_user"`
-		MaxNewslettersPerUser int `yaml:"max_newsletters_per_user"`
-	} `yaml:"limits"`
+		MaxFeedsPerUser       int `toml:"max_feeds_per_user"`
+		MaxFilterRulesPerUser int `toml:"max_filter_rules_per_user"`
+		MaxNewslettersPerUser int `toml:"max_newsletters_per_user"`
+	} `toml:"limits"`
 
 	Preferences struct {
-		Keywords         []string `yaml:"keywords"`
-		PreferredSources []string `yaml:"preferred_sources"`
-	} `yaml:"preferences"`
+		Keywords         []string `toml:"keywords"`
+		PreferredSources []string `toml:"preferred_sources"`
+	} `toml:"preferences"`
 
 	Prompts struct {
-		Security      string `yaml:"security,omitempty"`
-		Curation      string `yaml:"curation,omitempty"`
-		Summarization string `yaml:"summarization,omitempty"`
-		GroupSummary  string `yaml:"group_summary,omitempty"`
-		Newsletter    string `yaml:"newsletter,omitempty"`
-		Summary       string `yaml:"summary,omitempty"`
-	} `yaml:"prompts,omitempty"`
+		Security      string `toml:"security,omitempty"`
+		Curation      string `toml:"curation,omitempty"`
+		Summarization string `toml:"summarization,omitempty"`
+		GroupSummary  string `toml:"group_summary,omitempty"`
+		Newsletter    string `toml:"newsletter,omitempty"`
+		Summary       string `toml:"summary,omitempty"`
+	} `toml:"prompts,omitempty"`
 
 	Summarization struct {
-		MinArticleLength int `yaml:"min_article_length"`
-		MaxSummaryLength int `yaml:"max_summary_length"`
-	} `yaml:"summarization"`
+		MinArticleLength int `toml:"min_article_length"`
+		MaxSummaryLength int `toml:"max_summary_length"`
+	} `toml:"summarization"`
 
 	Grouping struct {
 		// Enabled toggles the staged cluster stage (breaking-news grouping).
 		// Default true; set false to disable auto-grouping entirely (articles
 		// stay ungrouped, still embedded so semantic search keeps working).
-		Enabled             bool    `yaml:"enabled"`
-		SimilarityThreshold float64 `yaml:"similarity_threshold"`
+		Enabled             bool    `toml:"enabled"`
+		SimilarityThreshold float64 `toml:"similarity_threshold"`
 		// ClusterThreshold is the cosine similarity at which the staged
 		// pipeline's cluster stage joins an article to a group or links two
 		// articles into a new one. Defaults to SimilarityThreshold when unset.
-		ClusterThreshold float64 `yaml:"cluster_threshold"`
+		ClusterThreshold float64 `toml:"cluster_threshold"`
 		// MinClusterSize is the smallest number of articles that forms a new
 		// breaking-news group; smaller components stay ungrouped. Default 2.
-		MinClusterSize int `yaml:"min_cluster_size"`
+		MinClusterSize int `toml:"min_cluster_size"`
 		// RecencyWindowHours bounds how far back the cluster stage reaches for
 		// already-embedded, still-ungrouped articles, so a story that broke a
 		// few cycles ago still gathers its late-arriving siblings. Default 48.
-		RecencyWindowHours int `yaml:"recency_window_hours"`
-	} `yaml:"grouping"`
+		RecencyWindowHours int `toml:"recency_window_hours"`
+	} `toml:"grouping"`
 
 	Temperatures struct {
-		Security      float64 `yaml:"security"`
-		Curation      float64 `yaml:"curation"`
-		Summarization float64 `yaml:"summarization"`
-		GroupSummary  float64 `yaml:"group_summary"`
-		Newsletter    float64 `yaml:"newsletter"`
-		Summary       float64 `yaml:"summary"`
-	} `yaml:"temperatures,omitempty"`
+		Security      float64 `toml:"security"`
+		Curation      float64 `toml:"curation"`
+		Summarization float64 `toml:"summarization"`
+		GroupSummary  float64 `toml:"group_summary"`
+		Newsletter    float64 `toml:"newsletter"`
+		Summary       float64 `toml:"summary"`
+	} `toml:"temperatures,omitempty"`
 
 	Email struct {
-		SMTPHost    string `yaml:"smtp_host"`
-		SMTPPort    int    `yaml:"smtp_port"`
-		Username    string `yaml:"username"`
-		Password    string `yaml:"password"`
-		FromAddress string `yaml:"from_address"`
-		FromName    string `yaml:"from_name"`
-	} `yaml:"email,omitempty"`
+		SMTPHost    string `toml:"smtp_host"`
+		SMTPPort    int    `toml:"smtp_port"`
+		Username    string `toml:"username"`
+		Password    string `toml:"password"`
+		FromAddress string `toml:"from_address"`
+		FromName    string `toml:"from_name"`
+	} `toml:"email,omitempty"`
 
 	// Summary configures the AI Summary feature's cloud LLM (e.g. Claude via the
 	// Nenya gateway). BaseURL empty disables the feature. The API key is NOT read
 	// from config — it comes from the HERALD_SUMMARY_API_KEY environment variable
 	// so the secret is never committed.
 	Summary struct {
-		BaseURL          string        `yaml:"base_url"`           // OpenAI-compatible /v1 endpoint
-		Model            string        `yaml:"model"`              // e.g. claude-sonnet-4-6
-		MinInterestScore float64       `yaml:"min_interest_score"` // interest floor for included articles
-		MinSecurityScore float64       `yaml:"min_security_score"` // security floor (gate)
-		MaxInputTokens   int           `yaml:"max_input_tokens"`   // budget bound; trims oldest overflow
-		BodyCharCap      int           `yaml:"body_char_cap"`      // per-article body truncation
-		MaxOutputTokens  int           `yaml:"max_output_tokens"`  // completion cap
-		Timeout          time.Duration `yaml:"timeout"`
+		BaseURL          string        `toml:"base_url"`           // OpenAI-compatible /v1 endpoint
+		Model            string        `toml:"model"`              // e.g. claude-sonnet-4-6
+		MinInterestScore float64       `toml:"min_interest_score"` // interest floor for included articles
+		MinSecurityScore float64       `toml:"min_security_score"` // security floor (gate)
+		MaxInputTokens   int           `toml:"max_input_tokens"`   // budget bound; trims oldest overflow
+		BodyCharCap      int           `toml:"body_char_cap"`      // per-article body truncation
+		MaxOutputTokens  int           `toml:"max_output_tokens"`  // completion cap
+		Timeout          time.Duration `toml:"timeout"`
 		// DisableThinking turns off a reasoning backend's thinking pass (Qwen3 via
 		// Lemonade) so the completion is real content, not reasoning_content.
-		DisableThinking bool `yaml:"disable_thinking"`
-	} `yaml:"summary,omitempty"`
+		DisableThinking bool `toml:"disable_thinking"`
+	} `toml:"summary,omitempty"`
+
+	// Web holds configuration keys only used by `herald serve` (the web UI).
+	// These coexist with the daemon-oriented keys in the same TOML file.
+	Web struct {
+		// Addr is the HTTP listen address for the web server.
+		Addr string `toml:"addr"`
+		// Webauth holds OIDC / webauth settings (required for the UI).
+		Webauth struct {
+			IssuerURL   string `toml:"issuer_url"`
+			WebauthURL  string `toml:"webauth_url"`
+			Cookie      string `toml:"cookie"`
+			ClientID    string `toml:"client_id"`
+			CallbackURL string `toml:"callback_url"`
+		} `toml:"webauth"`
+		// Admin configures who gets admin UI access.
+		Admin struct {
+			// Role is the JWT role claim that grants admin (default "admin").
+			Role string `toml:"role"`
+			// Users is fallback list of emails for admin when IdP omits roles.
+			Users []string `toml:"users"`
+		} `toml:"admin"`
+	} `toml:"web"`
 }
 
 // DefaultConfig returns a config with sensible defaults

@@ -1,5 +1,6 @@
-# FeedReader Configuration Example
-# Copy this file to config.yaml and customize
+# FeedReader Configuration Example (legacy YAML)
+# NOTE: Herald now standardizes on TOML. Prefer config.toml.example
+# Copy/convert to config.toml and customize. YAML support removed.
 
 database:
   # PostgreSQL DSN (postgres:// or postgresql:// URL). herald is Postgres-only.
