@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 )
 
@@ -17,6 +18,48 @@ const testHTMLWithFeeds = `<!DOCTYPE html>
 
 const testHTMLNoFeeds = `<!DOCTYPE html>
 <html><head><title>No Feeds Here</title></head><body><p>Nothing</p></body></html>`
+
+// substackProfileBody mimics a substack.com/@user profile page: no
+// autodiscovery <link> tags, but the publication subdomain appears in embedded
+// JSON, alongside platform-infrastructure hosts that must be filtered out.
+const substackProfileBody = `<!DOCTYPE html>
+<html><head><title>Jeffro Johnson</title></head><body>
+<script>window.__data = {"publicationUrl":"https://jeffrojohnson.substack.com",
+"logo":"https://cdn.substack.com/image/x.png",
+"avatar":"https://images.substack.com/y.png"};</script>
+<a href="https://substackcdn.com/z">cdn</a>
+<a href="https://jeffrojohnson.substack.com/p/post-one">a post</a>
+</body></html>`
+
+func TestExtractSubstackSubdomains(t *testing.T) {
+	got := extractSubstackSubdomains([]byte(substackProfileBody))
+	if len(got) != 1 || got[0] != "jeffrojohnson" {
+		t.Fatalf("got %v, want [jeffrojohnson] (cdn/images infra subdomains filtered)", got)
+	}
+}
+
+func TestIsSubstackProfile(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want bool
+	}{
+		{"https://substack.com/@jeffrojohnson", true},
+		{"https://www.substack.com/@jeffrojohnson", true},
+		{"https://substack.com/profile/12345-jeffro", true},
+		{"https://jeffrojohnson.substack.com/", false}, // publication: standard discovery works
+		{"https://substack.com/about", false},          // apex non-profile page
+		{"https://example.com/@someone", false},        // not substack
+	}
+	for _, c := range cases {
+		u, err := url.Parse(c.raw)
+		if err != nil {
+			t.Fatalf("parse %q: %v", c.raw, err)
+		}
+		if got := isSubstackProfile(u); got != c.want {
+			t.Errorf("isSubstackProfile(%q) = %v, want %v", c.raw, got, c.want)
+		}
+	}
+}
 
 func TestDiscoverFeeds_HTMLLinks(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
