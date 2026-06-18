@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
@@ -1047,78 +1049,73 @@ func (s *PostgresStore) GetStarredArticles(userID int64, limit, offset int, filt
 // --- Article images ---
 
 func (s *PostgresStore) StoreArticleImage(articleID int64, originalURL string, data []byte, mimeType string, width, height int) (int64, error) {
-	var id int64
-	err := s.db.QueryRow(
-		`INSERT INTO article_images (article_id, original_url, data, mime_type, width, height)
-		 VALUES (?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(article_id, original_url) DO UPDATE SET
-		   data = excluded.data, mime_type = excluded.mime_type,
-		   width = excluded.width, height = excluded.height,
-		   fetched_at = NOW()
-		 RETURNING id`,
-		articleID, originalURL, data, mimeType, width, height,
-	).Scan(&id)
-	if err != nil {
-		return 0, err
-	}
-	return id, nil
+	return s.q.StoreArticleImage(context.Background(), db.StoreArticleImageParams{
+		ArticleID:   articleID,
+		OriginalUrl: originalURL,
+		Data:        data,
+		MimeType:    mimeType,
+		Width:       int64(width),
+		Height:      int64(height),
+	})
 }
 
 func (s *PostgresStore) GetArticleImage(imageID int64) (*ArticleImage, error) {
-	var img ArticleImage
-	err := s.db.QueryRow(
-		`SELECT id, article_id, original_url, data, mime_type, width, height, fetched_at
-		 FROM article_images WHERE id = ?`, imageID,
-	).Scan(&img.ID, &img.ArticleID, &img.OriginalURL, &img.Data,
-		&img.MimeType, &img.Width, &img.Height, &img.FetchedAt)
-	if err == sql.ErrNoRows {
+	r, err := s.q.GetArticleImage(context.Background(), imageID)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get article image: %w", err)
 	}
-	return &img, nil
+	return &ArticleImage{
+		ID:          r.ID,
+		ArticleID:   r.ArticleID,
+		OriginalURL: r.OriginalUrl,
+		Data:        r.Data,
+		MimeType:    r.MimeType,
+		Width:       int(r.Width),
+		Height:      int(r.Height),
+		FetchedAt:   r.FetchedAt,
+	}, nil
 }
 
 func (s *PostgresStore) GetArticleImageMap(articleID int64) (map[string]int64, error) {
-	rows, err := s.db.Query(
-		`SELECT id, original_url FROM article_images WHERE article_id = ?`, articleID,
-	)
+	rows, err := s.q.GetArticleImageMap(context.Background(), articleID)
 	if err != nil {
 		return nil, fmt.Errorf("get article image map: %w", err)
 	}
-	defer rows.Close()
-
-	m := make(map[string]int64)
-	for rows.Next() {
-		var id int64
-		var u string
-		if err := rows.Scan(&id, &u); err != nil {
-			return nil, fmt.Errorf("scan article image: %w", err)
-		}
-		m[u] = id
+	m := make(map[string]int64, len(rows))
+	for _, r := range rows {
+		m[r.OriginalUrl] = r.ID
 	}
-	return m, rows.Err()
+	return m, nil
 }
 
 func (s *PostgresStore) GetArticlesNeedingImageCache(limit int) ([]Article, error) {
-	rows, err := s.db.Query(`
-		SELECT id, feed_id, guid, title, url, COALESCE(content,''), COALESCE(summary,''),
-		       COALESCE(author,''), published_date, fetched_date
-		FROM articles
-		WHERE images_cached = FALSE
-		ORDER BY fetched_date DESC
-		LIMIT ?`, limit)
+	rows, err := s.q.GetArticlesNeedingImageCache(context.Background(), int32(limit))
 	if err != nil {
 		return nil, fmt.Errorf("get articles needing image cache: %w", err)
 	}
-	defer rows.Close()
-	return scanArticles(rows)
+	out := make([]Article, len(rows))
+	for i, r := range rows {
+		out[i] = Article{
+			ID:            r.ID,
+			FeedID:        r.FeedID,
+			GUID:          r.Guid,
+			Title:         r.Title,
+			URL:           r.Url,
+			Content:       derefString(r.Content),
+			Summary:       derefString(r.Summary),
+			Author:        derefString(r.Author),
+			PublishedDate: r.PublishedDate,
+			FetchedDate:   r.FetchedDate,
+		}
+	}
+	return out, nil
 }
 
 func (s *PostgresStore) MarkArticleImagesCached(articleID int64) error {
-	_, err := s.db.Exec(`UPDATE articles SET images_cached = TRUE WHERE id = ?`, articleID)
-	return err
+	return s.q.MarkArticleImagesCached(context.Background(), articleID)
 }
 
 // --- Article metadata ---
@@ -1316,49 +1313,38 @@ func (s *PostgresStore) HasFilterRules(userID int64) (bool, error) {
 // --- Article summaries ---
 
 func (s *PostgresStore) UpdateArticleAISummary(articleID int64, aiSummary string) error {
-	_, err := s.db.Exec(
-		`INSERT INTO article_summaries (article_id, ai_summary, skip_reason)
-		 VALUES (?, ?, NULL)
-		 ON CONFLICT(article_id) DO UPDATE SET
-		   ai_summary = EXCLUDED.ai_summary,
-		   skip_reason = NULL,
-		   generated_at = NOW()`,
-		articleID, aiSummary,
-	)
-	if err != nil {
+	if err := s.q.UpdateArticleAISummary(context.Background(), db.UpdateArticleAISummaryParams{
+		ArticleID: articleID,
+		AiSummary: aiSummary,
+	}); err != nil {
 		return fmt.Errorf("failed to update AI summary: %w", err)
 	}
 	return nil
 }
 
 func (s *PostgresStore) MarkSummarizationSkipped(articleID int64, reason string) error {
-	_, err := s.db.Exec(
-		`INSERT INTO article_summaries (article_id, ai_summary, skip_reason)
-		 VALUES (?, '', ?)
-		 ON CONFLICT (article_id) DO UPDATE SET
-		   skip_reason = EXCLUDED.skip_reason,
-		   generated_at = NOW()`,
-		articleID, reason,
-	)
-	if err != nil {
+	if err := s.q.MarkSummarizationSkipped(context.Background(), db.MarkSummarizationSkippedParams{
+		ArticleID:  articleID,
+		SkipReason: reason,
+	}); err != nil {
 		return fmt.Errorf("failed to mark summarization skipped: %w", err)
 	}
 	return nil
 }
 
 func (s *PostgresStore) GetArticleSummary(articleID int64) (*ArticleSummary, error) {
-	var as ArticleSummary
-	err := s.db.QueryRow(
-		"SELECT article_id, ai_summary, generated_at FROM article_summaries WHERE article_id = ?",
-		articleID,
-	).Scan(&as.ArticleID, &as.AISummary, &as.GeneratedAt)
-	if err == sql.ErrNoRows {
+	r, err := s.q.GetArticleSummary(context.Background(), articleID)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get article summary: %w", err)
 	}
-	return &as, nil
+	return &ArticleSummary{
+		ArticleID:   r.ArticleID,
+		AISummary:   r.AiSummary,
+		GeneratedAt: r.GeneratedAt,
+	}, nil
 }
 
 // --- Feed stats ---
