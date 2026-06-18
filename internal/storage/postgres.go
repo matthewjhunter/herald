@@ -160,9 +160,18 @@ func pickFetchIntervalPG(lastPostAge, medianPostInterval time.Duration) time.Dur
 
 // --- Users ---
 
+func userFromRow(r db.User) User {
+	return User{
+		ID:        r.ID,
+		Name:      r.Name,
+		OIDCSub:   r.OidcSub,
+		Email:     r.Email,
+		CreatedAt: r.CreatedAt,
+	}
+}
+
 func (s *PostgresStore) CreateUser(name string) (int64, error) {
-	var id int64
-	err := s.db.QueryRow("INSERT INTO users (name) VALUES (?) RETURNING id", name).Scan(&id)
+	id, err := s.q.CreateUser(context.Background(), name)
 	if err != nil {
 		return 0, fmt.Errorf("create user: %w", err)
 	}
@@ -170,40 +179,20 @@ func (s *PostgresStore) CreateUser(name string) (int64, error) {
 }
 
 func (s *PostgresStore) GetUserByName(name string) (*User, error) {
-	var u User
-	var email sql.NullString
-	var oidcSub sql.NullString
-	err := s.db.QueryRow(
-		"SELECT id, name, oidc_sub, email, created_at FROM users WHERE name = ?", name,
-	).Scan(&u.ID, &u.Name, &oidcSub, &email, &u.CreatedAt)
+	r, err := s.q.GetUserByName(context.Background(), name)
 	if err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
-	if email.Valid {
-		u.Email = &email.String
-	}
-	if oidcSub.Valid {
-		u.OIDCSub = &oidcSub.String
-	}
+	u := userFromRow(r)
 	return &u, nil
 }
 
 func (s *PostgresStore) GetUserByOIDCSub(sub string) (*User, error) {
-	var u User
-	var email sql.NullString
-	var oidcSub sql.NullString
-	err := s.db.QueryRow(
-		"SELECT id, name, oidc_sub, email, created_at FROM users WHERE oidc_sub = ?", sub,
-	).Scan(&u.ID, &u.Name, &oidcSub, &email, &u.CreatedAt)
+	r, err := s.q.GetUserByOIDCSub(context.Background(), &sub)
 	if err != nil {
-		return nil, err
+		return nil, mapErr(err)
 	}
-	if email.Valid {
-		u.Email = &email.String
-	}
-	if oidcSub.Valid {
-		u.OIDCSub = &oidcSub.String
-	}
+	u := userFromRow(r)
 	return &u, nil
 }
 
@@ -212,74 +201,67 @@ func (s *PostgresStore) CreateUserWithOIDC(name, email, sub string) (*User, erro
 	if email != "" {
 		emailVal = &email
 	}
-	var id int64
-	err := s.db.QueryRow(
-		"INSERT INTO users (name, oidc_sub, email) VALUES (?, ?, ?) RETURNING id",
-		name, sub, emailVal,
-	).Scan(&id)
+	r, err := s.q.CreateUserWithOIDC(context.Background(), db.CreateUserWithOIDCParams{
+		Name:    name,
+		OidcSub: &sub,
+		Email:   emailVal,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("create OIDC user: %w", err)
 	}
-	u := &User{ID: id, Name: name, OIDCSub: &sub, Email: emailVal}
-	return u, nil
+	u := userFromRow(r)
+	return &u, nil
 }
 
 func (s *PostgresStore) UpdateUserOIDCEmail(id int64, email string) error {
-	_, err := s.db.Exec("UPDATE users SET email = ? WHERE id = ?", email, id)
-	return err
+	return s.q.UpdateUserOIDCEmail(context.Background(), db.UpdateUserOIDCEmailParams{
+		Email: &email,
+		ID:    id,
+	})
 }
 
 func (s *PostgresStore) ListUsers() ([]User, error) {
-	rows, err := s.db.Query("SELECT id, name, oidc_sub, email, created_at FROM users ORDER BY name")
+	rows, err := s.q.ListUsers(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
-	defer rows.Close()
-
-	var users []User
-	for rows.Next() {
-		var u User
-		var email sql.NullString
-		var oidcSub sql.NullString
-		if err := rows.Scan(&u.ID, &u.Name, &oidcSub, &email, &u.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan user: %w", err)
-		}
-		if email.Valid {
-			u.Email = &email.String
-		}
-		if oidcSub.Valid {
-			u.OIDCSub = &oidcSub.String
-		}
-		users = append(users, u)
+	users := make([]User, len(rows))
+	for i, r := range rows {
+		users[i] = userFromRow(r)
 	}
-	return users, rows.Err()
+	return users, nil
 }
 
 // DeleteUser removes a user and everything they own, atomically. Tables that
 // lack a users FK are deleted explicitly; tables with ON DELETE CASCADE are
 // handled automatically when the users row is removed.
 func (s *PostgresStore) DeleteUser(userID int64) error {
-	tx, err := s.db.Begin()
+	ctx := context.Background()
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("delete user: begin: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck // no-op after Commit
-	stmts := []string{
-		"DELETE FROM read_state WHERE user_id = $1",
-		"DELETE FROM user_preferences WHERE user_id = $1",
-		"DELETE FROM user_feeds WHERE user_id = $1",
-		"DELETE FROM feed_tags WHERE user_id = $1",
-		"DELETE FROM user_prompts WHERE user_id = $1",
-		"DELETE FROM filter_rules WHERE user_id = $1",
-		"DELETE FROM article_groups WHERE user_id = $1", // cascades article_group_members + group_summaries
-		"DELETE FROM users WHERE id = $1",               // cascades fever_credentials, newsletters+issues, ai_summaries
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+	qtx := s.q.WithTx(tx)
+	// Order matters only in that the explicit deletes precede DeleteUserRow,
+	// which cascades fever_credentials, newsletters+issues, and ai_summaries.
+	// DeleteUserArticleGroups cascades article_group_members + group_summaries.
+	steps := []func(context.Context, int64) error{
+		qtx.DeleteUserReadState,
+		qtx.DeleteUserPreferences,
+		qtx.DeleteUserFeeds,
+		qtx.DeleteUserFeedTags,
+		qtx.DeleteUserPrompts,
+		qtx.DeleteUserFilterRules,
+		qtx.DeleteUserArticleGroups,
+		qtx.DeleteUserRow,
 	}
-	for _, q := range stmts {
-		if _, err := tx.Exec(q, userID); err != nil {
-			return fmt.Errorf("delete user (%q): %w", q, err)
+	for _, step := range steps {
+		if err := step(ctx, userID); err != nil {
+			return fmt.Errorf("delete user: %w", err)
 		}
 	}
-	return tx.Commit()
+	return tx.Commit(ctx)
 }
 
 // --- User prompts ---
