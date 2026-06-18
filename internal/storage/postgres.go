@@ -1304,72 +1304,73 @@ func (s *PostgresStore) GetArticleSummary(articleID int64) (*ArticleSummary, err
 // user's articles (not broken down by feed). "pending" uses ai_retries < 3 (the
 // retry budget the pipeline honours); "stuck" is everything that has exhausted it.
 func (s *PostgresStore) GetProcessingStats(userID int64) (*ProcessingStats, error) {
-	var p ProcessingStats
-	err := s.db.QueryRow(`
-		SELECT
-			COUNT(*),
-			COALESCE(SUM(CASE WHEN a.security_screened_at IS NOT NULL THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN a.security_screened_at IS NULL AND a.security_attempts < 3 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN a.security_screened_at IS NULL AND a.security_attempts >= 3 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN a.security_score >= 7 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN a.security_score IS NOT NULL AND a.security_score < 7 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN a.security_screened_at IS NOT NULL AND a.security_score IS NULL THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN rs.interest_score IS NOT NULL THEN 1 ELSE 0 END), 0)
-		FROM articles a
-		JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = ?
-		LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = ?`,
-		userID, userID,
-	).Scan(&p.TotalArticles, &p.Scored, &p.Pending, &p.Stuck,
-		&p.SecurityPassed, &p.SecurityRejected, &p.SecuritySkipped, &p.Curated)
+	ctx := context.Background()
+	funnel, err := s.q.GetProcessingFunnel(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("get processing stats (funnel): %w", err)
 	}
-
-	// Summaries are per-article and shared by all subscribers (#162), so these
-	// two funnel numbers are global, like the security columns above.
-	err = s.db.QueryRow(`
-		SELECT
-			(SELECT COUNT(*) FROM article_summaries WHERE ai_summary <> ''),
-			(SELECT COUNT(*) FROM article_summaries WHERE COALESCE(skip_reason, '') <> '')`,
-	).Scan(&p.Summarized, &p.SummarizeSkipped)
+	summaries, err := s.q.GetProcessingSummaryCounts(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get processing stats (summaries): %w", err)
 	}
-
-	err = s.db.QueryRow(`
-		SELECT
-			(SELECT COUNT(*) FROM user_feeds WHERE user_id = ?),
-			(SELECT COUNT(*) FROM feeds f JOIN user_feeds uf ON uf.feed_id = f.id
-			 WHERE uf.user_id = ? AND f.consecutive_errors > 0)`,
-		userID, userID,
-	).Scan(&p.FeedsTotal, &p.FeedsErroring)
+	feeds, err := s.q.GetProcessingFeedCounts(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("get processing stats (feeds): %w", err)
 	}
-	return &p, nil
+	return &ProcessingStats{
+		TotalArticles:    funnel.TotalArticles,
+		Scored:           funnel.Scored,
+		Pending:          funnel.Pending,
+		Stuck:            funnel.Stuck,
+		SecurityPassed:   funnel.SecurityPassed,
+		SecurityRejected: funnel.SecurityRejected,
+		SecuritySkipped:  funnel.SecuritySkipped,
+		Curated:          funnel.Curated,
+		Summarized:       summaries.Summarized,
+		SummarizeSkipped: summaries.SummarizeSkipped,
+		FeedsTotal:       feeds.FeedsTotal,
+		FeedsErroring:    feeds.FeedsErroring,
+	}, nil
 }
 
 // RecordCycleStats persists one completed daemon cycle, then prunes to a bounded
 // history so the table can't grow without limit on a long-running daemon.
 func (s *PostgresStore) RecordCycleStats(cs CycleStats) error {
-	if _, err := s.db.Exec(
-		`INSERT INTO cycle_stats
-		   (completed_at, duration_ms, feeds_total, feeds_downloaded, feeds_not_modified,
-		    feeds_errored, new_articles, processed, high_interest, ai_backend_available)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		cs.CompletedAt, cs.DurationMs, cs.FeedsTotal, cs.FeedsDownloaded, cs.FeedsNotModified,
-		cs.FeedsErrored, cs.NewArticles, cs.Processed, cs.HighInterest, cs.AIBackendAvailable,
-	); err != nil {
+	ctx := context.Background()
+	if err := s.q.RecordCycleStats(ctx, db.RecordCycleStatsParams{
+		CompletedAt:        cs.CompletedAt,
+		DurationMs:         cs.DurationMs,
+		FeedsTotal:         cs.FeedsTotal,
+		FeedsDownloaded:    cs.FeedsDownloaded,
+		FeedsNotModified:   cs.FeedsNotModified,
+		FeedsErrored:       cs.FeedsErrored,
+		NewArticles:        cs.NewArticles,
+		Processed:          cs.Processed,
+		HighInterest:       cs.HighInterest,
+		AiBackendAvailable: cs.AIBackendAvailable,
+	}); err != nil {
 		return fmt.Errorf("record cycle stats: %w", err)
 	}
-	// Keep the most recent 500 cycles (~10 days at a 30m cadence).
-	if _, err := s.db.Exec(
-		`DELETE FROM cycle_stats WHERE id NOT IN (
-		   SELECT id FROM cycle_stats ORDER BY completed_at DESC LIMIT 500)`,
-	); err != nil {
+	if err := s.q.PruneCycleStats(ctx); err != nil {
 		return fmt.Errorf("prune cycle stats: %w", err)
 	}
 	return nil
+}
+
+func cycleStatsFromRow(r db.CycleStat) CycleStats {
+	return CycleStats{
+		ID:                 r.ID,
+		CompletedAt:        r.CompletedAt,
+		DurationMs:         r.DurationMs,
+		FeedsTotal:         r.FeedsTotal,
+		FeedsDownloaded:    r.FeedsDownloaded,
+		FeedsNotModified:   r.FeedsNotModified,
+		FeedsErrored:       r.FeedsErrored,
+		NewArticles:        r.NewArticles,
+		Processed:          r.Processed,
+		HighInterest:       r.HighInterest,
+		AIBackendAvailable: r.AiBackendAvailable,
+	}
 }
 
 // GetRecentCycleStats returns the most recent completed cycles, newest first.
@@ -1377,62 +1378,37 @@ func (s *PostgresStore) GetRecentCycleStats(limit int) ([]CycleStats, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := s.db.Query(
-		`SELECT id, completed_at, duration_ms, feeds_total, feeds_downloaded, feeds_not_modified,
-		        feeds_errored, new_articles, processed, high_interest, ai_backend_available
-		 FROM cycle_stats ORDER BY completed_at DESC LIMIT ?`, limit)
+	rows, err := s.q.GetRecentCycleStats(context.Background(), int32(limit))
 	if err != nil {
 		return nil, fmt.Errorf("get recent cycle stats: %w", err)
 	}
-	defer rows.Close()
-	var out []CycleStats
-	for rows.Next() {
-		var c CycleStats
-		if err := rows.Scan(&c.ID, &c.CompletedAt, &c.DurationMs, &c.FeedsTotal, &c.FeedsDownloaded,
-			&c.FeedsNotModified, &c.FeedsErrored, &c.NewArticles, &c.Processed, &c.HighInterest,
-			&c.AIBackendAvailable); err != nil {
-			return nil, fmt.Errorf("scan cycle stats: %w", err)
-		}
-		out = append(out, c)
+	out := make([]CycleStats, len(rows))
+	for i, r := range rows {
+		out[i] = cycleStatsFromRow(r)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *PostgresStore) GetFeedStats(userID int64) ([]FeedStats, error) {
-	rows, err := s.db.Query(`
-		SELECT f.id, COALESCE(uf.user_title, f.title),
-			COUNT(a.id),
-			SUM(CASE WHEN (rs.read IS NULL OR rs.read = FALSE)
-			         AND NOT EXISTS (
-			           SELECT 1 FROM article_group_members agm
-			           JOIN article_groups ag ON agm.group_id = ag.id
-			           WHERE agm.article_id = a.id AND ag.user_id = uf.user_id
-			         ) THEN 1 ELSE 0 END),
-			COUNT(a.id) - COUNT(asumm.article_id),
-			MAX(a.published_date)
-		FROM feeds f
-		JOIN user_feeds uf ON uf.feed_id = f.id AND uf.user_id = ?
-		JOIN articles a ON a.feed_id = f.id
-		LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = ?
-		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id
-		GROUP BY f.id, uf.user_title
-		ORDER BY COALESCE(uf.user_title, f.title)`,
-		userID, userID,
-	)
+	rows, err := s.q.GetFeedStats(context.Background(), userID)
 	if err != nil {
 		return nil, fmt.Errorf("get feed stats: %w", err)
 	}
-	defer rows.Close()
-
-	var stats []FeedStats
-	for rows.Next() {
-		var fs FeedStats
-		if err := rows.Scan(&fs.FeedID, &fs.FeedTitle, &fs.TotalArticles, &fs.UnreadArticles, &fs.UnsummarizedArticles, &fs.LastPostDate); err != nil {
-			return nil, fmt.Errorf("scan feed stats: %w", err)
+	stats := make([]FeedStats, len(rows))
+	for i, r := range rows {
+		fs := FeedStats{
+			FeedID:               r.FeedID,
+			FeedTitle:            r.FeedTitle,
+			TotalArticles:        r.TotalArticles,
+			UnreadArticles:       r.UnreadArticles,
+			UnsummarizedArticles: r.UnsummarizedArticles,
 		}
-		stats = append(stats, fs)
+		if t, ok := r.LastPostDate.(time.Time); ok {
+			fs.LastPostDate = &t
+		}
+		stats[i] = fs
 	}
-	return stats, rows.Err()
+	return stats, nil
 }
 
 // --- Article groups ---
