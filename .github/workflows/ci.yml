@@ -15,7 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        # pgvector image (Postgres 16 + the vector extension): grouping/similarity
+        # runs as pgvector ANN now (#186). The stock postgres:16 image lacks the
+        # extension. In CI the POSTGRES_USER role is a superuser, so the startup
+        # migration's CREATE EXTENSION IF NOT EXISTS vector self-provisions.
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_DB: herald_test
           POSTGRES_USER: herald

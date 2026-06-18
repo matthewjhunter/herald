@@ -66,16 +66,19 @@ type ArticleGroup struct {
 	UpdatedAt   time.Time
 }
 
-// ArticleEmbeddingRow holds a single article's embedding for cosine similarity search.
+// ArticleEmbeddingRow holds a single article's embedding vector.
 type ArticleEmbeddingRow struct {
 	ArticleID int64
-	Embedding []byte // raw little-endian float32 blob, caller decodes
+	Embedding []float32
 }
 
-// ArticleGroupWithEmbedding extends ArticleGroup with the raw centroid vector blob.
-type ArticleGroupWithEmbedding struct {
-	ArticleGroup
-	Embedding []byte // raw little-endian float32 blob, caller decodes
+// GroupMatch is one row of MatchArticlesToGroups: an embedded cohort article and
+// the user's nearest existing group centroid within the join threshold. GroupID
+// is 0 when the article has a usable embedding but no group is near enough -- a
+// leftover that the FORM phase may cluster into a new group.
+type GroupMatch struct {
+	ArticleID int64
+	GroupID   int64
 }
 
 // GroupStats holds sidebar display data for an article group virtual feed.
@@ -287,13 +290,6 @@ type ArticleImage struct {
 	Height      int
 	FetchedAt   time.Time
 }
-
-// embedSentinelBytes is the placeholder written to the embedding column
-// for non-ok status rows. The schema declares embedding NOT NULL, so we
-// need some bytes to satisfy the constraint; one byte distinguishes
-// these rows from real vectors (≥ 4 bytes for any single float32) and
-// matches the legacy sentinel encoding for backward compatibility.
-var embedSentinelBytes = []byte{0}
 
 // NewStore returns a Store backed by PostgreSQL. herald is Postgres-only; the
 // DSN must be a "postgres://" or "postgresql://" URL. A bare file path (the old

@@ -168,9 +168,12 @@ func (q *Queries) GetGroup(ctx context.Context, id int64) (GetGroupRow, error) {
 }
 
 const getGroupArticleCount = `-- name: GetGroupArticleCount :one
+
 SELECT COUNT(*)::int FROM article_group_members WHERE group_id = $1
 `
 
+// Centroid reads/writes (the embedding vector) run through the hand-written
+// pgvector layer in internal/storage/vector.go, not sqlc (#186).
 func (q *Queries) GetGroupArticleCount(ctx context.Context, groupID int64) (int, error) {
 	row := q.db.QueryRow(ctx, getGroupArticleCount, groupID)
 	var column_1 int
@@ -231,17 +234,6 @@ func (q *Queries) GetGroupArticles(ctx context.Context, groupID int64) ([]GetGro
 	return items, nil
 }
 
-const getGroupEmbedding = `-- name: GetGroupEmbedding :one
-SELECT embedding FROM article_groups WHERE id = $1
-`
-
-func (q *Queries) GetGroupEmbedding(ctx context.Context, id int64) ([]byte, error) {
-	row := q.db.QueryRow(ctx, getGroupEmbedding, id)
-	var embedding []byte
-	err := row.Scan(&embedding)
-	return embedding, err
-}
-
 const getGroupStats = `-- name: GetGroupStats :many
 SELECT ag.id AS group_id,
        COALESCE(ag.display_name, ag.topic) AS display_name,
@@ -299,57 +291,6 @@ func (q *Queries) GetGroupSummary(ctx context.Context, groupID int64) (GroupSumm
 		&i.GeneratedAt,
 	)
 	return i, err
-}
-
-const getGroupsWithEmbeddings = `-- name: GetGroupsWithEmbeddings :many
-SELECT id, user_id, topic, display_name, muted, embedding, created_at, updated_at
-FROM article_groups
-WHERE user_id = $1 AND embedding IS NOT NULL AND embedding_model = $2
-`
-
-type GetGroupsWithEmbeddingsParams struct {
-	UserID         int64
-	EmbeddingModel string
-}
-
-type GetGroupsWithEmbeddingsRow struct {
-	ID          int64
-	UserID      int64
-	Topic       string
-	DisplayName *string
-	Muted       bool
-	Embedding   []byte
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-}
-
-func (q *Queries) GetGroupsWithEmbeddings(ctx context.Context, arg GetGroupsWithEmbeddingsParams) ([]GetGroupsWithEmbeddingsRow, error) {
-	rows, err := q.db.Query(ctx, getGroupsWithEmbeddings, arg.UserID, arg.EmbeddingModel)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetGroupsWithEmbeddingsRow{}
-	for rows.Next() {
-		var i GetGroupsWithEmbeddingsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.UserID,
-			&i.Topic,
-			&i.DisplayName,
-			&i.Muted,
-			&i.Embedding,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const getUserGroups = `-- name: GetUserGroups :many
@@ -443,21 +384,6 @@ type UpdateGroupDisplayNameParams struct {
 
 func (q *Queries) UpdateGroupDisplayName(ctx context.Context, arg UpdateGroupDisplayNameParams) error {
 	_, err := q.db.Exec(ctx, updateGroupDisplayName, arg.DisplayName, arg.ID)
-	return err
-}
-
-const updateGroupEmbedding = `-- name: UpdateGroupEmbedding :exec
-UPDATE article_groups SET embedding = $1, embedding_model = $2 WHERE id = $3
-`
-
-type UpdateGroupEmbeddingParams struct {
-	Embedding      []byte
-	EmbeddingModel string
-	ID             int64
-}
-
-func (q *Queries) UpdateGroupEmbedding(ctx context.Context, arg UpdateGroupEmbeddingParams) error {
-	_, err := q.db.Exec(ctx, updateGroupEmbedding, arg.Embedding, arg.EmbeddingModel, arg.ID)
 	return err
 }
 

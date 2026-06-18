@@ -204,11 +204,10 @@ type Store interface {
 
 	// Search
 	SearchArticlesFTS(userID int64, query string, limit, offset int) ([]Article, error)
-	StoreArticleEmbedding(articleID int64, embedding []byte, model string) error
+	StoreArticleEmbedding(articleID int64, embedding []float32, model string) error
 	MarkArticleEmbeddingSkipped(articleID int64, model string) error
 	MarkArticleEmbeddingFailed(articleID int64, model, errMsg string) error
 	GetArticleEmbeddings(userID int64, model string) ([]ArticleEmbeddingRow, error)
-	GetArticleEmbeddingsByIDs(articleIDs []int64, model string) ([]ArticleEmbeddingRow, error)
 	GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error)
 	ResetAllArticleEmbeddings() (int64, error)
 	ResetAllGroupEmbeddings() (int64, error)
@@ -245,10 +244,15 @@ type Store interface {
 	GetAISummariesForNewsletter(userID, newsletterID int64, limit int) ([]AISummary, error)
 	GetUnreadArticlesForSummary(userID int64, minSecurity, minInterest float64, limit int) ([]Article, error)
 
-	// Embedding-based group operations
-	UpdateGroupEmbedding(groupID int64, embedding []byte, model string) error
-	GetGroupsWithEmbeddings(userID int64, model string) ([]ArticleGroupWithEmbedding, error)
-	GetGroupEmbedding(groupID int64) ([]byte, error)
+	// Embedding-based grouping (pgvector ANN, #186). MatchArticlesToGroups is
+	// the JOIN phase (article -> nearest group centroid within a distance);
+	// LeftoverSimilarPairs is the FORM phase's edge set; RecomputeGroupCentroid
+	// rebuilds a centroid in-database; GroupsNeedingCentroid drives the repair
+	// pass that re-establishes centroids as members embed.
+	MatchArticlesToGroups(userID int64, model string, articleIDs []int64, maxDist float64) ([]GroupMatch, error)
+	LeftoverSimilarPairs(model string, articleIDs []int64, maxDist float64) ([][2]int64, error)
+	RecomputeGroupCentroid(groupID int64, model string) error
+	GroupsNeedingCentroid(userID int64, model string) ([]int64, error)
 	GetGroupArticleCount(groupID int64) (int, error)
 	UpdateGroupTopic(groupID int64, topic string) error
 

@@ -51,8 +51,9 @@ func DSN(t *testing.T) (string, func()) {
 		t.Fatalf("storagetest: parse HERALD_TEST_DB_DSN: %v", err)
 	}
 	q := u.Query()
-	// Include public so the citext type (installed there) resolves while the
-	// test's own tables live in its private schema, which is first on the path.
+	// Include public so the citext and vector types (installed there) resolve
+	// while the test's own tables live in its private schema, which is first on
+	// the path.
 	q.Set("search_path", schema+",public")
 	u.RawQuery = q.Encode()
 	dsn := u.String()
@@ -62,6 +63,7 @@ func DSN(t *testing.T) (string, func()) {
 		t.Fatalf("storagetest: open for schema setup: %v", err)
 	}
 	ensureCitext(setupDB)
+	ensureVector(setupDB)
 	// Drop any leftover from a leaked prior run before (re)creating, so a
 	// recycled pid + counter can't collide with a stale schema.
 	if _, err := setupDB.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE"); err != nil {
@@ -117,6 +119,14 @@ func getBaseDSN(t *testing.T) string {
 // statement is a true no-op.
 func ensureCitext(db *sql.DB) {
 	db.Exec("CREATE EXTENSION IF NOT EXISTS citext") //nolint:errcheck
+}
+
+// ensureVector installs the pgvector extension into public so every test schema
+// can resolve the vector type and the vector_cosine_ops operator class the 0003
+// migration and the grouping queries depend on (#186). Tolerates the
+// concurrent-first-creation race for the same reason ensureCitext does.
+func ensureVector(db *sql.DB) {
+	db.Exec("CREATE EXTENSION IF NOT EXISTS vector") //nolint:errcheck
 }
 
 func trunc(s string, n int) string {

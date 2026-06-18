@@ -311,11 +311,9 @@ func (e *Engine) Search(ctx context.Context, userID int64, query string, limit, 
 				}
 				candidates := make([]scored, 0, len(rows))
 				for _, r := range rows {
-					if len(r.Embedding) < 4 {
-						continue // skip sentinel placeholders
-					}
-					vec := embedding.DecodeFloat32s(r.Embedding)
-					sim := embedding.CosineSimilarity(queryEmb, vec)
+					// GetArticleEmbeddings returns only status-ok rows, so every
+					// Embedding is a real vector (no sentinel placeholders).
+					sim := embedding.CosineSimilarity(queryEmb, r.Embedding)
 					if sim > 0.3 { // minimum similarity threshold
 						candidates = append(candidates, scored{r.ArticleID, sim})
 					}
@@ -563,7 +561,7 @@ func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, er
 			e.store.MarkArticleEmbeddingSkipped(a.ID, model) //nolint:errcheck
 			continue
 		}
-		if err := e.store.StoreArticleEmbedding(a.ID, embedding.EncodeFloat32s(emb), model); err != nil {
+		if err := e.store.StoreArticleEmbedding(a.ID, emb, model); err != nil {
 			log.Printf("backfill store embedding %d: %v", a.ID, err)
 			continue
 		}

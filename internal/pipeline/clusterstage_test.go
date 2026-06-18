@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	embedding "github.com/matthewjhunter/go-embedding"
 	"github.com/matthewjhunter/herald/internal/ai"
 	"github.com/matthewjhunter/herald/internal/storage"
 )
@@ -19,12 +18,41 @@ func clusterHarness(t *testing.T, fake *fakeAI) (*Stage, storage.Store, int64) {
 	return st, store, feedID
 }
 
-// embed stores a vector for an article under model "m".
+// embed stores a vector for an article under model "m". The toy vectors the
+// tests pass are padded to storage.EmbedDim so they fit the vector(EmbedDim)
+// column; trailing zeros do not change cosine similarity.
 func embedArt(t *testing.T, store storage.Store, a storage.Article, vec []float32) {
 	t.Helper()
-	if err := store.StoreArticleEmbedding(a.ID, embedding.EncodeFloat32s(vec), "m"); err != nil {
+	if err := store.StoreArticleEmbedding(a.ID, pad768(vec), "m"); err != nil {
 		t.Fatalf("StoreArticleEmbedding: %v", err)
 	}
+}
+
+// pad768 right-pads a vector with zeros to storage.EmbedDim components.
+func pad768(vec []float32) []float32 {
+	out := make([]float32, storage.EmbedDim)
+	copy(out, vec)
+	return out
+}
+
+// seedGroupCentroid creates a group whose centroid points at vec, by adding one
+// member embedded at vec and recomputing the centroid -- the real path now that
+// centroids are derived from members, not set directly (#186).
+func seedGroupCentroid(t *testing.T, store storage.Store, feedID int64, topic string, vec []float32) int64 {
+	t.Helper()
+	gid, err := store.CreateArticleGroup(1, topic)
+	if err != nil {
+		t.Fatalf("CreateArticleGroup: %v", err)
+	}
+	seed0 := seed(t, store, feedID, topic+"-seed", "seed body")
+	embedArt(t, store, seed0, vec)
+	if err := store.AddArticleToGroup(gid, seed0.ID); err != nil {
+		t.Fatalf("AddArticleToGroup: %v", err)
+	}
+	if err := store.RecomputeGroupCentroid(gid, "m"); err != nil {
+		t.Fatalf("RecomputeGroupCentroid: %v", err)
+	}
+	return gid
 }
 
 func groupOf(t *testing.T, store storage.Store, articleID int64) *int64 {
@@ -163,10 +191,7 @@ func TestClusterJoinsExistingGroup(t *testing.T) {
 	st, store, feedID := clusterHarness(t, &fakeAI{available: true})
 
 	// An existing group whose centroid points at [1,0,0].
-	gid, _ := store.CreateArticleGroup(1, "ongoing story")
-	if err := store.UpdateGroupEmbedding(gid, embedding.EncodeFloat32s([]float32{1, 0, 0}), "m"); err != nil {
-		t.Fatal(err)
-	}
+	gid := seedGroupCentroid(t, store, feedID, "ongoing story", []float32{1, 0, 0})
 
 	x := seed(t, store, feedID, "x", "body x")
 	embedArt(t, store, x, []float32{0.98, 0.05, 0}) // close to the centroid
@@ -184,10 +209,7 @@ func TestClusterJoinsExistingGroup(t *testing.T) {
 func TestClusterJoinMutedGroupMarksRead(t *testing.T) {
 	st, store, feedID := clusterHarness(t, &fakeAI{available: true})
 
-	gid, _ := store.CreateArticleGroup(1, "muted story")
-	if err := store.UpdateGroupEmbedding(gid, embedding.EncodeFloat32s([]float32{1, 0, 0}), "m"); err != nil {
-		t.Fatal(err)
-	}
+	gid := seedGroupCentroid(t, store, feedID, "muted story", []float32{1, 0, 0})
 	if err := store.SetGroupMuted(gid, true); err != nil {
 		t.Fatal(err)
 	}

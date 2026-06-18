@@ -1596,42 +1596,8 @@ func (s *PostgresStore) UpdateGroupDisplayName(groupID int64, displayName string
 	return nil
 }
 
-func (s *PostgresStore) UpdateGroupEmbedding(groupID int64, embedding []byte, model string) error {
-	if err := s.q.UpdateGroupEmbedding(context.Background(), db.UpdateGroupEmbeddingParams{
-		Embedding:      embedding,
-		EmbeddingModel: model,
-		ID:             groupID,
-	}); err != nil {
-		return fmt.Errorf("update group embedding: %w", err)
-	}
-	return nil
-}
-
-func (s *PostgresStore) GetGroupsWithEmbeddings(userID int64, model string) ([]ArticleGroupWithEmbedding, error) {
-	rows, err := s.q.GetGroupsWithEmbeddings(context.Background(), db.GetGroupsWithEmbeddingsParams{
-		UserID:         userID,
-		EmbeddingModel: model,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("get groups with embeddings: %w", err)
-	}
-	groups := make([]ArticleGroupWithEmbedding, len(rows))
-	for i, r := range rows {
-		groups[i] = ArticleGroupWithEmbedding{
-			ArticleGroup: groupFromCols(r.ID, r.UserID, r.Topic, r.DisplayName, r.Muted, r.CreatedAt, r.UpdatedAt),
-			Embedding:    r.Embedding,
-		}
-	}
-	return groups, nil
-}
-
-func (s *PostgresStore) GetGroupEmbedding(groupID int64) ([]byte, error) {
-	emb, err := s.q.GetGroupEmbedding(context.Background(), groupID)
-	if err != nil {
-		return nil, fmt.Errorf("get group embedding: %w", err)
-	}
-	return emb, nil
-}
+// Centroid reads/writes (the embedding vector) live in vector.go on the pgx
+// pool: RecomputeGroupCentroid, MatchArticlesToGroups, GroupsNeedingCentroid.
 
 func (s *PostgresStore) GetGroupArticleCount(groupID int64) (int, error) {
 	count, err := s.q.GetGroupArticleCount(context.Background(), groupID)
@@ -2181,54 +2147,28 @@ func (s *PostgresStore) SearchArticlesFTS(userID int64, query string, limit, off
 	return articles, nil
 }
 
-// StoreArticleEmbedding upserts a successful embedding vector. Resets
-// status, attempts, error_message, and last_attempted_at —
-// see SQLiteStore for rationale.
-func (s *PostgresStore) StoreArticleEmbedding(articleID int64, embedding []byte, model string) error {
-	return s.q.StoreArticleEmbedding(context.Background(), db.StoreArticleEmbeddingParams{
-		ArticleID:      articleID,
-		Embedding:      embedding,
-		EmbeddingModel: model,
-		Status:         int16(EmbedStatusOK),
-	})
-}
+// StoreArticleEmbedding and GetArticleEmbeddings (which bind/scan the vector
+// value) live in vector.go on the pgx pool.
 
-// MarkArticleEmbeddingSkipped — see SQLiteStore for behaviour.
+// MarkArticleEmbeddingSkipped — see embedding.sql. The embedding column is left
+// NULL (a non-ok row carries no vector).
 func (s *PostgresStore) MarkArticleEmbeddingSkipped(articleID int64, model string) error {
 	return s.q.MarkArticleEmbeddingSkipped(context.Background(), db.MarkArticleEmbeddingSkippedParams{
 		ArticleID:      articleID,
-		Embedding:      embedSentinelBytes,
 		EmbeddingModel: model,
 		Status:         int16(EmbedStatusTooShort),
 	})
 }
 
-// MarkArticleEmbeddingFailed — see SQLiteStore for behaviour.
+// MarkArticleEmbeddingFailed — see embedding.sql. The embedding column is left
+// NULL (a non-ok row carries no vector).
 func (s *PostgresStore) MarkArticleEmbeddingFailed(articleID int64, model, errMsg string) error {
 	return s.q.MarkArticleEmbeddingFailed(context.Background(), db.MarkArticleEmbeddingFailedParams{
 		ArticleID:      articleID,
-		Embedding:      embedSentinelBytes,
 		EmbeddingModel: model,
 		Status:         int16(EmbedStatusError),
 		ErrorMessage:   errMsg,
 	})
-}
-
-// GetArticleEmbeddings returns all article embeddings for a user's subscribed feeds,
-// filtered by the specified embedding model.
-func (s *PostgresStore) GetArticleEmbeddings(userID int64, model string) ([]ArticleEmbeddingRow, error) {
-	rows, err := s.q.GetArticleEmbeddings(context.Background(), db.GetArticleEmbeddingsParams{
-		UserID:         userID,
-		EmbeddingModel: model,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("get article embeddings: %w", err)
-	}
-	result := make([]ArticleEmbeddingRow, len(rows))
-	for i, r := range rows {
-		result[i] = ArticleEmbeddingRow{ArticleID: r.ArticleID, Embedding: r.Embedding}
-	}
-	return result, nil
 }
 
 // ResetAllArticleEmbeddings deletes every row in article_embeddings.
@@ -2239,27 +2179,6 @@ func (s *PostgresStore) ResetAllArticleEmbeddings() (int64, error) {
 		return 0, fmt.Errorf("reset article embeddings: %w", err)
 	}
 	return n, nil
-}
-
-// GetArticleEmbeddingsByIDs returns usable (status OK) embeddings for the given
-// article IDs and model. See the SQLite implementation.
-func (s *PostgresStore) GetArticleEmbeddingsByIDs(articleIDs []int64, model string) ([]ArticleEmbeddingRow, error) {
-	if len(articleIDs) == 0 {
-		return nil, nil
-	}
-	rows, err := s.q.GetArticleEmbeddingsByIDs(context.Background(), db.GetArticleEmbeddingsByIDsParams{
-		ArticleIds:     articleIDs,
-		EmbeddingModel: model,
-		Status:         int16(EmbedStatusOK),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("get article embeddings by ids: %w", err)
-	}
-	result := make([]ArticleEmbeddingRow, len(rows))
-	for i, r := range rows {
-		result[i] = ArticleEmbeddingRow{ArticleID: r.ArticleID, Embedding: r.Embedding}
-	}
-	return result, nil
 }
 
 // ResetAllGroupEmbeddings clears the centroid and embedding_model on

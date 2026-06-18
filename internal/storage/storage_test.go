@@ -15,6 +15,27 @@ import (
 
 var testSchemaSeq atomic.Int64
 
+// embVec builds a test embedding of EmbedDim components, with vals as the
+// leading values and zeros after, so a few meaningful components can stand in
+// for a full-width vector(EmbedDim) without writing 768 numbers.
+func embVec(vals ...float32) []float32 {
+	v := make([]float32, EmbedDim)
+	copy(v, vals)
+	return v
+}
+
+func vecEqual(a, b []float32) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // testDSN provisions an isolated schema in the test database and returns a DSN
 // whose search_path points at it, plus a cleanup that drops the schema.
 // Reopening the returned DSN (via NewStore) sees the same data. Skips when
@@ -1787,7 +1808,7 @@ func TestStoreAndGetArticleEmbeddings(t *testing.T) {
 	}
 
 	// Store embedding for article 1
-	fakeEmb := []byte{1, 2, 3, 4}
+	fakeEmb := embVec(1, 2, 3, 4)
 	if err := store.StoreArticleEmbedding(artID1, fakeEmb, "nomic-embed-text"); err != nil {
 		t.Fatalf("StoreArticleEmbedding: %v", err)
 	}
@@ -1826,7 +1847,7 @@ func TestStoreAndGetArticleEmbeddings(t *testing.T) {
 	}
 
 	// Upsert: update article 1's embedding
-	newEmb := []byte{5, 6, 7, 8}
+	newEmb := embVec(5, 6, 7, 8)
 	if err := store.StoreArticleEmbedding(artID1, newEmb, "nomic-embed-text"); err != nil {
 		t.Fatalf("StoreArticleEmbedding upsert: %v", err)
 	}
@@ -1837,7 +1858,7 @@ func TestStoreAndGetArticleEmbeddings(t *testing.T) {
 	if len(embs) != 1 {
 		t.Fatalf("expected 1 embedding after upsert, got %d", len(embs))
 	}
-	if string(embs[0].Embedding) != string(newEmb) {
+	if !vecEqual(embs[0].Embedding, newEmb) {
 		t.Errorf("embedding not updated after upsert")
 	}
 }
@@ -1878,7 +1899,7 @@ func TestEmbeddingStatusLifecycle(t *testing.T) {
 	const model = "nomic-embed-text"
 
 	// 1. Real embedding for a1 — status=ok, attempts=0, no error_message.
-	if err := store.StoreArticleEmbedding(a1, []byte{1, 2, 3, 4}, model); err != nil {
+	if err := store.StoreArticleEmbedding(a1, embVec(1, 2, 3, 4), model); err != nil {
 		t.Fatalf("StoreArticleEmbedding a1: %v", err)
 	}
 
@@ -1929,7 +1950,7 @@ func TestEmbeddingStatusLifecycle(t *testing.T) {
 	}
 
 	// 5. Success after failures resets the row — attempts=0, status=ok.
-	if err := store.StoreArticleEmbedding(a3, []byte{5, 6, 7, 8}, model); err != nil {
+	if err := store.StoreArticleEmbedding(a3, embVec(5, 6, 7, 8), model); err != nil {
 		t.Fatalf("StoreArticleEmbedding a3 (recovery): %v", err)
 	}
 	missing, _ = store.GetArticlesWithoutEmbeddings(model, 100)
@@ -2019,7 +2040,7 @@ func TestResetStuckEmbeddings(t *testing.T) {
 		}
 	}
 	// ok: real embedding.
-	if err := store.StoreArticleEmbedding(ok, []byte{1, 2, 3, 4}, model); err != nil {
+	if err := store.StoreArticleEmbedding(ok, embVec(1, 2, 3, 4), model); err != nil {
 		t.Fatalf("StoreArticleEmbedding ok: %v", err)
 	}
 	// tooShort: deterministic skip.
@@ -2143,10 +2164,10 @@ func TestResetAllArticleEmbeddings(t *testing.T) {
 	a1, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "g1", Title: "T1", URL: "u1", PublishedDate: &now})
 	a2, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "g2", Title: "T2", URL: "u2", PublishedDate: &now})
 
-	if err := store.StoreArticleEmbedding(a1, []byte{1, 2, 3, 4}, "nomic-embed-text"); err != nil {
+	if err := store.StoreArticleEmbedding(a1, embVec(1, 2, 3, 4), "nomic-embed-text"); err != nil {
 		t.Fatalf("StoreArticleEmbedding a1: %v", err)
 	}
-	if err := store.StoreArticleEmbedding(a2, []byte{5, 6, 7, 8}, "nomic-embed-text"); err != nil {
+	if err := store.StoreArticleEmbedding(a2, embVec(5, 6, 7, 8), "nomic-embed-text"); err != nil {
 		t.Fatalf("StoreArticleEmbedding a2: %v", err)
 	}
 
@@ -2177,15 +2198,33 @@ func TestResetAllGroupEmbeddings(t *testing.T) {
 	store, cleanup := newTestStore(t)
 	defer cleanup()
 
+	const model = "nomic-embed-text"
 	userID := int64(1)
 	store.CreateUser("u")
+	feedID, _ := store.AddFeed("https://example.com/feed", "F", "")
+	store.SubscribeUserToFeed(userID, feedID)
+	now := time.Now()
+
 	g1, _ := store.CreateArticleGroup(userID, "topic 1")
 	g2, _ := store.CreateArticleGroup(userID, "topic 2")
-	if err := store.UpdateGroupEmbedding(g1, []byte{1, 2, 3, 4}, "nomic-embed-text"); err != nil {
-		t.Fatalf("UpdateGroupEmbedding g1: %v", err)
+	// Give each group a real centroid via an embedded member, so the reset has
+	// something to clear and GroupsNeedingCentroid can confirm the clearing.
+	for i, gid := range []int64{g1, g2} {
+		guid := fmt.Sprintf("a%d", i)
+		aid, _ := store.AddArticle(&Article{FeedID: feedID, GUID: guid, Title: guid, URL: "u/" + guid, Content: "x", PublishedDate: &now})
+		if err := store.StoreArticleEmbedding(aid, embVec(float32(i+1)), model); err != nil {
+			t.Fatalf("StoreArticleEmbedding: %v", err)
+		}
+		if err := store.AddArticleToGroup(gid, aid); err != nil {
+			t.Fatalf("AddArticleToGroup: %v", err)
+		}
+		if err := store.RecomputeGroupCentroid(gid, model); err != nil {
+			t.Fatalf("RecomputeGroupCentroid: %v", err)
+		}
 	}
-	if err := store.UpdateGroupEmbedding(g2, []byte{5, 6, 7, 8}, "nomic-embed-text"); err != nil {
-		t.Fatalf("UpdateGroupEmbedding g2: %v", err)
+	// Both centroids are now current, so nothing needs a centroid.
+	if need, _ := store.GroupsNeedingCentroid(userID, model); len(need) != 0 {
+		t.Fatalf("expected 0 groups needing a centroid before reset, got %d", len(need))
 	}
 
 	n, err := store.ResetAllGroupEmbeddings()
@@ -2196,11 +2235,10 @@ func TestResetAllGroupEmbeddings(t *testing.T) {
 		t.Errorf("rows updated: got %d, want 2", n)
 	}
 
-	// Verify both centroids are now NULL — GetGroupsWithEmbeddings filters
-	// them out, so it should return zero groups.
-	groups, _ := store.GetGroupsWithEmbeddings(userID, "nomic-embed-text")
-	if len(groups) != 0 {
-		t.Errorf("expected 0 groups with embeddings after reset, got %d", len(groups))
+	// With centroids cleared but embedded members intact, both groups now need a
+	// centroid -- proof the reset nulled them.
+	if need, _ := store.GroupsNeedingCentroid(userID, model); len(need) != 2 {
+		t.Errorf("expected 2 groups needing a centroid after reset, got %d", len(need))
 	}
 
 	// Group rows themselves still exist — verify via single-group lookup.
@@ -2619,7 +2657,7 @@ func TestGetUngroupedEmbeddedArticles(t *testing.T) {
 		}
 		now := time.Now()
 		old := now.Add(-100 * time.Hour)
-		vec := []byte{1, 2, 3, 4}
+		vec := embVec(1, 2, 3, 4)
 		// All articles are security-passed so the test isolates the embedding,
 		// grouping, and recency filters rather than the security gate.
 		mk := func(guid string, pub time.Time) int64 {

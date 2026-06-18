@@ -1,6 +1,12 @@
 services:
   postgres:
-    image: postgres:16
+    # pgvector image (Postgres 16 + the vector extension) -- grouping/similarity
+    # uses pgvector ANN (#186); stock postgres:16 lacks it. This single-node
+    # compose runs Postgres as the superuser POSTGRES_USER, so the startup
+    # migration's CREATE EXTENSION IF NOT EXISTS vector self-provisions. (The
+    # shared homelab Postgres provisions the extension out-of-band instead,
+    # because herald connects there as a non-superuser role.)
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: herald
       POSTGRES_USER: herald

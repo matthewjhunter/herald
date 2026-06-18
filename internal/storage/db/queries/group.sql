@@ -83,16 +83,8 @@ DELETE FROM article_groups WHERE id = @id;
 -- name: UpdateGroupDisplayName :exec
 UPDATE article_groups SET display_name = @display_name WHERE id = @id;
 
--- name: UpdateGroupEmbedding :exec
-UPDATE article_groups SET embedding = @embedding, embedding_model = @embedding_model WHERE id = @id;
-
--- name: GetGroupsWithEmbeddings :many
-SELECT id, user_id, topic, display_name, muted, embedding, created_at, updated_at
-FROM article_groups
-WHERE user_id = @user_id AND embedding IS NOT NULL AND embedding_model = @embedding_model;
-
--- name: GetGroupEmbedding :one
-SELECT embedding FROM article_groups WHERE id = @id;
+-- Centroid reads/writes (the embedding vector) run through the hand-written
+-- pgvector layer in internal/storage/vector.go, not sqlc (#186).
 
 -- name: GetGroupArticleCount :one
 SELECT COUNT(*)::int FROM article_group_members WHERE group_id = @group_id;

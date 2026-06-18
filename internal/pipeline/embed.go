@@ -3,7 +3,6 @@ package pipeline
 import (
 	"context"
 
-	embedding "github.com/matthewjhunter/go-embedding"
 	"github.com/matthewjhunter/herald/internal/storage"
 )
 
@@ -14,8 +13,8 @@ import (
 // BackendAvailable gate here — only a guard for embedding being unconfigured.
 //
 // EmbedRecord returns (nil, nil) for bodies too short to embed; those are marked
-// as a deterministic skip and do not advance. Errors are recorded with a
-// sentinel (bounded retries via GetArticlesWithoutEmbeddings) and do not advance.
+// as a deterministic skip and do not advance. Errors are recorded as a non-ok
+// status row (bounded retries via GetArticlesWithoutEmbeddings) and do not advance.
 func (s *Stage) Embed(ctx context.Context, in []storage.Article) []storage.Article {
 	if s.Embedder == nil || s.BuildEmbedInput == nil {
 		return nil
@@ -34,7 +33,7 @@ func (s *Stage) Embed(ctx context.Context, in []storage.Article) []storage.Artic
 			s.Store.MarkArticleEmbeddingSkipped(a.ID, model) //nolint:errcheck
 			return nil
 		}
-		if err := s.Store.StoreArticleEmbedding(a.ID, embedding.EncodeFloat32s(emb), model); err != nil {
+		if err := s.Store.StoreArticleEmbedding(a.ID, emb, model); err != nil {
 			s.Formatter.Warning("store embedding for article %d: %v", a.ID, err)
 			return nil
 		}

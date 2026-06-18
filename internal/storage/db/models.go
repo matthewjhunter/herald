@@ -6,6 +6,8 @@ package db
 
 import (
 	"time"
+
+	"github.com/pgvector/pgvector-go"
 )
 
 type AiSummary struct {
@@ -62,25 +64,25 @@ type ArticleCategory struct {
 
 type ArticleEmbedding struct {
 	ArticleID       int64
-	Embedding       []byte
 	EmbeddingModel  string
 	Status          int16
 	Attempts        int
 	ErrorMessage    *string
 	LastAttemptedAt *time.Time
 	CreatedAt       time.Time
+	Embedding       *pgvector.Vector
 }
 
 type ArticleGroup struct {
 	ID             int64
 	UserID         int64
 	Topic          string
-	Embedding      []byte
 	EmbeddingModel string
 	DisplayName    *string
 	Muted          bool
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+	Embedding      *pgvector.Vector
 }
 
 type ArticleGroupMember struct {
