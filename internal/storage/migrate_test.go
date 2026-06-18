@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"testing"
+	"time"
 )
 
 // TestMigrationsBuildAndAreIdempotent verifies the goose baseline: the first
@@ -84,5 +86,61 @@ func TestMigrationsBuildAndAreIdempotent(t *testing.T) {
 	}
 	if len(feeds) != 1 {
 		t.Errorf("expected 1 feed to survive reopen, got %d", len(feeds))
+	}
+}
+
+// TestRunMigrationsAdvisoryLockSerializes verifies the cross-process guard from
+// #195: while one session holds the migration advisory lock (standing in for a
+// peer herald process mid-migrate), runMigrations on a separate pool must block
+// rather than run goose.Up concurrently, and must proceed once the lock frees.
+func TestRunMigrationsAdvisoryLockSerializes(t *testing.T) {
+	dsn, drop := testDSN(t)
+	defer drop()
+	ctx := context.Background()
+
+	// Holder pool: grab the migration lock on a dedicated connection and keep it.
+	holder, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("open holder: %v", err)
+	}
+	defer holder.Close()
+	hconn, err := holder.Conn(ctx)
+	if err != nil {
+		t.Fatalf("holder conn: %v", err)
+	}
+	if _, err := hconn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", migrationsAdvisoryLockKey); err != nil {
+		t.Fatalf("hold lock: %v", err)
+	}
+
+	// runMigrations on a second pool (a distinct session, like another process)
+	// must block while the lock is held.
+	db2, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("open db2: %v", err)
+	}
+	defer db2.Close()
+	done := make(chan error, 1)
+	go func() { done <- runMigrations(db2) }()
+
+	select {
+	case err := <-done:
+		t.Fatalf("runMigrations completed while the lock was held (err=%v); advisory lock not honoured", err)
+	case <-time.After(500 * time.Millisecond):
+		// Expected: still blocked on the lock.
+	}
+
+	// Release the lock; runMigrations must now complete and build the schema.
+	if _, err := hconn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", migrationsAdvisoryLockKey); err != nil {
+		t.Fatalf("release lock: %v", err)
+	}
+	hconn.Close()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runMigrations after unlock: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("runMigrations did not complete after the lock was released")
 	}
 }
