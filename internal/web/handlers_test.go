@@ -510,6 +510,40 @@ func TestHandleArticleList_Default(t *testing.T) {
 	}
 }
 
+func TestHandleArticleList_InlineAISummary(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	const summary = "Batch-fetched inline summary for the list."
+	if err := tf.store.UpdateArticleAISummary(tf.articleID, summary); err != nil {
+		t.Fatalf("UpdateArticleAISummary: %v", err)
+	}
+
+	rr := authedRequest(t, tf, "GET", "/articles", map[string]string{"HX-Request": "true"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, summary) {
+		t.Error("article list should render the inline AI summary text")
+	}
+	if !strings.Contains(body, "ai-summary-inline") {
+		t.Error("inline summary should use the .ai-summary-inline class")
+	}
+}
+
+func TestHandleArticleList_NoSummaryNoInlineBlock(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// The seeded article has no AI summary, so the inline block must be absent.
+	rr := authedRequest(t, tf, "GET", "/articles", map[string]string{"HX-Request": "true"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	if strings.Contains(rr.Body.String(), "ai-summary-inline") {
+		t.Error("article without a summary should not render an inline summary block")
+	}
+}
+
 func TestHandleArticleList_ByFeed(t *testing.T) {
 	tf := newTestFixtures(t)
 

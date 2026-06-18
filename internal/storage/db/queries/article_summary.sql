@@ -17,3 +17,9 @@ ON CONFLICT (article_id) DO UPDATE SET
 SELECT article_id, ai_summary, generated_at
 FROM article_summaries
 WHERE article_id = @article_id;
+
+-- name: GetArticleSummaries :many
+SELECT article_id, ai_summary
+FROM article_summaries
+WHERE article_id = ANY(@article_ids::bigint[])
+  AND ai_summary <> '';

@@ -257,6 +257,15 @@ func (e *Engine) GetArticleForUser(userID, articleID int64) (*Article, error) {
 	return &result, nil
 }
 
+// GetArticleSummaries batch-fetches non-empty AI summaries for the given
+// article ids, keyed by id, so a list page can render inline summaries without
+// an N+1 of GetArticleForUser. Access control is the caller's: pass ids the
+// user is entitled to (a page of the user's own list), since summaries are
+// per-article, not per-user (#162).
+func (e *Engine) GetArticleSummaries(articleIDs []int64) (map[int64]string, error) {
+	return e.store.GetArticleSummaries(articleIDs)
+}
+
 // GetHighInterestArticles returns unread articles scored above the threshold.
 func (e *Engine) GetHighInterestArticles(userID int64, threshold float64, limit, offset int) ([]Article, []float64, error) {
 	articles, scores, err := e.store.GetArticlesByInterestScore(userID, threshold, limit, offset, e.resolveFilterThreshold(userID))

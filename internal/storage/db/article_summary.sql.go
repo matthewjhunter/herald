@@ -10,6 +10,38 @@ import (
 	"time"
 )
 
+const getArticleSummaries = `-- name: GetArticleSummaries :many
+SELECT article_id, ai_summary
+FROM article_summaries
+WHERE article_id = ANY($1::bigint[])
+  AND ai_summary <> ''
+`
+
+type GetArticleSummariesRow struct {
+	ArticleID int64
+	AiSummary string
+}
+
+func (q *Queries) GetArticleSummaries(ctx context.Context, articleIds []int64) ([]GetArticleSummariesRow, error) {
+	rows, err := q.db.Query(ctx, getArticleSummaries, articleIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetArticleSummariesRow{}
+	for rows.Next() {
+		var i GetArticleSummariesRow
+		if err := rows.Scan(&i.ArticleID, &i.AiSummary); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getArticleSummary = `-- name: GetArticleSummary :one
 SELECT article_id, ai_summary, generated_at
 FROM article_summaries

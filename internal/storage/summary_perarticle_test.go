@@ -46,6 +46,58 @@ func TestArticleSummarySharedAcrossUsers(t *testing.T) {
 	})
 }
 
+// TestGetArticleSummariesBatch covers the batch lookup that backs inline list
+// summaries (#188): it returns one map entry per article that has a non-empty
+// summary, omits skipped (empty) summaries and unknown ids, and tolerates an
+// empty id list.
+func TestGetArticleSummariesBatch(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		feedID, _ := store.AddFeed("https://example.com/feed", "Feed", "")
+		if err := store.SubscribeUserToFeed(1, feedID); err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now()
+		summarized, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "sum", Title: "sum",
+			URL: "https://example.com/sum", PublishedDate: &now})
+		skipped, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "skip", Title: "skip",
+			URL: "https://example.com/skip2", PublishedDate: &now})
+		bare, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "bare", Title: "bare",
+			URL: "https://example.com/bare", PublishedDate: &now})
+
+		if err := store.UpdateArticleAISummary(summarized, "inline summary"); err != nil {
+			t.Fatalf("UpdateArticleAISummary: %v", err)
+		}
+		if err := store.MarkSummarizationSkipped(skipped, "too short"); err != nil {
+			t.Fatalf("MarkSummarizationSkipped: %v", err)
+		}
+
+		// Empty input is a no-op, not an error.
+		if got, err := store.GetArticleSummaries(nil); err != nil || len(got) != 0 {
+			t.Fatalf("GetArticleSummaries(nil) = %v err=%v, want empty", got, err)
+		}
+
+		got, err := store.GetArticleSummaries([]int64{summarized, skipped, bare, 999999})
+		if err != nil {
+			t.Fatalf("GetArticleSummaries: %v", err)
+		}
+		if got[summarized] != "inline summary" {
+			t.Errorf("summarized article: got %q, want %q", got[summarized], "inline summary")
+		}
+		if _, ok := got[skipped]; ok {
+			t.Error("skipped (empty) summary must be omitted from the batch result")
+		}
+		if _, ok := got[bare]; ok {
+			t.Error("article with no summary row must be omitted")
+		}
+		if _, ok := got[999999]; ok {
+			t.Error("unknown id must be omitted")
+		}
+		if len(got) != 1 {
+			t.Errorf("expected exactly one entry, got %d: %v", len(got), got)
+		}
+	})
+}
+
 // TestSummarizationSkipSharedAcrossUsers verifies a skip marker is shared the
 // same way: one MarkSummarizationSkipped keeps the article out of the global
 // queue with no per-user retry.
