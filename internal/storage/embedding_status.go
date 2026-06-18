@@ -29,6 +29,15 @@ const (
 	EmbedStatusError EmbedStatus = 2
 )
 
+// EmbedDim is the dimension of the embedding vectors stored in the
+// vector(EmbedDim) columns. It matches nomic-embed-text, herald's default (and
+// only deployed) embedding model. The migration that introduced the vector
+// columns (0003) hardcodes this dimension, so switching to a model that emits a
+// different number of dimensions requires a new migration to widen the columns
+// and a bump here. StoreArticleEmbedding rejects vectors of any other length so
+// a misconfigured model fails loudly instead of silently corrupting the column.
+const EmbedDim = 768
+
 // EmbedMaxAttempts caps retries on EmbedStatusError rows. After this many
 // failures the row stays in the error state but is no longer returned by
 // GetArticlesWithoutEmbeddings — operators can manually clear sentinels

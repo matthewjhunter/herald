@@ -10,81 +10,6 @@ import (
 	"time"
 )
 
-const getArticleEmbeddings = `-- name: GetArticleEmbeddings :many
-SELECT ae.article_id, ae.embedding
-FROM article_embeddings ae
-JOIN articles a ON a.id = ae.article_id
-JOIN user_feeds uf ON a.feed_id = uf.feed_id
-WHERE uf.user_id = $1 AND ae.embedding_model = $2
-`
-
-type GetArticleEmbeddingsParams struct {
-	UserID         int64
-	EmbeddingModel string
-}
-
-type GetArticleEmbeddingsRow struct {
-	ArticleID int64
-	Embedding []byte
-}
-
-func (q *Queries) GetArticleEmbeddings(ctx context.Context, arg GetArticleEmbeddingsParams) ([]GetArticleEmbeddingsRow, error) {
-	rows, err := q.db.Query(ctx, getArticleEmbeddings, arg.UserID, arg.EmbeddingModel)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetArticleEmbeddingsRow{}
-	for rows.Next() {
-		var i GetArticleEmbeddingsRow
-		if err := rows.Scan(&i.ArticleID, &i.Embedding); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getArticleEmbeddingsByIDs = `-- name: GetArticleEmbeddingsByIDs :many
-SELECT article_id, embedding FROM article_embeddings
-WHERE article_id = ANY($1::bigint[])
-  AND embedding_model = $2 AND status = $3
-`
-
-type GetArticleEmbeddingsByIDsParams struct {
-	ArticleIds     []int64
-	EmbeddingModel string
-	Status         int16
-}
-
-type GetArticleEmbeddingsByIDsRow struct {
-	ArticleID int64
-	Embedding []byte
-}
-
-func (q *Queries) GetArticleEmbeddingsByIDs(ctx context.Context, arg GetArticleEmbeddingsByIDsParams) ([]GetArticleEmbeddingsByIDsRow, error) {
-	rows, err := q.db.Query(ctx, getArticleEmbeddingsByIDs, arg.ArticleIds, arg.EmbeddingModel, arg.Status)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetArticleEmbeddingsByIDsRow{}
-	for rows.Next() {
-		var i GetArticleEmbeddingsByIDsRow
-		if err := rows.Scan(&i.ArticleID, &i.Embedding); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getArticlesWithoutEmbeddings = `-- name: GetArticlesWithoutEmbeddings :many
 SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
        a.author, a.published_date, a.fetched_date
@@ -155,12 +80,55 @@ func (q *Queries) GetArticlesWithoutEmbeddings(ctx context.Context, arg GetArtic
 	return items, nil
 }
 
+const groupsNeedingCentroid = `-- name: GroupsNeedingCentroid :many
+SELECT DISTINCT ag.id
+FROM article_groups ag
+JOIN article_group_members m ON m.group_id = ag.id
+JOIN article_embeddings ae ON ae.article_id = m.article_id
+  AND ae.embedding_model = $1 AND ae.status = $2
+WHERE ag.user_id = $3
+  AND (ag.embedding IS NULL OR ag.embedding_model <> $1)
+`
+
+type GroupsNeedingCentroidParams struct {
+	EmbeddingModel string
+	Status         int16
+	UserID         int64
+}
+
+// Groups whose centroid is missing or was built under a different embedding
+// model, but that have at least one member with a usable (status ok) embedding
+// under the current model -- so a centroid recompute will actually produce a
+// vector. Drives the cluster stage's self-healing centroid-repair pass (#186):
+// after the BYTEA->vector reset (and after any model switch) existing groups
+// have no centroid until their members re-embed.
+func (q *Queries) GroupsNeedingCentroid(ctx context.Context, arg GroupsNeedingCentroidParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, groupsNeedingCentroid, arg.EmbeddingModel, arg.Status, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markArticleEmbeddingFailed = `-- name: MarkArticleEmbeddingFailed :exec
-INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message, last_attempted_at)
-VALUES ($1, $2, $3, $4, 1, $5::text, NOW())
+INSERT INTO article_embeddings (article_id, embedding_model, status, attempts, error_message, last_attempted_at)
+VALUES ($1, $2, $3, 1, $4::text, NOW())
 ON CONFLICT (article_id) DO UPDATE
-SET embedding_model = EXCLUDED.embedding_model,
-    status = $4,
+SET embedding = NULL,
+    embedding_model = EXCLUDED.embedding_model,
+    status = $3,
     attempts = article_embeddings.attempts + 1,
     error_message = EXCLUDED.error_message,
     last_attempted_at = NOW(),
@@ -169,7 +137,6 @@ SET embedding_model = EXCLUDED.embedding_model,
 
 type MarkArticleEmbeddingFailedParams struct {
 	ArticleID      int64
-	Embedding      []byte
 	EmbeddingModel string
 	Status         int16
 	ErrorMessage   string
@@ -178,7 +145,6 @@ type MarkArticleEmbeddingFailedParams struct {
 func (q *Queries) MarkArticleEmbeddingFailed(ctx context.Context, arg MarkArticleEmbeddingFailedParams) error {
 	_, err := q.db.Exec(ctx, markArticleEmbeddingFailed,
 		arg.ArticleID,
-		arg.Embedding,
 		arg.EmbeddingModel,
 		arg.Status,
 		arg.ErrorMessage,
@@ -187,11 +153,13 @@ func (q *Queries) MarkArticleEmbeddingFailed(ctx context.Context, arg MarkArticl
 }
 
 const markArticleEmbeddingSkipped = `-- name: MarkArticleEmbeddingSkipped :exec
-INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message, last_attempted_at)
-VALUES ($1, $2, $3, $4, 0, NULL, NULL)
+
+INSERT INTO article_embeddings (article_id, embedding_model, status, attempts, error_message, last_attempted_at)
+VALUES ($1, $2, $3, 0, NULL, NULL)
 ON CONFLICT (article_id) DO UPDATE
-SET embedding_model = EXCLUDED.embedding_model,
-    status = $4,
+SET embedding = NULL,
+    embedding_model = EXCLUDED.embedding_model,
+    status = $3,
     attempts = 0,
     error_message = NULL,
     last_attempted_at = NULL,
@@ -200,18 +168,17 @@ SET embedding_model = EXCLUDED.embedding_model,
 
 type MarkArticleEmbeddingSkippedParams struct {
 	ArticleID      int64
-	Embedding      []byte
 	EmbeddingModel string
 	Status         int16
 }
 
+// Queries that read or write the embedding vector itself live in the
+// hand-written pgvector layer (internal/storage/vector.go), not here: sqlc does
+// not model the vector type or its distance operators (#186). This file holds
+// the embedding bookkeeping queries -- status, retries, resets -- that never
+// touch the vector value.
 func (q *Queries) MarkArticleEmbeddingSkipped(ctx context.Context, arg MarkArticleEmbeddingSkippedParams) error {
-	_, err := q.db.Exec(ctx, markArticleEmbeddingSkipped,
-		arg.ArticleID,
-		arg.Embedding,
-		arg.EmbeddingModel,
-		arg.Status,
-	)
+	_, err := q.db.Exec(ctx, markArticleEmbeddingSkipped, arg.ArticleID, arg.EmbeddingModel, arg.Status)
 	return err
 }
 
@@ -284,34 +251,4 @@ func (q *Queries) ResetStuckEmbeddingsLike(ctx context.Context, arg ResetStuckEm
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const storeArticleEmbedding = `-- name: StoreArticleEmbedding :exec
-INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message, last_attempted_at)
-VALUES ($1, $2, $3, $4, 0, NULL, NULL)
-ON CONFLICT (article_id) DO UPDATE
-SET embedding = EXCLUDED.embedding,
-    embedding_model = EXCLUDED.embedding_model,
-    status = $4,
-    attempts = 0,
-    error_message = NULL,
-    last_attempted_at = NULL,
-    created_at = NOW()
-`
-
-type StoreArticleEmbeddingParams struct {
-	ArticleID      int64
-	Embedding      []byte
-	EmbeddingModel string
-	Status         int16
-}
-
-func (q *Queries) StoreArticleEmbedding(ctx context.Context, arg StoreArticleEmbeddingParams) error {
-	_, err := q.db.Exec(ctx, storeArticleEmbedding,
-		arg.ArticleID,
-		arg.Embedding,
-		arg.EmbeddingModel,
-		arg.Status,
-	)
-	return err
 }

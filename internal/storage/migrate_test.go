@@ -40,8 +40,21 @@ func TestMigrationsBuildAndAreIdempotent(t *testing.T) {
 	if err := db.QueryRow("SELECT max(version_id) FROM goose_db_version").Scan(&maxVersion); err != nil {
 		t.Fatalf("read goose version: %v", err)
 	}
-	if maxVersion != 2 {
-		t.Errorf("goose max version = %d, want 2", maxVersion)
+	if maxVersion != 3 {
+		t.Errorf("goose max version = %d, want 3", maxVersion)
+	}
+
+	// 0003 must leave the embedding columns as pgvector vectors, not BYTEA.
+	for _, tbl := range []string{"article_embeddings", "article_groups"} {
+		var udt string
+		if err := db.QueryRow(
+			`SELECT udt_name FROM information_schema.columns
+			 WHERE table_name = $1 AND column_name = 'embedding'`, tbl).Scan(&udt); err != nil {
+			t.Fatalf("inspect %s.embedding: %v", tbl, err)
+		}
+		if udt != "vector" {
+			t.Errorf("%s.embedding udt = %q, want %q", tbl, udt, "vector")
+		}
 	}
 
 	// 0002 must leave sessions in the sealed-token shape: bytea tokens plus a

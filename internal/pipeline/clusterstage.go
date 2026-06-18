@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	embedding "github.com/matthewjhunter/go-embedding"
 	"github.com/matthewjhunter/herald/internal/ai"
 	"github.com/matthewjhunter/herald/internal/storage"
 )
@@ -33,73 +32,76 @@ func (s *Stage) Cluster(ctx context.Context, cohort []storage.Article) error {
 		return nil
 	}
 	model := s.Embedder.Model()
-	threshold := s.clusterThreshold()
+	// pgvector measures cosine distance (1 - cosine similarity), so the join
+	// similarity threshold becomes a maximum distance (#186).
+	maxDist := 1 - s.clusterThreshold()
 
-	// Load the cohort's vectors in one query.
+	// Re-establish centroids for existing groups that lost theirs (the
+	// BYTEA->vector reset, or a model switch) before matching against them, so a
+	// recovering group can gather its ongoing story instead of spawning a
+	// duplicate. No-op once centroids are current.
+	s.repairCentroids(model)
+
+	artByID := make(map[int64]storage.Article, len(cohort))
 	cohortIDs := make([]int64, len(cohort))
 	for i, a := range cohort {
+		artByID[a.ID] = a
 		cohortIDs[i] = a.ID
 	}
-	embRows, err := s.Store.GetArticleEmbeddingsByIDs(cohortIDs, model)
+
+	// 1. JOIN: in one ANN query, find each embedded cohort article's nearest
+	// existing group centroid within the threshold. Matched articles join that
+	// group; embedded-but-unmatched articles are held as leftovers; articles
+	// with no usable embedding are absent from the result and skipped.
+	matches, err := s.Store.MatchArticlesToGroups(s.UserID, model, cohortIDs, maxDist)
 	if err != nil {
 		return err
 	}
-	vecByID := make(map[int64][]float32, len(embRows))
-	for _, r := range embRows {
-		vecByID[r.ArticleID] = embedding.DecodeFloat32s(r.Embedding)
-	}
-
-	// Snapshot existing group centroids once; all join decisions are made
-	// against this frozen set.
-	groups, err := s.Store.GetGroupsWithEmbeddings(s.UserID, model)
-	if err != nil {
-		return err
-	}
-	snapIDs := make([]int64, 0, len(groups))
-	snapVecs := make([][]float32, 0, len(groups))
-	for _, g := range groups {
-		snapIDs = append(snapIDs, g.ID)
-		snapVecs = append(snapVecs, embedding.DecodeFloat32s(g.Embedding))
-	}
-
-	// 1. JOIN: assign each cohort article to its best existing group if similar
-	// enough; otherwise hold it as a leftover for new-group formation.
 	joined := make(map[int64]bool) // groupIDs touched by joins
-	var leftoverArts []storage.Article
-	var leftoverVecs [][]float32
-	for _, a := range cohort {
-		vec, ok := vecByID[a.ID]
-		if !ok {
-			continue // no usable embedding — skip
+	var leftoverIDs []int64
+	for _, m := range matches {
+		if m.GroupID != 0 {
+			if s.joinArticle(m.GroupID, m.ArticleID) {
+				joined[m.GroupID] = true
+			}
+			continue
 		}
-		if len(snapVecs) > 0 {
-			if idx, sim := bestCentroidMatch(vec, snapVecs); idx >= 0 && sim >= threshold {
-				gid := snapIDs[idx]
-				if s.joinArticle(gid, a.ID) {
-					joined[gid] = true
-				}
-				continue
+		leftoverIDs = append(leftoverIDs, m.ArticleID)
+	}
+
+	// 2. FORM: single-linkage clustering over the leftovers, with the similarity
+	// edges computed in the database. Map article ids to indices so the pure
+	// union-find primitive can group them.
+	pairs, err := s.Store.LeftoverSimilarPairs(model, leftoverIDs, maxDist)
+	if err != nil {
+		return err
+	}
+	idxByID := make(map[int64]int, len(leftoverIDs))
+	for i, id := range leftoverIDs {
+		idxByID[id] = i
+	}
+	edges := make([][2]int, 0, len(pairs))
+	for _, p := range pairs {
+		if ia, oka := idxByID[p[0]]; oka {
+			if ib, okb := idxByID[p[1]]; okb {
+				edges = append(edges, [2]int{ia, ib})
 			}
 		}
-		leftoverArts = append(leftoverArts, a)
-		leftoverVecs = append(leftoverVecs, vec)
 	}
-
-	// 2. FORM: link leftovers into new groups (>= MinClusterSize members).
 	minSize := s.minClusterSize()
-	for _, comp := range clusterByEdges(len(leftoverVecs), cosineEdges(leftoverVecs, threshold)) {
+	for _, comp := range clusterByEdges(len(leftoverIDs), edges) {
 		if len(comp) < minSize {
 			continue // singleton / too small — stays ungrouped
 		}
-		topic := truncateTopic(leftoverArts[comp[0]].Title)
+		topic := truncateTopic(artByID[leftoverIDs[comp[0]]].Title)
 		gid, err := s.Store.CreateArticleGroup(s.UserID, topic)
 		if err != nil {
 			s.Formatter.Warning("failed to create article group: %v", err)
 			continue
 		}
 		for _, idx := range comp {
-			if err := s.Store.AddArticleToGroup(gid, leftoverArts[idx].ID); err != nil {
-				s.Formatter.Warning("failed to add article %d to new group %d: %v", leftoverArts[idx].ID, gid, err)
+			if err := s.Store.AddArticleToGroup(gid, leftoverIDs[idx]); err != nil {
+				s.Formatter.Warning("failed to add article %d to new group %d: %v", leftoverIDs[idx], gid, err)
 			}
 		}
 		s.recomputeCentroid(gid, model)
@@ -112,6 +114,23 @@ func (s *Stage) Cluster(ctx context.Context, cohort []storage.Article) error {
 		s.nameGroup(ctx, gid)
 	}
 	return nil
+}
+
+// repairCentroids rebuilds the centroid of every group that is missing one (or
+// whose centroid was built under a different model) but has at least one
+// embedded member. It is the self-healing counterpart to dropping all centroids
+// in the BYTEA->vector migration: as members re-embed over successive cycles,
+// their groups regain centroids and rejoin the JOIN phase. A no-op at steady
+// state (no group qualifies).
+func (s *Stage) repairCentroids(model string) {
+	ids, err := s.Store.GroupsNeedingCentroid(s.UserID, model)
+	if err != nil {
+		s.Formatter.Warning("failed to list groups needing a centroid: %v", err)
+		return
+	}
+	for _, gid := range ids {
+		s.recomputeCentroid(gid, model)
+	}
 }
 
 // joinArticle adds an article to an existing group and, if that group is muted,
@@ -130,30 +149,11 @@ func (s *Stage) joinArticle(groupID, articleID int64) bool {
 }
 
 // recomputeCentroid recomputes a group's centroid as the mean of all its
-// members' embeddings and stores it. Done after membership changes so the
-// centroid reflects the full group, not an incremental approximation.
+// members' embeddings, in the database via pgvector's AVG aggregate (#186). Done
+// after membership changes so the centroid reflects the full group, not an
+// incremental approximation.
 func (s *Stage) recomputeCentroid(groupID int64, model string) {
-	arts, err := s.Store.GetGroupArticles(groupID)
-	if err != nil || len(arts) == 0 {
-		return
-	}
-	ids := make([]int64, len(arts))
-	for i, a := range arts {
-		ids[i] = a.ID
-	}
-	rows, err := s.Store.GetArticleEmbeddingsByIDs(ids, model)
-	if err != nil || len(rows) == 0 {
-		return
-	}
-	vecs := make([][]float32, 0, len(rows))
-	for _, r := range rows {
-		vecs = append(vecs, embedding.DecodeFloat32s(r.Embedding))
-	}
-	centroid := meanCentroid(vecs)
-	if centroid == nil {
-		return
-	}
-	if err := s.Store.UpdateGroupEmbedding(groupID, embedding.EncodeFloat32s(centroid), model); err != nil {
+	if err := s.Store.RecomputeGroupCentroid(groupID, model); err != nil {
 		s.Formatter.Warning("failed to update centroid for group %d: %v", groupID, err)
 	}
 }

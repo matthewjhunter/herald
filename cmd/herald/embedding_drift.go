@@ -75,14 +75,11 @@ shares. Default sample size is intentionally small (30) to keep the cost down.`,
 				return fmt.Errorf("load stored embeddings: %w", err)
 			}
 
-			// Filter out sentinel rows (status != ok). GetArticleEmbeddings
-			// returns every row matching the model; sentinel rows hold a
-			// single-byte placeholder, real vectors are 4 * dim bytes.
+			// GetArticleEmbeddings returns only status-ok rows, so every row
+			// carries a real vector (no sentinel placeholders to filter).
 			var realRows []driftRow
 			for _, r := range rows {
-				if len(r.Embedding) >= 4 {
-					realRows = append(realRows, driftRow{ID: r.ArticleID, Stored: r.Embedding})
-				}
+				realRows = append(realRows, driftRow{ID: r.ArticleID, Stored: r.Embedding})
 			}
 			if len(realRows) == 0 {
 				return fmt.Errorf("no real embeddings found for user %d, model %q", userID, model)
@@ -120,8 +117,7 @@ shares. Default sample size is intentionally small (30) to keep the cost down.`,
 						i+1, len(realRows), row.ID)
 					continue
 				}
-				stored := embedding.DecodeFloat32s(row.Stored)
-				sim := embedding.CosineSimilarity(stored, newVec)
+				sim := embedding.CosineSimilarity(row.Stored, newVec)
 				results = append(results, driftResult{
 					ArticleID: row.ID,
 					Title:     article.Title,
@@ -146,7 +142,7 @@ shares. Default sample size is intentionally small (30) to keep the cost down.`,
 
 type driftRow struct {
 	ID     int64
-	Stored []byte
+	Stored []float32
 }
 
 type driftResult struct {

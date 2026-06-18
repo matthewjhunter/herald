@@ -18,10 +18,16 @@ type fakeEmbedder struct {
 func (f *fakeEmbedder) Model() string { return f.model }
 
 func (f *fakeEmbedder) EmbedRecord(_ context.Context, _ []embedding.Field, body string) ([]float32, error) {
+	v := []float32{1, 0, 0}
 	if f.embedFn != nil {
-		return f.embedFn(body)
+		var err error
+		if v, err = f.embedFn(body); err != nil || v == nil {
+			return v, err // an error or a too-short skip passes through unpadded
+		}
 	}
-	return []float32{1, 0, 0}, nil
+	// Pad to the stored dimension so StoreArticleEmbedding accepts the vector;
+	// the leading components carry the test's intent, trailing zeros are inert.
+	return pad768(v), nil
 }
 
 func withEmbedder(st *Stage, emb *fakeEmbedder) {

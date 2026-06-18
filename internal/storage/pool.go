@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	pgxvec "github.com/pgvector/pgvector-go/pgx"
 )
 
 // slowQueryThreshold is the minimum duration before a query is logged.
@@ -55,6 +56,12 @@ func newPgxPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	cfg.MaxConnLifetime = pgConnMaxLifetime
 	cfg.MaxConnIdleTime = pgConnMaxIdleTime
 	cfg.ConnConfig.Tracer = slowQueryTracer{}
+	// Register pgvector's vector type on every pooled connection so the grouping
+	// queries can bind and scan vectors natively (#186). The OID is resolved per
+	// connection because it is assigned when the extension is created.
+	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		return pgxvec.RegisterTypes(ctx, conn)
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("create postgres pool: %w", err)
