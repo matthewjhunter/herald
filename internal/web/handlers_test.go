@@ -586,6 +586,46 @@ func TestHandleArticleView(t *testing.T) {
 	}
 }
 
+func TestHandleSearch_PastedURLFindsLinkers(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// A link-blog post linking to an external URL that is NOT itself an article
+	// in Herald -- the user pastes that URL into search to find who linked it.
+	const target = "https://hollymathnerd.substack.com/p/the-government-sets-the-trap"
+	linkFeed, err := tf.store.AddFeed("https://instapundit.example/feed", "Instapundit", "")
+	if err != nil {
+		t.Fatalf("AddFeed: %v", err)
+	}
+	if err := tf.store.SubscribeUserToFeed(tf.userID, linkFeed); err != nil {
+		t.Fatalf("SubscribeUserToFeed: %v", err)
+	}
+	postID, err := tf.store.AddArticle(&storage.Article{
+		FeedID: linkFeed, GUID: "ip1", Title: "Heh. Indeed.", URL: "https://instapundit.example/p/1",
+	})
+	if err != nil {
+		t.Fatalf("AddArticle: %v", err)
+	}
+	// linked_url carries Substack's session params; the search target is clean.
+	if err := tf.store.UpdateArticleLinkedContent(postID, target+"?r=wm1qp&triedRedirect=true", ""); err != nil {
+		t.Fatalf("UpdateArticleLinkedContent: %v", err)
+	}
+
+	rr := authedRequest(t, tf, "GET", "/search?q="+url.QueryEscape(target), map[string]string{"HX-Request": "true"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Feeds that linked to") {
+		t.Error("pasting a URL should switch search to linked-by mode")
+	}
+	if !strings.Contains(body, "Instapundit") {
+		t.Error("linked-by results should include the linking feed (normalized past tracking params)")
+	}
+	if !strings.Contains(body, "/articles/"+itoa(postID)) {
+		t.Error("result should link to the linking post")
+	}
+}
+
 func TestHandleArticleView_LinkedBy(t *testing.T) {
 	tf := newTestFixtures(t)
 

@@ -1,5 +1,5 @@
 {{define "search_results"}}
-{{if .Query}}<div class="search-banner">Results for "{{.Query}}"</div>{{end}}
+{{if .Heading}}<div class="search-banner">{{.Heading}}</div>{{else if .Query}}<div class="search-banner">Results for "{{.Query}}"</div>{{end}}
 {{if .Articles}}
 {{range .Articles}}
 {{template "article_row" .}}
@@ -13,6 +13,6 @@
 </div>
 {{end}}
 {{else}}
-{{if .Query}}<div class="empty-state">No results found</div>{{end}}
+{{if .Heading}}<div class="empty-state">No subscribed feed has linked to this URL.</div>{{else if .Query}}<div class="empty-state">No results found</div>{{end}}
 {{end}}
 {{end}}

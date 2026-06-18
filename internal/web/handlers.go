@@ -232,6 +232,7 @@ type articleRow struct {
 
 type searchResultsData struct {
 	Query      string
+	Heading    string // overrides the "Results for ..." banner (e.g. "linked by" mode)
 	Articles   []articleRow
 	HasMore    bool
 	NextOffset int
@@ -723,6 +724,33 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 	h.renderFragment(w, "feed_sidebar_oob", sidebarData)
 }
 
+// isURLQuery reports whether a search query is a pasted URL (so search should
+// answer "which feeds linked to this?" instead of running FTS).
+func isURLQuery(q string) bool {
+	q = strings.TrimSpace(q)
+	return strings.HasPrefix(q, "http://") || strings.HasPrefix(q, "https://")
+}
+
+// renderLinkedBy answers "which of the user's feeds linked to targetURL?" and
+// renders the linking posts using the search results fragment.
+func (h *handlers) renderLinkedBy(w http.ResponseWriter, uid int64, targetURL string) {
+	links, err := h.engine.GetArticleBacklinks(uid, 0, targetURL)
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Lookup failed")
+		return
+	}
+	data := searchResultsData{Heading: "Feeds that linked to " + targetURL}
+	for _, b := range links {
+		data.Articles = append(data.Articles, articleRow{
+			ID:               b.ArticleID,
+			Title:            b.Title,
+			FeedTitle:        b.FeedTitle,
+			PublishedDateFmt: formatDate(bestDate(b.PublishedDate, &b.FetchedDate)),
+		})
+	}
+	h.renderFragment(w, "search_results", data)
+}
+
 func (h *handlers) handleSearch(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID
 	query := r.URL.Query().Get("q")
@@ -731,6 +759,14 @@ func (h *handlers) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	if query == "" {
 		h.renderFragment(w, "search_results", searchResultsData{})
+		return
+	}
+
+	// A pasted URL switches to "linked by" mode: which of the user's feeds
+	// linked to that URL? (Plain FTS can't answer this -- the text parser drops
+	// href URLs as HTML tags -- so this matches articles.linked_url instead.)
+	if isURLQuery(query) {
+		h.renderLinkedBy(w, uid, strings.TrimSpace(query))
 		return
 	}
 
