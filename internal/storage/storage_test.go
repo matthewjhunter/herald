@@ -103,9 +103,8 @@ func TestNewPostgresStorePoolLimits(t *testing.T) {
 		t.Fatalf("expected *PostgresStore, got %T", store)
 	}
 
-	stats := pg.db.Stats()
-	if stats.MaxOpenConnections != pgMaxOpenConns {
-		t.Errorf("MaxOpenConnections = %d, want %d", stats.MaxOpenConnections, pgMaxOpenConns)
+	if got := pg.pool.Config().MaxConns; got != pgMaxOpenConns {
+		t.Errorf("pool MaxConns = %d, want %d", got, pgMaxOpenConns)
 	}
 }
 

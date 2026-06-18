@@ -43,6 +43,17 @@ tasks:
     cmds:
       - go run github.com/pressly/goose/v3/cmd/goose@v3.27.1 -dir internal/storage/migrations -s create {{.NAME}} sql
 
+  sqlc:
+    desc: Regenerate the sqlc query layer (internal/storage/db) from queries + migrations.
+    cmds:
+      - go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate
+
+  sqlc:check:
+    desc: Verify the committed sqlc-generated code matches queries + schema.
+    cmds:
+      - go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate
+      - git diff --exit-code -- internal/storage/db
+
   test-coverage:
     desc: Run tests with coverage report
     cmds:

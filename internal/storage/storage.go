@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -190,29 +189,6 @@ type FilterRule struct {
 	Value     string
 	Score     int
 	CreatedAt time.Time
-}
-
-// scanFeeds scans a *sql.Rows result set into a []Feed slice.
-// Each row must select: id, url, title, description, site_url, last_fetched,
-// last_error, etag, last_modified, enabled, created_at, consecutive_errors,
-// next_fetch_at, status.
-func scanFeeds(rows *sql.Rows) ([]Feed, error) {
-	var feeds []Feed
-	for rows.Next() {
-		var f Feed
-		var etag, lastMod sql.NullString
-		if err := rows.Scan(
-			&f.ID, &f.URL, &f.Title, &f.Description, &f.SiteURL, &f.LastFetched, &f.LastError,
-			&etag, &lastMod, &f.Enabled, &f.CreatedAt,
-			&f.ConsecutiveErrors, &f.NextFetchAt, &f.Status,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan feed: %w", err)
-		}
-		f.ETag = etag.String
-		f.LastModified = lastMod.String
-		feeds = append(feeds, f)
-	}
-	return feeds, rows.Err()
 }
 
 // applyErrorBackoff returns base doubled for each consecutive error, capped at 30 days.
