@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,6 +86,80 @@ func TestLoadConfig_ValidFile(t *testing.T) {
 		}
 		if cfg.Database.Path != "/tmp/test.db" {
 			t.Errorf("Database.Path: got %q, want /tmp/test.db", cfg.Database.Path)
+		}
+	})
+}
+
+// captureStderr runs fn with os.Stderr redirected to a pipe and returns what
+// was written. Used to assert on loadConfig's unknown-key warning.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	saved := os.Stderr
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = saved })
+
+	fn()
+	_ = w.Close()
+	os.Stderr = saved
+
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read captured stderr: %v", err)
+	}
+	return string(data)
+}
+
+func TestLoadConfig_WarnsOnUnknownKeys(t *testing.T) {
+	withGlobals(t, func() {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.toml")
+		// A stale pre-unification layout: [webauth] is now [web.webauth], and
+		// security_modle is a typo. Both decode into nothing and must be warned.
+		body := []byte("[webauth]\nissuer_url = \"https://idp.example.com\"\n\n" +
+			"[ollama]\nsecurity_modle = \"gemma4\"\n")
+		if err := os.WriteFile(path, body, 0o644); err != nil {
+			t.Fatalf("write tmp config: %v", err)
+		}
+		configPath = path
+
+		var loadErr error
+		out := captureStderr(t, func() { loadErr = loadConfig() })
+		if loadErr != nil {
+			t.Fatalf("loadConfig with unknown keys should not error, got: %v", loadErr)
+		}
+		if !strings.Contains(out, "unknown config key") {
+			t.Errorf("expected unknown-key warning on stderr, got: %q", out)
+		}
+		// Both offending keys should be named so the operator can fix them.
+		for _, want := range []string{"webauth.issuer_url", "ollama.security_modle"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("warning should name %q, got: %q", want, out)
+			}
+		}
+	})
+}
+
+func TestLoadConfig_NoWarningOnCleanFile(t *testing.T) {
+	withGlobals(t, func() {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.toml")
+		body := []byte("[database]\npath = \"/tmp/test.db\"\n")
+		if err := os.WriteFile(path, body, 0o644); err != nil {
+			t.Fatalf("write tmp config: %v", err)
+		}
+		configPath = path
+
+		out := captureStderr(t, func() {
+			if err := loadConfig(); err != nil {
+				t.Fatalf("loadConfig on valid file: %v", err)
+			}
+		})
+		if strings.Contains(out, "unknown config key") {
+			t.Errorf("clean config should produce no unknown-key warning, got: %q", out)
 		}
 	})
 }

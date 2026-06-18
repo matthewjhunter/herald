@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -136,8 +137,23 @@ func loadConfig() error {
 	}
 
 	cfg = storage.DefaultConfig()
-	if _, err := toml.Decode(string(data), cfg); err != nil {
+	md, err := toml.Decode(string(data), cfg)
+	if err != nil {
 		return fmt.Errorf("failed to parse config: %w", err)
+	}
+
+	// Warn loudly about keys present in the file but not in the config
+	// struct. These are silently ignored by the decoder, so without this a
+	// typo (security_modle) or a stale pre-unification layout (a top-level
+	// [webauth] that now lives under [web.webauth]) leaves the setting at its
+	// default with no clue why. See #197: the web keys moved under [web].
+	if undecoded := md.Undecoded(); len(undecoded) > 0 {
+		keys := make([]string, len(undecoded))
+		for i, k := range undecoded {
+			keys[i] = k.String()
+		}
+		fmt.Fprintf(os.Stderr, "Warning: ignoring %d unknown config key(s) in %s: %s\n",
+			len(keys), configPath, strings.Join(keys, ", "))
 	}
 
 	return nil
