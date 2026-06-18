@@ -16,6 +16,31 @@ import (
 	"github.com/matthewjhunter/herald/internal/storage"
 )
 
+func TestClassifyFaviconFailure(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"404", &faviconHTTPError{status: 404}, "permanent"},
+		{"403", &faviconHTTPError{status: 403}, "permanent"},
+		{"410", &faviconHTTPError{status: 410}, "permanent"},
+		{"451", &faviconHTTPError{status: 451}, "permanent"},
+		{"401", &faviconHTTPError{status: 401}, "permanent"},
+		{"500", &faviconHTTPError{status: 500}, "transient"},
+		{"503", &faviconHTTPError{status: 503}, "transient"},
+		{"429", &faviconHTTPError{status: 429}, "transient"},
+		{"empty", fmt.Errorf("%w at https://x/favicon.ico", errEmptyFavicon), "permanent"},
+		{"wrapped-404", fmt.Errorf("fetch: %w", &faviconHTTPError{status: 404}), "permanent"},
+		{"network", fmt.Errorf("dial tcp: i/o timeout"), "transient"},
+	}
+	for _, c := range cases {
+		if got := classifyFaviconFailure(c.err); got != c.want {
+			t.Errorf("%s: classifyFaviconFailure = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 // --- extractIconHref tests ---
 
 func TestExtractIconHref_BasicIcon(t *testing.T) {

@@ -3,6 +3,7 @@ package feeds
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -43,16 +44,62 @@ func (f *Fetcher) FetchFaviconsForFeeds(ctx context.Context) (int, error) {
 		}
 		data, mimeType, err := fetchFavicon(ctx, f.client, feed.URL)
 		if err != nil {
-			log.Printf("herald: favicon fetch failed for feed %d (%s): %v", feed.ID, feed.URL, err)
+			// Negative-cache the failure so a permanently-broken favicon isn't
+			// re-fetched and re-logged every cycle (#112). The retry query gates
+			// on the backoff window, so this log line now fires at most once per
+			// window per feed instead of every 5 minutes.
+			kind := classifyFaviconFailure(err)
+			log.Printf("herald: favicon fetch failed for feed %d (%s) [%s]: %v", feed.ID, feed.URL, kind, err)
+			if rerr := f.store.RecordFaviconFailure(feed.ID, kind); rerr != nil {
+				log.Printf("herald: failed to record favicon failure for feed %d: %v", feed.ID, rerr)
+			}
 			continue
 		}
 		if err := f.store.StoreFeedFavicon(feed.ID, data, mimeType); err != nil {
 			log.Printf("herald: failed to store favicon for feed %d: %v", feed.ID, err)
 			continue
 		}
+		// Clear any prior failure marker now that the favicon is cached.
+		if err := f.store.ClearFaviconFailure(feed.ID); err != nil {
+			log.Printf("herald: failed to clear favicon failure for feed %d: %v", feed.ID, err)
+		}
 		stored++
 	}
 	return stored, nil
+}
+
+// faviconHTTPError carries the HTTP status of a failed favicon fetch so the
+// failure can be classified (permanent vs transient) without string-parsing.
+type faviconHTTPError struct {
+	status int
+	url    string
+}
+
+func (e *faviconHTTPError) Error() string {
+	return fmt.Sprintf("HTTP %d for %s", e.status, e.url)
+}
+
+// errEmptyFavicon marks a 200 response with an empty body -- treated as a
+// permanent failure (the server stably serves nothing).
+var errEmptyFavicon = errors.New("empty favicon")
+
+// classifyFaviconFailure labels a favicon fetch error "permanent" (won't change
+// on retry: 404/403/410/451/401 or an empty body) or "transient" (5xx,
+// timeouts, network/DNS errors, parse failures) so the negative cache can pick
+// a backoff window.
+func classifyFaviconFailure(err error) string {
+	if errors.Is(err, errEmptyFavicon) {
+		return "permanent"
+	}
+	var he *faviconHTTPError
+	if errors.As(err, &he) {
+		switch he.status {
+		case http.StatusNotFound, http.StatusForbidden, http.StatusGone,
+			http.StatusUnavailableForLegalReasons, http.StatusUnauthorized:
+			return "permanent"
+		}
+	}
+	return "transient"
 }
 
 // fetchFavicon fetches the best favicon for the site at feedURL.
@@ -170,7 +217,7 @@ func fetchAndNormalize(ctx context.Context, client *http.Client, iconURL string)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("HTTP %d for %s", resp.StatusCode, iconURL)
+		return nil, "", &faviconHTTPError{status: resp.StatusCode, url: iconURL}
 	}
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFaviconBytes))
@@ -178,7 +225,7 @@ func fetchAndNormalize(ctx context.Context, client *http.Client, iconURL string)
 		return nil, "", fmt.Errorf("read favicon: %w", err)
 	}
 	if len(data) == 0 {
-		return nil, "", fmt.Errorf("empty favicon at %s", iconURL)
+		return nil, "", fmt.Errorf("%w at %s", errEmptyFavicon, iconURL)
 	}
 
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))

@@ -30,7 +30,7 @@ func (q *Queries) AddFeed(ctx context.Context, arg AddFeedParams) (int64, error)
 }
 
 const getActiveFeedsToFetch = `-- name: GetActiveFeedsToFetch :many
-SELECT id, url, title, description, site_url, last_fetched, last_error, etag, last_modified, enabled, created_at, consecutive_errors, next_fetch_at, status FROM feeds
+SELECT id, url, title, description, site_url, last_fetched, last_error, etag, last_modified, enabled, created_at, consecutive_errors, next_fetch_at, status, favicon_failed_at, favicon_fail_kind FROM feeds
 WHERE enabled = TRUE AND status = 'active'
   AND (next_fetch_at IS NULL OR next_fetch_at <= NOW())
 `
@@ -59,6 +59,8 @@ func (q *Queries) GetActiveFeedsToFetch(ctx context.Context) ([]Feed, error) {
 			&i.ConsecutiveErrors,
 			&i.NextFetchAt,
 			&i.Status,
+			&i.FaviconFailedAt,
+			&i.FaviconFailKind,
 		); err != nil {
 			return nil, err
 		}
@@ -71,7 +73,7 @@ func (q *Queries) GetActiveFeedsToFetch(ctx context.Context) ([]Feed, error) {
 }
 
 const getFeed = `-- name: GetFeed :one
-SELECT id, url, title, description, site_url, last_fetched, last_error, etag, last_modified, enabled, created_at, consecutive_errors, next_fetch_at, status FROM feeds WHERE id = $1
+SELECT id, url, title, description, site_url, last_fetched, last_error, etag, last_modified, enabled, created_at, consecutive_errors, next_fetch_at, status, favicon_failed_at, favicon_fail_kind FROM feeds WHERE id = $1
 `
 
 func (q *Queries) GetFeed(ctx context.Context, id int64) (Feed, error) {
@@ -92,6 +94,8 @@ func (q *Queries) GetFeed(ctx context.Context, id int64) (Feed, error) {
 		&i.ConsecutiveErrors,
 		&i.NextFetchAt,
 		&i.Status,
+		&i.FaviconFailedAt,
+		&i.FaviconFailKind,
 	)
 	return i, err
 }

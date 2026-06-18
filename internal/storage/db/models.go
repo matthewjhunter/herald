@@ -138,6 +138,8 @@ type Feed struct {
 	ConsecutiveErrors int64
 	NextFetchAt       *time.Time
 	Status            string
+	FaviconFailedAt   *time.Time
+	FaviconFailKind   string
 }
 
 type FeedFavicon struct {
