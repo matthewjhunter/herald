@@ -87,7 +87,7 @@ func (s *Stage) Cluster(ctx context.Context, cohort []storage.Article) error {
 
 	// 2. FORM: link leftovers into new groups (>= MinClusterSize members).
 	minSize := s.minClusterSize()
-	for _, comp := range clusterByCosine(leftoverVecs, threshold) {
+	for _, comp := range clusterByEdges(len(leftoverVecs), cosineEdges(leftoverVecs, threshold)) {
 		if len(comp) < minSize {
 			continue // singleton / too small — stays ungrouped
 		}

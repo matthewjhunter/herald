@@ -51,15 +51,30 @@ func meanCentroid(vecs [][]float32) []float32 {
 	return out
 }
 
-// clusterByCosine groups vectors into single-linkage connected components: two
-// vectors are linked when their cosine similarity is >= threshold, and linkage
-// is transitive (A~B and B~C puts A, B, C in one cluster even if A and C are not
-// directly similar). Every input appears in exactly one returned cluster,
-// singletons included; the caller filters by minimum cluster size. Clusters are
-// returned in order of their lowest member index, and indices within each
-// cluster are ascending, so the result is deterministic.
-func clusterByCosine(vecs [][]float32, threshold float64) [][]int {
-	n := len(vecs)
+// cosineEdges returns the index pairs (i, j) with i < j whose vectors are at
+// least threshold cosine-similar -- the single-linkage edge set over vecs. It is
+// the in-Go equivalent of the database's leftover-similarity query (#186), kept
+// for unit tests and any caller without a store. O(n^2); callers bound n.
+func cosineEdges(vecs [][]float32, threshold float64) [][2]int {
+	var edges [][2]int
+	for i := range vecs {
+		for j := i + 1; j < len(vecs); j++ {
+			if embedding.CosineSimilarity(vecs[i], vecs[j]) >= threshold {
+				edges = append(edges, [2]int{i, j})
+			}
+		}
+	}
+	return edges
+}
+
+// clusterByEdges groups the indices [0, n) into single-linkage connected
+// components given an undirected edge set: linkage is transitive (an edge A-B
+// and an edge B-C puts A, B, C in one cluster even with no direct A-C edge).
+// Every index appears in exactly one returned cluster, singletons included; the
+// caller filters by minimum cluster size. Clusters are returned in order of
+// their lowest member index, and indices within each cluster are ascending, so
+// the result is deterministic regardless of edge order.
+func clusterByEdges(n int, edges [][2]int) [][]int {
 	parent := make([]int, n)
 	for i := range parent {
 		parent[i] = i
@@ -77,12 +92,8 @@ func clusterByCosine(vecs [][]float32, threshold float64) [][]int {
 		}
 	}
 
-	for i := range n {
-		for j := i + 1; j < n; j++ {
-			if embedding.CosineSimilarity(vecs[i], vecs[j]) >= threshold {
-				union(i, j)
-			}
-		}
+	for _, e := range edges {
+		union(e[0], e[1])
 	}
 
 	// Group members by their component root, preserving first-seen order so the
