@@ -47,7 +47,8 @@
         <div><span style="color:#4caf50;">&#9632;</span> Pass (&ge;7.0) &nbsp;<strong>{{.Total.SecPass}}</strong></div>
         <div><span style="color:#ff9800;">&#9632;</span> Borderline (4-7) &nbsp;<strong>{{.Total.SecBorderline}}</strong></div>
         <div><span style="color:#f44336;">&#9632;</span> Fail (&lt;4.0) &nbsp;<strong>{{.Total.SecFail}}</strong></div>
-        <div style="margin-top:0.25rem;" class="secondary">{{.Total.SecTotal}} scored total</div>
+        {{if .Total.SecSkipped}}<div><span style="color:#9e9e9e;">&#9632;</span> Skipped (no content / too short) &nbsp;<strong>{{.Total.SecSkipped}}</strong></div>{{end}}
+        <div style="margin-top:0.25rem;" class="secondary">{{.Total.SecTotal}} scored{{if .Total.SecSkipped}}, {{.Total.SecSkipped}} skipped{{end}}</div>
       </div>
     </div>
 
@@ -65,7 +66,7 @@
 
     {{/* --- Legend --- */}}
     <div style="font-size:0.8em;color:var(--pico-muted-color);max-width:280px;align-self:center;margin-top:1rem;">
-      <p><strong>Security buckets:</strong> Pass = score &ge;7.0 (technically safe). Borderline = 4-7 (review). Fail = &lt;4.0 (threat detected).</p>
+      <p><strong>Security buckets:</strong> Pass = score &ge;7.0 (technically safe). Borderline = 4-7 (review). Fail = &lt;4.0 (threat detected). Skipped = screened but not scored (no content / too short) -- not counted as passed.</p>
       <p><strong>Interest buckets:</strong> High = &ge;8.0 (surfaced to you). Medium = 5-8 (available, below threshold). Low = &lt;5.0 (low relevance). Only counts security-passed articles.</p>
     </div>
   </div>
@@ -94,6 +95,7 @@
         <span style="color:#4caf50;">{{.SecPass}}</span> /
         <span style="color:#ff9800;">{{.SecBorderline}}</span> /
         <span style="color:#f44336;">{{.SecFail}}</span>
+        {{if .SecSkipped}}<span class="secondary" title="screened but skipped: no content / too short">(+{{.SecSkipped}} skipped)</span>{{end}}
       </td>
       <td style="text-align:center;padding:0.25rem 0.5rem;">{{template "donut" $int}}</td>
       <td style="text-align:right;white-space:nowrap;font-size:0.85em;">
