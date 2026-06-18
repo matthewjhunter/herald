@@ -61,3 +61,17 @@ LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = @user_id
 LEFT JOIN article_summaries asumm ON asumm.article_id = a.id
 GROUP BY f.id, uf.user_title
 ORDER BY COALESCE(uf.user_title, f.title);
+
+-- name: GetFeedStatsForDB :many
+SELECT
+  f.id, f.title, f.url, f.status,
+  COUNT(DISTINCT a.id)::int       AS articles,
+  COUNT(DISTINCT uf.user_id)::int AS subscribers
+FROM feeds f
+LEFT JOIN articles   a  ON a.feed_id  = f.id
+LEFT JOIN user_feeds uf ON uf.feed_id = f.id
+GROUP BY f.id
+ORDER BY articles DESC;
+
+-- name: CountUsers :one
+SELECT COUNT(*)::int FROM users;

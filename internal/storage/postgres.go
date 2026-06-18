@@ -1927,274 +1927,167 @@ func (s *PostgresStore) GetAllSubscribingUsers() ([]int64, error) {
 // --- Admin stats ---
 
 func (s *PostgresStore) GetDBStats() (DBStats, error) {
+	ctx := context.Background()
 	var stats DBStats
 
-	rows, err := s.db.Query(`
-		SELECT
-			f.id, f.title, f.url, f.status,
-			COUNT(DISTINCT a.id)       AS articles,
-			COUNT(DISTINCT uf.user_id) AS subscribers
-		FROM feeds f
-		LEFT JOIN articles   a  ON a.feed_id  = f.id
-		LEFT JOIN user_feeds uf ON uf.feed_id = f.id
-		GROUP BY f.id
-		ORDER BY articles DESC
-	`)
+	rows, err := s.q.GetFeedStatsForDB(ctx)
 	if err != nil {
 		return stats, fmt.Errorf("failed to query feed stats: %w", err)
 	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var fs FeedStat
-		if err := rows.Scan(&fs.ID, &fs.Title, &fs.URL, &fs.Status, &fs.Articles, &fs.Subscribers); err != nil {
-			return stats, fmt.Errorf("failed to scan feed stat: %w", err)
+	stats.Feeds = make([]FeedStat, len(rows))
+	for i, r := range rows {
+		fs := FeedStat{
+			ID:          r.ID,
+			Title:       r.Title,
+			URL:         r.Url,
+			Status:      r.Status,
+			Articles:    r.Articles,
+			Subscribers: r.Subscribers,
 		}
-		stats.Feeds = append(stats.Feeds, fs)
+		stats.Feeds[i] = fs
 		stats.TotalArticles += fs.Articles
 		stats.TotalFeeds++
 	}
-	if err := rows.Err(); err != nil {
-		return stats, err
-	}
 
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&stats.TotalUsers); err != nil {
+	totalUsers, err := s.q.CountUsers(ctx)
+	if err != nil {
 		return stats, fmt.Errorf("failed to count users: %w", err)
 	}
+	stats.TotalUsers = totalUsers
 	return stats, nil
 }
 
 // --- Fever API ---
 
 func (s *PostgresStore) SetFeverCredential(userID int64, apiKey string) error {
-	_, err := s.db.Exec(`
-		INSERT INTO fever_credentials (user_id, api_key) VALUES (?, ?)
-		ON CONFLICT(user_id) DO UPDATE SET api_key = excluded.api_key`,
-		userID, apiKey)
-	return err
+	return s.q.SetFeverCredential(context.Background(), db.SetFeverCredentialParams{
+		UserID: userID,
+		ApiKey: apiKey,
+	})
 }
 
 func (s *PostgresStore) GetUserByFeverAPIKey(apiKey string) (*User, error) {
-	var u User
-	var email sql.NullString
-	var oidcSub sql.NullString
-	err := s.db.QueryRow(`
-		SELECT u.id, u.name, u.oidc_sub, u.email, u.created_at
-		FROM users u
-		JOIN fever_credentials fc ON fc.user_id = u.id
-		WHERE fc.api_key = ?`, apiKey).Scan(
-		&u.ID, &u.Name, &oidcSub, &email, &u.CreatedAt)
+	r, err := s.q.GetUserByFeverAPIKey(context.Background(), apiKey)
 	if err != nil {
 		return nil, err
 	}
-	if email.Valid {
-		u.Email = &email.String
-	}
-	if oidcSub.Valid {
-		u.OIDCSub = &oidcSub.String
-	}
+	u := userFromRow(r)
 	return &u, nil
 }
 
 func (s *PostgresStore) GetFeverAPIKey(userID int64) (string, error) {
-	var apiKey string
-	err := s.db.QueryRow(`SELECT api_key FROM fever_credentials WHERE user_id = ?`, userID).Scan(&apiKey)
-	return apiKey, err
+	return s.q.GetFeverAPIKey(context.Background(), userID)
 }
 
 func (s *PostgresStore) DeleteFeverCredential(userID int64) error {
-	_, err := s.db.Exec(`DELETE FROM fever_credentials WHERE user_id = ?`, userID)
-	return err
+	return s.q.DeleteFeverCredential(context.Background(), userID)
+}
+
+// feverItemFromCore wraps the standard article projection plus the per-user
+// read/starred flags into a FeverItemRow.
+func feverItemFromCore(id, feedID int64, guid, title, url string, content, summary, author *string, published *time.Time, fetched time.Time, isRead, isStarred bool) FeverItemRow {
+	return FeverItemRow{
+		Article:   coreArticle(id, feedID, guid, title, url, content, summary, author, published, fetched),
+		IsRead:    isRead,
+		IsStarred: isStarred,
+	}
 }
 
 func (s *PostgresStore) GetFeverItems(userID int64, sinceID, maxID int64, withIDs []int64, limit int) ([]FeverItemRow, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 50
 	}
+	ctx := context.Background()
 
-	args := []any{userID, userID}
-	q := `
-		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date,
-		       COALESCE(rs.read, FALSE)    AS is_read,
-		       COALESCE(rs.starred, FALSE) AS is_starred
-		FROM articles a
-		JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = ?
-		LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = ?`
-
+	var results []FeverItemRow
 	if len(withIDs) > 0 {
-		placeholders := make([]string, len(withIDs))
-		for i, id := range withIDs {
-			placeholders[i] = "?"
-			args = append(args, id)
+		rows, err := s.q.GetFeverItemsByIDs(ctx, db.GetFeverItemsByIDsParams{
+			UserID:     userID,
+			ArticleIds: withIDs,
+			Lim:        int32(limit),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("fever items: %w", err)
 		}
-		q += ` WHERE a.id IN (` + strings.Join(placeholders, ",") + `)`
-	} else {
-		q += ` WHERE 1=1`
-		if sinceID > 0 {
-			q += ` AND a.id > ?`
-			args = append(args, sinceID)
+		results = make([]FeverItemRow, len(rows))
+		for i, r := range rows {
+			results[i] = feverItemFromCore(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate, r.IsRead, r.IsStarred)
 		}
-		if maxID > 0 {
-			q += ` AND a.id <= ?`
-			args = append(args, maxID)
-		}
+		return results, nil
 	}
 
-	q += ` ORDER BY a.id DESC LIMIT ?`
-	args = append(args, limit)
-
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.q.GetFeverItemsRange(ctx, db.GetFeverItemsRangeParams{
+		UserID:  userID,
+		SinceID: sinceID,
+		MaxID:   maxID,
+		Lim:     int32(limit),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("fever items: %w", err)
 	}
-	defer rows.Close()
-
-	var results []FeverItemRow
-	for rows.Next() {
-		var r FeverItemRow
-		if err := rows.Scan(
-			&r.ID, &r.FeedID, &r.GUID, &r.Title, &r.URL,
-			&r.Content, &r.Summary, &r.Author,
-			&r.PublishedDate, &r.FetchedDate,
-			&r.IsRead, &r.IsStarred,
-		); err != nil {
-			return nil, fmt.Errorf("fever items scan: %w", err)
-		}
-		results = append(results, r)
+	results = make([]FeverItemRow, len(rows))
+	for i, r := range rows {
+		results[i] = feverItemFromCore(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate, r.IsRead, r.IsStarred)
 	}
-	return results, rows.Err()
+	return results, nil
 }
 
 func (s *PostgresStore) GetFeverItemCount(userID int64) (int, error) {
-	var count int
-	err := s.db.QueryRow(`
-		SELECT COUNT(*)
-		FROM articles a
-		JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = ?`, userID).Scan(&count)
-	return count, err
+	return s.q.GetFeverItemCount(context.Background(), userID)
 }
 
 func (s *PostgresStore) GetUnreadArticleIDsForUser(userID int64) ([]int64, error) {
-	rows, err := s.db.Query(`
-		SELECT a.id
-		FROM articles a
-		JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = ?
-		LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = ?
-		WHERE NOT COALESCE(rs.read, FALSE)
-		ORDER BY a.id`, userID, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
+	return s.q.GetUnreadArticleIDsForUser(context.Background(), userID)
 }
 
 func (s *PostgresStore) GetStarredArticleIDsForUser(userID int64) ([]int64, error) {
-	rows, err := s.db.Query(`
-		SELECT article_id FROM read_state
-		WHERE user_id = ? AND starred = TRUE
-		ORDER BY article_id`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+	return s.q.GetStarredArticleIDsForUser(context.Background(), userID)
+}
 
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
+// beforeFilter translates the Fever "before" epoch-seconds bound into the
+// (filter, timestamp) pair the mark-read queries take: a non-positive value
+// disables the bound.
+func beforeFilter(before int64) (bool, time.Time) {
+	if before > 0 {
+		return true, time.Unix(before, 0)
 	}
-	return ids, rows.Err()
+	return false, time.Time{}
 }
 
 func (s *PostgresStore) MarkFeedArticlesRead(userID, feedID int64, before int64) error {
-	var beforeCond string
-	args := []any{userID, feedID}
-	if before > 0 {
-		beforeCond = `AND (a.published_date IS NULL OR a.published_date <= ?)`
-		args = append(args, time.Unix(before, 0))
-	}
-	_, err := s.db.Exec(fmt.Sprintf(`
-		INSERT INTO read_state (user_id, article_id, read, read_date)
-		SELECT ?, a.id, TRUE, NOW()
-		FROM articles a
-		WHERE a.feed_id = ? %s
-		ON CONFLICT(user_id, article_id) DO UPDATE SET read = TRUE, read_date = NOW()`,
-		beforeCond), args...)
-	return err
+	filter, ts := beforeFilter(before)
+	return s.q.MarkFeedArticlesRead(context.Background(), db.MarkFeedArticlesReadParams{
+		UserID:       userID,
+		FeedID:       feedID,
+		FilterBefore: filter,
+		Before:       ts,
+	})
 }
 
 func (s *PostgresStore) MarkGroupArticlesRead(userID, groupID int64, before int64) error {
-	var beforeCond string
-	args := []any{userID, groupID}
-	if before > 0 {
-		beforeCond = `AND (a.published_date IS NULL OR a.published_date <= ?)`
-		args = append(args, time.Unix(before, 0))
-	}
-	_, err := s.db.Exec(fmt.Sprintf(`
-		INSERT INTO read_state (user_id, article_id, read, read_date)
-		SELECT ?, a.id, TRUE, NOW()
-		FROM articles a
-		JOIN article_group_members agm ON agm.article_id = a.id
-		WHERE agm.group_id = ? %s
-		ON CONFLICT(user_id, article_id) DO UPDATE SET read = TRUE, read_date = NOW()`,
-		beforeCond), args...)
-	return err
+	filter, ts := beforeFilter(before)
+	return s.q.MarkGroupArticlesRead(context.Background(), db.MarkGroupArticlesReadParams{
+		UserID:       userID,
+		GroupID:      groupID,
+		FilterBefore: filter,
+		Before:       ts,
+	})
 }
 
 func (s *PostgresStore) MarkAllArticlesRead(userID int64, before int64) error {
-	var beforeCond string
-	args := []any{userID, userID}
-	if before > 0 {
-		beforeCond = `AND (a.published_date IS NULL OR a.published_date <= ?)`
-		args = append(args, time.Unix(before, 0))
-	}
-	_, err := s.db.Exec(fmt.Sprintf(`
-		INSERT INTO read_state (user_id, article_id, read, read_date)
-		SELECT ?, a.id, TRUE, NOW()
-		FROM articles a
-		JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = ?
-		WHERE 1=1 %s
-		ON CONFLICT(user_id, article_id) DO UPDATE SET read = TRUE, read_date = NOW()`,
-		beforeCond), args...)
-	return err
+	filter, ts := beforeFilter(before)
+	return s.q.MarkAllArticlesRead(context.Background(), db.MarkAllArticlesReadParams{
+		UserID:       userID,
+		FilterBefore: filter,
+		Before:       ts,
+	})
 }
 
 func (s *PostgresStore) GetFeverLinks(userID int64) ([]FeverLink, error) {
-	rows, err := s.db.Query(`
-		SELECT
-			ag.id,
-			agm.article_id,
-			a.feed_id,
-			a.title,
-			a.url,
-			CASE WHEN COALESCE(rs.starred, FALSE) THEN 1 ELSE 0 END,
-			COALESCE(gs.max_interest_score, 0)
-		FROM article_groups ag
-		JOIN article_group_members agm ON agm.group_id = ag.id
-		JOIN articles a ON a.id = agm.article_id
-		LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = ?
-		LEFT JOIN group_summaries gs ON gs.group_id = ag.id
-		WHERE ag.user_id = ?
-		ORDER BY ag.updated_at DESC, agm.added_at ASC`,
-		userID, userID)
+	rows, err := s.q.GetFeverLinks(context.Background(), userID)
 	if err != nil {
 		return nil, fmt.Errorf("fever links: %w", err)
 	}
-	defer rows.Close()
 
 	type memberRow struct {
 		articleID int64
@@ -2208,19 +2101,19 @@ func (s *PostgresStore) GetFeverLinks(userID int64) ([]FeverLink, error) {
 	var order []int64
 	byGroup := map[int64][]memberRow{}
 
-	for rows.Next() {
-		var groupID int64
-		var m memberRow
-		if err := rows.Scan(&groupID, &m.articleID, &m.feedID, &m.title, &m.url, &m.isSaved, &m.score); err != nil {
-			return nil, fmt.Errorf("fever links scan: %w", err)
+	for _, r := range rows {
+		m := memberRow{
+			articleID: r.ArticleID,
+			feedID:    r.FeedID,
+			title:     r.Title,
+			url:       r.Url,
+			isSaved:   r.IsSaved,
+			score:     r.Score,
 		}
-		if _, seen := byGroup[groupID]; !seen {
-			order = append(order, groupID)
+		if _, seen := byGroup[r.GroupID]; !seen {
+			order = append(order, r.GroupID)
 		}
-		byGroup[groupID] = append(byGroup[groupID], m)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+		byGroup[r.GroupID] = append(byGroup[r.GroupID], m)
 	}
 
 	links := make([]FeverLink, 0, len(order))
@@ -2261,28 +2154,15 @@ func (s *PostgresStore) GetFeverLinks(userID int64) ([]FeverLink, error) {
 }
 
 func (s *PostgresStore) GetFeedGroupMemberships(userID int64) (map[int64][]int64, error) {
-	rows, err := s.db.Query(`
-		SELECT agm.group_id, a.feed_id
-		FROM article_group_members agm
-		JOIN articles a ON a.id = agm.article_id
-		JOIN article_groups ag ON ag.id = agm.group_id
-		WHERE ag.user_id = ?
-		GROUP BY agm.group_id, a.feed_id
-		ORDER BY agm.group_id, a.feed_id`, userID)
+	rows, err := s.q.GetFeedGroupMemberships(context.Background(), userID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
 	result := make(map[int64][]int64)
-	for rows.Next() {
-		var groupID, feedID int64
-		if err := rows.Scan(&groupID, &feedID); err != nil {
-			return nil, err
-		}
-		result[groupID] = append(result[groupID], feedID)
+	for _, r := range rows {
+		result[r.GroupID] = append(result[r.GroupID], r.FeedID)
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // --- Search methods ---
@@ -2291,23 +2171,24 @@ func (s *PostgresStore) GetFeedGroupMemberships(userID int64) (map[int64][]int64
 // scoped to feeds the user is subscribed to. Uses websearch_to_tsquery for
 // natural query syntax (quoted phrases, -exclusion).
 func (s *PostgresStore) SearchArticlesFTS(userID int64, query string, limit, offset int) ([]Article, error) {
-	rows, err := s.db.Query(s.db.prepare(`
-		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date,
-		       COALESCE(a.security_flagged, FALSE) AS security_flagged,
-		       COALESCE(rs.read, FALSE) AS is_read, COALESCE(rs.starred, FALSE) AS is_starred
-		FROM articles a
-		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = ?
-		WHERE uf.user_id = ? AND a.search_vector @@ websearch_to_tsquery('english', ?)
-		ORDER BY ts_rank_cd(a.search_vector, websearch_to_tsquery('english', ?)) DESC
-		LIMIT ? OFFSET ?`),
-		userID, userID, query, query, limit, offset)
+	rows, err := s.q.SearchArticlesFTS(context.Background(), db.SearchArticlesFTSParams{
+		UserID: userID,
+		Query:  query,
+		Lim:    int32(limit),
+		Off:    int32(offset),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("fts search: %w", err)
 	}
-	defer rows.Close()
-	return scanArticlesWithReadState(rows)
+	articles := make([]Article, len(rows))
+	for i, r := range rows {
+		a := coreArticle(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate)
+		a.SecurityFlagged = r.SecurityFlagged
+		a.Read = r.IsRead
+		a.Starred = r.IsStarred
+		articles[i] = a
+	}
+	return articles, nil
 }
 
 // StoreArticleEmbedding upserts a successful embedding vector. Resets
@@ -2731,26 +2612,9 @@ func (s *PostgresStore) GetNewsletterArticles(userID int64, config *NewsletterCo
 
 // --- Internal scan helpers ---
 
-// scanArticlesWithReadState scans rows that include a security_flagged column
-// plus the per-user read and starred flags, in that order, after the standard
-// article fields. Used by the list queries that surface read/starred state.
-func scanArticlesWithReadState(rows *sql.Rows) ([]Article, error) {
-	var articles []Article
-	for rows.Next() {
-		var a Article
-		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
-			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate,
-			&a.SecurityFlagged, &a.Read, &a.Starred); err != nil {
-			return nil, fmt.Errorf("scan article: %w", err)
-		}
-		articles = append(articles, a)
-	}
-	return articles, rows.Err()
-}
-
-// scanArticlesWithReadStatePgx is the pgx counterpart to
-// scanArticlesWithReadState: the same 10 article columns followed by
-// security_flagged and the per-user read and starred flags.
+// scanArticlesWithReadStatePgx scans rows that include a security_flagged column
+// followed by the per-user read and starred flags, after the standard 10 article
+// columns. Used by the dynamic list queries that surface read/starred state.
 func scanArticlesWithReadStatePgx(rows pgx.Rows) ([]Article, error) {
 	defer rows.Close()
 	var articles []Article

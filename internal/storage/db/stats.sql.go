@@ -10,6 +10,17 @@ import (
 	"time"
 )
 
+const countUsers = `-- name: CountUsers :one
+SELECT COUNT(*)::int FROM users
+`
+
+func (q *Queries) CountUsers(ctx context.Context) (int, error) {
+	row := q.db.QueryRow(ctx, countUsers)
+	var column_1 int
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const getFeedStats = `-- name: GetFeedStats :many
 SELECT
   f.id AS feed_id,
@@ -57,6 +68,54 @@ func (q *Queries) GetFeedStats(ctx context.Context, userID int64) ([]GetFeedStat
 			&i.UnreadArticles,
 			&i.UnsummarizedArticles,
 			&i.LastPostDate,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getFeedStatsForDB = `-- name: GetFeedStatsForDB :many
+SELECT
+  f.id, f.title, f.url, f.status,
+  COUNT(DISTINCT a.id)::int       AS articles,
+  COUNT(DISTINCT uf.user_id)::int AS subscribers
+FROM feeds f
+LEFT JOIN articles   a  ON a.feed_id  = f.id
+LEFT JOIN user_feeds uf ON uf.feed_id = f.id
+GROUP BY f.id
+ORDER BY articles DESC
+`
+
+type GetFeedStatsForDBRow struct {
+	ID          int64
+	Title       string
+	Url         string
+	Status      string
+	Articles    int
+	Subscribers int
+}
+
+func (q *Queries) GetFeedStatsForDB(ctx context.Context) ([]GetFeedStatsForDBRow, error) {
+	rows, err := q.db.Query(ctx, getFeedStatsForDB)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetFeedStatsForDBRow{}
+	for rows.Next() {
+		var i GetFeedStatsForDBRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Url,
+			&i.Status,
+			&i.Articles,
+			&i.Subscribers,
 		); err != nil {
 			return nil, err
 		}
