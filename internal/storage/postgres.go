@@ -1254,6 +1254,24 @@ func (s *PostgresStore) GetArticleSummary(articleID int64) (*ArticleSummary, err
 	}, nil
 }
 
+// GetArticleSummaries batch-fetches non-empty AI summaries for the given
+// article ids in a single query, returning a map keyed by article id. Ids with
+// no summary (or a skipped/empty one) are absent from the map.
+func (s *PostgresStore) GetArticleSummaries(articleIDs []int64) (map[int64]string, error) {
+	out := make(map[int64]string, len(articleIDs))
+	if len(articleIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.q.GetArticleSummaries(context.Background(), articleIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get article summaries: %w", err)
+	}
+	for _, r := range rows {
+		out[r.ArticleID] = r.AiSummary
+	}
+	return out, nil
+}
+
 // --- Feed stats ---
 
 // GetProcessingStats returns an aggregate snapshot of the AI pipeline state for a

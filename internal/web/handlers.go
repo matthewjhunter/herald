@@ -224,6 +224,7 @@ type articleRow struct {
 	Author           string
 	FeedTitle        string
 	PublishedDateFmt string
+	AISummary        string
 	Read             bool
 	Starred          bool
 	SecurityFlagged  bool
@@ -598,6 +599,21 @@ func (h *handlers) handleSettingsPrompts(w http.ResponseWriter, r *http.Request)
 
 // --- htmx fragment handlers ---
 
+// articleSummaries batch-fetches inline AI summaries for a page of article ids,
+// keyed by id. Summaries are decorative, so a lookup error is logged and
+// degrades to no inline summaries rather than failing the list render.
+func (h *handlers) articleSummaries(ids []int64) map[int64]string {
+	if len(ids) == 0 {
+		return nil
+	}
+	summaries, err := h.engine.GetArticleSummaries(ids)
+	if err != nil {
+		log.Printf("herald-web: batch article summaries: %v", err)
+		return nil
+	}
+	return summaries
+}
+
 func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID
 	limit := parseIntParam(r, "limit", 30, maxPageLimit)
@@ -657,6 +673,13 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Batch-fetch AI summaries for the page in one query (avoid N+1).
+	ids := make([]int64, len(articles))
+	for i, a := range articles {
+		ids[i] = a.ID
+	}
+	summaries := h.articleSummaries(ids)
+
 	for _, a := range articles {
 		data.Articles = append(data.Articles, articleRow{
 			ID:               a.ID,
@@ -664,6 +687,7 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 			Author:           a.Author,
 			FeedTitle:        feedTitles[a.FeedID],
 			PublishedDateFmt: formatDate(bestDate(a.PublishedDate, &a.FetchedDate)),
+			AISummary:        summaries[a.ID],
 			SecurityFlagged:  a.SecurityFlagged,
 			Read:             a.Read,
 			Starred:          a.Starred,
@@ -723,6 +747,12 @@ func (h *handlers) handleSearch(w http.ResponseWriter, r *http.Request) {
 		HasMore:    hasMore,
 		NextOffset: offset + limit,
 	}
+	ids := make([]int64, len(results))
+	for i, r := range results {
+		ids[i] = r.ID
+	}
+	summaries := h.articleSummaries(ids)
+
 	for _, r := range results {
 		data.Articles = append(data.Articles, articleRow{
 			ID:               r.ID,
@@ -730,6 +760,7 @@ func (h *handlers) handleSearch(w http.ResponseWriter, r *http.Request) {
 			Author:           r.Author,
 			FeedTitle:        feedTitles[r.FeedID],
 			PublishedDateFmt: formatDate(bestDate(r.PublishedDate, &r.FetchedDate)),
+			AISummary:        summaries[r.ID],
 		})
 	}
 

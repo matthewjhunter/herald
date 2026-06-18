@@ -184,6 +184,21 @@
     color: gold;
 }
 
+/* Inline AI summary under the row meta. Clamped to keep list scan density;
+   the full summary still shows in the reading pane (.reading-pane .ai-summary). */
+.article-row .ai-summary-inline {
+    margin: 0.35rem 0 0;
+    font-size: 0.82rem;
+    line-height: 1.4;
+    color: var(--pico-muted-color);
+    border-left: 2px solid var(--pico-primary);
+    padding-left: 0.5rem;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
 /* Reading pane content */
 .reading-pane .article-header {
     margin-bottom: 1.5rem;

@@ -13,5 +13,6 @@
         {{if .Author}}{{.Author}} &middot; {{end}}
         {{.PublishedDateFmt}}
     </div>
+    {{if .AISummary}}<p class="ai-summary-inline">{{.AISummary}}</p>{{end}}
 </div>
 {{end}}
