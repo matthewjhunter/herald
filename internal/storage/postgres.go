@@ -1121,12 +1121,13 @@ func (s *PostgresStore) MarkArticleImagesCached(articleID int64) error {
 // --- Article metadata ---
 
 func (s *PostgresStore) StoreArticleAuthors(articleID int64, authors []ArticleAuthor) error {
+	ctx := context.Background()
 	for _, a := range authors {
-		_, err := s.db.Exec(
-			"INSERT INTO article_authors (article_id, name, email) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
-			articleID, a.Name, a.Email,
-		)
-		if err != nil {
+		if err := s.q.InsertArticleAuthor(ctx, db.InsertArticleAuthorParams{
+			ArticleID: articleID,
+			Name:      a.Name,
+			Email:     a.Email,
+		}); err != nil {
 			return fmt.Errorf("store article author: %w", err)
 		}
 	}
@@ -1134,12 +1135,12 @@ func (s *PostgresStore) StoreArticleAuthors(articleID int64, authors []ArticleAu
 }
 
 func (s *PostgresStore) StoreArticleCategories(articleID int64, categories []string) error {
+	ctx := context.Background()
 	for _, cat := range categories {
-		_, err := s.db.Exec(
-			"INSERT INTO article_categories (article_id, category) VALUES (?, ?) ON CONFLICT DO NOTHING",
-			articleID, cat,
-		)
-		if err != nil {
+		if err := s.q.InsertArticleCategory(ctx, db.InsertArticleCategoryParams{
+			ArticleID: articleID,
+			Category:  cat,
+		}); err != nil {
 			return fmt.Errorf("store article category: %w", err)
 		}
 	}
@@ -1147,91 +1148,41 @@ func (s *PostgresStore) StoreArticleCategories(articleID int64, categories []str
 }
 
 func (s *PostgresStore) GetArticleAuthors(articleID int64) ([]ArticleAuthor, error) {
-	rows, err := s.db.Query(
-		"SELECT name, email FROM article_authors WHERE article_id = ? ORDER BY name", articleID,
-	)
+	rows, err := s.q.GetArticleAuthors(context.Background(), articleID)
 	if err != nil {
 		return nil, fmt.Errorf("get article authors: %w", err)
 	}
-	defer rows.Close()
-
-	var authors []ArticleAuthor
-	for rows.Next() {
-		var a ArticleAuthor
-		var email sql.NullString
-		if err := rows.Scan(&a.Name, &email); err != nil {
-			return nil, fmt.Errorf("scan article author: %w", err)
-		}
-		a.Email = email.String
-		authors = append(authors, a)
+	authors := make([]ArticleAuthor, len(rows))
+	for i, r := range rows {
+		authors[i] = ArticleAuthor{Name: r.Name, Email: derefString(r.Email)}
 	}
-	return authors, rows.Err()
+	return authors, nil
 }
 
 func (s *PostgresStore) GetArticleCategories(articleID int64) ([]string, error) {
-	rows, err := s.db.Query(
-		"SELECT category FROM article_categories WHERE article_id = ? ORDER BY category", articleID,
-	)
+	cats, err := s.q.GetArticleCategories(context.Background(), articleID)
 	if err != nil {
 		return nil, fmt.Errorf("get article categories: %w", err)
 	}
-	defer rows.Close()
-
-	var cats []string
-	for rows.Next() {
-		var cat string
-		if err := rows.Scan(&cat); err != nil {
-			return nil, fmt.Errorf("scan article category: %w", err)
-		}
-		cats = append(cats, cat)
-	}
-	return cats, rows.Err()
+	return cats, nil
 }
 
 // --- Feed metadata discovery ---
 
 func (s *PostgresStore) GetFeedAuthors(feedID int64) ([]string, error) {
-	rows, err := s.db.Query(
-		`SELECT DISTINCT aa.name FROM article_authors aa
-		 JOIN articles a ON a.id = aa.article_id
-		 WHERE a.feed_id = ? ORDER BY aa.name`, feedID,
-	)
+	names, err := s.q.GetFeedAuthors(context.Background(), feedID)
 	if err != nil {
 		return nil, fmt.Errorf("get feed authors: %w", err)
 	}
-	defer rows.Close()
-
-	var names []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, fmt.Errorf("scan feed author: %w", err)
-		}
-		names = append(names, name)
-	}
-	return names, rows.Err()
+	return names, nil
 }
 
 func (s *PostgresStore) GetFeedCategories(feedID int64) ([]string, error) {
-	rows, err := s.db.Query(
-		`SELECT DISTINCT ac.category FROM article_categories ac
-		 JOIN articles a ON a.id = ac.article_id
-		 WHERE a.feed_id = ? ORDER BY ac.category`, feedID,
-	)
+	cats, err := s.q.GetFeedCategories(context.Background(), feedID)
 	if err != nil {
 		return nil, fmt.Errorf("get feed categories: %w", err)
 	}
-	defer rows.Close()
-
-	var cats []string
-	for rows.Next() {
-		var cat string
-		if err := rows.Scan(&cat); err != nil {
-			return nil, fmt.Errorf("scan feed category: %w", err)
-		}
-		cats = append(cats, cat)
-	}
-	return cats, rows.Err()
+	return cats, nil
 }
 
 // --- Filter rules ---
