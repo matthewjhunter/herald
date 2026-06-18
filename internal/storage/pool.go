@@ -10,10 +10,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// slowQueryThreshold is the minimum duration before a query is logged.
+const slowQueryThreshold = 100 * time.Millisecond
+
 // slowQueryTracer logs any pgx query whose round-trip exceeds slowQueryThreshold.
-// It is the pgx-pool equivalent of the legacy tracedDB.logIfSlow path, so the
-// sqlc/pgx query layer keeps the same slow-query visibility as the database/sql
-// layer it is replacing.
 type slowQueryTracer struct{}
 
 type traceCtxKey struct{}
@@ -43,22 +43,15 @@ func (slowQueryTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.
 	}
 }
 
-// pgPoolMaxConnsTransition caps the pgx pool while the query layer is split
-// between the legacy *tracedDB and the pgx pool (#185). Both handles open their
-// own connections to the same database, so during the port the pool takes a
-// modest share (it carries only the already-ported queries) and the legacy
-// handle keeps the bulk. Raise this to pgMaxOpenConns once the legacy handle is
-// removed and the pool serves every query.
-const pgPoolMaxConnsTransition = 10
-
 // newPgxPool builds a pgx connection pool with herald's connection limits and
-// slow-query tracing. It backs the sqlc-generated query layer.
+// slow-query tracing. It backs the sqlc-generated query layer, which now serves
+// every application query.
 func newPgxPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parse postgres dsn: %w", err)
 	}
-	cfg.MaxConns = pgPoolMaxConnsTransition
+	cfg.MaxConns = pgMaxOpenConns
 	cfg.MaxConnLifetime = pgConnMaxLifetime
 	cfg.MaxConnIdleTime = pgConnMaxIdleTime
 	cfg.ConnConfig.Tracer = slowQueryTracer{}
