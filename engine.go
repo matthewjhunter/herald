@@ -20,6 +20,7 @@ import (
 	emailpkg "github.com/matthewjhunter/herald/internal/email"
 	"github.com/matthewjhunter/herald/internal/feeds"
 	"github.com/matthewjhunter/herald/internal/storage"
+	"github.com/matthewjhunter/herald/internal/urlnorm"
 )
 
 // Engine is the public API for herald's content processing pipeline.
@@ -260,14 +261,17 @@ func (e *Engine) GetArticleForUser(userID, articleID int64) (*Article, error) {
 // maxBacklinks caps how many "linked by" entries the article view shows.
 const maxBacklinks = 50
 
-// GetArticleBacklinks answers "which of the user's feeds linked to this
-// article?" -- link-blog posts whose extracted linked_url points at targetURL
-// (normalized match). Returns nil for an empty targetURL.
+// GetArticleBacklinks answers "which of the user's feeds linked to this?" --
+// articles whose body/summary links (the article_links index) include
+// targetURL. The target is normalized the same way the index is, so scheme/
+// www/query/fragment/trailing-slash differences don't cause misses. Returns nil
+// when targetURL isn't an absolute http(s) URL.
 func (e *Engine) GetArticleBacklinks(userID, articleID int64, targetURL string) ([]storage.Backlink, error) {
-	if targetURL == "" {
+	norm := urlnorm.Normalize(targetURL)
+	if norm == "" {
 		return nil, nil
 	}
-	return e.store.GetArticleBacklinks(userID, articleID, targetURL, maxBacklinks)
+	return e.store.GetArticleBacklinks(userID, articleID, norm, maxBacklinks)
 }
 
 // GetArticleSummaries batch-fetches non-empty AI summaries for the given

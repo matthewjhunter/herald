@@ -457,6 +457,15 @@ func doFetch(ctx context.Context) error {
 		fmt.Fprintf(os.Stdout, "Updated full text for %d articles\n", fullTextUpdated)
 	}
 
+	// Index outbound links (from the now-enriched body/summary) for the
+	// "which feed linked to this?" lookup. Runs after full-text so it sees the
+	// best content; backfills existing articles over cycles.
+	if linksExtracted, err := fetcher.ExtractLinksForArticles(ctx); err != nil {
+		formatter.Warning("link extraction error: %v", err)
+	} else if linksExtracted > 0 {
+		fmt.Fprintf(os.Stdout, "Extracted links for %d articles\n", linksExtracted)
+	}
+
 	// Cache images referenced in article content.
 	if imagesStored, err := fetcher.CacheArticleImages(ctx); err != nil {
 		formatter.Warning("image cache error: %v", err)

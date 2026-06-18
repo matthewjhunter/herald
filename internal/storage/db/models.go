@@ -49,6 +49,7 @@ type Article struct {
 	SecurityScreenedAt *time.Time
 	SecurityAttempts   int
 	SearchVector       *string
+	LinksExtracted     bool
 }
 
 type ArticleAuthor struct {
@@ -100,6 +101,11 @@ type ArticleImage struct {
 	Width       int64
 	Height      int64
 	FetchedAt   time.Time
+}
+
+type ArticleLink struct {
+	ArticleID int64
+	UrlNorm   string
 }
 
 type ArticleSummary struct {

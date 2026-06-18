@@ -24,6 +24,7 @@ import (
 	herald "github.com/matthewjhunter/herald"
 	"github.com/matthewjhunter/herald/internal/storage"
 	"github.com/matthewjhunter/herald/internal/storagetest"
+	"github.com/matthewjhunter/herald/internal/urlnorm"
 )
 
 // testKey is generated once per test binary run.
@@ -605,9 +606,10 @@ func TestHandleSearch_PastedURLFindsLinkers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddArticle: %v", err)
 	}
-	// linked_url carries Substack's session params; the search target is clean.
-	if err := tf.store.UpdateArticleLinkedContent(postID, target+"?r=wm1qp&triedRedirect=true", ""); err != nil {
-		t.Fatalf("UpdateArticleLinkedContent: %v", err)
+	// The stored outbound link carries Substack's session params; the search
+	// target is clean -- both normalize to the same key.
+	if err := tf.store.StoreArticleLinks(postID, []string{urlnorm.Normalize(target + "?r=wm1qp&triedRedirect=true")}); err != nil {
+		t.Fatalf("StoreArticleLinks: %v", err)
 	}
 
 	rr := authedRequest(t, tf, "GET", "/search?q="+url.QueryEscape(target), map[string]string{"HX-Request": "true"})
@@ -645,8 +647,8 @@ func TestHandleArticleView_LinkedBy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddArticle: %v", err)
 	}
-	if err := tf.store.UpdateArticleLinkedContent(postID, "https://example.com/article/1", ""); err != nil {
-		t.Fatalf("UpdateArticleLinkedContent: %v", err)
+	if err := tf.store.StoreArticleLinks(postID, []string{urlnorm.Normalize("https://example.com/article/1")}); err != nil {
+		t.Fatalf("StoreArticleLinks: %v", err)
 	}
 
 	rr := authedRequest(t, tf, "GET", "/articles/"+itoa(tf.articleID), map[string]string{"HX-Request": "true"})
