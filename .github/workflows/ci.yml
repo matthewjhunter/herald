@@ -53,6 +53,13 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+      - name: sqlc generated code is up to date
+        run: |
+          go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate
+          git diff --exit-code -- internal/storage/db || {
+            echo "internal/storage/db is stale; run 'task sqlc' and commit the result."
+            exit 1
+          }
       - name: Smoke route coverage (warn)
         run: go tool smolder gate --manifest cmd/herald-web/smoke-manifest.json --mode warn
       - run: go install golang.org/x/vuln/cmd/govulncheck@latest

@@ -1,0 +1,59 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    queries: "internal/storage/db/queries/"
+    # sqlc reads the goose migration dir directly as the schema source of truth,
+    # so the generated models always track the live schema (it understands the
+    # -- +goose Up/Down and StatementBegin/End annotations).
+    schema: "internal/storage/migrations/"
+    gen:
+      go:
+        package: "db"
+        out: "internal/storage/db"
+        sql_package: "pgx/v5"
+        # herald already exposes its own Store interface; the generated Queries
+        # type is an implementation detail wrapped by PostgresStore, so no
+        # Querier interface and no JSON tags on the row models.
+        emit_interface: false
+        emit_json_tags: false
+        # Nullable columns become pointers, matching herald's domain types
+        # (*time.Time published dates, *float64 scores).
+        emit_pointers_for_null_types: true
+        emit_empty_slices: true
+        overrides:
+          # pgx/v5 maps timestamptz to pgtype.Timestamptz by default; herald's
+          # domain layer uses plain time.Time / *time.Time.
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+          - db_type: "timestamptz"
+            nullable: true
+            go_type:
+              type: "time.Time"
+              pointer: true
+          # INTEGER columns (token counts, retry counters, article counts) are
+          # int in the domain layer, not int32.
+          - db_type: "pg_catalog.int4"
+            go_type: "int"
+          - db_type: "pg_catalog.int4"
+            nullable: true
+            go_type:
+              type: "int"
+              pointer: true
+          # citext (case-insensitive text: user/author/category names) has no
+          # native Go mapping; treat it as a string.
+          - db_type: "citext"
+            go_type: "string"
+          - db_type: "citext"
+            nullable: true
+            go_type:
+              type: "string"
+              pointer: true
+          # search_vector is maintained by a trigger and never scanned by Go;
+          # map tsvector to string so the articles model still generates.
+          - db_type: "tsvector"
+            go_type: "string"
+          - db_type: "tsvector"
+            nullable: true
+            go_type:
+              type: "string"
+              pointer: true

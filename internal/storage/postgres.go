@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -8,12 +9,23 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/matthewjhunter/herald/internal/storage/db"
 )
 
 // PostgresStore implements the Store interface using PostgreSQL.
+//
+// The query layer is mid-migration from hand-written database/sql (via the
+// legacy *tracedDB) to sqlc-generated code on a pgx pool (#185). Both handles
+// are live during the port: methods move from db to pool/q one file at a time,
+// suite green at each step, and the legacy handle is removed once every query
+// is ported.
 type PostgresStore struct {
-	db *tracedDB
+	db   *tracedDB     // legacy database/sql handle for not-yet-ported queries
+	pool *pgxpool.Pool // pgx pool backing the sqlc query layer
+	q    *db.Queries   // sqlc-generated queries, bound to pool
 }
 
 // Compile-time check that PostgresStore implements Store.
@@ -34,27 +46,45 @@ const (
 // NewPostgresStore opens a PostgreSQL connection, verifies it, and initializes
 // the schema (all DDL statements are idempotent).
 func NewPostgresStore(dsn string) (*PostgresStore, error) {
-	db, err := sql.Open("pgx", dsn)
+	sqlDB, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open postgres: %w", err)
 	}
-	db.SetMaxOpenConns(pgMaxOpenConns)
-	db.SetMaxIdleConns(pgMaxIdleConns)
-	db.SetConnMaxLifetime(pgConnMaxLifetime)
-	db.SetConnMaxIdleTime(pgConnMaxIdleTime)
-	if err := db.Ping(); err != nil {
-		db.Close()
+	sqlDB.SetMaxOpenConns(pgMaxOpenConns)
+	sqlDB.SetMaxIdleConns(pgMaxIdleConns)
+	sqlDB.SetConnMaxLifetime(pgConnMaxLifetime)
+	sqlDB.SetConnMaxIdleTime(pgConnMaxIdleTime)
+	if err := sqlDB.Ping(); err != nil {
+		sqlDB.Close()
 		return nil, fmt.Errorf("failed to connect to postgres: %w", err)
 	}
-	if err := runMigrations(db); err != nil {
-		db.Close()
+	// goose runs against the database/sql handle (goose has no pgx-pool API).
+	if err := runMigrations(sqlDB); err != nil {
+		sqlDB.Close()
 		return nil, err
 	}
 
-	return &PostgresStore{db: &tracedDB{DB: db, useRebind: true}}, nil
+	// The pgx pool backs the sqlc query layer; goose has already brought the
+	// schema current above, so the pool only serves application queries.
+	pool, err := newPgxPool(context.Background(), dsn)
+	if err != nil {
+		sqlDB.Close()
+		return nil, err
+	}
+
+	return &PostgresStore{
+		db:   &tracedDB{DB: sqlDB, useRebind: true},
+		pool: pool,
+		q:    db.New(pool),
+	}, nil
 }
 
-func (s *PostgresStore) Close() error { return s.db.Close() }
+// Close releases both query handles. They are independent connection pools to
+// the same database during the sqlc migration (#185).
+func (s *PostgresStore) Close() error {
+	s.pool.Close()
+	return s.db.Close()
+}
 
 // --- Internal helpers ---
 
