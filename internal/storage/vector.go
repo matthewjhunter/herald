@@ -71,6 +71,59 @@ func (s *PostgresStore) GetArticleEmbeddings(userID int64, model string) ([]Arti
 	return out, rows.Err()
 }
 
+// SemanticSearch is the hybrid-search semantic path as an in-database query
+// (#192): it returns the user's subscribed-feed articles whose embedding under
+// model is within maxDist cosine distance of queryVec, nearest first, up to
+// limit. It replaces the old fetch-every-embedding-and-cosine-in-Go scan -- the
+// distance, ordering, and top-N now happen in Postgres, so only the hits cross
+// into the app.
+//
+// This is an EXACT scan, not an ANN index lookup. Semantic search filters to a
+// user's subscribed feeds with a JOIN to user_feeds, which pgvector's HNSW
+// iterative scan cannot see (it compensates only for filters evaluated inside
+// the index scan, not a join above it), so an HNSW index over the shared
+// article_embeddings table would silently under-return whenever another user's
+// articles are globally nearer to the query. An exact sequential scan ordered by
+// distance is always correct, has no recall loss, and at herald's scale (a
+// per-user article set in the thousands to low tens of thousands) runs in tens
+// of milliseconds -- fine for an interactive, low-QPS search. queryVec must have
+// EmbedDim components, matching the vector(EmbedDim) column.
+func (s *PostgresStore) SemanticSearch(userID int64, model string, queryVec []float32, maxDist float64, limit int) ([]SemanticHit, error) {
+	if len(queryVec) != EmbedDim {
+		return nil, fmt.Errorf("semantic search: query vector has %d dimensions, want %d (embedding model mismatch)", len(queryVec), EmbedDim)
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
+	const q = `
+		SELECT ae.article_id, ae.embedding <=> $1 AS distance
+		FROM article_embeddings ae
+		JOIN articles a ON a.id = ae.article_id
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		WHERE uf.user_id = $2 AND ae.embedding_model = $3 AND ae.status = $4
+		  AND (ae.embedding <=> $1) < $5
+		ORDER BY ae.embedding <=> $1
+		LIMIT $6`
+	rows, err := s.pool.Query(context.Background(), q, pgvector.NewVector(queryVec), userID, model, int16(EmbedStatusOK), maxDist, limit)
+	if err != nil {
+		return nil, fmt.Errorf("semantic search: %w", err)
+	}
+	defer rows.Close()
+
+	var out []SemanticHit
+	for rows.Next() {
+		var h SemanticHit
+		if err := rows.Scan(&h.ArticleID, &h.Distance); err != nil {
+			return nil, fmt.Errorf("scan semantic hit: %w", err)
+		}
+		out = append(out, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MatchArticlesToGroups is the JOIN phase as an in-database ANN query: for each
 // of the given articles that has a usable embedding under model, it finds the
 // user's nearest existing group centroid within maxDist cosine distance (an

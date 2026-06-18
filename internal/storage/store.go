@@ -208,6 +208,7 @@ type Store interface {
 	MarkArticleEmbeddingSkipped(articleID int64, model string) error
 	MarkArticleEmbeddingFailed(articleID int64, model, errMsg string) error
 	GetArticleEmbeddings(userID int64, model string) ([]ArticleEmbeddingRow, error)
+	SemanticSearch(userID int64, model string, queryVec []float32, maxDist float64, limit int) ([]SemanticHit, error)
 	GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error)
 	ResetAllArticleEmbeddings() (int64, error)
 	ResetAllGroupEmbeddings() (int64, error)
