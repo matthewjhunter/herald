@@ -91,20 +91,14 @@ func (s *PostgresStore) Close() error {
 // computeFeedBaseInterval queries the last 11 article publish dates for feedID
 // and returns a fetch interval based on posting recency and frequency.
 func (s *PostgresStore) computeFeedBaseInterval(feedID int64) time.Duration {
-	rows, err := s.db.Query(
-		`SELECT published_date FROM articles
-		 WHERE feed_id = ? AND published_date IS NOT NULL
-		 ORDER BY published_date DESC LIMIT 11`, feedID)
+	rows, err := s.q.GetFeedRecentPublishDates(context.Background(), feedID)
 	if err != nil {
 		return 24 * time.Hour
 	}
-	defer rows.Close()
-
-	var dates []time.Time
-	for rows.Next() {
-		var t time.Time
-		if err := rows.Scan(&t); err == nil {
-			dates = append(dates, t)
+	dates := make([]time.Time, 0, len(rows))
+	for _, t := range rows {
+		if t != nil {
+			dates = append(dates, *t)
 		}
 	}
 	if len(dates) == 0 {
@@ -501,12 +495,31 @@ func (s *PostgresStore) ResetScores(userID int64, securityOnly bool, belowScore 
 
 // --- Feeds ---
 
+func feedFromRow(r db.Feed) Feed {
+	return Feed{
+		ID:                r.ID,
+		URL:               r.Url,
+		Title:             r.Title,
+		Description:       derefString(r.Description),
+		SiteURL:           r.SiteUrl,
+		LastFetched:       r.LastFetched,
+		LastError:         r.LastError,
+		ETag:              derefString(r.Etag),
+		LastModified:      derefString(r.LastModified),
+		Enabled:           r.Enabled,
+		CreatedAt:         r.CreatedAt,
+		ConsecutiveErrors: int(r.ConsecutiveErrors),
+		NextFetchAt:       r.NextFetchAt,
+		Status:            r.Status,
+	}
+}
+
 func (s *PostgresStore) AddFeed(url, title, description string) (int64, error) {
-	var id int64
-	err := s.db.QueryRow(
-		"INSERT INTO feeds (url, title, description) VALUES (?, ?, ?) RETURNING id",
-		url, title, description,
-	).Scan(&id)
+	id, err := s.q.AddFeed(context.Background(), db.AddFeedParams{
+		Url:         url,
+		Title:       title,
+		Description: description,
+	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to add feed: %w", err)
 	}
@@ -518,62 +531,48 @@ func (s *PostgresStore) AddFeed(url, title, description string) (int64, error) {
 // callers using it for metadata lookup (e.g. embedding context) need the
 // title even for disabled feeds.
 func (s *PostgresStore) GetFeed(feedID int64) (*Feed, error) {
-	var f Feed
-	var etag, lastMod sql.NullString
-	err := s.db.QueryRow(s.db.prepare(
-		`SELECT id, url, title, description, site_url, last_fetched, last_error,
-		        etag, last_modified, enabled, created_at,
-		        consecutive_errors, next_fetch_at, status
-		 FROM feeds WHERE id = ?`), feedID,
-	).Scan(&f.ID, &f.URL, &f.Title, &f.Description, &f.SiteURL, &f.LastFetched,
-		&f.LastError, &etag, &lastMod, &f.Enabled, &f.CreatedAt,
-		&f.ConsecutiveErrors, &f.NextFetchAt, &f.Status)
+	r, err := s.q.GetFeed(context.Background(), feedID)
 	if err != nil {
-		return nil, fmt.Errorf("get feed %d: %w", feedID, err)
+		return nil, fmt.Errorf("get feed %d: %w", feedID, mapErr(err))
 	}
-	f.ETag = etag.String
-	f.LastModified = lastMod.String
+	f := feedFromRow(r)
 	return &f, nil
 }
 
 func (s *PostgresStore) GetAllFeeds() ([]Feed, error) {
-	rows, err := s.db.Query(`
-		SELECT id, url, title, description, site_url, last_fetched, last_error, etag, last_modified,
-		       enabled, created_at, consecutive_errors, next_fetch_at, status
-		FROM feeds
-		WHERE enabled = TRUE AND status = 'active'
-		  AND (next_fetch_at IS NULL OR next_fetch_at <= NOW())`)
+	rows, err := s.q.GetActiveFeedsToFetch(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get feeds: %w", err)
 	}
-	defer rows.Close()
-	return scanFeeds(rows)
+	feeds := make([]Feed, len(rows))
+	for i, r := range rows {
+		feeds[i] = feedFromRow(r)
+	}
+	return feeds, nil
 }
 
 func (s *PostgresStore) UpdateFeedError(feedID int64, errMsg string) error {
-	if _, err := s.db.Exec(
-		"UPDATE feeds SET last_error = ?, consecutive_errors = consecutive_errors + 1 WHERE id = ?",
-		errMsg, feedID,
-	); err != nil {
+	ctx := context.Background()
+	if err := s.q.IncrementFeedError(ctx, db.IncrementFeedErrorParams{
+		LastError: errMsg,
+		ID:        feedID,
+	}); err != nil {
 		return fmt.Errorf("failed to update feed error: %w", err)
 	}
 
-	var consecutiveErrors int
-	var lastFetched sql.NullTime
-	if err := s.db.QueryRow(
-		"SELECT consecutive_errors, last_fetched FROM feeds WHERE id = ?", feedID,
-	).Scan(&consecutiveErrors, &lastFetched); err != nil {
+	state, err := s.q.GetFeedErrorState(ctx, feedID)
+	if err != nil {
 		return nil
 	}
 
-	if consecutiveErrors >= 5 && (!lastFetched.Valid || time.Since(lastFetched.Time) > 30*24*time.Hour) {
-		s.db.Exec("UPDATE feeds SET status = 'dead' WHERE id = ?", feedID) //nolint:errcheck
+	if state.ConsecutiveErrors >= 5 && (state.LastFetched == nil || time.Since(*state.LastFetched) > 30*24*time.Hour) {
+		s.q.MarkFeedDead(ctx, feedID) //nolint:errcheck
 		return nil
 	}
 
 	base := s.computeFeedBaseInterval(feedID)
-	next := time.Now().Add(applyErrorBackoff(base, consecutiveErrors))
-	s.db.Exec("UPDATE feeds SET next_fetch_at = ? WHERE id = ?", next, feedID) //nolint:errcheck
+	next := time.Now().Add(applyErrorBackoff(base, int(state.ConsecutiveErrors)))
+	s.q.SetFeedNextFetch(ctx, db.SetFeedNextFetchParams{NextFetchAt: &next, ID: feedID}) //nolint:errcheck
 	return nil
 }
 
@@ -582,23 +581,18 @@ func (s *PostgresStore) ClearFeedError(feedID int64) error {
 }
 
 func (s *PostgresStore) MarkFeedFetched(feedID int64) error {
-	_, err := s.db.Exec(
-		`UPDATE feeds SET last_fetched = NOW(), last_error = NULL,
-		 consecutive_errors = 0, status = 'active' WHERE id = ?`,
-		feedID,
-	)
-	if err != nil {
+	if err := s.q.MarkFeedFetched(context.Background(), feedID); err != nil {
 		return fmt.Errorf("failed to mark feed fetched: %w", err)
 	}
 	return nil
 }
 
 func (s *PostgresStore) UpdateFeedCacheHeaders(feedID int64, etag, lastModified string) error {
-	_, err := s.db.Exec(
-		"UPDATE feeds SET etag = ?, last_modified = ? WHERE id = ?",
-		etag, lastModified, feedID,
-	)
-	if err != nil {
+	if err := s.q.UpdateFeedCacheHeaders(context.Background(), db.UpdateFeedCacheHeadersParams{
+		Etag:         etag,
+		LastModified: lastModified,
+		ID:           feedID,
+	}); err != nil {
 		return fmt.Errorf("failed to update feed cache headers: %w", err)
 	}
 	return nil
@@ -607,41 +601,39 @@ func (s *PostgresStore) UpdateFeedCacheHeaders(feedID int64, etag, lastModified 
 func (s *PostgresStore) UpdateFeedLastFetched(feedID int64) error {
 	base := s.computeFeedBaseInterval(feedID)
 	next := time.Now().Add(base)
-	_, err := s.db.Exec(
-		`UPDATE feeds SET last_fetched = NOW(), last_error = NULL,
-		 consecutive_errors = 0, status = 'active', next_fetch_at = ? WHERE id = ?`,
-		next, feedID,
-	)
-	if err != nil {
+	if err := s.q.MarkFeedFetchedWithNext(context.Background(), db.MarkFeedFetchedWithNextParams{
+		NextFetchAt: &next,
+		ID:          feedID,
+	}); err != nil {
 		return fmt.Errorf("failed to update feed last_fetched: %w", err)
 	}
 	return nil
 }
 
 func (s *PostgresStore) RenameFeed(feedID int64, title string) error {
-	_, err := s.db.Exec("UPDATE feeds SET title = ? WHERE id = ?", title, feedID)
-	if err != nil {
+	if err := s.q.RenameFeed(context.Background(), db.RenameFeedParams{Title: title, ID: feedID}); err != nil {
 		return fmt.Errorf("failed to rename feed: %w", err)
 	}
 	return nil
 }
 
 func (s *PostgresStore) RenameUserFeed(userID, feedID int64, title string) error {
-	var err error
-	if title == "" {
-		_, err = s.db.Exec("UPDATE user_feeds SET user_title = NULL WHERE user_id = ? AND feed_id = ?", userID, feedID)
-	} else {
-		_, err = s.db.Exec("UPDATE user_feeds SET user_title = ? WHERE user_id = ? AND feed_id = ?", title, userID, feedID)
+	var userTitle *string
+	if title != "" {
+		userTitle = &title
 	}
-	if err != nil {
+	if err := s.q.RenameUserFeed(context.Background(), db.RenameUserFeedParams{
+		UserTitle: userTitle,
+		UserID:    userID,
+		FeedID:    feedID,
+	}); err != nil {
 		return fmt.Errorf("failed to rename user feed: %w", err)
 	}
 	return nil
 }
 
 func (s *PostgresStore) UpdateFeedSiteURL(feedID int64, siteURL string) error {
-	_, err := s.db.Exec("UPDATE feeds SET site_url = ? WHERE id = ?", siteURL, feedID)
-	if err != nil {
+	if err := s.q.UpdateFeedSiteURL(context.Background(), db.UpdateFeedSiteURLParams{SiteUrl: siteURL, ID: feedID}); err != nil {
 		return fmt.Errorf("update feed site url: %w", err)
 	}
 	return nil
