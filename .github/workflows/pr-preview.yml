@@ -59,6 +59,13 @@ jobs:
             || docker exec postgres psql -U postgres \
                  -c "CREATE DATABASE \"herald_pr_${PR}\" OWNER herald"
 
+          # Provision the vector extension as the postgres superuser: grouping
+          # runs on pgvector now (#186), the herald role is not a superuser, and
+          # vector is not trusted, so herald-web's startup migration (which only
+          # does CREATE EXTENSION IF NOT EXISTS) cannot create it itself.
+          docker exec postgres psql -U postgres -d "herald_pr_${PR}" \
+            -c "CREATE EXTENSION IF NOT EXISTS vector"
+
           # Build the per-PR DSN from the deployed herald role password (read
           # from the host env file, never echoed) and hand it to the container
           # via HERALD_DB_DSN so it stays off the command line / docker inspect.
