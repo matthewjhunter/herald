@@ -267,146 +267,110 @@ func (s *PostgresStore) DeleteUser(userID int64) error {
 // --- User prompts ---
 
 func (s *PostgresStore) GetUserPrompt(userID int64, promptType string) (string, error) {
-	var promptTemplate string
-	err := s.db.QueryRow(
-		"SELECT prompt_template FROM user_prompts WHERE user_id = ? AND prompt_type = ?",
-		userID, promptType,
-	).Scan(&promptTemplate)
-	if err != nil {
-		return "", err
-	}
-	return promptTemplate, nil
+	tmpl, err := s.q.GetUserPrompt(context.Background(), db.GetUserPromptParams{
+		UserID:     userID,
+		PromptType: promptType,
+	})
+	return tmpl, mapErr(err)
 }
 
 func (s *PostgresStore) GetUserPromptTemperature(userID int64, promptType string) (float64, error) {
-	var temperature sql.NullFloat64
-	err := s.db.QueryRow(
-		"SELECT temperature FROM user_prompts WHERE user_id = ? AND prompt_type = ?",
-		userID, promptType,
-	).Scan(&temperature)
+	temp, err := s.q.GetUserPromptTemperature(context.Background(), db.GetUserPromptTemperatureParams{
+		UserID:     userID,
+		PromptType: promptType,
+	})
 	if err != nil {
-		return 0, err
+		return 0, mapErr(err)
 	}
-	if !temperature.Valid {
+	if temp == nil {
 		return 0, nil
 	}
-	return temperature.Float64, nil
+	return *temp, nil
 }
 
 func (s *PostgresStore) GetUserPromptModel(userID int64, promptType string) (string, error) {
-	var model sql.NullString
-	err := s.db.QueryRow(
-		"SELECT model FROM user_prompts WHERE user_id = ? AND prompt_type = ?",
-		userID, promptType,
-	).Scan(&model)
+	model, err := s.q.GetUserPromptModel(context.Background(), db.GetUserPromptModelParams{
+		UserID:     userID,
+		PromptType: promptType,
+	})
 	if err != nil {
-		return "", err
+		return "", mapErr(err)
 	}
-	return model.String, nil
+	return derefString(model), nil
 }
 
 func (s *PostgresStore) SetUserPrompt(userID int64, promptType, promptTemplate string, temperature *float64, model *string) error {
-	_, err := s.db.Exec(
-		`INSERT INTO user_prompts (user_id, prompt_type, prompt_template, temperature, model, updated_at)
-		 VALUES (?, ?, ?, ?, ?, NOW())
-		 ON CONFLICT(user_id, prompt_type) DO UPDATE SET
-		   prompt_template = excluded.prompt_template,
-		   temperature = excluded.temperature,
-		   model = COALESCE(excluded.model, user_prompts.model),
-		   updated_at = NOW()`,
-		userID, promptType, promptTemplate, temperature, model,
-	)
-	return err
+	return s.q.SetUserPrompt(context.Background(), db.SetUserPromptParams{
+		UserID:         userID,
+		PromptType:     promptType,
+		PromptTemplate: promptTemplate,
+		Temperature:    temperature,
+		Model:          model,
+	})
 }
 
 func (s *PostgresStore) DeleteUserPrompt(userID int64, promptType string) error {
-	_, err := s.db.Exec(
-		"DELETE FROM user_prompts WHERE user_id = ? AND prompt_type = ?",
-		userID, promptType,
-	)
-	return err
+	return s.q.DeleteUserPrompt(context.Background(), db.DeleteUserPromptParams{
+		UserID:     userID,
+		PromptType: promptType,
+	})
 }
 
 func (s *PostgresStore) ListUserPrompts(userID int64) ([]UserPrompt, error) {
-	rows, err := s.db.Query(
-		`SELECT prompt_type, prompt_template, temperature, model, created_at, updated_at
-		 FROM user_prompts WHERE user_id = ? ORDER BY prompt_type`,
-		userID,
-	)
+	rows, err := s.q.ListUserPrompts(context.Background(), userID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var prompts []UserPrompt
-	for rows.Next() {
-		var p UserPrompt
-		var temp sql.NullFloat64
-		var model sql.NullString
-		if err := rows.Scan(&p.PromptType, &p.PromptTemplate, &temp, &model, &p.CreatedAt, &p.UpdatedAt); err != nil {
-			return nil, err
+	prompts := make([]UserPrompt, len(rows))
+	for i, r := range rows {
+		prompts[i] = UserPrompt{
+			UserID:         userID,
+			PromptType:     r.PromptType,
+			PromptTemplate: r.PromptTemplate,
+			Temperature:    r.Temperature,
+			Model:          derefString(r.Model),
+			CreatedAt:      r.CreatedAt,
+			UpdatedAt:      r.UpdatedAt,
 		}
-		p.UserID = userID
-		p.Model = model.String
-		if temp.Valid {
-			tempVal := temp.Float64
-			p.Temperature = &tempVal
-		}
-		prompts = append(prompts, p)
 	}
-	return prompts, rows.Err()
+	return prompts, nil
 }
 
 // --- User preferences ---
 
 func (s *PostgresStore) GetUserPreference(userID int64, key string) (string, error) {
-	var value string
-	err := s.db.QueryRow(
-		"SELECT value FROM user_preferences WHERE user_id = ? AND key = ?",
-		userID, key,
-	).Scan(&value)
-	if err != nil {
-		return "", err
-	}
-	return value, nil
+	value, err := s.q.GetUserPreference(context.Background(), db.GetUserPreferenceParams{
+		UserID: userID,
+		Key:    key,
+	})
+	return value, mapErr(err)
 }
 
 func (s *PostgresStore) SetUserPreference(userID int64, key, value string) error {
-	_, err := s.db.Exec(
-		`INSERT INTO user_preferences (user_id, key, value)
-		 VALUES (?, ?, ?)
-		 ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`,
-		userID, key, value,
-	)
-	return err
+	return s.q.SetUserPreference(context.Background(), db.SetUserPreferenceParams{
+		UserID: userID,
+		Key:    key,
+		Value:  value,
+	})
 }
 
 func (s *PostgresStore) GetAllUserPreferences(userID int64) (map[string]string, error) {
-	rows, err := s.db.Query(
-		"SELECT key, value FROM user_preferences WHERE user_id = ?", userID,
-	)
+	rows, err := s.q.GetAllUserPreferences(context.Background(), userID)
 	if err != nil {
 		return nil, fmt.Errorf("get user preferences: %w", err)
 	}
-	defer rows.Close()
-
-	prefs := make(map[string]string)
-	for rows.Next() {
-		var k, v string
-		if err := rows.Scan(&k, &v); err != nil {
-			return nil, fmt.Errorf("scan preference: %w", err)
-		}
-		prefs[k] = v
+	prefs := make(map[string]string, len(rows))
+	for _, r := range rows {
+		prefs[r.Key] = r.Value
 	}
-	return prefs, rows.Err()
+	return prefs, nil
 }
 
 func (s *PostgresStore) DeleteUserPreference(userID int64, key string) error {
-	_, err := s.db.Exec(
-		"DELETE FROM user_preferences WHERE user_id = ? AND key = ?",
-		userID, key,
-	)
-	return err
+	return s.q.DeleteUserPreference(context.Background(), db.DeleteUserPreferenceParams{
+		UserID: userID,
+		Key:    key,
+	})
 }
 
 // --- Read state ---
