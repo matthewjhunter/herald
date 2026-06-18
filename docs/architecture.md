@@ -46,7 +46,7 @@ All prompts are loaded through the `PromptLoader` (see Prompt System below).
 
 ### GroupMatcher (`internal/ai`)
 
-Performs incremental vector-based article-to-group matching. Uses a local embedding model via `go-embedding` to embed article text (title + AI summary), then computes cosine similarity against stored group centroids. Groups with no prior centroid are seeded directly from the first article's embedding.
+Embeds article text (title + AI summary) with a local model via `go-embedding`. The match itself -- nearest group centroid within the threshold -- runs as a pgvector distance query in the database (#186), not a cosine loop in the app.
 
 ### Store (`internal/storage`)
 
@@ -117,21 +117,15 @@ Herald clusters articles covering the same event using vector embeddings rather 
 
 ### Embedding
 
-Article text (title + AI summary) is embedded using a local model via the `go-embedding` library. Embeddings are stored as binary-encoded float32 slices in the `article_groups` table alongside the group centroid.
+Article text (title + AI summary) is embedded using a local model via the `go-embedding` library. Embeddings are stored as pgvector `vector` values: `article_embeddings.embedding` per article, and `article_groups.embedding` for each group's centroid.
 
-### Incremental Centroid Update
+### Matching (pgvector ANN)
 
-When an article is assigned to a group, the group's centroid is updated incrementally without recomputing from scratch:
-
-```
-C_new = (C_old * N + V_new) / (N + 1)
-```
-
-where `C_old` is the current centroid, `N` is the article count before adding this one, and `V_new` is the new article's embedding. This keeps clustering O(1) per article rather than O(n) across all group members.
+Grouping runs as in-database nearest-neighbour queries rather than fetching every embedding into the app (#186). For each freshly embedded article the JOIN phase finds the nearest existing group centroid within the threshold (`embedding <=> centroid`, an HNSW `vector_cosine_ops` index backs the search); articles that match join that group, and the rest are clustered among themselves (single-linkage over pgvector distance edges) into new groups. A group's centroid is the mean of its members' embeddings, recomputed in the database with pgvector's `AVG` aggregate after membership changes.
 
 ### Matching Threshold
 
-A configurable similarity threshold (cosine similarity, 0–1) controls how aggressively articles are merged into existing groups. If no group centroid exceeds the threshold, a new group is created. Group topics are refined when a group reaches 3+ articles.
+A configurable similarity threshold (cosine similarity, 0–1) controls how aggressively articles are merged into existing groups; pgvector measures cosine distance, so the threshold is applied as `distance <= 1 - threshold`. If no group centroid is near enough, a new group is created. Group topics are refined when a group reaches 3+ articles.
 
 ### LLM-Based Batch Clustering
 
@@ -195,7 +189,7 @@ All AI inference runs through Ollama on localhost. This means feed content never
 
 ### Vector Clustering over LLM-Based Grouping
 
-Persistent article grouping uses vector embeddings and cosine similarity rather than asking an LLM to group articles. The staged cluster pass matches each article against a frozen snapshot of existing group centroids and links the remainder into new groups, using the LLM only to name a group once it forms. LLM-based grouping is available for ad-hoc batch clustering (`herald list --cluster`) but is not used for the persistent group state, where it would require re-running the LLM over all articles on each fetch.
+Persistent article grouping uses vector embeddings and pgvector similarity rather than asking an LLM to group articles. The staged cluster pass matches each article against the existing group centroids and links the remainder into new groups, using the LLM only to name a group once it forms. LLM-based grouping is available for ad-hoc batch clustering (`herald list --cluster`) but is not used for the persistent group state, where it would require re-running the LLM over all articles on each fetch.
 
 ### Config-Driven AI Prompts
 
