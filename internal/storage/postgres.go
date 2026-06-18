@@ -1789,74 +1789,66 @@ func (s *PostgresStore) UpdateGroupTopic(groupID int64, topic string) error {
 
 // --- Feed favicons ---
 
+func faviconFromRow(r db.FeedFavicon) FeedFavicon {
+	return FeedFavicon{
+		FeedID:    r.FeedID,
+		Data:      r.Data,
+		MimeType:  r.MimeType,
+		FetchedAt: r.FetchedAt,
+	}
+}
+
 func (s *PostgresStore) StoreFeedFavicon(feedID int64, data []byte, mimeType string) error {
-	_, err := s.db.Exec(
-		`INSERT INTO feed_favicons (feed_id, data, mime_type, fetched_at)
-		 VALUES (?, ?, ?, NOW())
-		 ON CONFLICT(feed_id) DO UPDATE SET
-		   data = excluded.data, mime_type = excluded.mime_type, fetched_at = NOW()`,
-		feedID, data, mimeType,
-	)
-	return err
+	return s.q.StoreFeedFavicon(context.Background(), db.StoreFeedFaviconParams{
+		FeedID:   feedID,
+		Data:     data,
+		MimeType: mimeType,
+	})
 }
 
 func (s *PostgresStore) GetFeedFavicon(feedID int64) (*FeedFavicon, error) {
-	var f FeedFavicon
-	err := s.db.QueryRow(
-		`SELECT feed_id, data, mime_type, fetched_at FROM feed_favicons WHERE feed_id = ?`, feedID,
-	).Scan(&f.FeedID, &f.Data, &f.MimeType, &f.FetchedAt)
-	if err == sql.ErrNoRows {
+	r, err := s.q.GetFeedFavicon(context.Background(), feedID)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get feed favicon: %w", err)
 	}
+	f := faviconFromRow(r)
 	return &f, nil
 }
 
 func (s *PostgresStore) GetAllFeedFavicons() ([]FeedFavicon, error) {
-	rows, err := s.db.Query(`SELECT feed_id, data, mime_type, fetched_at FROM feed_favicons`)
+	rows, err := s.q.GetAllFeedFavicons(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("get all feed favicons: %w", err)
 	}
-	defer rows.Close()
-
-	var favicons []FeedFavicon
-	for rows.Next() {
-		var f FeedFavicon
-		if err := rows.Scan(&f.FeedID, &f.Data, &f.MimeType, &f.FetchedAt); err != nil {
-			return nil, fmt.Errorf("scan feed favicon: %w", err)
-		}
-		favicons = append(favicons, f)
+	favicons := make([]FeedFavicon, len(rows))
+	for i, r := range rows {
+		favicons[i] = faviconFromRow(r)
 	}
-	return favicons, rows.Err()
+	return favicons, nil
 }
 
 func (s *PostgresStore) GetSubscribedFeedsWithoutFavicons() ([]Feed, error) {
-	rows, err := s.db.Query(`
-		SELECT DISTINCT f.id, f.url, f.title, f.description, f.site_url,
-		       f.last_fetched, f.last_error, f.etag, f.last_modified,
-		       f.enabled, f.created_at, f.consecutive_errors, f.next_fetch_at, f.status
-		FROM feeds f
-		JOIN user_feeds uf ON f.id = uf.feed_id
-		LEFT JOIN feed_favicons ff ON f.id = ff.feed_id
-		WHERE ff.feed_id IS NULL
-		ORDER BY f.id`)
+	rows, err := s.q.GetSubscribedFeedsWithoutFavicons(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("get feeds without favicons: %w", err)
 	}
-	defer rows.Close()
-	return scanFeeds(rows)
+	feeds := make([]Feed, len(rows))
+	for i, r := range rows {
+		feeds[i] = feedFromRow(r)
+	}
+	return feeds, nil
 }
 
 // --- Subscriptions ---
 
 func (s *PostgresStore) SubscribeUserToFeed(userID, feedID int64) error {
-	_, err := s.db.Exec(
-		"INSERT INTO user_feeds (user_id, feed_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
-		userID, feedID,
-	)
-	if err != nil {
+	if err := s.q.SubscribeUserToFeed(context.Background(), db.SubscribeUserToFeedParams{
+		UserID: userID,
+		FeedID: feedID,
+	}); err != nil {
 		return fmt.Errorf("failed to subscribe user to feed: %w", err)
 	}
 	return nil
@@ -1868,11 +1860,11 @@ func (s *PostgresStore) AddFeedTag(userID, feedID int64, tag string) error {
 	if tag == "" {
 		return fmt.Errorf("empty tag")
 	}
-	_, err := s.db.Exec(
-		"INSERT INTO feed_tags (user_id, feed_id, tag) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
-		userID, feedID, tag,
-	)
-	if err != nil {
+	if err := s.q.AddFeedTag(context.Background(), db.AddFeedTagParams{
+		UserID: userID,
+		FeedID: feedID,
+		Tag:    tag,
+	}); err != nil {
 		return fmt.Errorf("add feed tag: %w", err)
 	}
 	return nil
@@ -1881,11 +1873,11 @@ func (s *PostgresStore) AddFeedTag(userID, feedID int64, tag string) error {
 // RemoveFeedTag removes a tag from a feed for a user (case-insensitive).
 func (s *PostgresStore) RemoveFeedTag(userID, feedID int64, tag string) error {
 	tag = normalizeTag(tag)
-	_, err := s.db.Exec(
-		"DELETE FROM feed_tags WHERE user_id = ? AND feed_id = ? AND lower(tag) = lower(?)",
-		userID, feedID, tag,
-	)
-	if err != nil {
+	if err := s.q.RemoveFeedTag(context.Background(), db.RemoveFeedTagParams{
+		UserID: userID,
+		FeedID: feedID,
+		Tag:    tag,
+	}); err != nil {
 		return fmt.Errorf("remove feed tag: %w", err)
 	}
 	return nil
@@ -1893,66 +1885,36 @@ func (s *PostgresStore) RemoveFeedTag(userID, feedID int64, tag string) error {
 
 // GetFeedTags returns one feed's tags for a user, sorted.
 func (s *PostgresStore) GetFeedTags(userID, feedID int64) ([]string, error) {
-	rows, err := s.db.Query(
-		"SELECT tag FROM feed_tags WHERE user_id = ? AND feed_id = ? ORDER BY tag",
-		userID, feedID,
-	)
+	tags, err := s.q.GetFeedTags(context.Background(), db.GetFeedTagsParams{
+		UserID: userID,
+		FeedID: feedID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get feed tags: %w", err)
 	}
-	defer rows.Close()
-	var tags []string
-	for rows.Next() {
-		var t string
-		if err := rows.Scan(&t); err != nil {
-			return nil, fmt.Errorf("scan feed tag: %w", err)
-		}
-		tags = append(tags, t)
-	}
-	return tags, rows.Err()
+	return tags, nil
 }
 
 // GetAllFeedTags returns every tagged feed's tags for a user in one query.
 func (s *PostgresStore) GetAllFeedTags(userID int64) (map[int64][]string, error) {
-	rows, err := s.db.Query(
-		"SELECT feed_id, tag FROM feed_tags WHERE user_id = ? ORDER BY feed_id, tag",
-		userID,
-	)
+	rows, err := s.q.GetAllFeedTags(context.Background(), userID)
 	if err != nil {
 		return nil, fmt.Errorf("get all feed tags: %w", err)
 	}
-	defer rows.Close()
 	out := make(map[int64][]string)
-	for rows.Next() {
-		var fid int64
-		var t string
-		if err := rows.Scan(&fid, &t); err != nil {
-			return nil, fmt.Errorf("scan feed tag: %w", err)
-		}
-		out[fid] = append(out[fid], t)
+	for _, r := range rows {
+		out[r.FeedID] = append(out[r.FeedID], r.Tag)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // GetUserTags returns the distinct tags a user has applied, sorted.
 func (s *PostgresStore) GetUserTags(userID int64) ([]string, error) {
-	rows, err := s.db.Query(
-		"SELECT DISTINCT tag FROM feed_tags WHERE user_id = ? ORDER BY tag",
-		userID,
-	)
+	tags, err := s.q.GetUserTags(context.Background(), userID)
 	if err != nil {
 		return nil, fmt.Errorf("get user tags: %w", err)
 	}
-	defer rows.Close()
-	var tags []string
-	for rows.Next() {
-		var t string
-		if err := rows.Scan(&t); err != nil {
-			return nil, fmt.Errorf("scan user tag: %w", err)
-		}
-		tags = append(tags, t)
-	}
-	return tags, rows.Err()
+	return tags, nil
 }
 
 // GetFeedsByTags resolves a set of tags to the distinct feed IDs carrying any of
@@ -1962,112 +1924,97 @@ func (s *PostgresStore) GetFeedsByTags(userID int64, tags []string) ([]int64, er
 	if len(norm) == 0 {
 		return nil, nil
 	}
-	ph := make([]string, len(norm))
-	args := make([]any, 0, len(norm)+1)
-	args = append(args, userID)
+	lowered := make([]string, len(norm))
 	for i, t := range norm {
-		ph[i] = "lower(?)"
-		args = append(args, t)
+		lowered[i] = strings.ToLower(t)
 	}
-	rows, err := s.db.Query(
-		"SELECT DISTINCT feed_id FROM feed_tags WHERE user_id = ? AND lower(tag) IN ("+strings.Join(ph, ",")+") ORDER BY feed_id",
-		args...,
-	)
+	ids, err := s.q.GetFeedsByTags(context.Background(), db.GetFeedsByTagsParams{
+		UserID: userID,
+		Tags:   lowered,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get feeds by tags: %w", err)
 	}
-	defer rows.Close()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan feed id: %w", err)
-		}
-		ids = append(ids, id)
+	return ids, nil
+}
+
+func userFeedFromRow(r db.GetUserFeedsRow) Feed {
+	return Feed{
+		ID:                r.ID,
+		URL:               r.Url,
+		Title:             r.Title,
+		Description:       derefString(r.Description),
+		SiteURL:           r.SiteUrl,
+		LastFetched:       r.LastFetched,
+		LastError:         r.LastError,
+		ETag:              derefString(r.Etag),
+		LastModified:      derefString(r.LastModified),
+		Enabled:           r.Enabled,
+		CreatedAt:         r.CreatedAt,
+		ConsecutiveErrors: int(r.ConsecutiveErrors),
+		NextFetchAt:       r.NextFetchAt,
+		Status:            r.Status,
 	}
-	return ids, rows.Err()
 }
 
 func (s *PostgresStore) GetUserFeeds(userID int64) ([]Feed, error) {
-	rows, err := s.db.Query(`
-		SELECT f.id, f.url, COALESCE(uf.user_title, f.title), f.description, f.site_url, f.last_fetched, f.last_error, f.etag,
-		       f.last_modified, f.enabled, f.created_at,
-		       f.consecutive_errors, f.next_fetch_at, f.status
-		FROM feeds f
-		JOIN user_feeds uf ON f.id = uf.feed_id
-		WHERE uf.user_id = ? AND f.enabled = TRUE
-		ORDER BY COALESCE(uf.user_title, f.title)`, userID)
+	rows, err := s.q.GetUserFeeds(context.Background(), userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user feeds: %w", err)
 	}
-	defer rows.Close()
-	return scanFeeds(rows)
+	feeds := make([]Feed, len(rows))
+	for i, r := range rows {
+		feeds[i] = userFeedFromRow(r)
+	}
+	return feeds, nil
 }
 
 func (s *PostgresStore) GetAllSubscribedFeeds() ([]Feed, error) {
-	rows, err := s.db.Query(`
-		SELECT DISTINCT f.id, f.url, f.title, f.description, f.site_url, f.last_fetched, f.last_error,
-		       f.etag, f.last_modified, f.enabled, f.created_at,
-		       f.consecutive_errors, f.next_fetch_at, f.status
-		FROM feeds f
-		JOIN user_feeds uf ON f.id = uf.feed_id
-		WHERE f.enabled = TRUE AND f.status = 'active'
-		  AND (f.next_fetch_at IS NULL OR f.next_fetch_at <= NOW())
-		ORDER BY f.title`)
+	rows, err := s.q.GetAllSubscribedFeeds(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get subscribed feeds: %w", err)
 	}
-	defer rows.Close()
-	return scanFeeds(rows)
+	feeds := make([]Feed, len(rows))
+	for i, r := range rows {
+		feeds[i] = feedFromRow(r)
+	}
+	return feeds, nil
 }
 
 func (s *PostgresStore) GetAllActiveSubscribedFeeds() ([]Feed, error) {
-	rows, err := s.db.Query(`
-		SELECT DISTINCT f.id, f.url, f.title, f.description, f.site_url, f.last_fetched, f.last_error,
-		       f.etag, f.last_modified, f.enabled, f.created_at,
-		       f.consecutive_errors, f.next_fetch_at, f.status
-		FROM feeds f
-		JOIN user_feeds uf ON f.id = uf.feed_id
-		WHERE f.enabled = TRUE
-		ORDER BY f.title`)
+	rows, err := s.q.GetAllActiveSubscribedFeeds(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all active subscribed feeds: %w", err)
 	}
-	defer rows.Close()
-	return scanFeeds(rows)
+	feeds := make([]Feed, len(rows))
+	for i, r := range rows {
+		feeds[i] = feedFromRow(r)
+	}
+	return feeds, nil
 }
 
 func (s *PostgresStore) GetFeedSubscribers(feedID int64) ([]int64, error) {
-	rows, err := s.db.Query("SELECT user_id FROM user_feeds WHERE feed_id = ?", feedID)
+	userIDs, err := s.q.GetFeedSubscribers(context.Background(), feedID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get feed subscribers: %w", err)
 	}
-	defer rows.Close()
-
-	var userIDs []int64
-	for rows.Next() {
-		var userID int64
-		if err := rows.Scan(&userID); err != nil {
-			return nil, fmt.Errorf("failed to scan user ID: %w", err)
-		}
-		userIDs = append(userIDs, userID)
-	}
-	return userIDs, rows.Err()
+	return userIDs, nil
 }
 
 func (s *PostgresStore) UnsubscribeUserFromFeed(userID, feedID int64) error {
-	_, err := s.db.Exec(
-		"DELETE FROM user_feeds WHERE user_id = ? AND feed_id = ?", userID, feedID,
-	)
-	if err != nil {
+	if err := s.q.UnsubscribeUserFromFeed(context.Background(), db.UnsubscribeUserFromFeedParams{
+		UserID: userID,
+		FeedID: feedID,
+	}); err != nil {
 		return fmt.Errorf("failed to unsubscribe user from feed: %w", err)
 	}
 	return nil
 }
 
 func (s *PostgresStore) DeleteFeedIfOrphaned(feedID int64) (bool, error) {
-	var n int
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM user_feeds WHERE feed_id = ?", feedID).Scan(&n); err != nil {
+	ctx := context.Background()
+	n, err := s.q.CountFeedSubscribers(ctx, feedID)
+	if err != nil {
 		return false, fmt.Errorf("failed to check subscribers: %w", err)
 	}
 	if n > 0 {
@@ -2076,48 +2023,31 @@ func (s *PostgresStore) DeleteFeedIfOrphaned(feedID int64) (bool, error) {
 
 	const batchSize = 500
 	for {
-		res, err := s.db.Exec(
-			`DELETE FROM articles WHERE id IN (SELECT id FROM articles WHERE feed_id = ? LIMIT ?)`,
-			feedID, batchSize,
-		)
+		deleted, err := s.q.DeleteFeedArticlesBatch(ctx, db.DeleteFeedArticlesBatchParams{
+			FeedID: feedID,
+			Lim:    batchSize,
+		})
 		if err != nil {
 			return false, fmt.Errorf("failed to batch-delete articles for feed %d: %w", feedID, err)
 		}
-		if deleted, _ := res.RowsAffected(); deleted == 0 {
+		if deleted == 0 {
 			break
 		}
 	}
 
-	result, err := s.db.Exec(
-		"DELETE FROM feeds WHERE id = ? AND NOT EXISTS (SELECT 1 FROM user_feeds WHERE feed_id = ?)",
-		feedID, feedID,
-	)
+	rows, err := s.q.DeleteOrphanedFeed(ctx, feedID)
 	if err != nil {
 		return false, fmt.Errorf("failed to delete orphaned feed: %w", err)
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("failed to check rows affected: %w", err)
 	}
 	return rows > 0, nil
 }
 
 func (s *PostgresStore) GetAllSubscribingUsers() ([]int64, error) {
-	rows, err := s.db.Query("SELECT DISTINCT user_id FROM user_feeds ORDER BY user_id")
+	userIDs, err := s.q.GetAllSubscribingUsers(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get subscribing users: %w", err)
 	}
-	defer rows.Close()
-
-	var userIDs []int64
-	for rows.Next() {
-		var userID int64
-		if err := rows.Scan(&userID); err != nil {
-			return nil, fmt.Errorf("failed to scan user ID: %w", err)
-		}
-		userIDs = append(userIDs, userID)
-	}
-	return userIDs, rows.Err()
+	return userIDs, nil
 }
 
 // --- Admin stats ---
