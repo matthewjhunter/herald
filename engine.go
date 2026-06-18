@@ -107,7 +107,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	if storeCfg.Summary.BaseURL != "" {
 		summarizer = ai.NewCloudSummarizer(
 			storeCfg.Summary.BaseURL, cfg.SummaryAPIKey,
-			storeCfg.Summary.Model, storeCfg.Summary.Timeout,
+			storeCfg.Summary.Model, time.Duration(storeCfg.Summary.Timeout),
 			storeCfg.Summary.DisableThinking,
 		)
 	}
