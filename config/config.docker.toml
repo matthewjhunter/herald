@@ -5,7 +5,7 @@
 # 'postgres' is the compose service name.
 path = "postgres://herald:herald@postgres:5432/herald?sslmode=disable"
 
-# Embedding is via env (HERALD_EMBED_* or EMBEDDING_*); see README.
+# Embedding is via env (HERALD_EMBED_* or EMBEDDING_*); see config.toml.example.
 
 [ollama]
 base_url = "http://ollama:11434"

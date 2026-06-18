@@ -9,7 +9,7 @@ default_user_id = 1
 path = "postgres://localhost:5432/herald?sslmode=disable"
 
 [ollama]
-# Ollama API base URL (chat models only — embedding uses env vars).
+# Ollama API base URL (chat models only -- embedding uses env vars).
 base_url = "http://localhost:11434"
 
 # Security model - for content safety screening
@@ -18,8 +18,23 @@ security_model = "gemma4"
 # Curation model - for interest scoring
 curation_model = "gemma4"
 
-# Embedding configuration is read from environment variables, not the config file.
-# See README.md / QUICKSTART.md for HERALD_EMBED_* and EMBEDDING_* variables.
+# Embedding configuration is read from environment variables, not the config
+# file, so one set of variables drives every app in the ecosystem (memstore,
+# herald, ...) without duplicating values across config files:
+#
+#   EMBEDDING_BACKEND   ollama | openai     (default: ollama)
+#   EMBEDDING_BASE_URL  embedder host       (default: http://localhost:11434)
+#   EMBEDDING_MODEL     model name          (default: nomic-embed-text)
+#   EMBEDDING_API_KEY   bearer token        (optional)
+#   EMBEDDING_STRICT    true | false        (error vs. truncate on oversize input)
+#
+# Override just for herald with the HERALD_EMBED_* prefix; those cascade to
+# EMBEDDING_* if unset.
+#
+# IMPORTANT: changing the embedding model invalidates existing group centroids.
+# Stale centroids from the previous model are ignored and rebuild as new
+# articles are processed. To force a full rebuild, clear the column:
+#   UPDATE article_groups SET embedding = NULL;
 
 [thresholds]
 # Minimum interest score (0-10) to trigger notification
