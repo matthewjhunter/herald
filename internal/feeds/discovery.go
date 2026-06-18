@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/matthewjhunter/herald/internal/storage"
@@ -110,11 +111,80 @@ func (f *Fetcher) DiscoverFeeds(ctx context.Context, pageURL string) ([]Discover
 		}
 	}
 
+	// Substack profile URLs (substack.com/@user, /profile/...) carry no
+	// autodiscovery, and the feed lives on a publication subdomain that
+	// path-probing the apex host can't reach. Recover the subdomain(s) from the
+	// profile body and probe <pub>.substack.com/feed. (#109)
+	if found := f.substackProfileFeeds(ctx, base, body); len(found) > 0 {
+		return found, nil
+	}
+
 	// Fallback: probe common feed paths under the same host.
 	if base != nil {
 		return f.probeFeedPaths(ctx, base), nil
 	}
 	return nil, nil
+}
+
+// substackSubdomainRe matches "<sub>.substack.com" hostnames embedded anywhere
+// in a page body (links, embedded JSON, etc.), capturing the subdomain label.
+var substackSubdomainRe = regexp.MustCompile(`(?i)([a-z0-9][a-z0-9-]{0,62})\.substack\.com`)
+
+// substackInfraSubdomains are *.substack.com hosts that are platform
+// infrastructure, not publications, so they must never be probed for a feed.
+var substackInfraSubdomains = map[string]bool{
+	"www": true, "cdn": true, "images": true, "assets": true, "static": true,
+	"api": true, "email": true, "links": true, "substackcdn": true, "on": true,
+}
+
+// isSubstackProfile reports whether u is a Substack profile page (on the apex
+// host, path /@handle or /profile/...), as opposed to a publication subdomain
+// (which already works via standard autodiscovery).
+func isSubstackProfile(u *url.URL) bool {
+	host := strings.ToLower(u.Host)
+	if host != "substack.com" && host != "www.substack.com" {
+		return false
+	}
+	return strings.HasPrefix(u.Path, "/@") || strings.HasPrefix(u.Path, "/profile/")
+}
+
+// extractSubstackSubdomains returns the distinct publication subdomains
+// referenced in a Substack profile body, in first-seen order, excluding
+// platform-infrastructure hosts and capped at maxFeedProbes.
+func extractSubstackSubdomains(body []byte) []string {
+	var subs []string
+	seen := make(map[string]bool)
+	for _, m := range substackSubdomainRe.FindAllSubmatch(body, -1) {
+		sub := strings.ToLower(string(m[1]))
+		if substackInfraSubdomains[sub] || seen[sub] {
+			continue
+		}
+		seen[sub] = true
+		subs = append(subs, sub)
+		if len(subs) >= maxFeedProbes {
+			break
+		}
+	}
+	return subs
+}
+
+// substackProfileFeeds handles the Substack-profile special case: it extracts
+// the publication subdomains from the profile body and verifies
+// <pub>.substack.com/feed for each. Returns nil (falling through to generic
+// behaviour) when base is not a Substack profile or no publication is found.
+func (f *Fetcher) substackProfileFeeds(ctx context.Context, base *url.URL, body []byte) []DiscoveredFeed {
+	if base == nil || !isSubstackProfile(base) {
+		return nil
+	}
+	subs := extractSubstackSubdomains(body)
+	if len(subs) == 0 {
+		return nil
+	}
+	candidates := make([]string, 0, len(subs))
+	for _, s := range subs {
+		candidates = append(candidates, "https://"+s+".substack.com/feed")
+	}
+	return f.verifyFeedCandidates(ctx, candidates)
 }
 
 // verifyFeedCandidates fetches each candidate URL and returns those that parse
