@@ -2314,86 +2314,60 @@ func (s *PostgresStore) SearchArticlesFTS(userID int64, query string, limit, off
 // status, attempts, error_message, and last_attempted_at —
 // see SQLiteStore for rationale.
 func (s *PostgresStore) StoreArticleEmbedding(articleID int64, embedding []byte, model string) error {
-	_, err := s.db.Exec(s.db.prepare(`
-		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message, last_attempted_at)
-		VALUES (?, ?, ?, ?, 0, NULL, NULL)
-		ON CONFLICT (article_id) DO UPDATE
-		SET embedding = EXCLUDED.embedding,
-		    embedding_model = EXCLUDED.embedding_model,
-		    status = ?,
-		    attempts = 0,
-		    error_message = NULL,
-		    last_attempted_at = NULL,
-		    created_at = NOW()`),
-		articleID, embedding, model, EmbedStatusOK, EmbedStatusOK)
-	return err
+	return s.q.StoreArticleEmbedding(context.Background(), db.StoreArticleEmbeddingParams{
+		ArticleID:      articleID,
+		Embedding:      embedding,
+		EmbeddingModel: model,
+		Status:         int16(EmbedStatusOK),
+	})
 }
 
 // MarkArticleEmbeddingSkipped — see SQLiteStore for behaviour.
 func (s *PostgresStore) MarkArticleEmbeddingSkipped(articleID int64, model string) error {
-	_, err := s.db.Exec(s.db.prepare(`
-		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message, last_attempted_at)
-		VALUES (?, ?, ?, ?, 0, NULL, NULL)
-		ON CONFLICT (article_id) DO UPDATE
-		SET embedding_model = EXCLUDED.embedding_model,
-		    status = ?,
-		    attempts = 0,
-		    error_message = NULL,
-		    last_attempted_at = NULL,
-		    created_at = NOW()`),
-		articleID, embedSentinelBytes, model, EmbedStatusTooShort, EmbedStatusTooShort)
-	return err
+	return s.q.MarkArticleEmbeddingSkipped(context.Background(), db.MarkArticleEmbeddingSkippedParams{
+		ArticleID:      articleID,
+		Embedding:      embedSentinelBytes,
+		EmbeddingModel: model,
+		Status:         int16(EmbedStatusTooShort),
+	})
 }
 
 // MarkArticleEmbeddingFailed — see SQLiteStore for behaviour.
 func (s *PostgresStore) MarkArticleEmbeddingFailed(articleID int64, model, errMsg string) error {
-	_, err := s.db.Exec(s.db.prepare(`
-		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message, last_attempted_at)
-		VALUES (?, ?, ?, ?, 1, ?, NOW())
-		ON CONFLICT (article_id) DO UPDATE
-		SET embedding_model = EXCLUDED.embedding_model,
-		    status = ?,
-		    attempts = article_embeddings.attempts + 1,
-		    error_message = EXCLUDED.error_message,
-		    last_attempted_at = NOW(),
-		    created_at = NOW()`),
-		articleID, embedSentinelBytes, model, EmbedStatusError, errMsg, EmbedStatusError)
-	return err
+	return s.q.MarkArticleEmbeddingFailed(context.Background(), db.MarkArticleEmbeddingFailedParams{
+		ArticleID:      articleID,
+		Embedding:      embedSentinelBytes,
+		EmbeddingModel: model,
+		Status:         int16(EmbedStatusError),
+		ErrorMessage:   errMsg,
+	})
 }
 
 // GetArticleEmbeddings returns all article embeddings for a user's subscribed feeds,
 // filtered by the specified embedding model.
 func (s *PostgresStore) GetArticleEmbeddings(userID int64, model string) ([]ArticleEmbeddingRow, error) {
-	rows, err := s.db.Query(s.db.prepare(`
-		SELECT ae.article_id, ae.embedding
-		FROM article_embeddings ae
-		JOIN articles a ON a.id = ae.article_id
-		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		WHERE uf.user_id = ? AND ae.embedding_model = ?`),
-		userID, model)
+	rows, err := s.q.GetArticleEmbeddings(context.Background(), db.GetArticleEmbeddingsParams{
+		UserID:         userID,
+		EmbeddingModel: model,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get article embeddings: %w", err)
 	}
-	defer rows.Close()
-	var result []ArticleEmbeddingRow
-	for rows.Next() {
-		var r ArticleEmbeddingRow
-		if err := rows.Scan(&r.ArticleID, &r.Embedding); err != nil {
-			return nil, err
-		}
-		result = append(result, r)
+	result := make([]ArticleEmbeddingRow, len(rows))
+	for i, r := range rows {
+		result[i] = ArticleEmbeddingRow{ArticleID: r.ArticleID, Embedding: r.Embedding}
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // ResetAllArticleEmbeddings deletes every row in article_embeddings.
 // See SQLiteStore.ResetAllArticleEmbeddings for usage notes.
 func (s *PostgresStore) ResetAllArticleEmbeddings() (int64, error) {
-	r, err := s.db.Exec(`DELETE FROM article_embeddings`)
+	n, err := s.q.ResetAllArticleEmbeddings(context.Background())
 	if err != nil {
 		return 0, fmt.Errorf("reset article embeddings: %w", err)
 	}
-	return r.RowsAffected()
+	return n, nil
 }
 
 // GetArticleEmbeddingsByIDs returns usable (status OK) embeddings for the given
@@ -2402,87 +2376,77 @@ func (s *PostgresStore) GetArticleEmbeddingsByIDs(articleIDs []int64, model stri
 	if len(articleIDs) == 0 {
 		return nil, nil
 	}
-	placeholders := make([]string, len(articleIDs))
-	args := make([]any, 0, len(articleIDs)+2)
-	for i, id := range articleIDs {
-		placeholders[i] = "?"
-		args = append(args, id)
-	}
-	args = append(args, model, EmbedStatusOK)
-	rows, err := s.db.Query(
-		`SELECT article_id, embedding FROM article_embeddings
-		 WHERE article_id IN (`+strings.Join(placeholders, ",")+`)
-		   AND embedding_model = ? AND status = ?`, args...)
+	rows, err := s.q.GetArticleEmbeddingsByIDs(context.Background(), db.GetArticleEmbeddingsByIDsParams{
+		ArticleIds:     articleIDs,
+		EmbeddingModel: model,
+		Status:         int16(EmbedStatusOK),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get article embeddings by ids: %w", err)
 	}
-	defer rows.Close()
-	var result []ArticleEmbeddingRow
-	for rows.Next() {
-		var r ArticleEmbeddingRow
-		if err := rows.Scan(&r.ArticleID, &r.Embedding); err != nil {
-			return nil, err
-		}
-		result = append(result, r)
+	result := make([]ArticleEmbeddingRow, len(rows))
+	for i, r := range rows {
+		result[i] = ArticleEmbeddingRow{ArticleID: r.ArticleID, Embedding: r.Embedding}
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // ResetAllGroupEmbeddings clears the centroid and embedding_model on
 // every article_groups row. See SQLiteStore.ResetAllGroupEmbeddings.
 func (s *PostgresStore) ResetAllGroupEmbeddings() (int64, error) {
-	r, err := s.db.Exec(`UPDATE article_groups SET embedding = NULL, embedding_model = ''`)
+	n, err := s.q.ResetAllGroupEmbeddings(context.Background())
 	if err != nil {
 		return 0, fmt.Errorf("reset group embeddings: %w", err)
 	}
-	return r.RowsAffected()
+	return n, nil
 }
 
 // ResetStuckEmbeddings — see SQLiteStore for behaviour.
 func (s *PostgresStore) ResetStuckEmbeddings(model, errorPattern string) (int64, error) {
+	ctx := context.Background()
 	var (
-		r   sql.Result
+		n   int64
 		err error
 	)
 	if errorPattern == "" {
-		r, err = s.db.Exec(s.db.prepare(`
-			UPDATE article_embeddings
-			SET attempts = 0, last_attempted_at = NULL, error_message = NULL
-			WHERE embedding_model = ? AND status = ? AND attempts >= ?`),
-			model, EmbedStatusError, EmbedMaxAttempts)
+		n, err = s.q.ResetStuckEmbeddings(ctx, db.ResetStuckEmbeddingsParams{
+			EmbeddingModel: model,
+			Status:         int16(EmbedStatusError),
+			MaxAttempts:    EmbedMaxAttempts,
+		})
 	} else {
-		r, err = s.db.Exec(s.db.prepare(`
-			UPDATE article_embeddings
-			SET attempts = 0, last_attempted_at = NULL, error_message = NULL
-			WHERE embedding_model = ? AND status = ? AND attempts >= ?
-			  AND error_message LIKE ?`),
-			model, EmbedStatusError, EmbedMaxAttempts, errorPattern)
+		n, err = s.q.ResetStuckEmbeddingsLike(ctx, db.ResetStuckEmbeddingsLikeParams{
+			EmbeddingModel: model,
+			Status:         int16(EmbedStatusError),
+			MaxAttempts:    EmbedMaxAttempts,
+			ErrorPattern:   errorPattern,
+		})
 	}
 	if err != nil {
 		return 0, fmt.Errorf("reset stuck embeddings: %w", err)
 	}
-	return r.RowsAffected()
+	return n, nil
 }
 
 // GetArticlesWithoutEmbeddings returns articles eligible for an embedding
 // pass under the given model. See SQLiteStore for retry-eligibility rules.
 func (s *PostgresStore) GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error) {
 	cutoff := time.Now().UTC().Add(-EmbedRetryCooldown)
-	rows, err := s.db.Query(s.db.prepare(`
-		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date
-		FROM articles a
-		LEFT JOIN article_embeddings ae ON a.id = ae.article_id AND ae.embedding_model = ?
-		WHERE ae.article_id IS NULL
-		   OR (ae.status = ? AND ae.attempts < ?
-		       AND (ae.last_attempted_at IS NULL OR ae.last_attempted_at < ?))
-		ORDER BY a.published_date DESC
-		LIMIT ?`), model, EmbedStatusError, EmbedMaxAttempts, cutoff, limit)
+	rows, err := s.q.GetArticlesWithoutEmbeddings(context.Background(), db.GetArticlesWithoutEmbeddingsParams{
+		EmbeddingModel: model,
+		Status:         int16(EmbedStatusError),
+		MaxAttempts:    EmbedMaxAttempts,
+		Cutoff:         cutoff,
+		Lim:            int32(limit),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get articles without embeddings: %w", err)
 	}
-	defer rows.Close()
-	return scanArticles(rows)
+	articles := make([]Article, len(rows))
+	for i, r := range rows {
+		articles[i] = coreArticle(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate)
+	}
+	return articles, nil
 }
 
 // --- Newsletter methods ---
@@ -2769,20 +2733,6 @@ func (s *PostgresStore) GetNewsletterArticles(userID int64, config *NewsletterCo
 }
 
 // --- Internal scan helpers ---
-
-// scanArticles scans a standard 10-column article result set.
-func scanArticles(rows *sql.Rows) ([]Article, error) {
-	var articles []Article
-	for rows.Next() {
-		var a Article
-		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
-			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate); err != nil {
-			return nil, fmt.Errorf("scan article: %w", err)
-		}
-		articles = append(articles, a)
-	}
-	return articles, rows.Err()
-}
 
 // scanArticlesWithReadState scans rows that include a security_flagged column
 // plus the per-user read and starred flags, in that order, after the standard
