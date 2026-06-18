@@ -38,6 +38,10 @@ SELECT
   COUNT(*) FILTER (WHERE a.security_score >= 7.0)::int AS sec_pass,
   COUNT(*) FILTER (WHERE a.security_score >= 4.0 AND a.security_score < 7.0)::int AS sec_borderline,
   COUNT(*) FILTER (WHERE a.security_score IS NOT NULL AND a.security_score < 4.0)::int AS sec_fail,
+  -- Screened but skipped (no content / too short): security_screened_at set,
+  -- score left NULL. Counted separately so it isn't mistaken for a pass and so
+  -- total_scored = sec_pass + sec_borderline + sec_fail + sec_skipped (#123).
+  COUNT(*) FILTER (WHERE a.security_screened_at IS NOT NULL AND a.security_score IS NULL)::int AS sec_skipped,
   COUNT(*) FILTER (WHERE a.security_score >= 7.0 AND rs.interest_score >= 8.0)::int AS int_high,
   COUNT(*) FILTER (WHERE a.security_score >= 7.0 AND rs.interest_score >= 5.0 AND rs.interest_score < 8.0)::int AS int_medium,
   COUNT(*) FILTER (WHERE a.security_score >= 7.0 AND rs.interest_score IS NOT NULL AND rs.interest_score < 5.0)::int AS int_low

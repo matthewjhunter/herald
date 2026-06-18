@@ -10,6 +10,7 @@ type FeedScoreStats struct {
 	SecPass       int
 	SecBorderline int
 	SecFail       int
+	SecSkipped    int // screened but no verdict (no content / too short) -- #123
 	IntHigh       int
 	IntMedium     int
 	IntLow        int

@@ -202,11 +202,15 @@ type FeedScoreStats struct {
 	SecPass       int
 	SecBorderline int
 	SecFail       int
+	SecSkipped    int // screened but no verdict (no content / too short) -- #123
 	IntHigh       int
 	IntMedium     int
 	IntLow        int
 }
 
+// SecTotal counts only articles with a real verdict; skipped (no-verdict)
+// articles are excluded, so SecPassPct and the donut measure passes against
+// articles that were actually scored, not against ones skipped before scoring.
 func (f FeedScoreStats) SecTotal() int { return f.SecPass + f.SecBorderline + f.SecFail }
 func (f FeedScoreStats) IntTotal() int { return f.IntHigh + f.IntMedium + f.IntLow }
 func (f FeedScoreStats) SecPassPct() float64 {

@@ -55,6 +55,55 @@ func TestSecurityVerdictSharedAcrossUsers(t *testing.T) {
 	})
 }
 
+// TestGetScoreStatsCountsSkippedSeparately guards #123: a screened-but-skipped
+// article (NULL score) must be reported as sec_skipped, never folded into the
+// pass/borderline/fail verdict buckets, while still being counted in the raw
+// total_scored. Otherwise the stats page would imply a skipped article passed.
+func TestGetScoreStatsCountsSkippedSeparately(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		feedID, _ := store.AddFeed("https://example.com/feed", "Feed", "")
+		if err := store.SubscribeUserToFeed(1, feedID); err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now()
+		passed, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "pass", Title: "pass",
+			URL: "https://example.com/pass", PublishedDate: &now})
+		skipped, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "skip2", Title: "skip2",
+			URL: "https://example.com/skip2", PublishedDate: &now})
+
+		if err := store.ScreenArticleSecurity(passed, 8.0, "ok", false); err != nil {
+			t.Fatalf("ScreenArticleSecurity: %v", err)
+		}
+		if err := store.SkipArticleSecurity(skipped, "content too short"); err != nil {
+			t.Fatalf("SkipArticleSecurity: %v", err)
+		}
+
+		res, err := store.GetScoreStats(1)
+		if err != nil {
+			t.Fatalf("GetScoreStats: %v", err)
+		}
+		got := res.Total
+		if got.SecPass != 1 {
+			t.Errorf("SecPass = %d, want 1", got.SecPass)
+		}
+		if got.SecSkipped != 1 {
+			t.Errorf("SecSkipped = %d, want 1 (skipped must not be a pass)", got.SecSkipped)
+		}
+		if got.SecBorderline != 0 || got.SecFail != 0 {
+			t.Errorf("skipped article leaked into borderline/fail: border=%d fail=%d", got.SecBorderline, got.SecFail)
+		}
+		// total_scored counts everything screened; the verdict buckets plus
+		// skipped must reconcile to it.
+		if got.TotalScored != 2 {
+			t.Errorf("TotalScored = %d, want 2", got.TotalScored)
+		}
+		if got.SecPass+got.SecBorderline+got.SecFail+got.SecSkipped != got.TotalScored {
+			t.Errorf("buckets %d+%d+%d+%d do not reconcile to total_scored %d",
+				got.SecPass, got.SecBorderline, got.SecFail, got.SecSkipped, got.TotalScored)
+		}
+	})
+}
+
 // TestSkipArticleSecurityMarksScreened verifies the skip marker: a skipped
 // article leaves the unscreened queue (won't be re-screened) but keeps a NULL
 // score (excluded from every passing query), distinct from a never-screened one.

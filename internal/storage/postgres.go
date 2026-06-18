@@ -431,6 +431,7 @@ func (s *PostgresStore) GetScoreStats(userID int64) (*ScoreStatsResult, error) {
 			SecPass:       r.SecPass,
 			SecBorderline: r.SecBorderline,
 			SecFail:       r.SecFail,
+			SecSkipped:    r.SecSkipped,
 			IntHigh:       r.IntHigh,
 			IntMedium:     r.IntMedium,
 			IntLow:        r.IntLow,
@@ -439,6 +440,7 @@ func (s *PostgresStore) GetScoreStats(userID int64) (*ScoreStatsResult, error) {
 		result.Total.SecPass += fs.SecPass
 		result.Total.SecBorderline += fs.SecBorderline
 		result.Total.SecFail += fs.SecFail
+		result.Total.SecSkipped += fs.SecSkipped
 		result.Total.IntHigh += fs.IntHigh
 		result.Total.IntMedium += fs.IntMedium
 		result.Total.IntLow += fs.IntLow
