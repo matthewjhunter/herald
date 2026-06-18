@@ -65,7 +65,7 @@ jobs:
             exit 1
           }
       - name: Smoke route coverage (warn)
-        run: go tool smolder gate --manifest cmd/herald-web/smoke-manifest.json --mode warn
+        run: go tool smolder gate --manifest internal/web/smoke-manifest.json --mode warn
       - run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - run: govulncheck ./...
         continue-on-error: true

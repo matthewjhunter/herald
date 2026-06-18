@@ -91,7 +91,7 @@ jobs:
             -l "traefik.http.routers.herald-pr-${PR}.tls.certresolver=letsencrypt" \
             -l "traefik.http.services.herald-pr-${PR}.loadbalancer.server.port=8080" \
             ghcr.io/matthewjhunter/herald:pr-${PR} \
-            herald-web -addr :8080 -webauth-issuer https://webauth.infodancer.net/t/infodancer
+            herald serve --config /etc/herald/config.docker.toml --addr :8080 --webauth-issuer https://webauth.infodancer.net/t/infodancer
           docker network connect db herald-pr-${PR}
           docker start herald-pr-${PR}
 

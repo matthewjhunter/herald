@@ -13,5 +13,10 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata
 COPY --from=builder /herald /usr/local/bin/
 RUN mkdir -p /data /etc/herald
+# Bake the default container config so `herald serve --config
+# /etc/herald/config.docker.toml` works in images without a mounted config
+# (e.g. the PR-preview container). docker-compose mounts ./config over this,
+# so a real deployment still wins.
+COPY config/config.docker.toml /etc/herald/config.docker.toml
 VOLUME ["/data"]
 EXPOSE 8080
