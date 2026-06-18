@@ -24,6 +24,7 @@ import (
 	herald "github.com/matthewjhunter/herald"
 	"github.com/matthewjhunter/herald/internal/storage"
 	"github.com/matthewjhunter/herald/internal/storagetest"
+	"github.com/matthewjhunter/herald/internal/urlnorm"
 )
 
 // testKey is generated once per test binary run.
@@ -583,6 +584,126 @@ func TestHandleArticleView(t *testing.T) {
 	}
 	if !strings.Contains(body, "Hello, world!") {
 		t.Error("article view should contain sanitized content")
+	}
+}
+
+func TestHandleSearch_PastedURLFindsLinkers(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// A link-blog post linking to an external URL that is NOT itself an article
+	// in Herald -- the user pastes that URL into search to find who linked it.
+	const target = "https://hollymathnerd.substack.com/p/the-government-sets-the-trap"
+	linkFeed, err := tf.store.AddFeed("https://instapundit.example/feed", "Instapundit", "")
+	if err != nil {
+		t.Fatalf("AddFeed: %v", err)
+	}
+	if err := tf.store.SubscribeUserToFeed(tf.userID, linkFeed); err != nil {
+		t.Fatalf("SubscribeUserToFeed: %v", err)
+	}
+	postID, err := tf.store.AddArticle(&storage.Article{
+		FeedID: linkFeed, GUID: "ip1", Title: "Heh. Indeed.", URL: "https://instapundit.example/p/1",
+	})
+	if err != nil {
+		t.Fatalf("AddArticle: %v", err)
+	}
+	// The stored outbound link carries Substack's session params; the search
+	// target is clean -- both normalize to the same key.
+	if err := tf.store.StoreArticleLinks(postID, []string{urlnorm.Normalize(target + "?r=wm1qp&triedRedirect=true")}); err != nil {
+		t.Fatalf("StoreArticleLinks: %v", err)
+	}
+
+	rr := authedRequest(t, tf, "GET", "/search?q="+url.QueryEscape(target), map[string]string{"HX-Request": "true"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Feeds that linked to") {
+		t.Error("pasting a URL should switch search to linked-by mode")
+	}
+	if !strings.Contains(body, "Instapundit") {
+		t.Error("linked-by results should include the linking feed (normalized past tracking params)")
+	}
+	if !strings.Contains(body, "/articles/"+itoa(postID)) {
+		t.Error("result should link to the linking post")
+	}
+}
+
+func TestHandleSearch_BareDomainFindsAllLinks(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	linkFeed, err := tf.store.AddFeed("https://instapundit.example/feed", "Instapundit", "")
+	if err != nil {
+		t.Fatalf("AddFeed: %v", err)
+	}
+	if err := tf.store.SubscribeUserToFeed(tf.userID, linkFeed); err != nil {
+		t.Fatalf("SubscribeUserToFeed: %v", err)
+	}
+	// Two posts linking different paths on the same domain.
+	for i, path := range []string{"p/one", "p/two"} {
+		id, err := tf.store.AddArticle(&storage.Article{
+			FeedID: linkFeed, GUID: "ip" + itoa(int64(i)), Title: "post",
+			URL: "https://instapundit.example/x" + itoa(int64(i)),
+		})
+		if err != nil {
+			t.Fatalf("AddArticle: %v", err)
+		}
+		if err := tf.store.StoreArticleLinks(id, []string{urlnorm.Normalize("https://hollymathnerd.substack.com/" + path)}); err != nil {
+			t.Fatalf("StoreArticleLinks: %v", err)
+		}
+	}
+
+	// Typing just the domain (no scheme) finds all links under it.
+	rr := authedRequest(t, tf, "GET", "/search?q="+url.QueryEscape("hollymathnerd.substack.com"), map[string]string{"HX-Request": "true"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Feeds that linked to") {
+		t.Error("a bare domain should trigger linked-by mode")
+	}
+	// Both linking posts should appear.
+	if strings.Count(body, "/articles/") < 2 {
+		t.Errorf("expected both domain links in results, body had %d /articles/ refs", strings.Count(body, "/articles/"))
+	}
+}
+
+func TestHandleArticleView_LinkedBy(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// A link-blog post in another subscribed feed that links to the fixture
+	// article (URL https://example.com/article/1).
+	linkFeed, err := tf.store.AddFeed("https://linkblog.example/feed", "Link Blog", "")
+	if err != nil {
+		t.Fatalf("AddFeed: %v", err)
+	}
+	if err := tf.store.SubscribeUserToFeed(tf.userID, linkFeed); err != nil {
+		t.Fatalf("SubscribeUserToFeed: %v", err)
+	}
+	postID, err := tf.store.AddArticle(&storage.Article{
+		FeedID: linkFeed, GUID: "lb1", Title: "Worth a read",
+		URL: "https://linkblog.example/p/1",
+	})
+	if err != nil {
+		t.Fatalf("AddArticle: %v", err)
+	}
+	if err := tf.store.StoreArticleLinks(postID, []string{urlnorm.Normalize("https://example.com/article/1")}); err != nil {
+		t.Fatalf("StoreArticleLinks: %v", err)
+	}
+
+	rr := authedRequest(t, tf, "GET", "/articles/"+itoa(tf.articleID), map[string]string{"HX-Request": "true"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Linked by") {
+		t.Error("article view should show the Linked by section")
+	}
+	if !strings.Contains(body, "Link Blog") {
+		t.Error("Linked by section should name the linking feed")
+	}
+	// Clicking a backlink opens that post in-app.
+	if !strings.Contains(body, "/articles/"+itoa(postID)) {
+		t.Error("Linked by entry should link to the linking post's article view")
 	}
 }
 

@@ -1256,6 +1256,71 @@ func (s *PostgresStore) GetArticleSummary(articleID int64) (*ArticleSummary, err
 	}, nil
 }
 
+func (s *PostgresStore) GetArticleBacklinks(userID, excludeID int64, needle string, limit int) ([]Backlink, error) {
+	if needle == "" {
+		return nil, nil
+	}
+	rows, err := s.q.GetArticleBacklinks(context.Background(), db.GetArticleBacklinksParams{
+		UserID:    userID,
+		ExcludeID: excludeID,
+		Needle:    needle,
+		Lim:       int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get article backlinks: %w", err)
+	}
+	out := make([]Backlink, len(rows))
+	for i, r := range rows {
+		out[i] = Backlink{
+			ArticleID:     r.ID,
+			Title:         r.Title,
+			URL:           r.Url,
+			FeedTitle:     r.FeedTitle,
+			PublishedDate: r.PublishedDate,
+			FetchedDate:   r.FetchedDate,
+		}
+	}
+	return out, nil
+}
+
+func (s *PostgresStore) GetArticlesNeedingLinkExtraction(limit int) ([]ArticleLinkSource, error) {
+	rows, err := s.q.GetArticlesNeedingLinkExtraction(context.Background(), int32(limit))
+	if err != nil {
+		return nil, fmt.Errorf("get articles needing link extraction: %w", err)
+	}
+	out := make([]ArticleLinkSource, len(rows))
+	for i, r := range rows {
+		src := ArticleLinkSource{ID: r.ID}
+		if r.Content != nil {
+			src.Content = *r.Content
+		}
+		if r.Summary != nil {
+			src.Summary = *r.Summary
+		}
+		out[i] = src
+	}
+	return out, nil
+}
+
+func (s *PostgresStore) StoreArticleLinks(articleID int64, urlNorms []string) error {
+	for _, n := range urlNorms {
+		if err := s.q.AddArticleLink(context.Background(), db.AddArticleLinkParams{
+			ArticleID: articleID,
+			UrlNorm:   n,
+		}); err != nil {
+			return fmt.Errorf("add article link: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *PostgresStore) MarkArticleLinksExtracted(articleID int64) error {
+	if err := s.q.MarkArticleLinksExtracted(context.Background(), articleID); err != nil {
+		return fmt.Errorf("mark article links extracted: %w", err)
+	}
+	return nil
+}
+
 // GetArticleSummaries batch-fetches non-empty AI summaries for the given
 // article ids in a single query, returning a map keyed by article id. Ids with
 // no summary (or a skipped/empty one) are absent from the map.

@@ -47,6 +47,26 @@ type ArticleSummary struct {
 	GeneratedAt time.Time
 }
 
+// ArticleLinkSource is the raw text the link-extraction stage parses outbound
+// links from: an article's body and summary.
+type ArticleLinkSource struct {
+	ID      int64
+	Content string
+	Summary string
+}
+
+// Backlink is an article in the user's feeds whose body/summary links to a
+// target URL (matched via the normalized article_links index). Powers the
+// article view's "Linked by" section and the paste-a-URL search.
+type Backlink struct {
+	ArticleID     int64
+	Title         string
+	URL           string
+	FeedTitle     string
+	PublishedDate *time.Time
+	FetchedDate   time.Time
+}
+
 type ReadState struct {
 	ArticleID     int64
 	Read          bool

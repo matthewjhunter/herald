@@ -23,6 +23,7 @@ import (
 	"github.com/infodancer/oidclient/session"
 	herald "github.com/matthewjhunter/herald"
 	"github.com/matthewjhunter/herald/internal/storage"
+	"github.com/matthewjhunter/herald/internal/urlnorm"
 )
 
 // handlers holds dependencies for all HTTP handler methods.
@@ -232,6 +233,7 @@ type articleRow struct {
 
 type searchResultsData struct {
 	Query      string
+	Heading    string // overrides the "Results for ..." banner (e.g. "linked by" mode)
 	Articles   []articleRow
 	HasMore    bool
 	NextOffset int
@@ -252,6 +254,17 @@ type articleViewData struct {
 	LinkedURL              string
 	LinkedDomain           string
 	SanitizedLinkedContent template.HTML
+	LinkedBy               []backlinkRow
+}
+
+// backlinkRow is one feed/post in the user's subscriptions that linked to the
+// article being viewed (#"linked by" feature).
+type backlinkRow struct {
+	ID               int64
+	FeedTitle        string
+	Title            string
+	URL              string
+	PublishedDateFmt string
 }
 
 type feedManageData struct {
@@ -712,6 +725,26 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 	h.renderFragment(w, "feed_sidebar_oob", sidebarData)
 }
 
+// renderLinkedBy answers "which of the user's feeds linked to targetURL?" and
+// renders the linking posts using the search results fragment.
+func (h *handlers) renderLinkedBy(w http.ResponseWriter, uid int64, targetURL string) {
+	links, err := h.engine.GetArticleBacklinks(uid, 0, targetURL)
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError, "Lookup failed")
+		return
+	}
+	data := searchResultsData{Heading: "Feeds that linked to " + targetURL}
+	for _, b := range links {
+		data.Articles = append(data.Articles, articleRow{
+			ID:               b.ArticleID,
+			Title:            b.Title,
+			FeedTitle:        b.FeedTitle,
+			PublishedDateFmt: formatDate(bestDate(b.PublishedDate, &b.FetchedDate)),
+		})
+	}
+	h.renderFragment(w, "search_results", data)
+}
+
 func (h *handlers) handleSearch(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID
 	query := r.URL.Query().Get("q")
@@ -720,6 +753,16 @@ func (h *handlers) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	if query == "" {
 		h.renderFragment(w, "search_results", searchResultsData{})
+		return
+	}
+
+	// A URL or bare domain switches to "linked by" mode: which of the user's
+	// feeds linked to it? (Plain FTS can't answer this -- the text parser drops
+	// href URLs as HTML tags -- so this matches the extracted article_links
+	// index.) QueryKey returns "" for plain-word queries, which fall through to
+	// full-text search.
+	if urlnorm.QueryKey(query) != "" {
+		h.renderLinkedBy(w, uid, strings.TrimSpace(query))
 		return
 	}
 
@@ -835,6 +878,21 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 				sanitizedLinked = rewriteImageURLs(sanitizedLinked, imageMap)
 			}
 			data.SanitizedLinkedContent = template.HTML(sanitizedLinked) //nolint:gosec // sanitized by bluemonday
+		}
+	}
+
+	// "Linked by": other feeds whose link-blog posts point at this article.
+	if links, err := h.engine.GetArticleBacklinks(uid, article.ID, article.URL); err != nil {
+		log.Printf("herald-web: backlinks for article %d: %v", article.ID, err)
+	} else {
+		for _, b := range links {
+			data.LinkedBy = append(data.LinkedBy, backlinkRow{
+				ID:               b.ArticleID,
+				FeedTitle:        b.FeedTitle,
+				Title:            b.Title,
+				URL:              b.URL,
+				PublishedDateFmt: formatDate(bestDate(b.PublishedDate, &b.FetchedDate)),
+			})
 		}
 	}
 

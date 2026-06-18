@@ -179,6 +179,17 @@ type Store interface {
 	UpdateArticleAISummary(articleID int64, aiSummary string) error
 	MarkSummarizationSkipped(articleID int64, reason string) error
 	GetArticleSummary(articleID int64) (*ArticleSummary, error)
+	// GetArticleBacklinks returns articles in the user's feeds with an extracted
+	// outbound link (article_links) whose normalized form contains needle as a
+	// substring (urlnorm.QueryKey output -- a domain, partial URL, or full URL),
+	// excluding excludeID. Answers "which of my feeds linked to this?".
+	GetArticleBacklinks(userID, excludeID int64, needle string, limit int) ([]Backlink, error)
+	// Outbound-link extraction (#206): GetArticlesNeedingLinkExtraction drives
+	// the stage (new + backfill), StoreArticleLinks records the normalized links
+	// parsed from an article's body/summary, MarkArticleLinksExtracted closes it.
+	GetArticlesNeedingLinkExtraction(limit int) ([]ArticleLinkSource, error)
+	StoreArticleLinks(articleID int64, urlNorms []string) error
+	MarkArticleLinksExtracted(articleID int64) error
 	// GetArticleSummaries batch-fetches non-empty AI summaries for the given
 	// article ids, keyed by article id, so a list page can populate inline
 	// summaries in one query instead of N. Articles with no summary (or a
