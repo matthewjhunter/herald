@@ -19,6 +19,16 @@ func derefString(p *string) string {
 	return *p
 }
 
+// derefFloat collapses a nullable DOUBLE PRECISION to 0 when SQL NULL. Used where
+// the query already filters out NULLs (e.g. WHERE score IS NOT NULL) but sqlc
+// still types the column as a pointer.
+func derefFloat(p *float64) float64 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
 // mapErr normalizes pgx's no-rows sentinel to database/sql's. The hand-written
 // query layer returned sql.ErrNoRows, and callers (engine.go, engine_fever.go)
 // still test for it, so the storage boundary preserves that contract as queries
