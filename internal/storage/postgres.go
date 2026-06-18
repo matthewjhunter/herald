@@ -378,14 +378,10 @@ func (s *PostgresStore) DeleteUserPreference(userID int64, key string) error {
 // UserSubscribedToArticleFeed reports whether the user is subscribed to the
 // feed that owns the article. Unknown article IDs return false, nil.
 func (s *PostgresStore) UserSubscribedToArticleFeed(userID, articleID int64) (bool, error) {
-	var subscribed bool
-	err := s.db.QueryRow(`
-		SELECT EXISTS(
-			SELECT 1 FROM articles a
-			JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = ?
-			WHERE a.id = ?
-		)`, userID, articleID,
-	).Scan(&subscribed)
+	subscribed, err := s.q.UserSubscribedToArticleFeed(context.Background(), db.UserSubscribedToArticleFeedParams{
+		UserID:    userID,
+		ArticleID: articleID,
+	})
 	if err != nil {
 		return false, fmt.Errorf("check article subscription: %w", err)
 	}
@@ -393,13 +389,11 @@ func (s *PostgresStore) UserSubscribedToArticleFeed(userID, articleID int64) (bo
 }
 
 func (s *PostgresStore) UpdateStarred(userID, articleID int64, starred bool) error {
-	_, err := s.db.Exec(
-		`INSERT INTO read_state (user_id, article_id, starred)
-		 VALUES (?, ?, ?)
-		 ON CONFLICT(user_id, article_id) DO UPDATE SET starred = excluded.starred`,
-		userID, articleID, starred,
-	)
-	if err != nil {
+	if err := s.q.UpdateStarred(context.Background(), db.UpdateStarredParams{
+		UserID:    userID,
+		ArticleID: articleID,
+		Starred:   starred,
+	}); err != nil {
 		return fmt.Errorf("update starred: %w", err)
 	}
 	return nil
@@ -408,32 +402,26 @@ func (s *PostgresStore) UpdateStarred(userID, articleID int64, starred bool) err
 func (s *PostgresStore) UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64, securityReason *string, securityFlagged *bool) error {
 	var err error
 	if interestScore != nil {
-		// AI pipeline: record scores, mark ai_scored=TRUE, do not overwrite user's read flag.
-		// security_flagged uses COALESCE so a nil caller arg preserves the existing value.
+		// security_flagged is typed interface{} (COALESCE(?, FALSE) is untyped):
+		// pass the bool value or nil, matching the hand-written behavior.
 		var flagVal any
 		if securityFlagged != nil {
 			flagVal = *securityFlagged
 		}
-		_, err = s.db.Exec(
-			`INSERT INTO read_state (user_id, article_id, read, interest_score, security_score, security_reason, security_flagged, ai_scored)
-			 VALUES (?, ?, FALSE, ?, ?, ?, COALESCE(?, FALSE), TRUE)
-			 ON CONFLICT(user_id, article_id) DO UPDATE SET
-			   interest_score = excluded.interest_score,
-			   security_score = excluded.security_score,
-			   security_reason = excluded.security_reason,
-			   security_flagged = COALESCE(excluded.security_flagged, read_state.security_flagged),
-			   ai_scored = TRUE`,
-			userID, articleID, interestScore, securityScore, securityReason, flagVal,
-		)
+		err = s.q.UpsertReadStateScores(context.Background(), db.UpsertReadStateScoresParams{
+			UserID:          userID,
+			ArticleID:       articleID,
+			InterestScore:   interestScore,
+			SecurityScore:   securityScore,
+			SecurityReason:  securityReason,
+			SecurityFlagged: flagVal,
+		})
 	} else {
-		_, err = s.db.Exec(
-			`INSERT INTO read_state (user_id, article_id, read, read_date)
-			 VALUES (?, ?, ?, NOW())
-			 ON CONFLICT(user_id, article_id) DO UPDATE SET
-			   read = excluded.read,
-			   read_date = NOW()`,
-			userID, articleID, read,
-		)
+		err = s.q.UpsertReadStateRead(context.Background(), db.UpsertReadStateReadParams{
+			UserID:    userID,
+			ArticleID: articleID,
+			Read:      read,
+		})
 	}
 	if err != nil {
 		return fmt.Errorf("failed to update read state: %w", err)
@@ -443,37 +431,22 @@ func (s *PostgresStore) UpdateReadState(userID, articleID int64, read bool, inte
 
 // GetScoreStats returns AI scoring breakdown per feed for a user.
 func (s *PostgresStore) GetScoreStats(userID int64) (*ScoreStatsResult, error) {
-	rows, err := s.db.Query(`
-		SELECT
-			f.id,
-			COALESCE(uf.user_title, f.title),
-			COUNT(*) FILTER (WHERE a.security_screened_at IS NOT NULL),
-			COUNT(*) FILTER (WHERE a.security_score >= 7.0),
-			COUNT(*) FILTER (WHERE a.security_score >= 4.0 AND a.security_score < 7.0),
-			COUNT(*) FILTER (WHERE a.security_score IS NOT NULL AND a.security_score < 4.0),
-			COUNT(*) FILTER (WHERE a.security_score >= 7.0 AND rs.interest_score >= 8.0),
-			COUNT(*) FILTER (WHERE a.security_score >= 7.0 AND rs.interest_score >= 5.0 AND rs.interest_score < 8.0),
-			COUNT(*) FILTER (WHERE a.security_score >= 7.0 AND rs.interest_score IS NOT NULL AND rs.interest_score < 5.0)
-		FROM feeds f
-		JOIN user_feeds uf ON uf.feed_id = f.id AND uf.user_id = ?
-		JOIN articles a ON a.feed_id = f.id
-		LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = ?
-		GROUP BY f.id, uf.user_title, f.title
-		ORDER BY COALESCE(uf.user_title, f.title)`,
-		userID, userID,
-	)
+	rows, err := s.q.GetScoreStats(context.Background(), userID)
 	if err != nil {
 		return nil, fmt.Errorf("get score stats: %w", err)
 	}
-	defer rows.Close()
-
 	result := &ScoreStatsResult{}
-	for rows.Next() {
-		var fs FeedScoreStats
-		if err := rows.Scan(&fs.FeedID, &fs.FeedTitle, &fs.TotalScored,
-			&fs.SecPass, &fs.SecBorderline, &fs.SecFail,
-			&fs.IntHigh, &fs.IntMedium, &fs.IntLow); err != nil {
-			return nil, fmt.Errorf("scan score stats: %w", err)
+	for _, r := range rows {
+		fs := FeedScoreStats{
+			FeedID:        r.FeedID,
+			FeedTitle:     r.FeedTitle,
+			TotalScored:   r.TotalScored,
+			SecPass:       r.SecPass,
+			SecBorderline: r.SecBorderline,
+			SecFail:       r.SecFail,
+			IntHigh:       r.IntHigh,
+			IntMedium:     r.IntMedium,
+			IntLow:        r.IntLow,
 		}
 		result.Total.TotalScored += fs.TotalScored
 		result.Total.SecPass += fs.SecPass
@@ -484,20 +457,16 @@ func (s *PostgresStore) GetScoreStats(userID int64) (*ScoreStatsResult, error) {
 		result.Total.IntLow += fs.IntLow
 		result.Feeds = append(result.Feeds, fs)
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // IncrementAIRetries bumps the retry counter for an article that failed AI processing.
 // Creates a read_state row if one doesn't exist yet.
 func (s *PostgresStore) IncrementAIRetries(userID, articleID int64) error {
-	_, err := s.db.Exec(
-		`INSERT INTO read_state (user_id, article_id, ai_retries)
-		 VALUES (?, ?, 1)
-		 ON CONFLICT(user_id, article_id) DO UPDATE SET
-		   ai_retries = read_state.ai_retries + 1`,
-		userID, articleID,
-	)
-	if err != nil {
+	if err := s.q.IncrementAIRetries(context.Background(), db.IncrementAIRetriesParams{
+		UserID:    userID,
+		ArticleID: articleID,
+	}); err != nil {
 		return fmt.Errorf("increment ai retries: %w", err)
 	}
 	return nil
@@ -509,30 +478,23 @@ func (s *PostgresStore) IncrementAIRetries(userID, articleID int64) error {
 // user's own interest scores. If securityOnly, only articles below belowScore are
 // reset. Returns the number of article rows reset.
 func (s *PostgresStore) ResetScores(userID int64, securityOnly bool, belowScore float64) (int64, error) {
-	if !securityOnly {
-		if _, err := s.db.Exec(
-			`UPDATE read_state SET ai_scored = FALSE, ai_retries = 0, interest_score = NULL
-			 WHERE user_id = ?`, userID,
-		); err != nil {
-			return 0, fmt.Errorf("reset scores (read_state): %w", err)
-		}
-	}
-	query := `UPDATE articles
-		 SET security_score = NULL, security_reason = NULL, security_flagged = FALSE,
-		     security_screened_at = NULL, security_attempts = 0
-		 WHERE feed_id IN (SELECT feed_id FROM user_feeds WHERE user_id = ?)`
-	args := []any{userID}
+	ctx := context.Background()
 	if securityOnly {
-		query += ` AND security_score IS NOT NULL AND security_score < ?`
-		args = append(args, belowScore)
+		n, err := s.q.ResetArticleScoresBelow(ctx, db.ResetArticleScoresBelowParams{
+			UserID:     userID,
+			BelowScore: belowScore,
+		})
+		if err != nil {
+			return 0, fmt.Errorf("reset scores: %w", err)
+		}
+		return n, nil
 	}
-	result, err := s.db.Exec(query, args...)
+	if err := s.q.ResetReadStateScores(ctx, userID); err != nil {
+		return 0, fmt.Errorf("reset scores (read_state): %w", err)
+	}
+	n, err := s.q.ResetArticleScores(ctx, userID)
 	if err != nil {
 		return 0, fmt.Errorf("reset scores: %w", err)
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return 0, err
 	}
 	return n, nil
 }
