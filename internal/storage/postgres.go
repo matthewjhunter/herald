@@ -1240,12 +1240,13 @@ func (s *PostgresStore) GetFeedCategories(feedID int64) ([]string, error) {
 // --- Filter rules ---
 
 func (s *PostgresStore) AddFilterRule(rule *FilterRule) (int64, error) {
-	var id int64
-	err := s.db.QueryRow(
-		`INSERT INTO filter_rules (user_id, feed_id, axis, value, score)
-		 VALUES (?, ?, ?, ?, ?) RETURNING id`,
-		rule.UserID, rule.FeedID, rule.Axis, rule.Value, rule.Score,
-	).Scan(&id)
+	id, err := s.q.AddFilterRule(context.Background(), db.AddFilterRuleParams{
+		UserID: rule.UserID,
+		FeedID: rule.FeedID,
+		Axis:   rule.Axis,
+		Value:  rule.Value,
+		Score:  int64(rule.Score),
+	})
 	if err != nil {
 		return 0, fmt.Errorf("add filter rule: %w", err)
 	}
@@ -1253,60 +1254,59 @@ func (s *PostgresStore) AddFilterRule(rule *FilterRule) (int64, error) {
 }
 
 func (s *PostgresStore) GetFilterRules(userID int64, feedID *int64) ([]FilterRule, error) {
-	var query string
-	var args []any
-	if feedID != nil {
-		query = `SELECT id, user_id, feed_id, axis, value, score, created_at
-				 FROM filter_rules WHERE user_id = ? AND (feed_id IS NULL OR feed_id = ?)
-				 ORDER BY axis, value`
-		args = []any{userID, *feedID}
-	} else {
-		query = `SELECT id, user_id, feed_id, axis, value, score, created_at
-				 FROM filter_rules WHERE user_id = ? ORDER BY axis, value`
-		args = []any{userID}
-	}
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.q.GetFilterRules(context.Background(), db.GetFilterRulesParams{
+		UserID: userID,
+		FeedID: feedID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get filter rules: %w", err)
 	}
-	defer rows.Close()
-
-	var rules []FilterRule
-	for rows.Next() {
-		var r FilterRule
-		if err := rows.Scan(&r.ID, &r.UserID, &r.FeedID, &r.Axis, &r.Value, &r.Score, &r.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan filter rule: %w", err)
+	rules := make([]FilterRule, len(rows))
+	for i, r := range rows {
+		rules[i] = FilterRule{
+			ID:        r.ID,
+			UserID:    r.UserID,
+			FeedID:    r.FeedID,
+			Axis:      r.Axis,
+			Value:     r.Value,
+			Score:     int(r.Score),
+			CreatedAt: r.CreatedAt,
 		}
-		rules = append(rules, r)
 	}
-	return rules, rows.Err()
+	return rules, nil
 }
 
 func (s *PostgresStore) UpdateFilterRuleScore(userID, ruleID int64, score int) error {
-	res, err := s.db.Exec("UPDATE filter_rules SET score = ? WHERE id = ? AND user_id = ?", score, ruleID, userID)
+	n, err := s.q.UpdateFilterRuleScore(context.Background(), db.UpdateFilterRuleScoreParams{
+		Score:  int64(score),
+		ID:     ruleID,
+		UserID: userID,
+	})
 	if err != nil {
 		return fmt.Errorf("update filter rule score: %w", err)
 	}
-	if n, err := res.RowsAffected(); err == nil && n == 0 {
+	if n == 0 {
 		return fmt.Errorf("filter rule %d not found for user %d", ruleID, userID)
 	}
 	return nil
 }
 
 func (s *PostgresStore) DeleteFilterRule(userID, ruleID int64) error {
-	res, err := s.db.Exec("DELETE FROM filter_rules WHERE id = ? AND user_id = ?", ruleID, userID)
+	n, err := s.q.DeleteFilterRule(context.Background(), db.DeleteFilterRuleParams{
+		ID:     ruleID,
+		UserID: userID,
+	})
 	if err != nil {
 		return fmt.Errorf("delete filter rule: %w", err)
 	}
-	if n, err := res.RowsAffected(); err == nil && n == 0 {
+	if n == 0 {
 		return fmt.Errorf("filter rule %d not found for user %d", ruleID, userID)
 	}
 	return nil
 }
 
 func (s *PostgresStore) HasFilterRules(userID int64) (bool, error) {
-	var count int
-	err := s.db.QueryRow("SELECT COUNT(*) FROM filter_rules WHERE user_id = ?", userID).Scan(&count)
+	count, err := s.q.HasFilterRules(context.Background(), userID)
 	if err != nil {
 		return false, fmt.Errorf("has filter rules: %w", err)
 	}
