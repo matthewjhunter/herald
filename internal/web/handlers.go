@@ -252,6 +252,17 @@ type articleViewData struct {
 	LinkedURL              string
 	LinkedDomain           string
 	SanitizedLinkedContent template.HTML
+	LinkedBy               []backlinkRow
+}
+
+// backlinkRow is one feed/post in the user's subscriptions that linked to the
+// article being viewed (#"linked by" feature).
+type backlinkRow struct {
+	ID               int64
+	FeedTitle        string
+	Title            string
+	URL              string
+	PublishedDateFmt string
 }
 
 type feedManageData struct {
@@ -835,6 +846,21 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 				sanitizedLinked = rewriteImageURLs(sanitizedLinked, imageMap)
 			}
 			data.SanitizedLinkedContent = template.HTML(sanitizedLinked) //nolint:gosec // sanitized by bluemonday
+		}
+	}
+
+	// "Linked by": other feeds whose link-blog posts point at this article.
+	if links, err := h.engine.GetArticleBacklinks(uid, article.ID, article.URL); err != nil {
+		log.Printf("herald-web: backlinks for article %d: %v", article.ID, err)
+	} else {
+		for _, b := range links {
+			data.LinkedBy = append(data.LinkedBy, backlinkRow{
+				ID:               b.ArticleID,
+				FeedTitle:        b.FeedTitle,
+				Title:            b.Title,
+				URL:              b.URL,
+				PublishedDateFmt: formatDate(bestDate(b.PublishedDate, &b.FetchedDate)),
+			})
 		}
 	}
 

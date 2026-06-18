@@ -179,6 +179,10 @@ type Store interface {
 	UpdateArticleAISummary(articleID int64, aiSummary string) error
 	MarkSummarizationSkipped(articleID int64, reason string) error
 	GetArticleSummary(articleID int64) (*ArticleSummary, error)
+	// GetArticleBacklinks returns link-blog posts in the user's feeds whose
+	// extracted linked_url points at targetURL (normalized match), excluding
+	// excludeID. Answers "which of my feeds linked to this article?".
+	GetArticleBacklinks(userID, excludeID int64, targetURL string, limit int) ([]Backlink, error)
 	// GetArticleSummaries batch-fetches non-empty AI summaries for the given
 	// article ids, keyed by article id, so a list page can populate inline
 	// summaries in one query instead of N. Articles with no summary (or a

@@ -220,6 +220,23 @@
     line-height: 1.7;
 }
 
+/* "Linked by" -- feeds that linked to the article being viewed. */
+.linked-by {
+    margin: 1.5rem 0;
+    padding: 0.75rem 1rem;
+    background: var(--pico-card-background-color);
+    border-left: 3px solid var(--pico-primary);
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+.linked-by ul {
+    margin: 0.5rem 0 0;
+    padding-left: 1.1rem;
+}
+.linked-by li {
+    margin-bottom: 0.25rem;
+}
+
 .reading-pane .article-content img {
     max-width: 100%;
     height: auto;

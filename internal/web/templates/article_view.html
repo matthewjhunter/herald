@@ -33,6 +33,22 @@
 </div>
 {{end}}
 
+{{if .LinkedBy}}
+<div class="linked-by">
+    <strong>Linked by {{len .LinkedBy}} feed{{if gt (len .LinkedBy) 1}}s{{end}}</strong>
+    <ul>
+        {{range .LinkedBy}}
+        <li>
+            <a href="/articles/{{.ID}}" hx-get="/articles/{{.ID}}" hx-target="#reading-pane" hx-swap="innerHTML">
+                <strong>{{.FeedTitle}}</strong>{{if .Title}} &middot; {{cleanTitle .Title}}{{end}}
+            </a>
+            {{if .PublishedDateFmt}}<span class="secondary"> &middot; {{.PublishedDateFmt}}</span>{{end}}
+        </li>
+        {{end}}
+    </ul>
+</div>
+{{end}}
+
 <div class="article-actions">
     <a href="{{.URL}}" target="_blank" rel="noopener" role="button" class="outline" data-original>
         {{if .LinkedURL}}Open Post{{else}}Open Original{{end}}

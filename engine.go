@@ -257,6 +257,19 @@ func (e *Engine) GetArticleForUser(userID, articleID int64) (*Article, error) {
 	return &result, nil
 }
 
+// maxBacklinks caps how many "linked by" entries the article view shows.
+const maxBacklinks = 50
+
+// GetArticleBacklinks answers "which of the user's feeds linked to this
+// article?" -- link-blog posts whose extracted linked_url points at targetURL
+// (normalized match). Returns nil for an empty targetURL.
+func (e *Engine) GetArticleBacklinks(userID, articleID int64, targetURL string) ([]storage.Backlink, error) {
+	if targetURL == "" {
+		return nil, nil
+	}
+	return e.store.GetArticleBacklinks(userID, articleID, targetURL, maxBacklinks)
+}
+
 // GetArticleSummaries batch-fetches non-empty AI summaries for the given
 // article ids, keyed by id, so a list page can render inline summaries without
 // an N+1 of GetArticleForUser. Access control is the caller's: pass ids the

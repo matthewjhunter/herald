@@ -586,6 +586,46 @@ func TestHandleArticleView(t *testing.T) {
 	}
 }
 
+func TestHandleArticleView_LinkedBy(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	// A link-blog post in another subscribed feed that links to the fixture
+	// article (URL https://example.com/article/1).
+	linkFeed, err := tf.store.AddFeed("https://linkblog.example/feed", "Link Blog", "")
+	if err != nil {
+		t.Fatalf("AddFeed: %v", err)
+	}
+	if err := tf.store.SubscribeUserToFeed(tf.userID, linkFeed); err != nil {
+		t.Fatalf("SubscribeUserToFeed: %v", err)
+	}
+	postID, err := tf.store.AddArticle(&storage.Article{
+		FeedID: linkFeed, GUID: "lb1", Title: "Worth a read",
+		URL: "https://linkblog.example/p/1",
+	})
+	if err != nil {
+		t.Fatalf("AddArticle: %v", err)
+	}
+	if err := tf.store.UpdateArticleLinkedContent(postID, "https://example.com/article/1", ""); err != nil {
+		t.Fatalf("UpdateArticleLinkedContent: %v", err)
+	}
+
+	rr := authedRequest(t, tf, "GET", "/articles/"+itoa(tf.articleID), map[string]string{"HX-Request": "true"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Linked by") {
+		t.Error("article view should show the Linked by section")
+	}
+	if !strings.Contains(body, "Link Blog") {
+		t.Error("Linked by section should name the linking feed")
+	}
+	// Clicking a backlink opens that post in-app.
+	if !strings.Contains(body, "/articles/"+itoa(postID)) {
+		t.Error("Linked by entry should link to the linking post's article view")
+	}
+}
+
 func TestHandleArticleView_SanitizesXSS(t *testing.T) {
 	tf := newTestFixtures(t)
 

@@ -47,6 +47,18 @@ type ArticleSummary struct {
 	GeneratedAt time.Time
 }
 
+// Backlink is an article in the user's feeds that links to a target article,
+// matched via FTS on the target's URL (a link post contains the URL it links
+// to in its body). Powers the article view's "Linked by" section.
+type Backlink struct {
+	ArticleID     int64
+	Title         string
+	URL           string
+	FeedTitle     string
+	PublishedDate *time.Time
+	FetchedDate   time.Time
+}
+
 type ReadState struct {
 	ArticleID     int64
 	Read          bool

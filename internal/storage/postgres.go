@@ -1256,6 +1256,30 @@ func (s *PostgresStore) GetArticleSummary(articleID int64) (*ArticleSummary, err
 	}, nil
 }
 
+func (s *PostgresStore) GetArticleBacklinks(userID, excludeID int64, targetURL string, limit int) ([]Backlink, error) {
+	rows, err := s.q.GetArticleBacklinks(context.Background(), db.GetArticleBacklinksParams{
+		UserID:    userID,
+		ExcludeID: excludeID,
+		TargetUrl: targetURL,
+		Lim:       int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get article backlinks: %w", err)
+	}
+	out := make([]Backlink, len(rows))
+	for i, r := range rows {
+		out[i] = Backlink{
+			ArticleID:     r.ID,
+			Title:         r.Title,
+			URL:           r.Url,
+			FeedTitle:     r.FeedTitle,
+			PublishedDate: r.PublishedDate,
+			FetchedDate:   r.FetchedDate,
+		}
+	}
+	return out, nil
+}
+
 // GetArticleSummaries batch-fetches non-empty AI summaries for the given
 // article ids in a single query, returning a map keyed by article id. Ids with
 // no summary (or a skipped/empty one) are absent from the map.
