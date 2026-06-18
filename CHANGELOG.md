@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **TOML parser switched to `pelletier/go-toml/v2`; unknown config keys now
+  rejected.** Replaces `BurntSushi/toml` (the project standard for new code).
+  Config loading runs in strict mode: a key present in the file but absent from
+  the schema -- a typo, or a stale pre-unification layout like a top-level
+  `[webauth]` that now lives under `[web.webauth]` -- is a hard startup error
+  naming the offending key, rather than being silently ignored. Duration keys
+  (`timeout`) keep their `"5m"` string form via a wrapper type. (#199)
+
 - **Unified binary: `herald serve` replaces separate `herald-web`.** The web UI is now
   a subcommand of the single `herald` binary (`herald daemon` + `herald serve`).
   One build artifact, smaller images, single config entrypoint. Config standardized

@@ -1,6 +1,32 @@
 package storage
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
+
+// Duration wraps time.Duration so it (un)marshals from a TOML string like
+// "5m" via time.ParseDuration. pelletier/go-toml/v2 has no native Duration
+// support (it would try to read the string into the underlying int64 and
+// fail), so the config exposes this TextMarshaler/TextUnmarshaler type for
+// every duration-valued key. Callers convert with time.Duration(d) at use.
+type Duration time.Duration
+
+// MarshalText renders the duration in Go's canonical form (e.g. "5m0s") so a
+// written-back config (herald init-config) round-trips through UnmarshalText.
+func (d Duration) MarshalText() ([]byte, error) {
+	return []byte(time.Duration(d).String()), nil
+}
+
+// UnmarshalText parses a duration string such as "30s" or "5m".
+func (d *Duration) UnmarshalText(b []byte) error {
+	v, err := time.ParseDuration(string(b))
+	if err != nil {
+		return fmt.Errorf("invalid duration %q: %w", string(b), err)
+	}
+	*d = Duration(v)
+	return nil
+}
 
 type Config struct {
 	DefaultUserID int64 `toml:"default_user_id"`
@@ -12,12 +38,12 @@ type Config struct {
 	} `toml:"database"`
 
 	Ollama struct {
-		BaseURL       string        `toml:"base_url"`
-		APIKey        string        `toml:"api_key"`
-		SecurityModel string        `toml:"security_model"`
-		CurationModel string        `toml:"curation_model"`
-		Timeout       time.Duration `toml:"timeout"`
-		MaxParallel   int           `toml:"max_parallel"`
+		BaseURL       string   `toml:"base_url"`
+		APIKey        string   `toml:"api_key"`
+		SecurityModel string   `toml:"security_model"`
+		CurationModel string   `toml:"curation_model"`
+		Timeout       Duration `toml:"timeout"`
+		MaxParallel   int      `toml:"max_parallel"`
 		// MaxConcurrent bounds the number of in-flight generate() calls in this
 		// process. <= 0 means unbounded (no gate).
 		MaxConcurrent int `toml:"max_concurrent"`
@@ -96,14 +122,14 @@ type Config struct {
 	// from config — it comes from the HERALD_SUMMARY_API_KEY environment variable
 	// so the secret is never committed.
 	Summary struct {
-		BaseURL          string        `toml:"base_url"`           // OpenAI-compatible /v1 endpoint
-		Model            string        `toml:"model"`              // e.g. claude-sonnet-4-6
-		MinInterestScore float64       `toml:"min_interest_score"` // interest floor for included articles
-		MinSecurityScore float64       `toml:"min_security_score"` // security floor (gate)
-		MaxInputTokens   int           `toml:"max_input_tokens"`   // budget bound; trims oldest overflow
-		BodyCharCap      int           `toml:"body_char_cap"`      // per-article body truncation
-		MaxOutputTokens  int           `toml:"max_output_tokens"`  // completion cap
-		Timeout          time.Duration `toml:"timeout"`
+		BaseURL          string   `toml:"base_url"`           // OpenAI-compatible /v1 endpoint
+		Model            string   `toml:"model"`              // e.g. claude-sonnet-4-6
+		MinInterestScore float64  `toml:"min_interest_score"` // interest floor for included articles
+		MinSecurityScore float64  `toml:"min_security_score"` // security floor (gate)
+		MaxInputTokens   int      `toml:"max_input_tokens"`   // budget bound; trims oldest overflow
+		BodyCharCap      int      `toml:"body_char_cap"`      // per-article body truncation
+		MaxOutputTokens  int      `toml:"max_output_tokens"`  // completion cap
+		Timeout          Duration `toml:"timeout"`
 		// DisableThinking turns off a reasoning backend's thinking pass (Qwen3 via
 		// Lemonade) so the completion is real content, not reasoning_content.
 		DisableThinking bool `toml:"disable_thinking"`
@@ -140,7 +166,7 @@ func DefaultConfig() *Config {
 	cfg.Ollama.BaseURL = "http://localhost:11434"
 	cfg.Ollama.SecurityModel = "gemma3:4b"
 	cfg.Ollama.CurationModel = "llama3.1:8b"
-	cfg.Ollama.Timeout = 2 * time.Minute
+	cfg.Ollama.Timeout = Duration(2 * time.Minute)
 	cfg.Ollama.MaxConcurrent = 8
 	cfg.Summarization.MinArticleLength = 200
 	cfg.Summarization.MaxSummaryLength = 500
@@ -168,6 +194,6 @@ func DefaultConfig() *Config {
 	cfg.Summary.MaxInputTokens = 170000
 	cfg.Summary.BodyCharCap = 6000
 	cfg.Summary.MaxOutputTokens = 16000
-	cfg.Summary.Timeout = 5 * time.Minute
+	cfg.Summary.Timeout = Duration(5 * time.Minute)
 	return cfg
 }

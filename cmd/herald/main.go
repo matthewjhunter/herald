@@ -1,14 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
-	"github.com/BurntSushi/toml"
 	embedding "github.com/matthewjhunter/go-embedding"
 	herald "github.com/matthewjhunter/herald"
 	"github.com/matthewjhunter/herald/internal/ai"
@@ -16,6 +16,7 @@ import (
 	"github.com/matthewjhunter/herald/internal/output"
 	"github.com/matthewjhunter/herald/internal/pipeline"
 	"github.com/matthewjhunter/herald/internal/storage"
+	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 )
 
@@ -137,23 +138,21 @@ func loadConfig() error {
 	}
 
 	cfg = storage.DefaultConfig()
-	md, err := toml.Decode(string(data), cfg)
-	if err != nil {
-		return fmt.Errorf("failed to parse config: %w", err)
-	}
-
-	// Warn loudly about keys present in the file but not in the config
-	// struct. These are silently ignored by the decoder, so without this a
-	// typo (security_modle) or a stale pre-unification layout (a top-level
-	// [webauth] that now lives under [web.webauth]) leaves the setting at its
-	// default with no clue why. See #197: the web keys moved under [web].
-	if undecoded := md.Undecoded(); len(undecoded) > 0 {
-		keys := make([]string, len(undecoded))
-		for i, k := range undecoded {
-			keys[i] = k.String()
+	// DisallowUnknownFields turns a key that exists in the file but not in the
+	// Config struct into a hard parse error instead of a silent no-op. This
+	// catches typos (security_modle) and stale pre-unification layouts (a
+	// top-level [webauth] that now lives under [web.webauth] -- see #197) at
+	// boot, matching the fail-loud stance of the missing-file check above.
+	dec := toml.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(cfg); err != nil {
+		// StrictMissingError.String() pinpoints each offending key with a
+		// source excerpt; plain Error() only says "fields ... are missing".
+		var strict *toml.StrictMissingError
+		if errors.As(err, &strict) {
+			return fmt.Errorf("invalid config %s (unknown or misplaced key):\n%s", configPath, strict.String())
 		}
-		fmt.Fprintf(os.Stderr, "Warning: ignoring %d unknown config key(s) in %s: %s\n",
-			len(keys), configPath, strings.Join(keys, ", "))
+		return fmt.Errorf("failed to parse config: %w", err)
 	}
 
 	return nil

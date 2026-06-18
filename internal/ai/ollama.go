@@ -61,7 +61,7 @@ func NewAIProcessor(baseURL, securityModel, curationModel string, store any, con
 			apiKey = cfg.Ollama.APIKey
 		}
 		if cfg.Ollama.Timeout > 0 {
-			callTimeout = cfg.Ollama.Timeout
+			callTimeout = time.Duration(cfg.Ollama.Timeout)
 		}
 		maxConcurrent = cfg.Ollama.MaxConcurrent
 	}
