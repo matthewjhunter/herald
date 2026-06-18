@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -643,32 +644,51 @@ func (s *PostgresStore) UpdateFeedSiteURL(feedID int64, siteURL string) error {
 
 // --- Articles ---
 
+// coreArticle assembles an Article from the standard 10-column projection
+// (id, feed_id, guid, title, url, content, summary, author, published_date,
+// fetched_date) shared by the article fetch queries. The nullable text columns
+// are dereferenced to "" to match the non-pointer Article fields.
+func coreArticle(id, feedID int64, guid, title, url string, content, summary, author *string, published *time.Time, fetched time.Time) Article {
+	return Article{
+		ID:            id,
+		FeedID:        feedID,
+		GUID:          guid,
+		Title:         title,
+		URL:           url,
+		Content:       derefString(content),
+		Summary:       derefString(summary),
+		Author:        derefString(author),
+		PublishedDate: published,
+		FetchedDate:   fetched,
+	}
+}
+
 func (s *PostgresStore) FindDuplicateArticle(title string, publishedDate *time.Time) (int64, error) {
 	if title == "" || publishedDate == nil {
 		return 0, nil
 	}
-	var id int64
-	err := s.db.QueryRow(
-		"SELECT id FROM articles WHERE title = ? AND published_date = ? LIMIT 1",
-		title, publishedDate,
-	).Scan(&id)
-	if err == sql.ErrNoRows {
+	id, err := s.q.FindDuplicateArticle(context.Background(), db.FindDuplicateArticleParams{
+		Title:         title,
+		PublishedDate: publishedDate,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
 	return id, err
 }
 
 func (s *PostgresStore) AddArticle(article *Article) (int64, error) {
-	var id int64
-	err := s.db.QueryRow(
-		`INSERT INTO articles (feed_id, guid, title, url, content, summary, author, published_date)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(feed_id, guid) DO NOTHING
-		 RETURNING id`,
-		article.FeedID, article.GUID, article.Title, article.URL,
-		article.Content, article.Summary, article.Author, article.PublishedDate,
-	).Scan(&id)
-	if err == sql.ErrNoRows {
+	id, err := s.q.AddArticle(context.Background(), db.AddArticleParams{
+		FeedID:        article.FeedID,
+		Guid:          article.GUID,
+		Title:         article.Title,
+		Url:           article.URL,
+		Content:       article.Content,
+		Summary:       article.Summary,
+		Author:        article.Author,
+		PublishedDate: article.PublishedDate,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil // duplicate
 	}
 	if err != nil {
@@ -678,34 +698,25 @@ func (s *PostgresStore) AddArticle(article *Article) (int64, error) {
 }
 
 func (s *PostgresStore) GetUnreadArticles(limit int) ([]Article, error) {
-	rows, err := s.db.Query(`
-		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date
-		FROM articles a
-		LEFT JOIN read_state rs ON a.id = rs.article_id
-		WHERE rs.article_id IS NULL OR rs.read = FALSE
-		ORDER BY a.published_date DESC
-		LIMIT ?`, limit)
+	rows, err := s.q.GetUnreadArticles(context.Background(), int32(limit))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get unread articles: %w", err)
 	}
-	defer rows.Close()
-	return scanArticles(rows)
+	articles := make([]Article, len(rows))
+	for i, r := range rows {
+		articles[i] = coreArticle(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate)
+	}
+	return articles, nil
 }
 
 func (s *PostgresStore) GetArticle(articleID int64) (*Article, error) {
-	var a Article
-	err := s.db.QueryRow(
-		`SELECT id, feed_id, guid, title, url, content, summary,
-		        author, published_date, fetched_date,
-		        COALESCE(linked_url,''), COALESCE(linked_content,'')
-		 FROM articles WHERE id = ?`, articleID,
-	).Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
-		&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate,
-		&a.LinkedURL, &a.LinkedContent)
+	r, err := s.q.GetArticle(context.Background(), articleID)
 	if err != nil {
-		return nil, fmt.Errorf("get article %d: %w", articleID, err)
+		return nil, fmt.Errorf("get article %d: %w", articleID, mapErr(err))
 	}
+	a := coreArticle(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate)
+	a.LinkedURL = r.LinkedUrl
+	a.LinkedContent = r.LinkedContent
 	return &a, nil
 }
 
@@ -724,7 +735,7 @@ func (s *PostgresStore) GetArticlesByInterestScore(userID int64, threshold float
 	args := []any{userID, threshold}
 	args = append(args, filterArgs...)
 	args = append(args, limit, offset)
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.pool.Query(context.Background(), rebindNumeric(query), args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get articles by interest score: %w", err)
 	}
@@ -733,13 +744,19 @@ func (s *PostgresStore) GetArticlesByInterestScore(userID int64, threshold float
 	var articles []Article
 	var scores []float64
 	for rows.Next() {
-		var a Article
-		var score float64
-		if err := rows.Scan(&a.ID, &a.FeedID, &a.GUID, &a.Title, &a.URL,
-			&a.Content, &a.Summary, &a.Author, &a.PublishedDate, &a.FetchedDate, &score); err != nil {
+		var (
+			id, feedID               int64
+			guid, title, url         string
+			content, summary, author *string
+			published                *time.Time
+			fetched                  time.Time
+			score                    float64
+		)
+		if err := rows.Scan(&id, &feedID, &guid, &title, &url,
+			&content, &summary, &author, &published, &fetched, &score); err != nil {
 			return nil, nil, fmt.Errorf("failed to scan article: %w", err)
 		}
-		articles = append(articles, a)
+		articles = append(articles, coreArticle(id, feedID, guid, title, url, content, summary, author, published, fetched))
 		scores = append(scores, score)
 	}
 	return articles, scores, rows.Err()
@@ -767,12 +784,11 @@ func (s *PostgresStore) GetUnreadArticlesForUser(userID int64, limit, offset int
 	args := []any{userID, userID, userID}
 	args = append(args, filterArgs...)
 	args = append(args, limit, offset)
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.pool.Query(context.Background(), rebindNumeric(query), args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get unread articles for user: %w", err)
 	}
-	defer rows.Close()
-	return scanArticlesWithReadState(rows)
+	return scanArticlesWithReadStatePgx(rows)
 }
 
 func (s *PostgresStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int, filterThreshold *int, includeRead bool) ([]Article, error) {
@@ -797,31 +813,18 @@ func (s *PostgresStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, off
 	args := []any{userID, userID, feedID, userID}
 	args = append(args, filterArgs...)
 	args = append(args, limit, offset)
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.pool.Query(context.Background(), rebindNumeric(query), args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get unread articles by feed: %w", err)
 	}
-	defer rows.Close()
-	return scanArticlesWithReadState(rows)
+	return scanArticlesWithReadStatePgx(rows)
 }
 
 // GetUnscoredArticleCount counts the user's articles still in the AI funnel:
 // not yet security-screened (within budget) or screened-pass but not yet
 // interest-scored for this user. See the SQLite implementation (#141).
 func (s *PostgresStore) GetUnscoredArticleCount(userID int64) (int, error) {
-	var count int
-	err := s.db.QueryRow(`
-		SELECT COUNT(*)
-		FROM articles a
-		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
-		WHERE uf.user_id = ?
-		  AND (
-		    (a.security_screened_at IS NULL AND a.security_attempts < 3)
-		    OR (a.security_score >= 7.0 AND rs.interest_score IS NULL)
-		  )`,
-		userID, userID,
-	).Scan(&count)
+	count, err := s.q.GetUnscoredArticleCount(context.Background(), userID)
 	if err != nil {
 		return 0, fmt.Errorf("get unscored article count: %w", err)
 	}
@@ -829,34 +832,28 @@ func (s *PostgresStore) GetUnscoredArticleCount(userID int64) (int, error) {
 }
 
 func (s *PostgresStore) GetUnsummarizedScoredArticles(securityThreshold float64, limit int) ([]Article, error) {
-	rows, err := s.db.Query(`
-		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date
-		FROM articles a
-		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id
-		WHERE a.security_score >= ?
-		  AND asumm.article_id IS NULL
-		ORDER BY a.published_date DESC
-		LIMIT ?`, securityThreshold, limit)
+	rows, err := s.q.GetUnsummarizedScoredArticles(context.Background(), db.GetUnsummarizedScoredArticlesParams{
+		SecurityThreshold: securityThreshold,
+		Lim:               int32(limit),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get unsummarized scored articles: %w", err)
 	}
-	defer rows.Close()
-	return scanArticles(rows)
+	articles := make([]Article, len(rows))
+	for i, r := range rows {
+		articles[i] = coreArticle(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate)
+	}
+	return articles, nil
 }
 
 // SetInterestScore records the curation interest score without touching the
 // security verdict. See the SQLite implementation.
 func (s *PostgresStore) SetInterestScore(userID, articleID int64, interestScore float64) error {
-	_, err := s.db.Exec(
-		`INSERT INTO read_state (user_id, article_id, read, interest_score, ai_scored)
-		 VALUES (?, ?, FALSE, ?, TRUE)
-		 ON CONFLICT(user_id, article_id) DO UPDATE SET
-		   interest_score = excluded.interest_score,
-		   ai_scored = TRUE`,
-		userID, articleID, interestScore,
-	)
-	if err != nil {
+	if err := s.q.SetInterestScore(context.Background(), db.SetInterestScoreParams{
+		UserID:        userID,
+		ArticleID:     articleID,
+		InterestScore: interestScore,
+	}); err != nil {
 		return fmt.Errorf("set interest score: %w", err)
 	}
 	return nil
@@ -865,14 +862,12 @@ func (s *PostgresStore) SetInterestScore(userID, articleID int64, interestScore 
 // ScreenArticleSecurity records the security verdict on the article itself
 // (#141). See the SQLite implementation.
 func (s *PostgresStore) ScreenArticleSecurity(articleID int64, securityScore float64, securityReason string, securityFlagged bool) error {
-	_, err := s.db.Exec(
-		`UPDATE articles
-		 SET security_score = ?, security_reason = ?, security_flagged = ?,
-		     security_screened_at = NOW()
-		 WHERE id = ?`,
-		securityScore, securityReason, securityFlagged, articleID,
-	)
-	if err != nil {
+	if err := s.q.ScreenArticleSecurity(context.Background(), db.ScreenArticleSecurityParams{
+		SecurityScore:   securityScore,
+		SecurityReason:  securityReason,
+		SecurityFlagged: securityFlagged,
+		ID:              articleID,
+	}); err != nil {
 		return fmt.Errorf("screen article security: %w", err)
 	}
 	return nil
@@ -881,13 +876,10 @@ func (s *PostgresStore) ScreenArticleSecurity(articleID int64, securityScore flo
 // SkipArticleSecurity marks an article screened without a score (no content /
 // too short). See the SQLite implementation.
 func (s *PostgresStore) SkipArticleSecurity(articleID int64, reason string) error {
-	_, err := s.db.Exec(
-		`UPDATE articles
-		 SET security_reason = ?, security_screened_at = NOW()
-		 WHERE id = ?`,
-		reason, articleID,
-	)
-	if err != nil {
+	if err := s.q.SkipArticleSecurity(context.Background(), db.SkipArticleSecurityParams{
+		SecurityReason: reason,
+		ID:             articleID,
+	}); err != nil {
 		return fmt.Errorf("skip article security: %w", err)
 	}
 	return nil
@@ -896,11 +888,7 @@ func (s *PostgresStore) SkipArticleSecurity(articleID int64, reason string) erro
 // IncrementArticleSecurityAttempts bumps the per-article security retry counter.
 // See the SQLite implementation.
 func (s *PostgresStore) IncrementArticleSecurityAttempts(articleID int64) error {
-	_, err := s.db.Exec(
-		`UPDATE articles SET security_attempts = security_attempts + 1 WHERE id = ?`,
-		articleID,
-	)
-	if err != nil {
+	if err := s.q.IncrementArticleSecurityAttempts(context.Background(), articleID); err != nil {
 		return fmt.Errorf("increment article security attempts: %w", err)
 	}
 	return nil
@@ -909,79 +897,60 @@ func (s *PostgresStore) IncrementArticleSecurityAttempts(articleID int64) error 
 // GetUnscreenedArticles returns articles not yet security-screened, within the
 // retry budget, newest first. Global (not user-scoped). See the SQLite version.
 func (s *PostgresStore) GetUnscreenedArticles(limit int) ([]Article, error) {
-	rows, err := s.db.Query(`
-		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date
-		FROM articles a
-		WHERE a.security_screened_at IS NULL
-		  AND a.security_attempts < 3
-		ORDER BY a.published_date DESC
-		LIMIT ?`, limit)
+	rows, err := s.q.GetUnscreenedArticles(context.Background(), int32(limit))
 	if err != nil {
 		return nil, fmt.Errorf("get unscreened articles: %w", err)
 	}
-	defer rows.Close()
-	return scanArticles(rows)
+	articles := make([]Article, len(rows))
+	for i, r := range rows {
+		articles[i] = coreArticle(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate)
+	}
+	return articles, nil
 }
 
 // GetUnscoredCurationArticles returns articles that passed the security screen
 // but have not yet been interest-scored (interest_score IS NULL). Backfill input
 // for the staged pipeline's curation stage. See the SQLite implementation.
 func (s *PostgresStore) GetUnscoredCurationArticles(userID int64, securityThreshold float64, limit int) ([]Article, error) {
-	rows, err := s.db.Query(`
-		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date
-		FROM articles a
-		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
-		WHERE uf.user_id = ?
-		  AND a.security_score >= ?
-		  AND rs.interest_score IS NULL
-		ORDER BY a.published_date DESC
-		LIMIT ?`, userID, securityThreshold, limit)
+	rows, err := s.q.GetUnscoredCurationArticles(context.Background(), db.GetUnscoredCurationArticlesParams{
+		UserID:            userID,
+		SecurityThreshold: securityThreshold,
+		Lim:               int32(limit),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get unscored curation articles: %w", err)
 	}
-	defer rows.Close()
-	return scanArticles(rows)
+	articles := make([]Article, len(rows))
+	for i, r := range rows {
+		articles[i] = coreArticle(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate)
+	}
+	return articles, nil
 }
 
 // GetUngroupedEmbeddedArticles returns security-passed, embedded (status OK),
 // still-ungrouped articles published/fetched since the cutoff. The cluster
 // stage's recency window. See the SQLite implementation.
 func (s *PostgresStore) GetUngroupedEmbeddedArticles(userID int64, model string, securityThreshold float64, since time.Time, limit int) ([]Article, error) {
-	rows, err := s.db.Query(`
-		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date
-		FROM articles a
-		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		JOIN article_embeddings ae ON ae.article_id = a.id
-		    AND ae.embedding_model = ? AND ae.status = ?
-		WHERE uf.user_id = ?
-		  AND a.security_score >= ?
-		  AND COALESCE(a.published_date, a.fetched_date) >= ?
-		  AND NOT EXISTS (
-		      SELECT 1 FROM article_group_members agm
-		      JOIN article_groups ag ON agm.group_id = ag.id
-		      WHERE agm.article_id = a.id AND ag.user_id = uf.user_id
-		  )
-		ORDER BY COALESCE(a.published_date, a.fetched_date) DESC
-		LIMIT ?`, model, EmbedStatusOK, userID, securityThreshold, since, limit)
+	rows, err := s.q.GetUngroupedEmbeddedArticles(context.Background(), db.GetUngroupedEmbeddedArticlesParams{
+		Model:             model,
+		Status:            int16(EmbedStatusOK),
+		UserID:            userID,
+		SecurityThreshold: securityThreshold,
+		Since:             since,
+		Lim:               int32(limit),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get ungrouped embedded articles: %w", err)
 	}
-	defer rows.Close()
-	return scanArticles(rows)
+	articles := make([]Article, len(rows))
+	for i, r := range rows {
+		articles[i] = coreArticle(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate)
+	}
+	return articles, nil
 }
 
 func (s *PostgresStore) GetUnsummarizedArticleCount() (int, error) {
-	var count int
-	err := s.db.QueryRow(`
-		SELECT COUNT(*)
-		FROM articles a
-		LEFT JOIN article_summaries asumm ON asumm.article_id = a.id
-		WHERE asumm.article_id IS NULL`,
-	).Scan(&count)
+	count, err := s.q.GetUnsummarizedArticleCount(context.Background())
 	if err != nil {
 		return 0, fmt.Errorf("get unsummarized article count: %w", err)
 	}
@@ -989,36 +958,34 @@ func (s *PostgresStore) GetUnsummarizedArticleCount() (int, error) {
 }
 
 func (s *PostgresStore) GetArticlesNeedingFullText(limit int) ([]Article, error) {
-	rows, err := s.db.Query(`
-		SELECT id, feed_id, guid, title, url, COALESCE(content,''), COALESCE(summary,''),
-		       COALESCE(author,''), published_date, fetched_date
-		FROM articles
-		WHERE full_text_fetched = FALSE
-		ORDER BY fetched_date DESC
-		LIMIT ?`, limit)
+	rows, err := s.q.GetArticlesNeedingFullText(context.Background(), int32(limit))
 	if err != nil {
 		return nil, fmt.Errorf("get articles needing full text: %w", err)
 	}
-	defer rows.Close()
-	return scanArticles(rows)
+	articles := make([]Article, len(rows))
+	for i, r := range rows {
+		articles[i] = coreArticle(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate)
+	}
+	return articles, nil
 }
 
 func (s *PostgresStore) UpdateArticleContent(articleID int64, content string) error {
-	_, err := s.db.Exec(`UPDATE articles SET content = ? WHERE id = ?`, content, articleID)
-	return err
+	return s.q.UpdateArticleContent(context.Background(), db.UpdateArticleContentParams{
+		Content: content,
+		ID:      articleID,
+	})
 }
 
 func (s *PostgresStore) UpdateArticleLinkedContent(articleID int64, linkedURL, linkedContent string) error {
-	_, err := s.db.Exec(
-		`UPDATE articles SET linked_url = ?, linked_content = ? WHERE id = ?`,
-		linkedURL, linkedContent, articleID,
-	)
-	return err
+	return s.q.UpdateArticleLinkedContent(context.Background(), db.UpdateArticleLinkedContentParams{
+		LinkedUrl:     linkedURL,
+		LinkedContent: linkedContent,
+		ID:            articleID,
+	})
 }
 
 func (s *PostgresStore) MarkArticleFullTextFetched(articleID int64) error {
-	_, err := s.db.Exec(`UPDATE articles SET full_text_fetched = TRUE WHERE id = ?`, articleID)
-	return err
+	return s.q.MarkArticleFullTextFetched(context.Background(), articleID)
 }
 
 func (s *PostgresStore) GetStarredArticles(userID int64, limit, offset int, filterThreshold *int) ([]Article, error) {
@@ -1038,12 +1005,11 @@ func (s *PostgresStore) GetStarredArticles(userID int64, limit, offset int, filt
 	args := []any{userID, userID}
 	args = append(args, filterArgs...)
 	args = append(args, limit, offset)
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.pool.Query(context.Background(), rebindNumeric(query), args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get starred articles: %w", err)
 	}
-	defer rows.Close()
-	return scanArticlesWithReadState(rows)
+	return scanArticlesWithReadStatePgx(rows)
 }
 
 // --- Article images ---
@@ -2901,6 +2867,56 @@ func scanArticlesWithReadState(rows *sql.Rows) ([]Article, error) {
 		articles = append(articles, a)
 	}
 	return articles, rows.Err()
+}
+
+// scanArticlesWithReadStatePgx is the pgx counterpart to
+// scanArticlesWithReadState: the same 10 article columns followed by
+// security_flagged and the per-user read and starred flags.
+func scanArticlesWithReadStatePgx(rows pgx.Rows) ([]Article, error) {
+	defer rows.Close()
+	var articles []Article
+	for rows.Next() {
+		var (
+			id, feedID                 int64
+			guid, title, url           string
+			content, summary, author   *string
+			published                  *time.Time
+			fetched                    time.Time
+			flagged, isRead, isStarred bool
+		)
+		if err := rows.Scan(&id, &feedID, &guid, &title, &url,
+			&content, &summary, &author, &published, &fetched,
+			&flagged, &isRead, &isStarred); err != nil {
+			return nil, fmt.Errorf("scan article: %w", err)
+		}
+		a := coreArticle(id, feedID, guid, title, url, content, summary, author, published, fetched)
+		a.SecurityFlagged = flagged
+		a.Read = isRead
+		a.Starred = isStarred
+		articles = append(articles, a)
+	}
+	return articles, rows.Err()
+}
+
+// rebindNumeric rewrites '?' placeholders to pgx's '$1','$2',... form, left to
+// right. The dynamic list queries are assembled from fragments that use '?';
+// pgx (unlike the legacy database/sql handle) has no rebind, so it needs the
+// numbered form. None of these queries contain a literal '?', so a plain scan
+// is safe.
+func rebindNumeric(query string) string {
+	var b strings.Builder
+	b.Grow(len(query) + 8)
+	n := 0
+	for i := 0; i < len(query); i++ {
+		if query[i] == '?' {
+			n++
+			b.WriteByte('$')
+			b.WriteString(strconv.Itoa(n))
+			continue
+		}
+		b.WriteByte(query[i])
+	}
+	return b.String()
 }
 
 // readFilterClausePG is the Postgres counterpart to readFilterClause: it uses
