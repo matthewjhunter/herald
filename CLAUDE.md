@@ -2,16 +2,15 @@
 
 AI-powered RSS/Atom feed reader with security screening and content curation. Monitors feeds, scores articles for relevance using Ollama models, and surfaces high-interest items as formatted notification output.
 
-Two binaries: `herald` (CLI) and `herald-web` (web interface).
+Single binary `herald` with subcommands (including `herald serve` for the web UI; `herald daemon` for polling).
 
 ## Build
 
 ```bash
 go build -o herald ./cmd/herald
-go build -o herald-web ./cmd/herald-web
 
-# Or build all:
-task build-all
+# Or:
+task build
 ```
 
 ## Test

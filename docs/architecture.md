@@ -26,7 +26,7 @@ Herald is designed around three principles:
                     │                           │
                ┌────┴────┐                ┌─────┴───────┐
                │   CLI   │                │   Web UI    │
-               │ herald  │                │ herald-web  │
+               │ herald (daemon + serve) │                │ (unified)  │
                └─────────┘                └─────────────┘
 ```
 
@@ -160,7 +160,7 @@ Herald uses Go `text/template` for all AI prompts, with a 3-tier fallback:
 
 ```
 Tier 1 (lowest priority): embedded defaults — compiled into the binary via go:embed
-Tier 2: config file — prompts.* fields in config.yaml
+Tier 2: config file — prompts.* fields in config.toml
 Tier 3 (highest priority): user database — per-user custom templates in user_prompts
 ```
 

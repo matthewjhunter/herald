@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Unified binary: `herald serve` replaces separate `herald-web`.** The web UI is now
+  a subcommand of the single `herald` binary (`herald daemon` + `herald serve`).
+  One build artifact, smaller images, single config entrypoint. Config standardized
+  on TOML (retired the YAML loader); web-only keys live under `[web]` (webauth,
+  admin, addr) alongside daemon sections in one file. Docker, systemd, Taskfile,
+  and docs updated. The two-process topology is preserved for isolation/scaling.
+  (#197)
+
 - **Similarity and grouping on pgvector ANN.** Article embeddings now live in
   `vector(768)` columns instead of `BYTEA` blobs, and the cluster stage groups
   articles with in-database nearest-neighbour queries instead of pulling every

@@ -1,4 +1,4 @@
-package main
+package web
 
 import (
 	"net/http"
@@ -16,7 +16,7 @@ import (
 func TestRequireAuth_ReusesExistingFlow(t *testing.T) {
 	tf := newTestFixtures(t)
 	validator := newTestValidatorWithOIDC(t, nil)
-	router := newRouter(tf.engine, validator, "", nil)
+	router := NewRouter(tf.engine, validator, "", nil)
 
 	// First unauthenticated request starts a flow.
 	req1 := httptest.NewRequest("GET", "/", nil)

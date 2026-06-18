@@ -22,7 +22,7 @@ func withGlobals(t *testing.T, fn func()) {
 
 func TestLoadConfig_MissingFileIsHardError(t *testing.T) {
 	withGlobals(t, func() {
-		configPath = filepath.Join(t.TempDir(), "does-not-exist.yaml")
+		configPath = filepath.Join(t.TempDir(), "does-not-exist.toml")
 		err := loadConfig()
 		if err == nil {
 			t.Fatalf("expected error for missing config, got nil")
@@ -45,7 +45,7 @@ func TestLoadConfig_DefaultPathMissing(t *testing.T) {
 	// When --config is not passed AND the default path doesn't exist,
 	// we still error out (no silent fallback to defaults).
 	withGlobals(t, func() {
-		// Run from a temp dir so ./config/config.yaml is guaranteed missing.
+		// Run from a temp dir so ./config/config.toml is guaranteed missing.
 		dir := t.TempDir()
 		oldWd, err := os.Getwd()
 		if err != nil {
@@ -70,9 +70,9 @@ func TestLoadConfig_DefaultPathMissing(t *testing.T) {
 func TestLoadConfig_ValidFile(t *testing.T) {
 	withGlobals(t, func() {
 		dir := t.TempDir()
-		path := filepath.Join(dir, "config.yaml")
-		// Minimal valid YAML — defaults fill in the rest.
-		body := []byte("database:\n  path: \"/tmp/test.db\"\n")
+		path := filepath.Join(dir, "config.toml")
+		// Minimal valid TOML — defaults fill in the rest.
+		body := []byte("[database]\npath = \"/tmp/test.db\"\n")
 		if err := os.WriteFile(path, body, 0o644); err != nil {
 			t.Fatalf("write tmp config: %v", err)
 		}
@@ -106,7 +106,7 @@ func TestPersistentPreRun_HonorsSkipAnnotation(t *testing.T) {
 	// PersistentPreRunE. We replicate the same logic the rootCmd uses
 	// (without spinning up cobra) and verify both branches.
 	withGlobals(t, func() {
-		configPath = filepath.Join(t.TempDir(), "missing.yaml")
+		configPath = filepath.Join(t.TempDir(), "missing.toml")
 
 		// With the annotation: should be a no-op, no error.
 		annotated := map[string]string{annotationSkipConfigLoad: "true"}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	embedding "github.com/matthewjhunter/go-embedding"
 	herald "github.com/matthewjhunter/herald"
 	"github.com/matthewjhunter/herald/internal/ai"
@@ -15,7 +16,6 @@ import (
 	"github.com/matthewjhunter/herald/internal/pipeline"
 	"github.com/matthewjhunter/herald/internal/storage"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -77,7 +77,7 @@ func main() {
 		},
 	}
 
-	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "config file path (default: ./config/config.yaml)")
+	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "config file path (default: ./config/config.toml)")
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "format", "f", "json", "output format: json, text, human (default: json)")
 
 	rootCmd.AddCommand(createUserCmd())
@@ -86,6 +86,7 @@ func main() {
 	rootCmd.AddCommand(processCmd())
 	rootCmd.AddCommand(fetchCmd())
 	rootCmd.AddCommand(daemonCmd())
+	rootCmd.AddCommand(serveCmd())
 	rootCmd.AddCommand(listCmd())
 	rootCmd.AddCommand(readCmd())
 	rootCmd.AddCommand(initConfigCmd())
@@ -103,9 +104,9 @@ func main() {
 // defaultConfigPath is the search location for the config file when the
 // caller does not pass --config explicitly. Kept as a constant so tests
 // can refer to the same value without duplication.
-const defaultConfigPath = "./config/config.yaml"
+const defaultConfigPath = "./config/config.toml"
 
-// loadConfig reads the YAML config from configPath into the package-level
+// loadConfig reads the TOML config from configPath into the package-level
 // cfg, layered over storage.DefaultConfig (so unset fields keep their
 // defaults).
 //
@@ -135,7 +136,7 @@ func loadConfig() error {
 	}
 
 	cfg = storage.DefaultConfig()
-	if err := yaml.Unmarshal(data, cfg); err != nil {
+	if _, err := toml.Decode(string(data), cfg); err != nil {
 		return fmt.Errorf("failed to parse config: %w", err)
 	}
 
@@ -692,7 +693,7 @@ func initConfigCmd() *cobra.Command {
 
 			// Write default config
 			cfg := storage.DefaultConfig()
-			data, err := yaml.Marshal(cfg)
+			data, err := toml.Marshal(cfg)
 			if err != nil {
 				return fmt.Errorf("failed to marshal config: %w", err)
 			}

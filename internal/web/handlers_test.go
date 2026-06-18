@@ -1,4 +1,4 @@
-package main
+package web
 
 import (
 	"context"
@@ -38,13 +38,13 @@ func init() {
 		panic("failed to generate test RSA key: " + err.Error())
 	}
 	// Pin a deterministic session encryption key so the Manager built inside
-	// newRouter and the helpers that pre-seed session rows (createTestSession)
+	// NewRouter and the helpers that pre-seed session rows (createTestSession)
 	// seal and open tokens under the same keyring.
 	os.Setenv("HERALD_SESSION_ENC_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
 }
 
 // testSessionKeyring builds the keyring from the pinned test key, matching the
-// one newRouter constructs, so pre-seeded session tokens decrypt in the Manager.
+// one NewRouter constructs, so pre-seeded session tokens decrypt in the Manager.
 func testSessionKeyring(t *testing.T) *session.Keyring {
 	t.Helper()
 	kr, err := newSessionKeyring(os.Getenv("HERALD_SESSION_ENC_KEY"))
@@ -330,7 +330,7 @@ func newTestFixturesWith(t *testing.T, mutate func(*herald.EngineConfig)) *testF
 
 	validator, issueToken := newTestValidatorIssuer(t)
 	jwtToken := issueToken("test-sub-1", "tester@example.com", "Tester")
-	router := newRouter(engine, validator, "", nil)
+	router := NewRouter(engine, validator, "", nil)
 
 	t.Cleanup(func() {
 		engine.Close()
@@ -876,7 +876,7 @@ func TestHandleCallback_SetsSessionCookie(t *testing.T) {
 	tf := newTestFixtures(t)
 
 	validator := newTestValidatorWithOIDC(t, nil)
-	router := newRouter(tf.engine, validator, "", nil)
+	router := NewRouter(tf.engine, validator, "", nil)
 
 	state := "test-state-nonce"
 	verifier := "test-pkce-verifier"
@@ -913,7 +913,7 @@ func TestHandleCallback_DefaultRedirect(t *testing.T) {
 	tf := newTestFixtures(t)
 
 	validator := newTestValidatorWithOIDC(t, nil)
-	router := newRouter(tf.engine, validator, "", nil)
+	router := NewRouter(tf.engine, validator, "", nil)
 
 	state := "test-state"
 	req := httptest.NewRequest("GET", "/auth/callback?code=test-code&state="+state, nil)
@@ -936,7 +936,7 @@ func TestHandleCallback_InvalidState(t *testing.T) {
 	tf := newTestFixtures(t)
 
 	validator := newTestValidatorWithOIDC(t, nil)
-	router := newRouter(tf.engine, validator, "", nil)
+	router := NewRouter(tf.engine, validator, "", nil)
 
 	req := httptest.NewRequest("GET", "/auth/callback?code=test-code&state=WRONG", nil)
 	req.AddCookie(&http.Cookie{Name: oidclient.CookieState, Value: "correct-state"})
@@ -954,7 +954,7 @@ func TestHandleCallback_MissingVerifier(t *testing.T) {
 	tf := newTestFixtures(t)
 
 	validator := newTestValidatorWithOIDC(t, nil)
-	router := newRouter(tf.engine, validator, "", nil)
+	router := NewRouter(tf.engine, validator, "", nil)
 
 	state := "test-state"
 	req := httptest.NewRequest("GET", "/auth/callback?code=test-code&state="+state, nil)
@@ -976,7 +976,7 @@ func TestHandleCallback_TokenExchangeError(t *testing.T) {
 	validator := newTestValidatorWithOIDC(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid_grant", http.StatusUnauthorized)
 	})
-	router := newRouter(tf.engine, validator, "", nil)
+	router := NewRouter(tf.engine, validator, "", nil)
 
 	state := "test-state"
 	req := httptest.NewRequest("GET", "/auth/callback?code=bad-code&state="+state, nil)
@@ -995,7 +995,7 @@ func TestHandleCallback_UpstreamAuthError(t *testing.T) {
 	tf := newTestFixtures(t)
 
 	validator := newTestValidatorWithOIDC(t, nil)
-	router := newRouter(tf.engine, validator, "", nil)
+	router := NewRouter(tf.engine, validator, "", nil)
 
 	// Webauth redirects with ?error=access_denied when the user denies.
 	req := httptest.NewRequest("GET", "/auth/callback?error=access_denied&error_description=User+denied+access", nil)
@@ -1385,9 +1385,9 @@ func TestSubscribeGenericError(t *testing.T) {
 func TestSecurityHeaders(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	// securityHeaders is wired in main.go but not in newRouter. Wrap manually
+	// SecurityHeaders is wired in serve but not in NewRouter. Wrap manually
 	// here to test the middleware in isolation.
-	wrapped := securityHeaders(tf.router)
+	wrapped := SecurityHeaders(tf.router)
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.AddCookie(&http.Cookie{Name: "test_jwt", Value: tf.sessionID})
@@ -1434,7 +1434,7 @@ func newAdminFixtures(t *testing.T) *testFixtures {
 	validator, issueToken := newTestValidatorIssuer(t)
 	jwtToken := issueToken("test-sub-1", "tester@example.com", "Tester")
 	// Grant admin by listing the test user's email in adminUsers.
-	router := newRouter(engine, validator, "", []string{"tester@example.com"})
+	router := NewRouter(engine, validator, "", []string{"tester@example.com"})
 
 	t.Cleanup(func() {
 		engine.Close()

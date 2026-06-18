@@ -82,8 +82,8 @@ feedreader/
 │       ├── storage.go           # Database operations
 │       └── storage_test.go      # Unit tests
 ├── config/
-│   ├── config.yaml              # Active configuration
-│   └── config.yaml.example      # Example configuration
+│   ├── config.toml              # Active configuration
+│   └── config.toml.example      # Example configuration
 ├── README.md                    # Project overview
 ├── INSTALL.md                   # Installation guide
 ├── USAGE.md                     # Usage guide
@@ -240,7 +240,7 @@ preferences:
 
 - **Documentation**: See README.md, INSTALL.md, USAGE.md
 - **Issues**: Check logs in fetch.log
-- **Configuration**: Modify config/config.yaml
+- **Configuration**: Modify config/config.toml
 
 ## Conclusion
 

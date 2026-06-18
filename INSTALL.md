@@ -49,12 +49,12 @@ go build -o herald ./cmd/herald
 ./herald init-config
 
 # Or copy the example
-cp config/config.yaml.example config/config.yaml
+cp config/config.toml.example config/config.toml
 ```
 
 ### 2. Customize Configuration
 
-Edit `config/config.yaml`:
+Edit `config/config.toml`:
 
 ```yaml
 database:
@@ -230,7 +230,7 @@ curl -I https://hnrss.org/frontpage
 
 ### Reduce AI Processing Load
 
-Edit `config/config.yaml`:
+Edit `config/config.toml`:
 
 ```yaml
 thresholds:
