@@ -69,5 +69,41 @@ func TestGetArticleBacklinks(t *testing.T) {
 		if len(got) != 2 {
 			t.Errorf("got %d backlinks, want 2 (a, b; c unrelated, src excluded)", len(got))
 		}
+
+		// Bare-domain prefix: "all links to substack.com" matches both substack
+		// links (a, b) regardless of path; the example.com linker (c) does not.
+		dom, err := store.GetArticleBacklinks(1, srcID, "hollymathnerd.substack.com", 50)
+		if err != nil {
+			t.Fatalf("GetArticleBacklinks (domain): %v", err)
+		}
+		if len(dom) != 2 {
+			t.Errorf("domain prefix got %d, want 2 (a, b)", len(dom))
+		}
+	})
+}
+
+// TestGetArticleBacklinks_CaseInsensitivePrefix proves matching is
+// case-insensitive: a mixed-case link is found by a lower-cased prefix (the
+// form urlnorm.QueryKey always produces).
+func TestGetArticleBacklinks_CaseInsensitivePrefix(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		now := time.Now()
+		feedID, _ := store.AddFeed("https://blog.example/feed", "Blog", "")
+		if err := store.SubscribeUserToFeed(1, feedID); err != nil {
+			t.Fatal(err)
+		}
+		id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "p", Title: "p",
+			URL: "https://blog.example/p", PublishedDate: &now})
+		// Stored via Normalize, which lower-cases an upper-case source path.
+		if err := store.StoreArticleLinks(id, []string{urlnorm.Normalize("https://Example.com/Foo/Bar")}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := store.GetArticleBacklinks(1, 0, "example.com/foo", 50)
+		if err != nil {
+			t.Fatalf("GetArticleBacklinks: %v", err)
+		}
+		if len(got) != 1 {
+			t.Errorf("case-insensitive prefix got %d, want 1", len(got))
+		}
 	})
 }

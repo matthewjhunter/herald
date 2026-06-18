@@ -628,6 +628,45 @@ func TestHandleSearch_PastedURLFindsLinkers(t *testing.T) {
 	}
 }
 
+func TestHandleSearch_BareDomainFindsAllLinks(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	linkFeed, err := tf.store.AddFeed("https://instapundit.example/feed", "Instapundit", "")
+	if err != nil {
+		t.Fatalf("AddFeed: %v", err)
+	}
+	if err := tf.store.SubscribeUserToFeed(tf.userID, linkFeed); err != nil {
+		t.Fatalf("SubscribeUserToFeed: %v", err)
+	}
+	// Two posts linking different paths on the same domain.
+	for i, path := range []string{"p/one", "p/two"} {
+		id, err := tf.store.AddArticle(&storage.Article{
+			FeedID: linkFeed, GUID: "ip" + itoa(int64(i)), Title: "post",
+			URL: "https://instapundit.example/x" + itoa(int64(i)),
+		})
+		if err != nil {
+			t.Fatalf("AddArticle: %v", err)
+		}
+		if err := tf.store.StoreArticleLinks(id, []string{urlnorm.Normalize("https://hollymathnerd.substack.com/" + path)}); err != nil {
+			t.Fatalf("StoreArticleLinks: %v", err)
+		}
+	}
+
+	// Typing just the domain (no scheme) finds all links under it.
+	rr := authedRequest(t, tf, "GET", "/search?q="+url.QueryEscape("hollymathnerd.substack.com"), map[string]string{"HX-Request": "true"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "Feeds that linked to") {
+		t.Error("a bare domain should trigger linked-by mode")
+	}
+	// Both linking posts should appear.
+	if strings.Count(body, "/articles/") < 2 {
+		t.Errorf("expected both domain links in results, body had %d /articles/ refs", strings.Count(body, "/articles/"))
+	}
+}
+
 func TestHandleArticleView_LinkedBy(t *testing.T) {
 	tf := newTestFixtures(t)
 

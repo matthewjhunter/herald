@@ -1256,14 +1256,14 @@ func (s *PostgresStore) GetArticleSummary(articleID int64) (*ArticleSummary, err
 	}, nil
 }
 
-func (s *PostgresStore) GetArticleBacklinks(userID, excludeID int64, urlNorm string, limit int) ([]Backlink, error) {
-	if urlNorm == "" {
+func (s *PostgresStore) GetArticleBacklinks(userID, excludeID int64, prefix string, limit int) ([]Backlink, error) {
+	if prefix == "" {
 		return nil, nil
 	}
 	rows, err := s.q.GetArticleBacklinks(context.Background(), db.GetArticleBacklinksParams{
 		UserID:    userID,
 		ExcludeID: excludeID,
-		UrlNorm:   urlNorm,
+		Prefix:    prefix,
 		Lim:       int32(limit),
 	})
 	if err != nil {

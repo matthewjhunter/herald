@@ -18,7 +18,7 @@ FROM article_links al
 JOIN articles a ON a.id = al.article_id
 JOIN feeds f ON f.id = a.feed_id
 JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = $1
-WHERE al.url_norm = $2::text
+WHERE starts_with(al.url_norm, $2::text)
   AND a.id <> $3
 ORDER BY a.published_date DESC NULLS LAST, a.fetched_date DESC
 LIMIT $4
@@ -26,7 +26,7 @@ LIMIT $4
 
 type GetArticleBacklinksParams struct {
 	UserID    int64
-	UrlNorm   string
+	Prefix    string
 	ExcludeID int64
 	Lim       int32
 }
@@ -40,16 +40,17 @@ type GetArticleBacklinksRow struct {
 	FetchedDate   time.Time
 }
 
-// "Which of my feeds linked to this article?" -- articles in the user's
-// subscribed feeds with an outbound link (parsed from body/summary into
-// article_links) matching the target URL. @url_norm is the caller-normalized
-// target (urlnorm.Normalize), compared against the pre-normalized index, so the
-// match ignores scheme/www/query/fragment/trailing-slash differences. The target
-// article itself is excluded.
+// "Which of my feeds linked to this?" -- articles in the user's subscribed
+// feeds with an outbound link (parsed from body/summary into article_links)
+// whose normalized form starts with @prefix. It's a prefix match, so a bare
+// domain ("example.com") finds every link under it and a full URL finds that
+// page; both sides are lower-cased and stripped (urlnorm), so matching is
+// case-insensitive and ignores scheme/www/query/fragment/trailing-slash. The
+// target article itself is excluded.
 func (q *Queries) GetArticleBacklinks(ctx context.Context, arg GetArticleBacklinksParams) ([]GetArticleBacklinksRow, error) {
 	rows, err := q.db.Query(ctx, getArticleBacklinks,
 		arg.UserID,
-		arg.UrlNorm,
+		arg.Prefix,
 		arg.ExcludeID,
 		arg.Lim,
 	)

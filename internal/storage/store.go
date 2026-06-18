@@ -179,11 +179,11 @@ type Store interface {
 	UpdateArticleAISummary(articleID int64, aiSummary string) error
 	MarkSummarizationSkipped(articleID int64, reason string) error
 	GetArticleSummary(articleID int64) (*ArticleSummary, error)
-	// GetArticleBacklinks returns articles in the user's feeds whose extracted
-	// outbound links (article_links) include urlNorm -- the caller-normalized
-	// target URL (urlnorm.Normalize) -- excluding excludeID. Answers "which of
-	// my feeds linked to this?".
-	GetArticleBacklinks(userID, excludeID int64, urlNorm string, limit int) ([]Backlink, error)
+	// GetArticleBacklinks returns articles in the user's feeds with an extracted
+	// outbound link (article_links) whose normalized form starts with prefix
+	// (urlnorm.QueryKey output -- a bare domain or a full URL), excluding
+	// excludeID. Answers "which of my feeds linked to this?".
+	GetArticleBacklinks(userID, excludeID int64, prefix string, limit int) ([]Backlink, error)
 	// Outbound-link extraction (#206): GetArticlesNeedingLinkExtraction drives
 	// the stage (new + backfill), StoreArticleLinks records the normalized links
 	// parsed from an article's body/summary, MarkArticleLinksExtracted closes it.

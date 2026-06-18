@@ -267,11 +267,11 @@ const maxBacklinks = 50
 // www/query/fragment/trailing-slash differences don't cause misses. Returns nil
 // when targetURL isn't an absolute http(s) URL.
 func (e *Engine) GetArticleBacklinks(userID, articleID int64, targetURL string) ([]storage.Backlink, error) {
-	norm := urlnorm.Normalize(targetURL)
-	if norm == "" {
+	prefix := urlnorm.QueryKey(targetURL)
+	if prefix == "" {
 		return nil, nil
 	}
-	return e.store.GetArticleBacklinks(userID, articleID, norm, maxBacklinks)
+	return e.store.GetArticleBacklinks(userID, articleID, prefix, maxBacklinks)
 }
 
 // GetArticleSummaries batch-fetches non-empty AI summaries for the given

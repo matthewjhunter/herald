@@ -23,6 +23,7 @@ import (
 	"github.com/infodancer/oidclient/session"
 	herald "github.com/matthewjhunter/herald"
 	"github.com/matthewjhunter/herald/internal/storage"
+	"github.com/matthewjhunter/herald/internal/urlnorm"
 )
 
 // handlers holds dependencies for all HTTP handler methods.
@@ -724,13 +725,6 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 	h.renderFragment(w, "feed_sidebar_oob", sidebarData)
 }
 
-// isURLQuery reports whether a search query is a pasted URL (so search should
-// answer "which feeds linked to this?" instead of running FTS).
-func isURLQuery(q string) bool {
-	q = strings.TrimSpace(q)
-	return strings.HasPrefix(q, "http://") || strings.HasPrefix(q, "https://")
-}
-
 // renderLinkedBy answers "which of the user's feeds linked to targetURL?" and
 // renders the linking posts using the search results fragment.
 func (h *handlers) renderLinkedBy(w http.ResponseWriter, uid int64, targetURL string) {
@@ -762,10 +756,12 @@ func (h *handlers) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A pasted URL switches to "linked by" mode: which of the user's feeds
-	// linked to that URL? (Plain FTS can't answer this -- the text parser drops
-	// href URLs as HTML tags -- so this matches articles.linked_url instead.)
-	if isURLQuery(query) {
+	// A URL or bare domain switches to "linked by" mode: which of the user's
+	// feeds linked to it? (Plain FTS can't answer this -- the text parser drops
+	// href URLs as HTML tags -- so this matches the extracted article_links
+	// index.) QueryKey returns "" for plain-word queries, which fall through to
+	// full-text search.
+	if urlnorm.QueryKey(query) != "" {
 		h.renderLinkedBy(w, uid, strings.TrimSpace(query))
 		return
 	}
