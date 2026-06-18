@@ -302,42 +302,27 @@ func (e *Engine) Search(ctx context.Context, userID int64, query string, limit, 
 	if e.groupMatcher != nil {
 		queryEmb, embErr := e.groupMatcher.EmbedText(ctx, query)
 		if embErr == nil && queryEmb != nil {
-			rows, embErr := e.store.GetArticleEmbeddings(userID, e.groupMatcher.Model())
-			if embErr == nil && len(rows) > 0 {
-				// Compute cosine similarity for all embeddings.
-				type scored struct {
-					articleID int64
-					sim       float64
-				}
-				candidates := make([]scored, 0, len(rows))
-				for _, r := range rows {
-					// GetArticleEmbeddings returns only status-ok rows, so every
-					// Embedding is a real vector (no sentinel placeholders).
-					sim := embedding.CosineSimilarity(queryEmb, r.Embedding)
-					if sim > 0.3 { // minimum similarity threshold
-						candidates = append(candidates, scored{r.ArticleID, sim})
-					}
-				}
-
-				// Sort by similarity descending.
-				sort.Slice(candidates, func(i, j int) bool {
-					return candidates[i].sim > candidates[j].sim
-				})
-
-				// Take top N and merge.
-				n := min(limit, len(candidates))
-				// Fetch full articles for semantic hits not already in FTS results.
-				for _, c := range candidates[:n] {
-					if existing, ok := resultMap[c.articleID]; ok {
+			// The store orders the user's subscribed-feed article embeddings by
+			// cosine distance to the query vector and returns the nearest within
+			// the threshold, replacing the old fetch-all-and-cosine-in-Go scan
+			// (#192). The 0.3 minimum similarity becomes a 0.7 distance ceiling
+			// (cosine distance = 1 - cosine similarity).
+			const minSim = 0.3
+			hits, embErr := e.store.SemanticSearch(userID, e.groupMatcher.Model(), queryEmb, 1.0-minSim, limit)
+			if embErr == nil {
+				// Merge hits, already nearest-first, into the FTS result map.
+				for _, h := range hits {
+					sim := 1.0 - h.Distance
+					if existing, ok := resultMap[h.ArticleID]; ok {
 						existing.MatchType = "both"
-						existing.Score = 0.6*existing.Score + 0.4*c.sim
+						existing.Score = 0.6*existing.Score + 0.4*sim
 					} else {
-						a, fetchErr := e.store.GetArticle(c.articleID)
+						a, fetchErr := e.store.GetArticle(h.ArticleID)
 						if fetchErr != nil {
 							continue
 						}
 						art := articleFromInternal(*a)
-						resultMap[c.articleID] = &SearchResult{Article: art, MatchType: "semantic", Score: c.sim}
+						resultMap[h.ArticleID] = &SearchResult{Article: art, MatchType: "semantic", Score: sim}
 					}
 				}
 			}

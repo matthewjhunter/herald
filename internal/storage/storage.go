@@ -81,6 +81,15 @@ type GroupMatch struct {
 	GroupID   int64
 }
 
+// SemanticHit is one result of SemanticSearch: an article whose embedding is
+// within the distance threshold of the query vector, with its cosine distance
+// (0 = identical, 2 = opposite). The caller turns distance into a similarity
+// score (1 - distance) for ranking.
+type SemanticHit struct {
+	ArticleID int64
+	Distance  float64
+}
+
 // GroupStats holds sidebar display data for an article group virtual feed.
 type GroupStats struct {
 	GroupID        int64
