@@ -290,7 +290,9 @@ func (e *Engine) Search(ctx context.Context, userID int64, query string, limit, 
 	resultMap := make(map[int64]*SearchResult, len(ftsArticles))
 	for i, a := range ftsArticles {
 		art := articleFromInternal(a)
-		// Normalize FTS rank to 0-1 score (FTS5 rank is negative, closer to 0 is better).
+		// Score by rank position, not raw ts_rank: SearchArticlesFTS already
+		// orders by ts_rank_cd DESC (best first), so map position i to a 0-1
+		// score, 1.0 for the top hit down to 1/len for the last.
 		score := 1.0
 		if len(ftsArticles) > 1 {
 			score = 1.0 - float64(i)/float64(len(ftsArticles))
