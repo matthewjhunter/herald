@@ -1654,6 +1654,23 @@ func (s *PostgresStore) StoreFeedFavicon(feedID int64, data []byte, mimeType str
 	})
 }
 
+func (s *PostgresStore) RecordFaviconFailure(feedID int64, kind string) error {
+	if err := s.q.RecordFaviconFailure(context.Background(), db.RecordFaviconFailureParams{
+		FeedID:   feedID,
+		FailKind: kind,
+	}); err != nil {
+		return fmt.Errorf("record favicon failure: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) ClearFaviconFailure(feedID int64) error {
+	if err := s.q.ClearFaviconFailure(context.Background(), feedID); err != nil {
+		return fmt.Errorf("clear favicon failure: %w", err)
+	}
+	return nil
+}
+
 func (s *PostgresStore) GetFeedFavicon(feedID int64) (*FeedFavicon, error) {
 	r, err := s.q.GetFeedFavicon(context.Background(), feedID)
 	if errors.Is(err, pgx.ErrNoRows) {

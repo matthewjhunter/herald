@@ -53,7 +53,7 @@ func (q *Queries) DeleteOrphanedFeed(ctx context.Context, feedID int64) (int64, 
 }
 
 const getAllActiveSubscribedFeeds = `-- name: GetAllActiveSubscribedFeeds :many
-SELECT DISTINCT f.id, f.url, f.title, f.description, f.site_url, f.last_fetched, f.last_error, f.etag, f.last_modified, f.enabled, f.created_at, f.consecutive_errors, f.next_fetch_at, f.status FROM feeds f
+SELECT DISTINCT f.id, f.url, f.title, f.description, f.site_url, f.last_fetched, f.last_error, f.etag, f.last_modified, f.enabled, f.created_at, f.consecutive_errors, f.next_fetch_at, f.status, f.favicon_failed_at, f.favicon_fail_kind FROM feeds f
 JOIN user_feeds uf ON f.id = uf.feed_id
 WHERE f.enabled = TRUE
 ORDER BY f.title
@@ -83,6 +83,8 @@ func (q *Queries) GetAllActiveSubscribedFeeds(ctx context.Context) ([]Feed, erro
 			&i.ConsecutiveErrors,
 			&i.NextFetchAt,
 			&i.Status,
+			&i.FaviconFailedAt,
+			&i.FaviconFailKind,
 		); err != nil {
 			return nil, err
 		}
@@ -95,7 +97,7 @@ func (q *Queries) GetAllActiveSubscribedFeeds(ctx context.Context) ([]Feed, erro
 }
 
 const getAllSubscribedFeeds = `-- name: GetAllSubscribedFeeds :many
-SELECT DISTINCT f.id, f.url, f.title, f.description, f.site_url, f.last_fetched, f.last_error, f.etag, f.last_modified, f.enabled, f.created_at, f.consecutive_errors, f.next_fetch_at, f.status FROM feeds f
+SELECT DISTINCT f.id, f.url, f.title, f.description, f.site_url, f.last_fetched, f.last_error, f.etag, f.last_modified, f.enabled, f.created_at, f.consecutive_errors, f.next_fetch_at, f.status, f.favicon_failed_at, f.favicon_fail_kind FROM feeds f
 JOIN user_feeds uf ON f.id = uf.feed_id
 WHERE f.enabled = TRUE AND f.status = 'active'
   AND (f.next_fetch_at IS NULL OR f.next_fetch_at <= NOW())
@@ -126,6 +128,8 @@ func (q *Queries) GetAllSubscribedFeeds(ctx context.Context) ([]Feed, error) {
 			&i.ConsecutiveErrors,
 			&i.NextFetchAt,
 			&i.Status,
+			&i.FaviconFailedAt,
+			&i.FaviconFailKind,
 		); err != nil {
 			return nil, err
 		}

@@ -282,6 +282,11 @@ type Store interface {
 
 	// Feed favicons
 	StoreFeedFavicon(feedID int64, data []byte, mimeType string) error
+	// RecordFaviconFailure negative-caches a favicon fetch failure so the feed
+	// is skipped until its backoff window elapses (kind: "permanent" or
+	// "transient"). ClearFaviconFailure resets it on a later success. (#112)
+	RecordFaviconFailure(feedID int64, kind string) error
+	ClearFaviconFailure(feedID int64) error
 	GetFeedFavicon(feedID int64) (*FeedFavicon, error)
 	GetAllFeedFavicons() ([]FeedFavicon, error)
 	GetSubscribedFeedsWithoutFavicons() ([]Feed, error)

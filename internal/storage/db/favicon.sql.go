@@ -9,6 +9,16 @@ import (
 	"context"
 )
 
+const clearFaviconFailure = `-- name: ClearFaviconFailure :exec
+UPDATE feeds SET favicon_failed_at = NULL, favicon_fail_kind = ''
+WHERE id = $1
+`
+
+func (q *Queries) ClearFaviconFailure(ctx context.Context, feedID int64) error {
+	_, err := q.db.Exec(ctx, clearFaviconFailure, feedID)
+	return err
+}
+
 const getAllFeedFavicons = `-- name: GetAllFeedFavicons :many
 SELECT feed_id, data, mime_type, fetched_at FROM feed_favicons
 `
@@ -55,13 +65,22 @@ func (q *Queries) GetFeedFavicon(ctx context.Context, feedID int64) (FeedFavicon
 }
 
 const getSubscribedFeedsWithoutFavicons = `-- name: GetSubscribedFeedsWithoutFavicons :many
-SELECT DISTINCT f.id, f.url, f.title, f.description, f.site_url, f.last_fetched, f.last_error, f.etag, f.last_modified, f.enabled, f.created_at, f.consecutive_errors, f.next_fetch_at, f.status FROM feeds f
+SELECT DISTINCT f.id, f.url, f.title, f.description, f.site_url, f.last_fetched, f.last_error, f.etag, f.last_modified, f.enabled, f.created_at, f.consecutive_errors, f.next_fetch_at, f.status, f.favicon_failed_at, f.favicon_fail_kind FROM feeds f
 JOIN user_feeds uf ON f.id = uf.feed_id
 LEFT JOIN feed_favicons ff ON f.id = ff.feed_id
 WHERE ff.feed_id IS NULL
+  AND (
+    f.favicon_failed_at IS NULL
+    OR (f.favicon_fail_kind = 'transient' AND f.favicon_failed_at < NOW() - INTERVAL '6 hours')
+    OR (f.favicon_fail_kind = 'permanent' AND f.favicon_failed_at < NOW() - INTERVAL '30 days')
+  )
 ORDER BY f.id
 `
 
+// Feeds a user subscribes to that have no cached favicon AND are not inside a
+// failure backoff window (#112): permanent failures retry at most every 30 days,
+// transient ones every 6 hours. A feed with a cached favicon (feed_favicons row)
+// is always excluded.
 func (q *Queries) GetSubscribedFeedsWithoutFavicons(ctx context.Context) ([]Feed, error) {
 	rows, err := q.db.Query(ctx, getSubscribedFeedsWithoutFavicons)
 	if err != nil {
@@ -86,6 +105,8 @@ func (q *Queries) GetSubscribedFeedsWithoutFavicons(ctx context.Context) ([]Feed
 			&i.ConsecutiveErrors,
 			&i.NextFetchAt,
 			&i.Status,
+			&i.FaviconFailedAt,
+			&i.FaviconFailKind,
 		); err != nil {
 			return nil, err
 		}
@@ -95,6 +116,21 @@ func (q *Queries) GetSubscribedFeedsWithoutFavicons(ctx context.Context) ([]Feed
 		return nil, err
 	}
 	return items, nil
+}
+
+const recordFaviconFailure = `-- name: RecordFaviconFailure :exec
+UPDATE feeds SET favicon_failed_at = NOW(), favicon_fail_kind = $1::text
+WHERE id = $2
+`
+
+type RecordFaviconFailureParams struct {
+	FailKind string
+	FeedID   int64
+}
+
+func (q *Queries) RecordFaviconFailure(ctx context.Context, arg RecordFaviconFailureParams) error {
+	_, err := q.db.Exec(ctx, recordFaviconFailure, arg.FailKind, arg.FeedID)
+	return err
 }
 
 const storeFeedFavicon = `-- name: StoreFeedFavicon :exec

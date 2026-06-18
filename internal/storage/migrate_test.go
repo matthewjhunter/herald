@@ -42,8 +42,8 @@ func TestMigrationsBuildAndAreIdempotent(t *testing.T) {
 	if err := db.QueryRow("SELECT max(version_id) FROM goose_db_version").Scan(&maxVersion); err != nil {
 		t.Fatalf("read goose version: %v", err)
 	}
-	if maxVersion != 3 {
-		t.Errorf("goose max version = %d, want 3", maxVersion)
+	if maxVersion != 4 {
+		t.Errorf("goose max version = %d, want 4", maxVersion)
 	}
 
 	// 0003 must leave the embedding columns as pgvector vectors, not BYTEA.
