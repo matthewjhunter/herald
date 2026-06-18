@@ -70,14 +70,23 @@ func TestGetArticleBacklinks(t *testing.T) {
 			t.Errorf("got %d backlinks, want 2 (a, b; c unrelated, src excluded)", len(got))
 		}
 
-		// Bare-domain prefix: "all links to substack.com" matches both substack
-		// links (a, b) regardless of path; the example.com linker (c) does not.
+		// Publication domain: matches both substack links (a, b); example.com (c) not.
 		dom, err := store.GetArticleBacklinks(1, srcID, "hollymathnerd.substack.com", 50)
 		if err != nil {
 			t.Fatalf("GetArticleBacklinks (domain): %v", err)
 		}
 		if len(dom) != 2 {
-			t.Errorf("domain prefix got %d, want 2 (a, b)", len(dom))
+			t.Errorf("domain got %d, want 2 (a, b)", len(dom))
+		}
+
+		// Substring, not prefix: the parent domain "substack.com" still matches
+		// links to the *.substack.com subdomain (this is the case prefix missed).
+		parent, err := store.GetArticleBacklinks(1, srcID, "substack.com", 50)
+		if err != nil {
+			t.Fatalf("GetArticleBacklinks (parent domain): %v", err)
+		}
+		if len(parent) != 2 {
+			t.Errorf("parent-domain substring got %d, want 2 (a, b)", len(parent))
 		}
 	})
 }

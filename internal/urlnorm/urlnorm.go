@@ -1,11 +1,11 @@
 // Package urlnorm canonicalizes URLs for link matching. Outbound links are
 // indexed with Normalize; lookups use QueryKey, which is lenient (a bare domain
-// or partial URL is fine) and yields a prefix the index is matched against with
-// starts_with. Both lower-case host and path and drop scheme/"www."/query/
+// or partial URL is fine) and yields a needle matched against the index as a
+// substring. Both lower-case host and path and drop scheme/"www."/query/
 // fragment/trailing-slash, so matching is case-insensitive and ignores session
-// params (e.g. Substack's ?r=...&triedRedirect=true). The search is a prefix
-// match: "example.com" finds every link under that domain; a full URL finds
-// that page.
+// params (e.g. Substack's ?r=...&triedRedirect=true). The search is a substring
+// match: "substack.com" finds links to every *.substack.com publication, and a
+// full URL finds that page.
 package urlnorm
 
 import (
@@ -35,7 +35,7 @@ func Normalize(raw string) string {
 
 // QueryKey is the lenient counterpart used for lookups: it accepts a full URL, a
 // host+path fragment, or a bare domain (with or without a scheme) and returns
-// the prefix to match against the index with starts_with. It returns "" when the
+// the needle to match against the index as a substring. It returns "" when the
 // input doesn't begin with a host-like token (no dot before the first slash, or
 // it contains whitespace) -- the caller treats that as "not a link search" and
 // falls back to full-text search. The result is lower-cased and stripped the
@@ -54,7 +54,7 @@ func QueryKey(raw string) string {
 	s = strings.TrimRight(s, "/")
 	// Require a host-like leading token: a dot in the part before the first '/'.
 	// "golang generics" or "openai" -> "" (let FTS handle it); "example.com" or
-	// "example.com/path" -> a usable prefix.
+	// "example.com/path" -> a usable needle.
 	host, _, _ := strings.Cut(s, "/")
 	if host == "" || !strings.Contains(host, ".") {
 		return ""
