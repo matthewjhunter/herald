@@ -27,6 +27,10 @@
         </div>
         {{block "nav" .}}{{end}}
         <form class="nav-search" onsubmit="return false;">
+            <svg class="nav-search-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+                <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/>
+                <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
             <input type="search" name="q" placeholder="Search, or paste a URL to find who linked it"
                    hx-get="/search" hx-target="#article-list" hx-swap="innerHTML"
                    hx-trigger="input changed delay:300ms, search"
