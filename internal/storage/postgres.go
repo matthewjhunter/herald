@@ -1283,6 +1283,33 @@ func (s *PostgresStore) GetArticleBacklinks(userID, excludeID int64, needle stri
 	return out, nil
 }
 
+func (s *PostgresStore) GetArticleBacklinksExact(userID, excludeID int64, needle string, limit int) ([]Backlink, error) {
+	if needle == "" {
+		return nil, nil
+	}
+	rows, err := s.q.GetArticleBacklinksExact(context.Background(), db.GetArticleBacklinksExactParams{
+		UserID:    userID,
+		ExcludeID: excludeID,
+		Needle:    needle,
+		Lim:       int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get article backlinks (exact): %w", err)
+	}
+	out := make([]Backlink, len(rows))
+	for i, r := range rows {
+		out[i] = Backlink{
+			ArticleID:     r.ID,
+			Title:         r.Title,
+			URL:           r.Url,
+			FeedTitle:     r.FeedTitle,
+			PublishedDate: r.PublishedDate,
+			FetchedDate:   r.FetchedDate,
+		}
+	}
+	return out, nil
+}
+
 func (s *PostgresStore) GetArticlesNeedingLinkExtraction(limit int) ([]ArticleLinkSource, error) {
 	rows, err := s.q.GetArticlesNeedingLinkExtraction(context.Background(), int32(limit))
 	if err != nil {

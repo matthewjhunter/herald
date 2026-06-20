@@ -182,8 +182,14 @@ type Store interface {
 	// GetArticleBacklinks returns articles in the user's feeds with an extracted
 	// outbound link (article_links) whose normalized form contains needle as a
 	// substring (urlnorm.QueryKey output -- a domain, partial URL, or full URL),
-	// excluding excludeID. Answers "which of my feeds linked to this?".
+	// excluding excludeID. Powers the lenient search box ("paste a URL or
+	// domain"). Answers "which of my feeds linked to anything matching this?".
 	GetArticleBacklinks(userID, excludeID int64, needle string, limit int) ([]Backlink, error)
+	// GetArticleBacklinksExact is the article-view variant: it matches needle (a
+	// full urlnorm.Normalize key) for EQUALITY, not as a substring, so it returns
+	// only links to that exact article and a host-only key doesn't sweep in every
+	// link to the same site. Answers "which of my feeds linked to THIS post?".
+	GetArticleBacklinksExact(userID, excludeID int64, needle string, limit int) ([]Backlink, error)
 	// Outbound-link extraction (#206): GetArticlesNeedingLinkExtraction drives
 	// the stage (new + backfill), StoreArticleLinks records the normalized links
 	// parsed from an article's body/summary, MarkArticleLinksExtracted closes it.
