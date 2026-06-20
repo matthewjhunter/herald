@@ -36,7 +36,7 @@ func (f *Fetcher) ExtractLinksForArticles(ctx context.Context) (int, error) {
 		if ctx.Err() != nil {
 			break
 		}
-		links := extractExternalLinks(a.Content, a.Summary)
+		links := extractExternalLinks(urlnorm.Host(a.URL), a.Content, a.Summary)
 		if err := f.store.StoreArticleLinks(a.ID, links); err != nil {
 			log.Printf("herald: store links for article %d: %v", a.ID, err)
 			continue
@@ -57,7 +57,14 @@ func (f *Fetcher) ExtractLinksForArticles(ctx context.Context) (int, error) {
 // urlnorm.Normalize. This is deliberately link-only: it does not try to resolve
 // relative URLs (no per-article base) -- the editorial outbound links we care
 // about are absolute.
-func extractExternalLinks(fragments ...string) []string {
+//
+// selfHost is the normalized host of the article being parsed (urlnorm.Host of
+// its URL). Links to that same host are dropped: a link-blog's own sidebar,
+// "recent posts", and archive widgets point back into the site on every page,
+// and counting them as citations swamps the "linked by" lookup with one feed
+// linking to itself. An empty selfHost (article URL not http(s)) disables the
+// filter, so nothing is lost when the host is unknown.
+func extractExternalLinks(selfHost string, fragments ...string) []string {
 	var out []string
 	seen := make(map[string]bool)
 
@@ -78,7 +85,9 @@ func extractExternalLinks(fragments ...string) []string {
 				href := strings.TrimSpace(nodeAttrs(n.Attr)["href"])
 				if norm := urlnorm.Normalize(href); norm != "" && !seen[norm] {
 					seen[norm] = true
-					out = append(out, norm)
+					if host, _, _ := strings.Cut(norm, "/"); host != selfHost {
+						out = append(out, norm)
+					}
 				}
 			}
 			for c := n.FirstChild; c != nil; c = c.NextSibling {

@@ -26,7 +26,7 @@ func (q *Queries) AddArticleLink(ctx context.Context, arg AddArticleLinkParams) 
 }
 
 const getArticlesNeedingLinkExtraction = `-- name: GetArticlesNeedingLinkExtraction :many
-SELECT id, content, summary
+SELECT id, url, content, summary
 FROM articles
 WHERE links_extracted = FALSE
 ORDER BY fetched_date DESC
@@ -35,11 +35,14 @@ LIMIT $1
 
 type GetArticlesNeedingLinkExtractionRow struct {
 	ID      int64
+	Url     string
 	Content *string
 	Summary *string
 }
 
-// Articles whose outbound links haven't been parsed yet (new + backfill).
+// Articles whose outbound links haven't been parsed yet (new + backfill). url is
+// the article's own address: the extractor drops same-host links (sidebars,
+// archive widgets) so a feed doesn't flood the backlink index linking to itself.
 func (q *Queries) GetArticlesNeedingLinkExtraction(ctx context.Context, lim int32) ([]GetArticlesNeedingLinkExtractionRow, error) {
 	rows, err := q.db.Query(ctx, getArticlesNeedingLinkExtraction, lim)
 	if err != nil {
@@ -49,7 +52,12 @@ func (q *Queries) GetArticlesNeedingLinkExtraction(ctx context.Context, lim int3
 	items := []GetArticlesNeedingLinkExtractionRow{}
 	for rows.Next() {
 		var i GetArticlesNeedingLinkExtractionRow
-		if err := rows.Scan(&i.ID, &i.Content, &i.Summary); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Url,
+			&i.Content,
+			&i.Summary,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

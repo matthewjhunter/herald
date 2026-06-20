@@ -1290,7 +1290,7 @@ func (s *PostgresStore) GetArticlesNeedingLinkExtraction(limit int) ([]ArticleLi
 	}
 	out := make([]ArticleLinkSource, len(rows))
 	for i, r := range rows {
-		src := ArticleLinkSource{ID: r.ID}
+		src := ArticleLinkSource{ID: r.ID, URL: r.Url}
 		if r.Content != nil {
 			src.Content = *r.Content
 		}
