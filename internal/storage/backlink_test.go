@@ -91,6 +91,55 @@ func TestGetArticleBacklinks(t *testing.T) {
 	})
 }
 
+// TestGetArticleBacklinksExact_QueryPermalinks reproduces the BattleSwarm bug:
+// two distinct WordPress ?p= posts share the host, so the substring path matched
+// every link to that host (10 unrelated "Linked by" entries). The exact path,
+// fed a full Normalize key (host+query), returns only links to the one post.
+func TestGetArticleBacklinksExact_QueryPermalinks(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		now := time.Now()
+		linkFeed, _ := store.AddFeed("https://instapundit.com/feed", "Instapundit", "")
+		if err := store.SubscribeUserToFeed(1, linkFeed); err != nil {
+			t.Fatal(err)
+		}
+		mk := func(guid string, links ...string) int64 {
+			id, err := store.AddArticle(&Article{FeedID: linkFeed, GUID: guid, Title: guid,
+				URL: "https://instapundit.com/" + guid, PublishedDate: &now})
+			if err != nil {
+				t.Fatalf("AddArticle %s: %v", guid, err)
+			}
+			if err := store.StoreArticleLinks(id, links); err != nil {
+				t.Fatalf("StoreArticleLinks %s: %v", guid, err)
+			}
+			return id
+		}
+		// Two posts on the same host, distinguished only by their ?p= id, each
+		// linked by a different Instapundit post.
+		a := mk("a", urlnorm.Normalize("https://www.battleswarmblog.com/?p=58410"))
+		mk("b", urlnorm.Normalize("https://www.battleswarmblog.com/?p=99999"))
+
+		needle := urlnorm.Normalize("https://www.battleswarmblog.com/?p=58410")
+		got, err := store.GetArticleBacklinksExact(1, 0, needle, 50)
+		if err != nil {
+			t.Fatalf("GetArticleBacklinksExact: %v", err)
+		}
+		if len(got) != 1 || got[0].ArticleID != a {
+			t.Fatalf("exact backlinks = %+v; want exactly article a(%d) that links ?p=58410", got, a)
+		}
+
+		// The lenient substring path collapses both posts to the bare host and
+		// returns both -- the over-match the article view must avoid by using the
+		// exact variant. (QueryKey strips the query, so this is the host needle.)
+		dom, err := store.GetArticleBacklinks(1, 0, "battleswarmblog.com", 50)
+		if err != nil {
+			t.Fatalf("GetArticleBacklinks (host): %v", err)
+		}
+		if len(dom) != 2 {
+			t.Fatalf("substring host match = %d; want 2 (documents the over-match exact fixes)", len(dom))
+		}
+	})
+}
+
 // TestGetArticleBacklinks_CaseInsensitivePrefix proves matching is
 // case-insensitive: a mixed-case link is found by a lower-cased prefix (the
 // form urlnorm.QueryKey always produces).
