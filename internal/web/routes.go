@@ -97,8 +97,16 @@ func NewRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.HandleFunc("GET /auth/logout", h.handleLogout,
 		smoke.Skip("destructive: deletes the caller's server-side session"))
 
+	// Public front door: the marketing landing page for anonymous visitors, the
+	// reader for authenticated ones. No auth wrapper -- handleRoot decides.
+	mux.HandleFunc("GET /{$}", h.handleRoot)
+
+	// Sign-in CTA from the landing page; initiates the OIDC flow (sign-up and
+	// sign-in are the same flow -- first-time users are provisioned on callback).
+	mux.HandleFunc("GET /login", h.handleLogin,
+		smoke.Skip("initiates an OIDC authorize redirect to the external IdP"))
+
 	// Full-page routes.
-	mux.Handle("GET /{$}", auth(http.HandlerFunc(h.handleHome)))
 	mux.Handle("GET /feeds", auth(http.HandlerFunc(h.handleFeedsManage)))
 	mux.Handle("GET /settings", auth(http.HandlerFunc(h.handleSettings)))
 	mux.Handle("GET /settings/sync", auth(http.HandlerFunc(h.handleSettingsSync)))
