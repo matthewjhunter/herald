@@ -22,6 +22,23 @@ func TestNormalize(t *testing.T) {
 	}
 }
 
+func TestHost(t *testing.T) {
+	cases := []struct{ raw, want string }{
+		{"https://example.com/p/123", "example.com"},
+		{"http://www.Example.com/Path", "example.com"}, // www stripped, lower-cased
+		{"https://sub.example.com", "sub.example.com"}, // non-www subdomain kept
+		{"https://example.com:8080/x", "example.com:8080"},
+		{"mailto:a@b.com", ""},
+		{"/relative", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := Host(c.raw); got != c.want {
+			t.Errorf("Host(%q) = %q, want %q", c.raw, got, c.want)
+		}
+	}
+}
+
 func TestQueryKey(t *testing.T) {
 	cases := []struct{ raw, want string }{
 		// Full URLs normalize to the same key as Normalize.

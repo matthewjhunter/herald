@@ -13,24 +13,43 @@ import (
 	"strings"
 )
 
+// split parses an absolute http(s) URL into its normalized host (lower-cased,
+// leading "www." removed, port preserved) and path (lower-cased, trailing slash
+// trimmed). ok is false for anything that isn't an absolute http(s) URL
+// (relative, mailto:, javascript:, host-less, ...).
+func split(raw string) (host, path string, ok bool) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return "", "", false
+	}
+	host = strings.TrimPrefix(strings.ToLower(u.Host), "www.")
+	if host == "" {
+		return "", "", false
+	}
+	return host, strings.ToLower(strings.TrimRight(u.Path, "/")), true
+}
+
 // Normalize returns the canonical index key for an absolute http(s) URL:
 // lower-cased host (leading "www." removed) + lower-cased path with any trailing
 // slash trimmed, scheme/query/fragment dropped. Returns "" for anything that
 // isn't an absolute http(s) URL (relative, mailto:, javascript:, ...), which the
 // caller should skip. Used when indexing outbound links (hrefs are absolute).
 func Normalize(raw string) string {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil {
+	host, path, ok := split(raw)
+	if !ok {
 		return ""
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return ""
-	}
-	host := strings.TrimPrefix(strings.ToLower(u.Host), "www.")
-	if host == "" {
-		return ""
-	}
-	return host + strings.ToLower(strings.TrimRight(u.Path, "/"))
+	return host + path
+}
+
+// Host returns the normalized host of an absolute http(s) URL: lower-cased,
+// leading "www." removed, port preserved. It is the host half of the Normalize
+// key, exposed so callers can detect same-site links (an article's outbound
+// links whose host matches the article's own host are sidebar/archive widgets,
+// not editorial citations). Returns "" for non-http(s) or host-less input.
+func Host(raw string) string {
+	host, _, _ := split(raw)
+	return host
 }
 
 // QueryKey is the lenient counterpart used for lookups: it accepts a full URL, a

@@ -48,9 +48,11 @@ type ArticleSummary struct {
 }
 
 // ArticleLinkSource is the raw text the link-extraction stage parses outbound
-// links from: an article's body and summary.
+// links from: an article's body and summary, plus its own URL so same-host
+// self-links (sidebars, archives) can be dropped.
 type ArticleLinkSource struct {
 	ID      int64
+	URL     string
 	Content string
 	Summary string
 }
