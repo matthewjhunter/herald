@@ -40,7 +40,10 @@ func TestRouterDegradesWhileIdPUnreachable(t *testing.T) {
 		want         int
 	}{
 		{"GET", "/health", http.StatusOK},
-		{"GET", "/", http.StatusServiceUnavailable},
+		// The public landing page is static and must stay up through an IdP
+		// outage; only sign-in itself (/login) and the authed app degrade.
+		{"GET", "/", http.StatusOK},
+		{"GET", "/login", http.StatusServiceUnavailable},
 		{"GET", "/articles", http.StatusServiceUnavailable},
 		{"GET", "/auth/callback?code=x&state=y", http.StatusServiceUnavailable},
 	}

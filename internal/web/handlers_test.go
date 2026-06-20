@@ -412,17 +412,26 @@ func authedRequestForm(t *testing.T, tf *testFixtures, method, path string, form
 
 // --- Auth tests ---
 
-func TestHandleRoot_UnauthenticatedRedirectsToWebauth(t *testing.T) {
+func TestHandleRoot_UnauthenticatedServesLanding(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	// No JWT cookie → should redirect to webauth login.
+	// No JWT cookie → the public landing page, served in place (not a redirect to
+	// the IdP). This is the "accessible without logging in" guarantee.
 	rr := request(t, tf.router, "GET", "/", nil)
-	if rr.Code != http.StatusFound {
-		t.Errorf("status: got %d, want %d", rr.Code, http.StatusFound)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d (landing must not redirect anonymous visitors)", rr.Code, http.StatusOK)
 	}
-	loc := rr.Header().Get("Location")
-	if loc == "" {
-		t.Error("expected Location header for unauthenticated redirect")
+	body := rr.Body.String()
+	if !strings.Contains(body, "Read the news without reading the attacks") {
+		t.Error("landing page should contain the hero headline")
+	}
+	if !strings.Contains(body, `href="/login"`) {
+		t.Error("landing page should link to the /login sign-in CTA")
+	}
+	// The public layout must not carry app chrome (the reader's search box posts
+	// to an authenticated route); its absence proves base_public.html was used.
+	if strings.Contains(body, "nav-search") {
+		t.Error("landing page should not render the app search box")
 	}
 }
 
@@ -488,12 +497,17 @@ func TestHandleHome(t *testing.T) {
 	}
 }
 
-func TestHandleHome_Unauthenticated(t *testing.T) {
+func TestHandleLogin_RedirectsToIdP(t *testing.T) {
 	tf := newTestFixtures(t)
 
-	rr := request(t, tf.router, "GET", "/", nil)
+	// The landing-page CTA initiates the OIDC flow: /login always redirects to
+	// the IdP (the redirect that used to live on an unauthenticated "/").
+	rr := request(t, tf.router, "GET", "/login", nil)
 	if rr.Code != http.StatusFound {
-		t.Errorf("status: got %d, want %d", rr.Code, http.StatusFound)
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusFound)
+	}
+	if loc := rr.Header().Get("Location"); loc == "" {
+		t.Error("expected a Location header pointing at the IdP login URL")
 	}
 }
 
