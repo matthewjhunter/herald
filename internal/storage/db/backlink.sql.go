@@ -80,3 +80,70 @@ func (q *Queries) GetArticleBacklinks(ctx context.Context, arg GetArticleBacklin
 	}
 	return items, nil
 }
+
+const getArticleBacklinksExact = `-- name: GetArticleBacklinksExact :many
+SELECT DISTINCT a.id, a.title, a.url,
+       COALESCE(uf.user_title, f.title) AS feed_title,
+       a.published_date, a.fetched_date
+FROM article_links al
+JOIN articles a ON a.id = al.article_id
+JOIN feeds f ON f.id = a.feed_id
+JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = $1
+WHERE al.url_norm = $2::text
+  AND a.id <> $3
+ORDER BY a.published_date DESC NULLS LAST, a.fetched_date DESC
+LIMIT $4
+`
+
+type GetArticleBacklinksExactParams struct {
+	UserID    int64
+	Needle    string
+	ExcludeID int64
+	Lim       int32
+}
+
+type GetArticleBacklinksExactRow struct {
+	ID            int64
+	Title         string
+	Url           string
+	FeedTitle     string
+	PublishedDate *time.Time
+	FetchedDate   time.Time
+}
+
+// "Which of my feeds linked to THIS exact article?" -- the article-view variant
+// of GetArticleBacklinks. Matches @needle (a full urlnorm.Normalize key) for
+// EQUALITY, not as a substring, so a post whose identity lives in the bare host
+// (e.g. a WordPress ?p= site whose key is "blog.example?p=58410") does not match
+// every other link to the same host. The target article itself is excluded.
+func (q *Queries) GetArticleBacklinksExact(ctx context.Context, arg GetArticleBacklinksExactParams) ([]GetArticleBacklinksExactRow, error) {
+	rows, err := q.db.Query(ctx, getArticleBacklinksExact,
+		arg.UserID,
+		arg.Needle,
+		arg.ExcludeID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetArticleBacklinksExactRow{}
+	for rows.Next() {
+		var i GetArticleBacklinksExactRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Url,
+			&i.FeedTitle,
+			&i.PublishedDate,
+			&i.FetchedDate,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

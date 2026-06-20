@@ -1,11 +1,17 @@
 // Package urlnorm canonicalizes URLs for link matching. Outbound links are
-// indexed with Normalize; lookups use QueryKey, which is lenient (a bare domain
-// or partial URL is fine) and yields a needle matched against the index as a
-// substring. Both lower-case host and path and drop scheme/"www."/query/
-// fragment/trailing-slash, so matching is case-insensitive and ignores session
-// params (e.g. Substack's ?r=...&triedRedirect=true). The search is a substring
-// match: "substack.com" finds links to every *.substack.com publication, and a
-// full URL finds that page.
+// indexed with Normalize. There are two lookup modes against that index:
+//
+//   - The article view ("which feeds linked to THIS post?") builds its needle
+//     with Normalize and matches it for equality, so it returns only links to
+//     that exact article.
+//   - The search box ("paste a URL or domain") builds its needle with QueryKey,
+//     which is lenient (a bare domain or partial URL is fine) and is matched as a
+//     substring, so "substack.com" finds links to every *.substack.com page.
+//
+// Both lower-case host and path and drop scheme/"www."/fragment/trailing-slash,
+// so matching is case-insensitive. Normalize drops the query too, except when
+// the path is empty (WordPress ?p= permalinks carry the article identity in the
+// query); QueryKey always drops the query, keeping the search box lenient.
 package urlnorm
 
 import (
@@ -14,32 +20,58 @@ import (
 )
 
 // split parses an absolute http(s) URL into its normalized host (lower-cased,
-// leading "www." removed, port preserved) and path (lower-cased, trailing slash
-// trimmed). ok is false for anything that isn't an absolute http(s) URL
+// leading "www." removed, port preserved), path (lower-cased, trailing slash
+// trimmed), and query. The query is "" unless the path is empty, in which case
+// the canonicalized query is kept with a leading "?": some sites put the whole
+// article identity in the query (WordPress's default permalinks, e.g.
+// battleswarmblog.com/?p=58410), so dropping it would collapse every post to the
+// bare host and make distinct articles indistinguishable. When there IS a path,
+// the query is almost always tracking/session junk (Substack's
+// ?r=...&triedRedirect=true) and is dropped so a canonical URL matches its
+// tracked variants. ok is false for anything that isn't an absolute http(s) URL
 // (relative, mailto:, javascript:, host-less, ...).
-func split(raw string) (host, path string, ok bool) {
+func split(raw string) (host, path, query string, ok bool) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		return "", "", false
+		return "", "", "", false
 	}
 	host = strings.TrimPrefix(strings.ToLower(u.Host), "www.")
 	if host == "" {
-		return "", "", false
+		return "", "", "", false
 	}
-	return host, strings.ToLower(strings.TrimRight(u.Path, "/")), true
+	path = strings.ToLower(strings.TrimRight(u.Path, "/"))
+	if path == "" && u.RawQuery != "" {
+		if q := canonicalQuery(u.RawQuery); q != "" {
+			query = "?" + q
+		}
+	}
+	return host, path, query, true
+}
+
+// canonicalQuery sorts and lower-cases a raw query string so that param order
+// and case don't yield different keys (?b=2&a=1 == ?a=1&b=2). Returns "" for an
+// unparseable or empty query.
+func canonicalQuery(raw string) string {
+	v, err := url.ParseQuery(raw)
+	if err != nil || len(v) == 0 {
+		return ""
+	}
+	return strings.ToLower(v.Encode())
 }
 
 // Normalize returns the canonical index key for an absolute http(s) URL:
 // lower-cased host (leading "www." removed) + lower-cased path with any trailing
-// slash trimmed, scheme/query/fragment dropped. Returns "" for anything that
-// isn't an absolute http(s) URL (relative, mailto:, javascript:, ...), which the
-// caller should skip. Used when indexing outbound links (hrefs are absolute).
+// slash trimmed, scheme/fragment dropped. The query is dropped too EXCEPT when
+// the path is empty, in which case the canonicalized query is kept (see split).
+// Returns "" for anything that isn't an absolute http(s) URL (relative, mailto:,
+// javascript:, ...), which the caller should skip. Used when indexing outbound
+// links (hrefs are absolute).
 func Normalize(raw string) string {
-	host, path, ok := split(raw)
+	host, path, query, ok := split(raw)
 	if !ok {
 		return ""
 	}
-	return host + path
+	return host + path + query
 }
 
 // Host returns the normalized host of an absolute http(s) URL: lower-cased,
@@ -48,7 +80,7 @@ func Normalize(raw string) string {
 // links whose host matches the article's own host are sidebar/archive widgets,
 // not editorial citations). Returns "" for non-http(s) or host-less input.
 func Host(raw string) string {
-	host, _, _ := split(raw)
+	host, _, _, _ := split(raw)
 	return host
 }
 
@@ -58,7 +90,8 @@ func Host(raw string) string {
 // input doesn't begin with a host-like token (no dot before the first slash, or
 // it contains whitespace) -- the caller treats that as "not a link search" and
 // falls back to full-text search. The result is lower-cased and stripped the
-// same way Normalize strips, so a full URL produces the same key either way.
+// same way Normalize strips a path-bearing URL (the query is dropped), so the
+// search box stays lenient even when Normalize would keep a path-empty query.
 func QueryKey(raw string) string {
 	s := strings.ToLower(strings.TrimSpace(raw))
 	if s == "" || strings.ContainsAny(s, " \t\r\n") {

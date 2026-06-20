@@ -274,6 +274,21 @@ func (e *Engine) GetArticleBacklinks(userID, articleID int64, targetURL string) 
 	return e.store.GetArticleBacklinks(userID, articleID, needle, maxBacklinks)
 }
 
+// GetArticleBacklinksExact answers the article view's "which of the user's feeds
+// linked to THIS post?" -- the same question as GetArticleBacklinks but matched
+// exactly. The needle is built with Normalize (targetURL is a real article URL,
+// not a search fragment) and compared for equality, so a post whose normalized
+// key is just its host (a WordPress ?p= permalink, say) isn't matched by every
+// other link to the same site. Returns nil when targetURL isn't an absolute
+// http(s) URL.
+func (e *Engine) GetArticleBacklinksExact(userID, articleID int64, targetURL string) ([]storage.Backlink, error) {
+	needle := urlnorm.Normalize(targetURL)
+	if needle == "" {
+		return nil, nil
+	}
+	return e.store.GetArticleBacklinksExact(userID, articleID, needle, maxBacklinks)
+}
+
 // GetArticleSummaries batch-fetches non-empty AI summaries for the given
 // article ids, keyed by id, so a list page can render inline summaries without
 // an N+1 of GetArticleForUser. Access control is the caller's: pass ids the

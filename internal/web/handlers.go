@@ -881,8 +881,10 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// "Linked by": other feeds whose link-blog posts point at this article.
-	if links, err := h.engine.GetArticleBacklinks(uid, article.ID, article.URL); err != nil {
+	// "Linked by": other feeds whose link-blog posts point at this exact article.
+	// Exact (not substring) match so sites that carry their article id in the
+	// query (e.g. WordPress ?p= permalinks) don't match every link to the host.
+	if links, err := h.engine.GetArticleBacklinksExact(uid, article.ID, article.URL); err != nil {
 		log.Printf("herald-web: backlinks for article %d: %v", article.ID, err)
 	} else {
 		for _, b := range links {
