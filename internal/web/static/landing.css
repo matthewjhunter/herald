@@ -1,0 +1,247 @@
+/* landing.css -- styles for the public, unauthenticated landing page.
+   Loaded only by base_public.html, so it never touches the app reader.
+   Built on Pico's CSS custom properties so light/dark themes both work. */
+
+body.public {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* --- Public nav --- */
+.public-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem clamp(1rem, 5vw, 3rem);
+    border-bottom: 1px solid var(--pico-muted-border-color);
+}
+
+.public-nav nav {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.public-brand {
+    font-size: 1.4rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    text-decoration: none;
+    color: var(--pico-color);
+}
+
+.public-nav-link {
+    text-decoration: none;
+    color: var(--pico-muted-color);
+}
+
+.public-nav-link:hover {
+    color: var(--pico-color);
+}
+
+.public-signin {
+    padding: 0.35rem 1rem;
+    margin: 0;
+    white-space: nowrap;
+}
+
+.public-nav .theme-toggle {
+    padding: 0.35rem 0.6rem;
+    margin: 0;
+}
+
+/* --- Layout shell --- */
+.landing {
+    flex: 1;
+    width: 100%;
+    max-width: 60rem;
+    margin: 0 auto;
+    padding: 0 clamp(1rem, 5vw, 3rem);
+}
+
+.landing section {
+    padding: clamp(2.5rem, 7vw, 5rem) 0;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+}
+
+.landing section:last-child {
+    border-bottom: none;
+}
+
+/* --- Hero --- */
+.hero {
+    text-align: center;
+}
+
+.hero h1 {
+    font-size: clamp(2rem, 6vw, 3.25rem);
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    margin-bottom: 1rem;
+}
+
+.hero-sub {
+    font-size: clamp(1.05rem, 2.5vw, 1.3rem);
+    color: var(--pico-muted-color);
+    max-width: 42rem;
+    margin: 0 auto 2rem;
+}
+
+.hero-sub em {
+    color: var(--pico-color);
+    font-style: italic;
+}
+
+.hero-cta {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.hero-cta [role="button"] {
+    margin: 0;
+}
+
+.hero-note {
+    margin-top: 1.25rem;
+    font-size: 0.85rem;
+    color: var(--pico-muted-color);
+}
+
+/* --- Pillars --- */
+.pillars {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+}
+
+.pillar {
+    margin: 0;
+    padding: 1.5rem;
+    background: var(--pico-card-background-color);
+    border: 1px solid var(--pico-muted-border-color);
+    border-radius: var(--pico-border-radius);
+}
+
+.pillar h2 {
+    font-size: 1.15rem;
+    margin-bottom: 0.5rem;
+}
+
+.pillar p {
+    margin: 0;
+    color: var(--pico-muted-color);
+    font-size: 0.95rem;
+}
+
+/* --- How it works --- */
+.how-steps {
+    list-style: none;
+    counter-reset: step;
+    padding: 0;
+    margin: 1.5rem 0 0;
+    display: grid;
+    gap: 1rem;
+}
+
+.how-steps li {
+    counter-increment: step;
+    position: relative;
+    padding-left: 3rem;
+    color: var(--pico-muted-color);
+}
+
+.how-steps li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0;
+    top: -0.15rem;
+    width: 2rem;
+    height: 2rem;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    font-weight: 700;
+    color: var(--pico-primary-inverse);
+    background: var(--pico-primary);
+}
+
+.how-steps li strong {
+    color: var(--pico-color);
+}
+
+/* --- Why / prose sections --- */
+.why p,
+.closing p {
+    color: var(--pico-muted-color);
+    max-width: 44rem;
+}
+
+.why em {
+    color: var(--pico-color);
+    font-style: italic;
+}
+
+/* --- Features --- */
+.feature-grid {
+    list-style: none;
+    padding: 0;
+    margin: 1.5rem 0 0;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.6rem 1.5rem;
+}
+
+.feature-grid li {
+    position: relative;
+    padding-left: 1.6rem;
+    color: var(--pico-muted-color);
+}
+
+.feature-grid li::before {
+    content: "+";
+    position: absolute;
+    left: 0;
+    font-weight: 700;
+    color: var(--pico-primary);
+}
+
+/* --- Closing CTA --- */
+.closing {
+    text-align: center;
+}
+
+.closing [role="button"] {
+    margin-top: 0.5rem;
+}
+
+/* --- Footer --- */
+.public-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    padding: 1.5rem clamp(1rem, 5vw, 3rem);
+    border-top: 1px solid var(--pico-muted-border-color);
+    font-size: 0.8rem;
+    color: var(--pico-muted-color);
+}
+
+.public-footer a {
+    color: var(--pico-muted-color);
+}
+
+/* --- Responsive --- */
+@media (max-width: 48rem) {
+    .pillars {
+        grid-template-columns: 1fr;
+    }
+    .feature-grid {
+        grid-template-columns: 1fr;
+    }
+}
