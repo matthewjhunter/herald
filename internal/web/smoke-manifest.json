@@ -344,6 +344,13 @@
     },
     {
       "method": "GET",
+      "pattern": "/login",
+      "effect": "read_only",
+      "skip": "initiates an OIDC authorize redirect to the external IdP",
+      "complete": true
+    },
+    {
+      "method": "GET",
       "pattern": "/newsletters",
       "effect": "read_only",
       "complete": true

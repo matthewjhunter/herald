@@ -1,0 +1,100 @@
+{{define "title"}}Herald -- a feed reader that screens before it curates{{end}}
+{{define "content"}}
+<main class="landing">
+
+  <section class="hero">
+    <h1>Read the news without reading the attacks.</h1>
+    <p class="hero-sub">
+      Herald is a self-hosted, AI-powered feed reader. It screens every article
+      for prompt injection and adversarial manipulation <em>before</em> anything
+      curates it, then ranks what is left by your interests -- not by an
+      engagement algorithm.
+    </p>
+    <div class="hero-cta">
+      <a class="contrast" href="/login" role="button">Create your account</a>
+      <a class="outline" href="#how" role="button">See how it works</a>
+    </div>
+    <p class="hero-note">Free account. Bring your own OPML. Read on the web or sync to your existing RSS client.</p>
+  </section>
+
+  <section class="pillars">
+    <article class="pillar">
+      <h2>Screened first</h2>
+      <p>
+        Feeds are untrusted input. A dedicated security model inspects every
+        article for prompt injection and content engineered to manipulate
+        downstream AI -- and it is deliberately conservative: when in doubt, it
+        flags. Anything that fails is recorded with its reasoning and kept out
+        of curation entirely.
+      </p>
+    </article>
+    <article class="pillar">
+      <h2>Curated, not steered</h2>
+      <p>
+        A separate model scores what survives screening against <em>your</em>
+        keywords and thresholds. It judges relevance, not category, so nothing
+        is buried for being off-trend or boosted for being divisive. You set the
+        bar; Herald ranks to it.
+      </p>
+    </article>
+    <article class="pillar">
+      <h2>Stories, not duplicates</h2>
+      <p>
+        The same event from a dozen sources collapses into one cluster. Herald
+        groups related articles across feeds with vector embeddings, so you read
+        the story once instead of scrolling past ten copies of it.
+      </p>
+    </article>
+  </section>
+
+  <section id="how" class="how">
+    <h2>How it works</h2>
+    <ol class="how-steps">
+      <li><strong>Subscribe.</strong> Import your existing subscriptions from OPML, or add feeds one at a time. RSS and Atom both work.</li>
+      <li><strong>Screen.</strong> Each fetched article is checked for manipulation before it goes any further. Unsafe content is quarantined, not curated.</li>
+      <li><strong>Score.</strong> Cleared articles are ranked against your interest keywords and a threshold you control.</li>
+      <li><strong>Cluster.</strong> Related coverage is grouped across sources so you see one story, not ten.</li>
+      <li><strong>Read anywhere.</strong> Browse in the web reader, or sync via OPML and the Fever API into the RSS client you already use.</li>
+    </ol>
+  </section>
+
+  <section class="why">
+    <h2>Why two models instead of one</h2>
+    <p>
+      Most AI news tools either skip security -- leaving them open to poisoned
+      feeds -- or fold safety and editorial judgment into a single model, where
+      the two fight each other. A safety-trained model curates defensively and
+      buries anything it finds sensitive; a relevance-tuned model has no
+      defenses at all.
+    </p>
+    <p>
+      Herald splits the jobs at the architecture level. One model is responsible
+      only for whether content is <em>safe</em>. A different one is responsible
+      only for whether it is <em>interesting to you</em>. Neither has to
+      compromise, so you get real protection and neutral ranking at the same
+      time.
+    </p>
+  </section>
+
+  <section class="features">
+    <h2>What you get</h2>
+    <ul class="feature-grid">
+      <li>Prompt-injection screening on every article</li>
+      <li>Neutral interest scoring with your own keywords and thresholds</li>
+      <li>Cross-source clustering of related stories</li>
+      <li>OPML import and export</li>
+      <li>Sync to existing RSS clients (OPML URL + Fever API)</li>
+      <li>Per-article summaries</li>
+      <li>Filter rules by author, category, or tag</li>
+      <li>Per-account feeds, preferences, and read state</li>
+    </ul>
+  </section>
+
+  <section class="closing">
+    <h2>Start reading on your terms.</h2>
+    <p>Sign in to create your account -- it takes a few seconds and your feeds are private to you.</p>
+    <a class="contrast" href="/login" role="button">Create your account</a>
+  </section>
+
+</main>
+{{end}}

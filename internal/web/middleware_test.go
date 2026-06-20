@@ -18,8 +18,10 @@ func TestRequireAuth_ReusesExistingFlow(t *testing.T) {
 	validator := newTestValidatorWithOIDC(t, nil)
 	router := NewRouter(tf.engine, validator, "", nil)
 
-	// First unauthenticated request starts a flow.
-	req1 := httptest.NewRequest("GET", "/", nil)
+	// First unauthenticated request to an auth-wrapped route starts a flow.
+	// ("/" is now the public landing page; use a protected route to drive
+	// requireAuth, which is what this test covers.)
+	req1 := httptest.NewRequest("GET", "/feeds", nil)
 	rr1 := httptest.NewRecorder()
 	router.ServeHTTP(rr1, req1)
 
@@ -46,7 +48,7 @@ func TestRequireAuth_ReusesExistingFlow(t *testing.T) {
 
 	// Second request carrying those cookies must redirect with the same state
 	// and leave the flow cookies alone.
-	req2 := httptest.NewRequest("GET", "/", nil)
+	req2 := httptest.NewRequest("GET", "/feeds", nil)
 	for _, c := range flowCookies {
 		req2.AddCookie(&http.Cookie{Name: c.Name, Value: c.Value})
 	}

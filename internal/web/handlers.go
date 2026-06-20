@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -28,13 +29,14 @@ import (
 
 // handlers holds dependencies for all HTTP handler methods.
 type handlers struct {
-	engine     *herald.Engine
-	validator  *oidclient.Client
-	sessions   *session.Manager              // server-side OIDC session lifecycle (#173)
-	pages      map[string]*template.Template // per-page template sets
-	pagesOnce  sync.Once                     // guards lazy template parsing
-	adminRole  string                        // JWT role value that grants admin access (default: "admin")
-	adminUsers []string                      // fallback email list when the IdP does not issue role claims
+	engine      *herald.Engine
+	validator   *oidclient.Client
+	sessions    *session.Manager              // server-side OIDC session lifecycle (#173)
+	pages       map[string]*template.Template // per-page (authenticated) template sets
+	publicPages map[string]*template.Template // unauthenticated pages (landing); base_public.html layout
+	pagesOnce   sync.Once                     // guards lazy template parsing
+	adminRole   string                        // JWT role value that grants admin access (default: "admin")
+	adminUsers  []string                      // fallback email list when the IdP does not issue role claims
 }
 
 // isAdminCtx reports whether the request context carries admin privileges.
@@ -188,8 +190,36 @@ func (h *handlers) parseTemplates() {
 		t := template.Must(template.New("").Funcs(funcMap).ParseFS(tmplFS, files...))
 		built[page] = t
 	}
+
+	// Public (unauthenticated) pages use a standalone layout with no app nav,
+	// search box, or htmx -- so they share none of the app partials above.
+	publicPages := []string{"landing.html"}
+	builtPublic := make(map[string]*template.Template, len(publicPages))
+	for _, page := range publicPages {
+		t := template.Must(template.New("").Funcs(funcMap).ParseFS(tmplFS, "base_public.html", page))
+		builtPublic[page] = t
+	}
+
 	// Publish only once fully built so no reader sees a partial map.
 	h.pages = built
+	h.publicPages = builtPublic
+}
+
+// renderPublicPage renders an unauthenticated full page using the base_public.html
+// layout. Unlike renderPage it never falls back to an htmx fragment -- public
+// pages are plain document loads.
+func (h *handlers) renderPublicPage(w http.ResponseWriter, name string, data any) {
+	h.init()
+	t, ok := h.publicPages[name]
+	if !ok {
+		log.Printf("herald-web: unknown public page template: %s", name)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := t.ExecuteTemplate(w, "base_public.html", data); err != nil {
+		log.Printf("herald-web: template error: %v", err)
+	}
 }
 
 // --- Template data types ---
@@ -474,6 +504,65 @@ func (h *handlers) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// it lapses at webauth on its own TTL.
 	h.sessions.Destroy(w, r)
 	http.Redirect(w, r, h.validator.LogoutURL(), http.StatusFound)
+}
+
+// handleRoot is the public front door at "/". Logged-in visitors get their
+// reader (handleHome); everyone else gets the marketing landing page. Unlike the
+// auth-wrapped app routes, it never triggers the OIDC redirect -- an anonymous
+// visit to the landing page must show the pitch, not bounce to the IdP.
+func (h *handlers) handleRoot(w http.ResponseWriter, r *http.Request) {
+	// No session manager (e.g. the manifest-only router) -> treat as anonymous.
+	if h.sessions == nil {
+		h.renderPublicPage(w, "landing.html", nil)
+		return
+	}
+	claims, err := h.sessions.Authenticate(r)
+	if err != nil {
+		// ErrNoSession is the normal anonymous case; log anything else so a real
+		// fault is diagnosable, but serve the public page either way -- we never
+		// render app content without a valid session.
+		if !errors.Is(err, session.ErrNoSession) {
+			log.Printf("herald-web: root authenticate: %v", err)
+		}
+		h.renderPublicPage(w, "landing.html", nil)
+		return
+	}
+	user, err := h.engine.GetOrProvisionOIDCUser(claims.Sub, claims.Name, claims.Email)
+	if err != nil {
+		log.Printf("herald-web: provision user: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	ctx := withClaims(withUser(r.Context(), user), claims)
+	h.handleHome(w, r.WithContext(ctx))
+}
+
+// handleLogin initiates the OIDC sign-in flow from the landing-page CTA and
+// redirects to the IdP. Sign-up and sign-in are one flow: a first-time user is
+// provisioned automatically on the post-callback request (see requireAuth). The
+// post-login destination defaults to "/" (the reader, once authenticated); an
+// optional return_to is accepted only if it is a same-origin relative path.
+func (h *handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
+	returnTo := "/"
+	if rt := localPath(r.URL.Query().Get("return_to")); rt != "" {
+		returnTo = rt
+	}
+	if h.validator == nil || !h.validator.Ready() {
+		http.Error(w, "sign-in temporarily unavailable -- please try again shortly", http.StatusServiceUnavailable)
+		return
+	}
+	var loginURL string
+	if h.validator.FlowConfigured() {
+		state, verifier, err := oidclient.GetOrCreateFlow(w, r, returnTo)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		loginURL = h.validator.AuthorizeURL(state, verifier)
+	} else {
+		loginURL = h.validator.LoginURL(returnTo)
+	}
+	http.Redirect(w, r, loginURL, http.StatusFound)
 }
 
 func (h *handlers) handleHome(w http.ResponseWriter, r *http.Request) {
