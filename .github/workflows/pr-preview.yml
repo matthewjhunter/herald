@@ -35,7 +35,7 @@ jobs:
     if: ${{ vars.HERALD_PREVIEW_ENABLED == 'true' }}
     runs-on: [self-hosted, linux, docker-web]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build preview image
         env:
