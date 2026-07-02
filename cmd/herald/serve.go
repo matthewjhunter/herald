@@ -97,7 +97,10 @@ user sessions, article browsing, admin, Fever API, etc.`,
 			}
 			defer engine.Close()
 
-			mux := web.NewRouter(engine, validator, cfg.Web.Admin.Role, cfg.Web.Admin.Users)
+			mux := web.NewRouter(engine, validator, cfg.Web.Admin.Role, cfg.Web.Admin.Users, web.AnalyticsConfig{
+				UmamiSrc:  cfg.Web.Analytics.UmamiSrc,
+				WebsiteID: cfg.Web.Analytics.WebsiteID,
+			})
 
 			// Sweep expired sessions hourly for the lifetime of the server (#173).
 			sweepCtx, stopSweep := context.WithCancel(context.Background())

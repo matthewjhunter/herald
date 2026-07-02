@@ -37,6 +37,7 @@ type handlers struct {
 	pagesOnce   sync.Once                     // guards lazy template parsing
 	adminRole   string                        // JWT role value that grants admin access (default: "admin")
 	adminUsers  []string                      // fallback email list when the IdP does not issue role claims
+	analytics   analyticsView                 // optional landing-page analytics (disabled zero value = no tracking)
 }
 
 // isAdminCtx reports whether the request context carries admin privileges.
@@ -216,10 +217,26 @@ func (h *handlers) renderPublicPage(w http.ResponseWriter, name string, data any
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+	// When analytics is enabled, widen this response's CSP to permit the one
+	// configured tracker origin. This overrides the strict default set by the
+	// SecurityHeaders middleware, and only for public pages -- the authenticated
+	// app's CSP is never relaxed.
+	if h.analytics.Enabled {
+		w.Header().Set("Content-Security-Policy", contentSecurityPolicy(h.analytics.Origin))
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := t.ExecuteTemplate(w, "base_public.html", data); err != nil {
+	pd := publicPageData{Analytics: h.analytics, Data: data}
+	if err := t.ExecuteTemplate(w, "base_public.html", pd); err != nil {
 		log.Printf("herald-web: template error: %v", err)
 	}
+}
+
+// publicPageData wraps a public page's own data with the shared analytics view
+// so base_public.html can emit the (optional) tracker snippet. Page templates
+// reach their own payload through .Data; the landing page currently passes nil.
+type publicPageData struct {
+	Analytics analyticsView
+	Data      any
 }
 
 // --- Template data types ---

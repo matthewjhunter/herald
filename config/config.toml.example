@@ -91,3 +91,11 @@ cookie = "infodancer_jwt"
 [web.admin]
 role = "admin"
 # users = ["admin@example.com"]  # fallback when no role claim
+
+# Optional, privacy-respecting analytics on the PUBLIC LANDING PAGE only (never
+# the authenticated reader). Omit this section entirely for zero tracking (the
+# default). Point it at your own Umami instance -- nothing is sent to the Herald
+# project. Both keys are required to enable it. See docs/analytics.md.
+# [web.analytics]
+# umami_src  = "https://umami.example.com/script.js"  # full tracker script URL
+# website_id = "00000000-0000-0000-0000-000000000000" # Umami site UUID

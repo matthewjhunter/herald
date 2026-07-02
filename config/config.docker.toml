@@ -40,3 +40,9 @@ addr = ":8080"
 # [web.admin]
 # role = "admin"
 # users = ["dev@example.com"]
+#
+# Optional public-landing-page analytics (off by default). Point at your own
+# Umami instance; both keys required. See docs/analytics.md.
+# [web.analytics]
+# umami_src  = "https://umami.example.com/script.js"
+# website_id = "00000000-0000-0000-0000-000000000000"

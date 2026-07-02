@@ -16,7 +16,7 @@ import (
 func TestRequireAuth_ReusesExistingFlow(t *testing.T) {
 	tf := newTestFixtures(t)
 	validator := newTestValidatorWithOIDC(t, nil)
-	router := NewRouter(tf.engine, validator, "", nil)
+	router := NewRouter(tf.engine, validator, "", nil, AnalyticsConfig{})
 
 	// First unauthenticated request to an auth-wrapped route starts a flow.
 	// ("/" is now the public landing page; use a protected route to drive

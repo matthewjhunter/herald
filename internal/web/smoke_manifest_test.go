@@ -22,7 +22,7 @@ const smokeManifestPath = "smoke-manifest.json"
 // specs at registration time and never touches the engine/validator, so a nil
 // engine is sufficient to enumerate the surface without a database.
 func TestSmokeManifestUpToDate(t *testing.T) {
-	got, err := NewRouter(nil, nil, "", nil).Registry().Manifest().MarshalJSON()
+	got, err := NewRouter(nil, nil, "", nil, AnalyticsConfig{}).Registry().Manifest().MarshalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
