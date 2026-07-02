@@ -14,6 +14,7 @@
             if (t) document.documentElement.setAttribute('data-theme', t);
         })();
     </script>
+    {{with .Analytics}}{{if .Enabled}}<script defer src="{{.Src}}" data-website-id="{{.WebsiteID}}"></script>{{end}}{{end}}
 </head>
 <body class="public">
     <header class="public-nav">

@@ -33,7 +33,7 @@ var embedded embed.FS
 // Fixture id convention: each seeded entity is the first row in a fresh DB, so
 // its id is 1; destructive writes target a dedicated second row (id 2) so they
 // don't delete what the read probes need. See TestSmokeRoutesAuthenticated.
-func NewRouter(engine *herald.Engine, validator *oidclient.Client, adminRole string, adminUsers []string) *smoke.Mux {
+func NewRouter(engine *herald.Engine, validator *oidclient.Client, adminRole string, adminUsers []string, analytics AnalyticsConfig) *smoke.Mux {
 	mux := smoke.NewMux()
 
 	// Liveness probe — no auth, no DB. Used by the PR-preview pipeline to wait
@@ -72,6 +72,7 @@ func NewRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 		sessions:   sessions,
 		adminRole:  adminRole,
 		adminUsers: adminUsers,
+		analytics:  newAnalyticsView(analytics),
 	}
 	auth := h.requireAuth
 

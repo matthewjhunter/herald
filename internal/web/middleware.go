@@ -143,17 +143,42 @@ func (h *handlers) requireAuth(next http.Handler) http.Handler {
 	})
 }
 
+// contentSecurityPolicy builds the CSP header value. With an empty
+// analyticsOrigin (the default, and every authenticated response) it returns the
+// strict baseline: nothing loads from off-origin. When a landing page is served
+// with analytics enabled, the single configured Umami origin (scheme://host, not
+// a full URL) is whitelisted in script-src (to load the tracker) and connect-src
+// (so the tracker may POST events there) -- and nowhere else. The empty-origin
+// output is kept byte-for-byte stable because tests and operators pin it.
+func contentSecurityPolicy(analyticsOrigin string) string {
+	parts := []string{
+		"default-src 'self'",
+		"img-src 'self' data:",
+		"style-src 'self' 'unsafe-inline'",
+	}
+	if analyticsOrigin != "" {
+		parts = append(parts,
+			"script-src 'self' 'unsafe-inline' "+analyticsOrigin,
+			"connect-src 'self' "+analyticsOrigin)
+	} else {
+		parts = append(parts, "script-src 'self' 'unsafe-inline'")
+	}
+	parts = append(parts, "object-src 'none'", "frame-ancestors 'none'", "base-uri 'self'")
+	return strings.Join(parts, "; ")
+}
+
 // SecurityHeaders sets conservative security response headers on every
-// response. The CSP currently permits inline scripts/styles because some
-// templates use them; tightening script-src with nonces is a follow-up.
+// response. The CSP permits inline scripts/styles because some templates use
+// them; tightening script-src with nonces is a follow-up. Individual handlers
+// may override Content-Security-Policy before writing (the public landing page
+// does, to whitelist an optional analytics origin); this sets the strict default.
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		h.Set("Content-Security-Policy",
-			"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'")
+		h.Set("Content-Security-Policy", contentSecurityPolicy(""))
 		h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		next.ServeHTTP(w, r)
 	})

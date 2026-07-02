@@ -151,7 +151,7 @@ func TestSmokeRoutesAuthenticated(t *testing.T) {
 	validator, token := newTestValidator(t)
 	// adminRole "admin" with no role claim falls back to the adminUsers email
 	// list, granting the smoke user admin so /admin/* returns 200.
-	mux := NewRouter(engine, validator, "admin", []string{"tester@example.com"})
+	mux := NewRouter(engine, validator, "admin", []string{"tester@example.com"}, AnalyticsConfig{})
 
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)

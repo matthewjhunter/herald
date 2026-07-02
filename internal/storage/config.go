@@ -155,6 +155,18 @@ type Config struct {
 			// Users is fallback list of emails for admin when IdP omits roles.
 			Users []string `toml:"users"`
 		} `toml:"admin"`
+		// Analytics configures optional, privacy-respecting web analytics on the
+		// public landing page only (never the authenticated reader). Both fields
+		// must be set to enable it; empty (the default) means no tracking of any
+		// kind. Point these at your own Umami instance -- nothing is sent to the
+		// Herald project. See docs/analytics.md.
+		Analytics struct {
+			// UmamiSrc is the full URL of the Umami tracker script, e.g.
+			// "https://umami.example.com/script.js". Empty disables analytics.
+			UmamiSrc string `toml:"umami_src"`
+			// WebsiteID is the Umami site UUID (rendered as data-website-id).
+			WebsiteID string `toml:"website_id"`
+		} `toml:"analytics,omitempty"`
 	} `toml:"web"`
 }
 
