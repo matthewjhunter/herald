@@ -23,6 +23,8 @@ conditions, and update your row when done.
 | 006 | Bound concurrent LLM calls with a process-global ceiling | P1 | M | -- | DONE (merged into feature/162, commit 931ee79) |
 | 007 | Web input limits, security headers, and error hygiene | P2 | S-M | -- (complements 004) | DONE (merged into feature/162, commits d2d1a8f..3460163; CSP ships with 'unsafe-inline' for script/style -- nonce tightening deferred) |
 | 009 | Let an admin delete a user and all their data | P2 | M | -- | DONE (merged into feature/162, commits 934031b..e5f3c6b; Postgres path verified live 2026-06-13 -- TestDeleteUser/postgres + TestDeleteUserIdempotent/postgres pass against ephemeral PG 17) |
+| 010 | Replace the hand-rolled prompt fence with airlock/wrap | P2 | S | airlock v0.1.0 | IN PROGRESS (branch `feature/010-airlock-fence-swap`; airlock pinned at v0.1.0, fence.go is now a thin adapter; existing internal/ai tests pass unchanged, evasion regression added. Fixes an encoding-evasion hole airlock caught: homoglyph/zero-width/fullwidth fence tags used to survive neutralization. Rebase onto main after #224 for the go1.26.5 vulncheck fix) |
+| 011 | Flip security score to a threat scale, drop security_reason | P2 | M | -- (bundle with next rescore) | TODO (deferred by operator; plan written) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale)

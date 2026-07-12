@@ -1,10 +1,7 @@
 package ai
 
 import (
-	"crypto/rand"
-	"encoding/hex"
-	"fmt"
-	"regexp"
+	"github.com/matthewjhunter/airlock/wrap"
 )
 
 // Untrusted feed text (article bodies, titles, group summaries) is embedded in
@@ -13,33 +10,40 @@ import (
 // smuggling instructions into the prompt's trusted region. Two layers defend
 // against that:
 //
-//  1. The fence carries a per-call random nonce — <untrusted-{nonce}> — so the
+//  1. The fence carries a per-call random nonce -- <untrusted-{nonce}> -- so the
 //     closing tag cannot be predicted or reproduced by stored content.
 //  2. Any delimiter-like sequence is stripped from the untrusted text before
 //     interpolation, so even a leaked nonce or a legacy prompt that still uses
 //     the static <article> fence cannot be closed from within the content.
-
-// fenceTagRe matches an opening or closing fence delimiter: the nonce-suffixed
-// form this package emits (<untrusted-...>) and the legacy static <article>
-// form older custom prompts may still use. It deliberately does NOT match tags
-// carrying attributes (e.g. <article class="post">), leaving genuine HTML
-// markup in feed content intact for the model to inspect.
-var fenceTagRe = regexp.MustCompile(`(?i)</?(?:untrusted|article)(?:-[0-9a-f]+)?\s*>`)
+//
+// Both layers now live in github.com/matthewjhunter/airlock/wrap, which was
+// extracted from this file so the technique could be reused (and tested) outside
+// Herald. This file is a thin adapter: it keeps Herald's function names and the
+// Herald-specific bits (content truncation, the template-data shape), and defers
+// the security-relevant work to airlock.
+//
+// The swap is not merely a deduplication. airlock fixed an evasion that the
+// implementation here had: neutralization matched its tag regex against the RAW
+// text, so a fence tag spelled with a zero-width space, a Cyrillic homoglyph, a
+// soft hyphen, or fullwidth brackets survived into the prompt. The nonce still
+// prevented a *correct* closing tag -- 128 bits of crypto/rand is not guessed --
+// but the model reading the prompt is not a parser, and a tag-shaped string with
+// a wrong nonce can still persuade it that the fenced region ended. airlock's
+// wrap.Neutralize matches on a folded view of the text and redacts from the
+// original, so the disguised spellings are caught without mangling legitimate
+// non-Latin content. See TestNeutralizeFence_EncodingEvasion.
 
 // newFenceNonce returns an unguessable lowercase-hex token unique to one prompt
 // invocation, used to build the <untrusted-{nonce}> delimiter.
 func newFenceNonce() (string, error) {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("generate fence nonce: %w", err)
-	}
-	return hex.EncodeToString(b), nil
+	return wrap.Nonce()
 }
 
 // neutralizeFence removes any fence-delimiter sequence from untrusted text so
-// it can neither open nor close the fence that wraps it in a prompt.
+// it can neither open nor close the fence that wraps it in a prompt, including
+// sequences disguised with invisible characters or homoglyphs.
 func neutralizeFence(s string) string {
-	return fenceTagRe.ReplaceAllString(s, "[tag removed]")
+	return wrap.Neutralize(s)
 }
 
 // fencedArticleData builds the template data for a single-article prompt
