@@ -8,6 +8,7 @@ require (
 	github.com/infodancer/oidclient v0.6.0
 	github.com/infodancer/smoke v0.1.0
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/matthewjhunter/airlock v0.1.0
 	github.com/matthewjhunter/go-embedding v0.4.6
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/mmcdole/gofeed v1.3.0
