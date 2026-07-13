@@ -253,10 +253,10 @@ func TestUpdateReadState(t *testing.T) {
 	// AI scores the article, then user marks it as read (separate operations).
 	interestScore := 8.5
 	securityScore := 9.0
-	if err := store.UpdateReadState(1, articleID, false, &interestScore, &securityScore, nil, nil); err != nil {
+	if err := store.UpdateReadState(1, articleID, false, &interestScore, &securityScore, nil, nil, nil); err != nil {
 		t.Fatalf("UpdateReadState (AI scores) failed: %v", err)
 	}
-	if err := store.UpdateReadState(1, articleID, true, nil, nil, nil, nil); err != nil {
+	if err := store.UpdateReadState(1, articleID, true, nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("UpdateReadState (user read) failed: %v", err)
 	}
 
@@ -293,7 +293,7 @@ func TestGetArticlesByInterestScore(t *testing.T) {
 
 		score := scores[i]
 		secScore := 9.0
-		store.UpdateReadState(1, articleID, false, &score, &secScore, nil, nil)
+		store.UpdateReadState(1, articleID, false, &score, &secScore, nil, nil, nil)
 	}
 
 	// Get articles with score >= 8.0
@@ -334,8 +334,8 @@ func TestGetArticlesByInterestScore_TimeDecay(t *testing.T) {
 	// Both get raw score 9.0
 	rawScore := 9.0
 	secScore := 9.0
-	store.UpdateReadState(1, art1, false, &rawScore, &secScore, nil, nil)
-	store.UpdateReadState(1, art2, false, &rawScore, &secScore, nil, nil)
+	store.UpdateReadState(1, art1, false, &rawScore, &secScore, nil, nil, nil)
+	store.UpdateReadState(1, art2, false, &rawScore, &secScore, nil, nil, nil)
 
 	articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil)
 	if err != nil {
@@ -600,7 +600,7 @@ func TestGetArticlesIncludeReadAndFlags(t *testing.T) {
 	})
 
 	// Mark one read and star it; leave the other untouched.
-	if err := store.UpdateReadState(1, readID, true, nil, nil, nil, nil); err != nil {
+	if err := store.UpdateReadState(1, readID, true, nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("UpdateReadState: %v", err)
 	}
 	if err := store.UpdateStarred(1, readID, true); err != nil {
@@ -785,11 +785,11 @@ func TestReadStatePerUserIsolation(t *testing.T) {
 	// User 1 scores the article
 	score1 := 9.0
 	sec := 8.0
-	store.UpdateReadState(1, articleID, false, &score1, &sec, nil, nil)
+	store.UpdateReadState(1, articleID, false, &score1, &sec, nil, nil, nil)
 
 	// User 2 scores the same article differently
 	score2 := 3.0
-	store.UpdateReadState(2, articleID, false, &score2, &sec, nil, nil)
+	store.UpdateReadState(2, articleID, false, &score2, &sec, nil, nil, nil)
 
 	// User 1 should see their score
 	articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil)
@@ -813,7 +813,7 @@ func TestReadStatePerUserIsolation(t *testing.T) {
 	}
 
 	// User 1 marks read (AI already scored it above), user 2 still unread
-	store.UpdateReadState(1, articleID, true, nil, nil, nil, nil)
+	store.UpdateReadState(1, articleID, true, nil, nil, nil, nil, nil)
 	articles, _, _ = store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil)
 	if len(articles) != 0 {
 		t.Errorf("user 1 after mark-read: expected 0 articles, got %d", len(articles))
@@ -1274,10 +1274,10 @@ func TestPostgresBackend(t *testing.T) {
 
 		score := 9.0
 		sec := 8.0
-		if err := store.UpdateReadState(1, aid, false, &score, &sec, nil, nil); err != nil {
+		if err := store.UpdateReadState(1, aid, false, &score, &sec, nil, nil, nil); err != nil {
 			t.Fatalf("UpdateReadState (AI): %v", err)
 		}
-		if err := store.UpdateReadState(1, aid, true, nil, nil, nil, nil); err != nil {
+		if err := store.UpdateReadState(1, aid, true, nil, nil, nil, nil, nil); err != nil {
 			t.Fatalf("UpdateReadState (read): %v", err)
 		}
 
@@ -1301,8 +1301,8 @@ func TestPostgresBackend(t *testing.T) {
 			URL: "https://pg.example.com/recent", PublishedDate: &recent})
 
 		raw, sec := 9.0, 9.0
-		store.UpdateReadState(1, art1, false, &raw, &sec, nil, nil)
-		store.UpdateReadState(1, art2, false, &raw, &sec, nil, nil)
+		store.UpdateReadState(1, art1, false, &raw, &sec, nil, nil, nil)
+		store.UpdateReadState(1, art2, false, &raw, &sec, nil, nil, nil)
 
 		articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil)
 		if err != nil {
@@ -1648,7 +1648,7 @@ func TestGetUnsummarizedScoredArticles(t *testing.T) {
 		FeedID: feedID, GUID: "a1", Title: "Has summary",
 		URL: "https://example.com/1", PublishedDate: &now,
 	})
-	store.ScreenArticleSecurity(a1, 10.0, "", false)
+	store.ScreenArticleSecurity(a1, 0, "none", false, false)
 	store.UpdateArticleAISummary(a1, "an existing summary")
 
 	// Article 2: scored, passed security, NO summary — included.
@@ -1656,14 +1656,14 @@ func TestGetUnsummarizedScoredArticles(t *testing.T) {
 		FeedID: feedID, GUID: "a2", Title: "Missing summary",
 		URL: "https://example.com/2", PublishedDate: &now,
 	})
-	store.ScreenArticleSecurity(a2, 10.0, "", false)
+	store.ScreenArticleSecurity(a2, 0, "none", false, false)
 
 	// Article 3: scored, FAILED security — excluded (security_score < threshold).
 	a3, _ := store.AddArticle(&Article{
 		FeedID: feedID, GUID: "a3", Title: "Failed security",
 		URL: "https://example.com/3", PublishedDate: &now,
 	})
-	store.ScreenArticleSecurity(a3, 3.0, "", false)
+	store.ScreenArticleSecurity(a3, 7, "none", false, false)
 
 	// Article 4: never scored — excluded (no read_state).
 	store.AddArticle(&Article{
@@ -1676,12 +1676,12 @@ func TestGetUnsummarizedScoredArticles(t *testing.T) {
 		FeedID: feedID, GUID: "a5", Title: "Skipped — too short to compress",
 		URL: "https://example.com/5", PublishedDate: &now,
 	})
-	store.ScreenArticleSecurity(a5, 10.0, "", false)
+	store.ScreenArticleSecurity(a5, 0, "none", false, false)
 	if err := store.MarkSummarizationSkipped(a5, "summary longer than content"); err != nil {
 		t.Fatalf("MarkSummarizationSkipped: %v", err)
 	}
 
-	got, err := store.GetUnsummarizedScoredArticles(7.0, 100)
+	got, err := store.GetUnsummarizedScoredArticles(3.0, 100)
 	if err != nil {
 		t.Fatalf("GetUnsummarizedScoredArticles: %v", err)
 	}
@@ -2562,21 +2562,21 @@ func TestMarkSecurityScoredAndCurationQueue(t *testing.T) {
 		scored := mk("scored") // fully scored (interest set) → excluded
 		_ = mk("unscored")     // no read_state at all → excluded
 
-		if err := store.ScreenArticleSecurity(passed, 8.0, "fine", false); err != nil {
+		if err := store.ScreenArticleSecurity(passed, 2, "none", false, false); err != nil {
 			t.Fatalf("ScreenArticleSecurity: %v", err)
 		}
-		if err := store.ScreenArticleSecurity(lowSec, 5.0, "borderline", false); err != nil {
+		if err := store.ScreenArticleSecurity(lowSec, 5, "none", false, false); err != nil {
 			t.Fatalf("ScreenArticleSecurity low: %v", err)
 		}
 		// "scored": security-passed and already interest-scored for this user.
-		if err := store.ScreenArticleSecurity(scored, 8.0, "fine", false); err != nil {
+		if err := store.ScreenArticleSecurity(scored, 2, "none", false, false); err != nil {
 			t.Fatalf("ScreenArticleSecurity scored: %v", err)
 		}
 		if err := store.SetInterestScore(1, scored, 6.0); err != nil {
 			t.Fatalf("SetInterestScore: %v", err)
 		}
 
-		got, err := store.GetUnscoredCurationArticles(1, 7.0, 10)
+		got, err := store.GetUnscoredCurationArticles(1, 3.0, 10)
 		if err != nil {
 			t.Fatalf("GetUnscoredCurationArticles: %v", err)
 		}
@@ -2597,10 +2597,10 @@ func TestMarkSecurityScoredAndCurationQueue(t *testing.T) {
 		if err := store.SetInterestScore(1, passed, 7.5); err != nil {
 			t.Fatalf("SetInterestScore passed: %v", err)
 		}
-		if err := store.ScreenArticleSecurity(passed, 8.0, "re-screened", false); err != nil {
+		if err := store.ScreenArticleSecurity(passed, 2, "none", false, false); err != nil {
 			t.Fatalf("ScreenArticleSecurity re-run: %v", err)
 		}
-		after, _ := store.GetUnscoredCurationArticles(1, 7.0, 10)
+		after, _ := store.GetUnscoredCurationArticles(1, 3.0, 10)
 		if len(after) != 0 {
 			t.Fatalf("curated article should not reappear in curation queue, got %v", articleIDs(after))
 		}
@@ -2620,7 +2620,7 @@ func TestSetInterestScorePreservesSecurity(t *testing.T) {
 		id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "x", Title: "x",
 			URL: "https://example.com/x", PublishedDate: &now})
 
-		if err := store.ScreenArticleSecurity(id, 8.0, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(id, 2, "none", false, false); err != nil {
 			t.Fatalf("ScreenArticleSecurity: %v", err)
 		}
 		if err := store.SetInterestScore(1, id, 6.0); err != nil {
@@ -2630,7 +2630,7 @@ func TestSetInterestScorePreservesSecurity(t *testing.T) {
 		// Security score must survive (>= 7.0), so the article still qualifies as
 		// security-passed for the summary stage. If SetInterestScore had nulled it,
 		// this query would return nothing.
-		scored, err := store.GetUnsummarizedScoredArticles(7.0, 10)
+		scored, err := store.GetUnsummarizedScoredArticles(3.0, 10)
 		if err != nil {
 			t.Fatalf("GetUnsummarizedScoredArticles: %v", err)
 		}
@@ -2639,7 +2639,7 @@ func TestSetInterestScorePreservesSecurity(t *testing.T) {
 		}
 
 		// And it has left the curation queue (interest_score now set).
-		cur, _ := store.GetUnscoredCurationArticles(1, 7.0, 10)
+		cur, _ := store.GetUnscoredCurationArticles(1, 3.0, 10)
 		if len(cur) != 0 {
 			t.Fatalf("expected nothing awaiting curation, got %v", articleIDs(cur))
 		}
@@ -2663,7 +2663,7 @@ func TestGetUngroupedEmbeddedArticles(t *testing.T) {
 		mk := func(guid string, pub time.Time) int64 {
 			id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: guid, Title: guid,
 				URL: "https://example.com/" + guid, PublishedDate: &pub})
-			store.ScreenArticleSecurity(id, 9, "ok", false) //nolint:errcheck
+			store.ScreenArticleSecurity(id, 1, "none", false, false) //nolint:errcheck
 			return id
 		}
 
@@ -2692,10 +2692,10 @@ func TestGetUngroupedEmbeddedArticles(t *testing.T) {
 		blocked := mk("blocked", now)
 		store.StoreArticleEmbedding(blocked, vec, model) //nolint:errcheck
 		// Overwrite the passing verdict with a failing one.
-		store.ScreenArticleSecurity(blocked, 2.0, "blocked", false) //nolint:errcheck
+		store.ScreenArticleSecurity(blocked, 8, "none", false, false) //nolint:errcheck
 
 		since := now.Add(-48 * time.Hour)
-		got, err := store.GetUngroupedEmbeddedArticles(1, model, 7.0, since, 10)
+		got, err := store.GetUngroupedEmbeddedArticles(1, model, 3.0, since, 10)
 		if err != nil {
 			t.Fatalf("GetUngroupedEmbeddedArticles: %v", err)
 		}
@@ -2737,7 +2737,7 @@ func TestGetProcessingStats(t *testing.T) {
 	add("a1") // untouched -> pending
 
 	a2 := add("a2") // screened, security pass, curated, summarized
-	if err := store.ScreenArticleSecurity(a2, 8, "ok", false); err != nil {
+	if err := store.ScreenArticleSecurity(a2, 2, "none", false, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.SetInterestScore(1, a2, 7); err != nil {
@@ -2748,7 +2748,7 @@ func TestGetProcessingStats(t *testing.T) {
 	}
 
 	a3 := add("a3") // screened, security rejected, summarize-skipped
-	if err := store.ScreenArticleSecurity(a3, 3, "unsafe", false); err != nil {
+	if err := store.ScreenArticleSecurity(a3, 7, "none", false, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.MarkSummarizationSkipped(a3, "too short"); err != nil {
@@ -2932,7 +2932,7 @@ func TestDeleteUser(t *testing.T) {
 			t.Fatalf("subscribe del: %v", err)
 		}
 		score := 0.8
-		if err := store.UpdateReadState(delID, articleID, false, &score, &score, nil, nil); err != nil {
+		if err := store.UpdateReadState(delID, articleID, false, &score, &score, nil, nil, nil); err != nil {
 			t.Fatalf("UpdateReadState del: %v", err)
 		}
 
@@ -3010,7 +3010,7 @@ func TestDeleteUser(t *testing.T) {
 		if err := store.SubscribeUserToFeed(keepID, feedID); err != nil {
 			t.Fatalf("subscribe keep: %v", err)
 		}
-		if err := store.UpdateReadState(keepID, articleID, false, &score, &score, nil, nil); err != nil {
+		if err := store.UpdateReadState(keepID, articleID, false, &score, &score, nil, nil, nil); err != nil {
 			t.Fatalf("UpdateReadState keep: %v", err)
 		}
 		if err := store.SetUserPreference(keepID, "theme", "light"); err != nil {

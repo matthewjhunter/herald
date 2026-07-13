@@ -164,7 +164,7 @@ func TestClusterRecentRespectsToggle(t *testing.T) {
 		embedArt(t, store, a, []float32{1, 0, 0})
 		embedArt(t, store, b, []float32{0.99, 0.05, 0})
 		for _, art := range []storage.Article{a, b} {
-			if err := store.ScreenArticleSecurity(art.ID, 9, "ok", false); err != nil {
+			if err := store.ScreenArticleSecurity(art.ID, 1, "none", false, false); err != nil {
 				t.Fatal(err)
 			}
 			if err := store.SetInterestScore(1, art.ID, 8); err != nil {

@@ -28,7 +28,7 @@ func TestSecurityVerdictSharedAcrossUsers(t *testing.T) {
 			URL: "https://example.com/shared", PublishedDate: &now})
 
 		// One screen, no user_id.
-		if err := store.ScreenArticleSecurity(id, 8.0, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(id, 2, "none", false, false); err != nil {
 			t.Fatalf("ScreenArticleSecurity: %v", err)
 		}
 
@@ -36,7 +36,7 @@ func TestSecurityVerdictSharedAcrossUsers(t *testing.T) {
 			t.Fatalf("article should be screened once, still unscreened: %v", articleIDs(un))
 		}
 		for _, uid := range []int64{1, 2} {
-			cur, err := store.GetUnscoredCurationArticles(uid, 7.0, 10)
+			cur, err := store.GetUnscoredCurationArticles(uid, 3.0, 10)
 			if err != nil {
 				t.Fatalf("GetUnscoredCurationArticles user %d: %v", uid, err)
 			}
@@ -49,8 +49,8 @@ func TestSecurityVerdictSharedAcrossUsers(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetArticleSecurityScores: %v", err)
 		}
-		if scores[id] != 8.0 {
-			t.Errorf("GetArticleSecurityScores = %v, want 8.0", scores[id])
+		if scores[id] != 2.0 {
+			t.Errorf("GetArticleSecurityScores = %v, want 2.0 (threat, 0=clean)", scores[id])
 		}
 	})
 }
@@ -71,7 +71,7 @@ func TestGetScoreStatsCountsSkippedSeparately(t *testing.T) {
 		skipped, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "skip2", Title: "skip2",
 			URL: "https://example.com/skip2", PublishedDate: &now})
 
-		if err := store.ScreenArticleSecurity(passed, 8.0, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(passed, 2, "none", false, false); err != nil {
 			t.Fatalf("ScreenArticleSecurity: %v", err)
 		}
 		if err := store.SkipArticleSecurity(skipped, "content too short"); err != nil {
@@ -134,7 +134,7 @@ func TestSkipArticleSecurityMarksScreened(t *testing.T) {
 		if _, ok := scores[skipped]; ok {
 			t.Error("skipped article must not have a security score")
 		}
-		if cur, _ := store.GetUnscoredCurationArticles(1, 7.0, 10); len(cur) != 0 {
+		if cur, _ := store.GetUnscoredCurationArticles(1, 3.0, 10); len(cur) != 0 {
 			t.Errorf("skipped article must not await curation, got %v", articleIDs(cur))
 		}
 	})

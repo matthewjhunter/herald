@@ -14,14 +14,14 @@ func seedScored(t *testing.T, store Store, feedID, userID int64, guid string, re
 		t.Fatalf("AddArticle: %v", err)
 	}
 	// Security verdict is article-level (#141); interest stays per-user.
-	if err := store.ScreenArticleSecurity(id, security, "", false); err != nil {
+	if err := store.ScreenArticleSecurity(id, 10-security, "none", false, false); err != nil {
 		t.Fatalf("ScreenArticleSecurity: %v", err)
 	}
-	if err := store.UpdateReadState(userID, id, false, &interest, nil, nil, nil); err != nil {
+	if err := store.UpdateReadState(userID, id, false, &interest, nil, nil, nil, nil); err != nil {
 		t.Fatalf("UpdateReadState scores: %v", err)
 	}
 	if read {
-		if err := store.UpdateReadState(userID, id, true, nil, nil, nil, nil); err != nil {
+		if err := store.UpdateReadState(userID, id, true, nil, nil, nil, nil, nil); err != nil {
 			t.Fatalf("UpdateReadState read: %v", err)
 		}
 	}
@@ -42,7 +42,7 @@ func TestGetUnreadArticlesForSummary(t *testing.T) {
 	seedScored(t, store, feedID, uid, "alreadyread", true, 8, 9)   // read
 	seedScored(t, store, feedID, uid, "lowsecurity", false, 5, 9)  // security < 7
 
-	got, err := store.GetUnreadArticlesForSummary(uid, 7, 7, 100)
+	got, err := store.GetUnreadArticlesForSummary(uid, 3, 7, 100)
 	if err != nil {
 		t.Fatalf("GetUnreadArticlesForSummary: %v", err)
 	}

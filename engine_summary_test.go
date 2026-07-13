@@ -60,10 +60,10 @@ func TestGenerateAISummary(t *testing.T) {
 		id, _ := store.AddArticle(&storage.Article{FeedID: feedID, GUID: guid, Title: guid,
 			URL: "https://example.com/" + guid, Content: "<p>body " + guid + "</p>", PublishedDate: &now})
 		// Security verdict is article-level (#141); interest stays per-user.
-		if err := store.ScreenArticleSecurity(id, security, "", false); err != nil {
+		if err := store.ScreenArticleSecurity(id, 10-security, "none", false, false); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.UpdateReadState(uid, id, false, &interest, nil, nil, nil); err != nil {
+		if err := store.UpdateReadState(uid, id, false, &interest, nil, nil, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 		return id
@@ -74,7 +74,7 @@ func TestGenerateAISummary(t *testing.T) {
 
 	cfg := storage.DefaultConfig()
 	cfg.Summary.MinInterestScore = 7
-	cfg.Summary.MinSecurityScore = 7
+	cfg.Summary.MaxSecurityThreat = 3
 	e := &Engine{
 		store:      store,
 		summarizer: ai.NewCloudSummarizer(srv.URL, "", "test-model", time.Minute, false),
@@ -236,8 +236,8 @@ func TestGenerateForConfig(t *testing.T) {
 		id, _ := store.AddArticle(&storage.Article{FeedID: feedID, GUID: guid, Title: guid,
 			URL: "https://example.com/" + guid, Content: "<p>body " + guid + "</p>", PublishedDate: &now})
 		i := 8.0
-		store.ScreenArticleSecurity(id, 9.0, "", false)          //nolint:errcheck
-		store.UpdateReadState(uid, id, false, &i, nil, nil, nil) //nolint:errcheck
+		store.ScreenArticleSecurity(id, 1, "none", false, false)      //nolint:errcheck
+		store.UpdateReadState(uid, id, false, &i, nil, nil, nil, nil) //nolint:errcheck
 		return id
 	}
 	a1 := mk(feedA, "a1")

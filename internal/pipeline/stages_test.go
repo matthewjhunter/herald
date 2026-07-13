@@ -55,7 +55,7 @@ func (f *fakeAI) SecurityCheck(_ context.Context, title, content string) (*ai.Se
 	if f.securityFn != nil {
 		return f.securityFn(title, content)
 	}
-	return &ai.SecurityResult{Safe: true, Score: 9}, nil
+	return &ai.SecurityResult{Threat: 1}, nil
 }
 
 func (f *fakeAI) SummarizeArticle(_ context.Context, title, content string, _ int) (string, error) {
@@ -126,11 +126,11 @@ func TestSecurityStageGatesAndMarks(t *testing.T) {
 	fake.securityFn = func(title, _ string) (*ai.SecurityResult, error) {
 		switch {
 		case strings.HasPrefix(title, "block"):
-			return &ai.SecurityResult{Safe: true, Score: 2}, nil // hard block
+			return &ai.SecurityResult{Threat: 8}, nil // hard block
 		case strings.HasPrefix(title, "medium"):
-			return &ai.SecurityResult{Safe: true, Score: 5}, nil // between 4 and 7
+			return &ai.SecurityResult{Threat: 5}, nil // between 4 and 7
 		default:
-			return &ai.SecurityResult{Safe: true, Score: 9}, nil
+			return &ai.SecurityResult{Threat: 1}, nil
 		}
 	}
 	st, store, feedID := newHarness(t, fake)
@@ -150,7 +150,7 @@ func TestSecurityStageGatesAndMarks(t *testing.T) {
 	if fake.sumCalls != 0 {
 		t.Fatalf("security stage must not summarize, got %d summarize calls", fake.sumCalls)
 	}
-	cur, _ := store.GetUnscoredCurationArticles(1, 7.0, 10)
+	cur, _ := store.GetUnscoredCurationArticles(1, 3.0, 10)
 	if len(cur) != 1 || cur[0].ID != pass.ID {
 		t.Fatalf("expected article %d awaiting curation, got %v", pass.ID, ids(cur))
 	}
@@ -238,7 +238,7 @@ func TestSecurityStageScansSanitizedContent(t *testing.T) {
 	var seen string
 	fake := &fakeAI{available: true, securityFn: func(_, content string) (*ai.SecurityResult, error) {
 		seen = content
-		return &ai.SecurityResult{Safe: true, Score: 9}, nil
+		return &ai.SecurityResult{Threat: 1}, nil
 	}}
 	st, store, feedID := newHarness(t, fake)
 	body := `<script src="https://rumble.com/widgets.js"></script><p>` + strings.Repeat("real news ", 60) + `</p>`
@@ -258,7 +258,7 @@ func TestSummarizeStage(t *testing.T) {
 	st, store, feedID := newHarness(t, &fakeAI{available: true})
 	mustPass := func(a storage.Article) {
 		// Put the article into the security-passed state the summarize stage expects.
-		if err := store.ScreenArticleSecurity(a.ID, 9, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(a.ID, 1, "none", false, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -331,7 +331,7 @@ func TestCurateStage(t *testing.T) {
 		}}
 		st, store, feedID := newHarness(t, fake)
 		a := seed(t, store, feedID, "x", "body text")
-		if err := store.ScreenArticleSecurity(a.ID, 9, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(a.ID, 1, "none", false, false); err != nil {
 			t.Fatal(err)
 		}
 
@@ -340,11 +340,11 @@ func TestCurateStage(t *testing.T) {
 			t.Fatalf("expected article curated, got %v", ids(out))
 		}
 		// Left the curation queue and still counts as security-passed.
-		cur, _ := store.GetUnscoredCurationArticles(1, 7.0, 10)
+		cur, _ := store.GetUnscoredCurationArticles(1, 3.0, 10)
 		if len(cur) != 0 {
 			t.Fatalf("curated article should leave the curation queue, got %v", ids(cur))
 		}
-		scored, _ := store.GetUnsummarizedScoredArticles(7.0, 10)
+		scored, _ := store.GetUnsummarizedScoredArticles(3.0, 10)
 		if len(scored) != 1 {
 			t.Fatalf("security score must survive curation, got %v", ids(scored))
 		}
@@ -358,16 +358,16 @@ func TestCurateStage(t *testing.T) {
 		var buf bytes.Buffer
 		st.Formatter = output.NewFormatterWithWriters(output.FormatJSON, &buf, io.Discard)
 		a := seed(t, store, feedID, "x", "body text")
-		if err := store.ScreenArticleSecurity(a.ID, 9, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(a.ID, 1, "none", false, false); err != nil {
 			t.Fatal(err)
 		}
 
 		st.Curate(context.Background(), []storage.Article{a})
 
 		var ev struct {
-			Event         string  `json:"event"`
-			SecurityScore float64 `json:"security_score"`
-			InterestScore float64 `json:"interest_score"`
+			Event          string  `json:"event"`
+			SecurityThreat float64 `json:"security_threat"`
+			InterestScore  float64 `json:"interest_score"`
 		}
 		if err := json.Unmarshal(buf.Bytes(), &ev); err != nil {
 			t.Fatalf("decode processed event: %v (out=%q)", err, buf.String())
@@ -377,8 +377,10 @@ func TestCurateStage(t *testing.T) {
 		}
 		// The curate stage must surface the verdict the security stage wrote,
 		// not a 0 placeholder — the event feeds logs and notifications (#119).
-		if ev.SecurityScore != 9 {
-			t.Errorf("security_score = %v, want 9 (persisted verdict)", ev.SecurityScore)
+		// The article was screened at threat 1 (setup below), so that is what the
+		// event must carry.
+		if ev.SecurityThreat != 1 {
+			t.Errorf("security_threat = %v, want 1 (persisted verdict)", ev.SecurityThreat)
 		}
 		if ev.InterestScore != 8 {
 			t.Errorf("interest_score = %v, want 8", ev.InterestScore)
@@ -393,7 +395,7 @@ func TestCurateStage(t *testing.T) {
 		var errBuf bytes.Buffer
 		st.Formatter = output.NewFormatterWithWriters(output.FormatJSON, io.Discard, &errBuf)
 		a := seed(t, store, feedID, "headline here", "body text")
-		if err := store.ScreenArticleSecurity(a.ID, 9, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(a.ID, 1, "none", false, false); err != nil {
 			t.Fatal(err)
 		}
 
@@ -405,7 +407,7 @@ func TestCurateStage(t *testing.T) {
 		if !strings.Contains(got, "Info:") {
 			t.Errorf("expected an info-level success line, got: %q", got)
 		}
-		if !strings.Contains(got, "interest=8.0") || !strings.Contains(got, "security=9.0") {
+		if !strings.Contains(got, "interest=8.0") || !strings.Contains(got, "security=1.0") {
 			t.Errorf("info line missing actual scores, got: %q", got)
 		}
 	})
@@ -416,14 +418,14 @@ func TestCurateStage(t *testing.T) {
 		}}
 		st, store, feedID := newHarness(t, fake)
 		a := seed(t, store, feedID, "x", "body text")
-		if err := store.ScreenArticleSecurity(a.ID, 9, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(a.ID, 1, "none", false, false); err != nil {
 			t.Fatal(err)
 		}
 		out := st.Curate(context.Background(), []storage.Article{a})
 		if len(out) != 0 {
 			t.Fatalf("failed curation should not advance, got %v", ids(out))
 		}
-		cur, _ := store.GetUnscoredCurationArticles(1, 7.0, 10)
+		cur, _ := store.GetUnscoredCurationArticles(1, 3.0, 10)
 		if len(cur) != 1 {
 			t.Fatalf("failed article should still await curation, got %v", ids(cur))
 		}
