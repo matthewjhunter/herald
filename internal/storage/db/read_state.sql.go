@@ -14,16 +14,16 @@ SELECT
   f.id AS feed_id,
   COALESCE(uf.user_title, f.title) AS feed_title,
   COUNT(*) FILTER (WHERE a.security_screened_at IS NOT NULL)::int AS total_scored,
-  COUNT(*) FILTER (WHERE a.security_score >= 7.0)::int AS sec_pass,
-  COUNT(*) FILTER (WHERE a.security_score >= 4.0 AND a.security_score < 7.0)::int AS sec_borderline,
-  COUNT(*) FILTER (WHERE a.security_score IS NOT NULL AND a.security_score < 4.0)::int AS sec_fail,
+  COUNT(*) FILTER (WHERE a.security_threat <= 3.0)::int AS sec_pass,
+  COUNT(*) FILTER (WHERE a.security_threat > 3.0 AND a.security_threat <= 6.0)::int AS sec_borderline,
+  COUNT(*) FILTER (WHERE a.security_threat IS NOT NULL AND a.security_threat > 6.0)::int AS sec_fail,
   -- Screened but skipped (no content / too short): security_screened_at set,
-  -- score left NULL. Counted separately so it isn't mistaken for a pass and so
+  -- threat left NULL. Counted separately so it isn't mistaken for a pass and so
   -- total_scored = sec_pass + sec_borderline + sec_fail + sec_skipped (#123).
-  COUNT(*) FILTER (WHERE a.security_screened_at IS NOT NULL AND a.security_score IS NULL)::int AS sec_skipped,
-  COUNT(*) FILTER (WHERE a.security_score >= 7.0 AND rs.interest_score >= 8.0)::int AS int_high,
-  COUNT(*) FILTER (WHERE a.security_score >= 7.0 AND rs.interest_score >= 5.0 AND rs.interest_score < 8.0)::int AS int_medium,
-  COUNT(*) FILTER (WHERE a.security_score >= 7.0 AND rs.interest_score IS NOT NULL AND rs.interest_score < 5.0)::int AS int_low
+  COUNT(*) FILTER (WHERE a.security_screened_at IS NOT NULL AND a.security_threat IS NULL)::int AS sec_skipped,
+  COUNT(*) FILTER (WHERE a.security_threat <= 3.0 AND rs.interest_score >= 8.0)::int AS int_high,
+  COUNT(*) FILTER (WHERE a.security_threat <= 3.0 AND rs.interest_score >= 5.0 AND rs.interest_score < 8.0)::int AS int_medium,
+  COUNT(*) FILTER (WHERE a.security_threat <= 3.0 AND rs.interest_score IS NOT NULL AND rs.interest_score < 5.0)::int AS int_low
 FROM feeds f
 JOIN user_feeds uf ON uf.feed_id = f.id AND uf.user_id = $1
 JOIN articles a ON a.feed_id = f.id
@@ -95,8 +95,8 @@ func (q *Queries) IncrementAIRetries(ctx context.Context, arg IncrementAIRetries
 
 const resetArticleScores = `-- name: ResetArticleScores :execrows
 UPDATE articles
-SET security_score = NULL, security_reason = NULL, security_flagged = FALSE,
-    security_screened_at = NULL, security_attempts = 0
+SET security_threat = NULL, security_category = NULL, security_verified = NULL,
+    security_flagged = FALSE, security_screened_at = NULL, security_attempts = 0
 WHERE feed_id IN (SELECT feed_id FROM user_feeds WHERE user_id = $1)
 `
 
@@ -110,19 +110,21 @@ func (q *Queries) ResetArticleScores(ctx context.Context, userID int64) (int64, 
 
 const resetArticleScoresBelow = `-- name: ResetArticleScoresBelow :execrows
 UPDATE articles
-SET security_score = NULL, security_reason = NULL, security_flagged = FALSE,
-    security_screened_at = NULL, security_attempts = 0
+SET security_threat = NULL, security_category = NULL, security_verified = NULL,
+    security_flagged = FALSE, security_screened_at = NULL, security_attempts = 0
 WHERE feed_id IN (SELECT feed_id FROM user_feeds WHERE user_id = $1)
-  AND security_score IS NOT NULL AND security_score < $2::double precision
+  AND security_threat IS NOT NULL AND security_threat > $2::double precision
 `
 
 type ResetArticleScoresBelowParams struct {
-	UserID     int64
-	BelowScore float64
+	UserID      int64
+	AboveThreat float64
 }
 
+// Re-screen articles that previously FAILED: on the threat scale that is a HIGH
+// score (above the ceiling), where the old safety scale made it a LOW one.
 func (q *Queries) ResetArticleScoresBelow(ctx context.Context, arg ResetArticleScoresBelowParams) (int64, error) {
-	result, err := q.db.Exec(ctx, resetArticleScoresBelow, arg.UserID, arg.BelowScore)
+	result, err := q.db.Exec(ctx, resetArticleScoresBelow, arg.UserID, arg.AboveThreat)
 	if err != nil {
 		return 0, err
 	}
@@ -177,24 +179,26 @@ func (q *Queries) UpsertReadStateRead(ctx context.Context, arg UpsertReadStateRe
 
 const upsertReadStateScores = `-- name: UpsertReadStateScores :exec
 INSERT INTO read_state
-  (user_id, article_id, read, interest_score, security_score, security_reason, security_flagged, ai_scored)
+  (user_id, article_id, read, interest_score, security_threat, security_category, security_verified, security_flagged, ai_scored)
 VALUES
-  ($1, $2, FALSE, $3, $4, $5, COALESCE($6, FALSE), TRUE)
+  ($1, $2, FALSE, $3, $4, $5, $6, COALESCE($7, FALSE), TRUE)
 ON CONFLICT (user_id, article_id) DO UPDATE SET
   interest_score = excluded.interest_score,
-  security_score = excluded.security_score,
-  security_reason = excluded.security_reason,
+  security_threat = excluded.security_threat,
+  security_category = excluded.security_category,
+  security_verified = excluded.security_verified,
   security_flagged = COALESCE(excluded.security_flagged, read_state.security_flagged),
   ai_scored = TRUE
 `
 
 type UpsertReadStateScoresParams struct {
-	UserID          int64
-	ArticleID       int64
-	InterestScore   *float64
-	SecurityScore   *float64
-	SecurityReason  *string
-	SecurityFlagged interface{}
+	UserID           int64
+	ArticleID        int64
+	InterestScore    *float64
+	SecurityThreat   *float64
+	SecurityCategory *string
+	SecurityVerified *bool
+	SecurityFlagged  interface{}
 }
 
 // AI pipeline: record scores, mark ai_scored, leave the user's read flag alone.
@@ -203,8 +207,9 @@ func (q *Queries) UpsertReadStateScores(ctx context.Context, arg UpsertReadState
 		arg.UserID,
 		arg.ArticleID,
 		arg.InterestScore,
-		arg.SecurityScore,
-		arg.SecurityReason,
+		arg.SecurityThreat,
+		arg.SecurityCategory,
+		arg.SecurityVerified,
 		arg.SecurityFlagged,
 	)
 	return err

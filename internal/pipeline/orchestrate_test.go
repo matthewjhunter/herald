@@ -17,7 +17,7 @@ import (
 func happyAI() *fakeAI {
 	return &fakeAI{
 		available:   true,
-		securityFn:  func(string, string) (*ai.SecurityResult, error) { return &ai.SecurityResult{Safe: true, Score: 9}, nil },
+		securityFn:  func(string, string) (*ai.SecurityResult, error) { return &ai.SecurityResult{Threat: 1}, nil },
 		summarizeFn: func(string, string) (string, error) { return "a clean summary", nil },
 		curateFn:    func(string, string) (*ai.CurationResult, error) { return &ai.CurationResult{InterestScore: 8}, nil },
 	}
@@ -59,7 +59,7 @@ func TestRunEndToEnd(t *testing.T) {
 	if unscreened, _ := store.GetUnscreenedArticles(10); len(unscreened) != 0 {
 		t.Fatalf("expected all articles screened, still unscreened: %v", ids(unscreened))
 	}
-	if cur, _ := store.GetUnscoredCurationArticles(1, 7.0, 10); len(cur) != 0 {
+	if cur, _ := store.GetUnscoredCurationArticles(1, 3.0, 10); len(cur) != 0 {
 		t.Fatalf("expected all articles curated, still pending: %v", ids(cur))
 	}
 	for _, art := range []storage.Article{a, b} {
@@ -111,7 +111,7 @@ func TestRunTerminatesOnPersistentFailure(t *testing.T) {
 	withRealEmbed(st)
 
 	a := seed(t, store, feedID, "a", strings.Repeat("x", 500))
-	if err := store.ScreenArticleSecurity(a.ID, 9, "ok", false); err != nil {
+	if err := store.ScreenArticleSecurity(a.ID, 1, "none", false, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -164,7 +164,7 @@ func TestRunSummariesOncePerArticleAcrossUsers(t *testing.T) {
 	a := seed(t, store, feedID, "a", "body a")
 	b := seed(t, store, feedID, "b", "body b")
 	for _, art := range []storage.Article{a, b} {
-		if err := store.ScreenArticleSecurity(art.ID, 9, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(art.ID, 1, "none", false, false); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -156,6 +156,91 @@ func (q *Queries) GetArticlesNeedingFullText(ctx context.Context, lim int32) ([]
 	return items, nil
 }
 
+const getLowSafetyArticleSample = `-- name: GetLowSafetyArticleSample :many
+SELECT id, title, content, security_threat
+FROM articles
+WHERE security_screened_at IS NOT NULL AND content <> '' AND security_threat IS NOT NULL
+ORDER BY security_threat ASC, RANDOM()
+LIMIT $1
+`
+
+type GetLowSafetyArticleSampleRow struct {
+	ID             int64
+	Title          string
+	Content        *string
+	SecurityThreat *float64
+}
+
+// The lowest-scoring screened articles (worst stored verdict first), for the
+// plan-012 harness's --unsafe-first mode. Pre-rescore the stored column still
+// holds the old 10=safe value, so ASC surfaces what prod flagged. Diagnostic only.
+func (q *Queries) GetLowSafetyArticleSample(ctx context.Context, lim int32) ([]GetLowSafetyArticleSampleRow, error) {
+	rows, err := q.db.Query(ctx, getLowSafetyArticleSample, lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetLowSafetyArticleSampleRow{}
+	for rows.Next() {
+		var i GetLowSafetyArticleSampleRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Content,
+			&i.SecurityThreat,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getScreenedArticleSample = `-- name: GetScreenedArticleSample :many
+SELECT id, title, content, security_threat
+FROM articles
+WHERE security_screened_at IS NOT NULL AND content <> ''
+ORDER BY RANDOM()
+LIMIT $1
+`
+
+type GetScreenedArticleSampleRow struct {
+	ID             int64
+	Title          string
+	Content        *string
+	SecurityThreat *float64
+}
+
+// A random sample of already-screened articles that still have content, for the
+// plan-012 score-comparison harness (herald screen-compare). Diagnostic only.
+func (q *Queries) GetScreenedArticleSample(ctx context.Context, lim int32) ([]GetScreenedArticleSampleRow, error) {
+	rows, err := q.db.Query(ctx, getScreenedArticleSample, lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetScreenedArticleSampleRow{}
+	for rows.Next() {
+		var i GetScreenedArticleSampleRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Content,
+			&i.SecurityThreat,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getUngroupedEmbeddedArticles = `-- name: GetUngroupedEmbeddedArticles :many
 SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
        a.author, a.published_date, a.fetched_date
@@ -164,7 +249,7 @@ JOIN user_feeds uf ON a.feed_id = uf.feed_id
 JOIN article_embeddings ae ON ae.article_id = a.id
     AND ae.embedding_model = $1 AND ae.status = $2
 WHERE uf.user_id = $3
-  AND a.security_score >= $4::double precision
+  AND a.security_threat <= $4::double precision
   AND COALESCE(a.published_date, a.fetched_date) >= $5::timestamptz
   AND NOT EXISTS (
       SELECT 1 FROM article_group_members agm
@@ -179,7 +264,7 @@ type GetUngroupedEmbeddedArticlesParams struct {
 	Model             string
 	Status            int16
 	UserID            int64
-	SecurityThreshold float64
+	MaxSecurityThreat float64
 	Since             time.Time
 	Lim               int32
 }
@@ -202,7 +287,7 @@ func (q *Queries) GetUngroupedEmbeddedArticles(ctx context.Context, arg GetUngro
 		arg.Model,
 		arg.Status,
 		arg.UserID,
-		arg.SecurityThreshold,
+		arg.MaxSecurityThreat,
 		arg.Since,
 		arg.Lim,
 	)
@@ -297,7 +382,7 @@ LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = $1
 WHERE uf.user_id = $1
   AND (
     (a.security_screened_at IS NULL AND a.security_attempts < 3)
-    OR (a.security_score >= 7.0 AND rs.interest_score IS NULL)
+    OR (a.security_threat <= 3.0 AND rs.interest_score IS NULL)
   )
 `
 
@@ -315,7 +400,7 @@ FROM articles a
 JOIN user_feeds uf ON a.feed_id = uf.feed_id
 LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
 WHERE uf.user_id = $1
-  AND a.security_score >= $2::double precision
+  AND a.security_threat <= $2::double precision
   AND rs.interest_score IS NULL
 ORDER BY a.published_date DESC
 LIMIT $3
@@ -323,7 +408,7 @@ LIMIT $3
 
 type GetUnscoredCurationArticlesParams struct {
 	UserID            int64
-	SecurityThreshold float64
+	MaxSecurityThreat float64
 	Lim               int32
 }
 
@@ -341,7 +426,7 @@ type GetUnscoredCurationArticlesRow struct {
 }
 
 func (q *Queries) GetUnscoredCurationArticles(ctx context.Context, arg GetUnscoredCurationArticlesParams) ([]GetUnscoredCurationArticlesRow, error) {
-	rows, err := q.db.Query(ctx, getUnscoredCurationArticles, arg.UserID, arg.SecurityThreshold, arg.Lim)
+	rows, err := q.db.Query(ctx, getUnscoredCurationArticles, arg.UserID, arg.MaxSecurityThreat, arg.Lim)
 	if err != nil {
 		return nil, err
 	}
@@ -443,13 +528,13 @@ SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
        a.author, a.published_date, a.fetched_date
 FROM articles a
 LEFT JOIN article_summaries asumm ON asumm.article_id = a.id
-WHERE a.security_score >= $1::double precision AND asumm.article_id IS NULL
+WHERE a.security_threat <= $1::double precision AND asumm.article_id IS NULL
 ORDER BY a.published_date DESC
 LIMIT $2
 `
 
 type GetUnsummarizedScoredArticlesParams struct {
-	SecurityThreshold float64
+	MaxSecurityThreat float64
 	Lim               int32
 }
 
@@ -467,7 +552,7 @@ type GetUnsummarizedScoredArticlesRow struct {
 }
 
 func (q *Queries) GetUnsummarizedScoredArticles(ctx context.Context, arg GetUnsummarizedScoredArticlesParams) ([]GetUnsummarizedScoredArticlesRow, error) {
-	rows, err := q.db.Query(ctx, getUnsummarizedScoredArticles, arg.SecurityThreshold, arg.Lim)
+	rows, err := q.db.Query(ctx, getUnsummarizedScoredArticles, arg.MaxSecurityThreat, arg.Lim)
 	if err != nil {
 		return nil, err
 	}
@@ -517,24 +602,27 @@ func (q *Queries) MarkArticleFullTextFetched(ctx context.Context, id int64) erro
 
 const screenArticleSecurity = `-- name: ScreenArticleSecurity :exec
 UPDATE articles
-SET security_score = $1::double precision,
-    security_reason = $2::text,
-    security_flagged = $3,
+SET security_threat = $1::double precision,
+    security_category = $2::text,
+    security_verified = $3,
+    security_flagged = $4,
     security_screened_at = NOW()
-WHERE id = $4
+WHERE id = $5
 `
 
 type ScreenArticleSecurityParams struct {
-	SecurityScore   float64
-	SecurityReason  string
-	SecurityFlagged bool
-	ID              int64
+	SecurityThreat   float64
+	SecurityCategory string
+	SecurityVerified *bool
+	SecurityFlagged  bool
+	ID               int64
 }
 
 func (q *Queries) ScreenArticleSecurity(ctx context.Context, arg ScreenArticleSecurityParams) error {
 	_, err := q.db.Exec(ctx, screenArticleSecurity,
-		arg.SecurityScore,
-		arg.SecurityReason,
+		arg.SecurityThreat,
+		arg.SecurityCategory,
+		arg.SecurityVerified,
 		arg.SecurityFlagged,
 		arg.ID,
 	)
@@ -562,17 +650,15 @@ func (q *Queries) SetInterestScore(ctx context.Context, arg SetInterestScorePara
 
 const skipArticleSecurity = `-- name: SkipArticleSecurity :exec
 UPDATE articles
-SET security_reason = $1::text, security_screened_at = NOW()
-WHERE id = $2
+SET security_screened_at = NOW()
+WHERE id = $1
 `
 
-type SkipArticleSecurityParams struct {
-	SecurityReason string
-	ID             int64
-}
-
-func (q *Queries) SkipArticleSecurity(ctx context.Context, arg SkipArticleSecurityParams) error {
-	_, err := q.db.Exec(ctx, skipArticleSecurity, arg.SecurityReason, arg.ID)
+// Marks an article screened-but-skipped (screened_at set, threat left NULL). The
+// skip reason is herald-authored, not attacker text, but the column that held it
+// is gone (plan 012); screened_at + NULL threat already encodes the state.
+func (q *Queries) SkipArticleSecurity(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, skipArticleSecurity, id)
 	return err
 }
 

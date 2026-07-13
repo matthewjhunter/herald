@@ -43,7 +43,7 @@ func TestEmbedStage(t *testing.T) {
 		emb := &fakeEmbedder{model: "m", embedFn: func(string) ([]float32, error) { return []float32{1, 2, 3}, nil }}
 		withEmbedder(st, emb)
 		a := seed(t, store, feedID, "a", "body")
-		if err := store.ScreenArticleSecurity(a.ID, 9, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(a.ID, 1, "none", false, false); err != nil {
 			t.Fatal(err)
 		}
 
@@ -53,7 +53,7 @@ func TestEmbedStage(t *testing.T) {
 		}
 		// Now a security-passed, embedded, ungrouped, recent article — visible to
 		// the cluster stage.
-		cohort, _ := store.GetUngroupedEmbeddedArticles(1, "m", 7.0, a.PublishedDate.Add(-time.Hour), 10)
+		cohort, _ := store.GetUngroupedEmbeddedArticles(1, "m", 3.0, a.PublishedDate.Add(-time.Hour), 10)
 		if len(cohort) != 1 || cohort[0].ID != a.ID {
 			t.Fatalf("expected embedded article in cohort, got %v", ids(cohort))
 		}
@@ -70,7 +70,7 @@ func TestEmbedStage(t *testing.T) {
 			t.Fatalf("too-short article should not advance, got %v", ids(out))
 		}
 		// Skipped (status != OK), so not in the cluster cohort, and not retried.
-		cohort, _ := store.GetUngroupedEmbeddedArticles(1, "m", 7.0, a.PublishedDate.Add(-time.Hour), 10)
+		cohort, _ := store.GetUngroupedEmbeddedArticles(1, "m", 3.0, a.PublishedDate.Add(-time.Hour), 10)
 		if len(cohort) != 0 {
 			t.Fatalf("skipped article must not be in cohort, got %v", ids(cohort))
 		}

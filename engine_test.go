@@ -74,8 +74,8 @@ func TestNewEngineDefaults(t *testing.T) {
 	if engine.config.Thresholds.InterestScore != 8.0 {
 		t.Errorf("default interest threshold: got %f", engine.config.Thresholds.InterestScore)
 	}
-	if engine.config.Thresholds.SecurityScore != 7.0 {
-		t.Errorf("default security threshold: got %f", engine.config.Thresholds.SecurityScore)
+	if engine.config.Thresholds.MaxSecurityThreat != 3.0 {
+		t.Errorf("default max security threat: got %f", engine.config.Thresholds.MaxSecurityThreat)
 	}
 }
 
@@ -371,7 +371,7 @@ func TestGetFeedStats(t *testing.T) {
 	})
 
 	// Mark one article read in feed 1
-	engine.store.UpdateReadState(1, id1, true, nil, nil, nil, nil)
+	engine.store.UpdateReadState(1, id1, true, nil, nil, nil, nil, nil)
 
 	// Summarize one article in feed 2
 	engine.store.UpdateArticleAISummary(id4, "Summary of article 4")

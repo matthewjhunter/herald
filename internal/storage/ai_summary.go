@@ -127,12 +127,12 @@ func (s *PostgresStore) GetAISummariesForNewsletter(userID, newsletterID int64, 
 	return out, nil
 }
 
-func (s *PostgresStore) GetUnreadArticlesForSummary(userID int64, minSecurity, minInterest float64, limit int) ([]Article, error) {
+func (s *PostgresStore) GetUnreadArticlesForSummary(userID int64, maxSecurityThreat, minInterest float64, limit int) ([]Article, error) {
 	rows, err := s.q.GetUnreadArticlesForSummary(context.Background(), db.GetUnreadArticlesForSummaryParams{
-		UserID:      userID,
-		MinSecurity: minSecurity,
-		MinInterest: minInterest,
-		Lim:         int32(limit),
+		UserID:            userID,
+		MaxSecurityThreat: maxSecurityThreat,
+		MinInterest:       minInterest,
+		Lim:               int32(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("get unread articles for summary: %w", err)

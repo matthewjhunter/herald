@@ -25,6 +25,17 @@ type ScoreStatsResult struct {
 // ProcessingStats is an aggregate snapshot of where a user's articles sit in the
 // AI pipeline (fetch -> security -> summarize -> curate). Unlike ScoreStatsResult
 // it counts pipeline *state* (how much is done vs pending), not score outcomes,
+// ScreenedArticle is a minimal projection of a screened article for the plan-012
+// comparison harness: enough to re-screen and compare, plus the value currently
+// stored. StoredThreat is the raw security_threat column -- pre-rescore it still
+// holds the old-scale (10 = safe) value the rename carried over unconverted.
+type ScreenedArticle struct {
+	ID           int64
+	Title        string
+	Content      string
+	StoredThreat *float64
+}
+
 // and is not broken down by feed. (storage-internal type)
 type ProcessingStats struct {
 	TotalArticles    int // articles in the user's subscribed feeds
@@ -98,14 +109,22 @@ type Store interface {
 
 	// Read state
 	UpdateStarred(userID, articleID int64, starred bool) error
-	UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64, securityReason *string, securityFlagged *bool) error
+	UpdateReadState(userID, articleID int64, read bool, interestScore, securityThreat *float64, securityCategory *string, securityVerified, securityFlagged *bool) error
 	// Security verdict lives on the article (#141): screened once, shared by all
 	// subscribers. ScreenArticleSecurity/SkipArticleSecurity record the verdict;
-	// GetUnscreenedArticles drives the global once-per-cycle security pass.
-	ScreenArticleSecurity(articleID int64, securityScore float64, securityReason string, securityFlagged bool) error
+	// GetUnscreenedArticles drives the global once-per-cycle security pass. The
+	// verdict is payload-free (plan 012): threat (0=clean), category (closed
+	// vocabulary), verified -- never the model's quoted evidence or prose.
+	ScreenArticleSecurity(articleID int64, securityThreat float64, securityCategory string, securityVerified, securityFlagged bool) error
 	SkipArticleSecurity(articleID int64, reason string) error
 	IncrementArticleSecurityAttempts(articleID int64) error
 	GetUnscreenedArticles(limit int) ([]Article, error)
+	// GetScreenedArticleSample returns a random sample of screened articles with
+	// content, for the plan-012 score-comparison harness. Diagnostic; read-only.
+	GetScreenedArticleSample(limit int) ([]ScreenedArticle, error)
+	// GetLowSafetyArticleSample returns the lowest-scoring screened articles first,
+	// for the harness's --unsafe-first mode. Diagnostic; read-only.
+	GetLowSafetyArticleSample(limit int) ([]ScreenedArticle, error)
 	SetInterestScore(userID, articleID int64, interestScore float64) error
 	IncrementAIRetries(userID, articleID int64) error
 	ResetScores(userID int64, securityOnly bool, belowScore float64) (int64, error)

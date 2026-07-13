@@ -245,7 +245,7 @@ prompts:
 
 ### AI is Too Conservative/Liberal
 
-- **Security too strict**: Lower security threshold in config (`thresholds.security_score`)
+- **Security too strict**: Raise the threat ceiling in config (`thresholds.max_security_threat`) -- on the threat scale a higher ceiling is MORE permissive (0 = clean, higher = worse)
 - **Curation too harsh**: Adjust temperature or rewrite prompt to be more lenient
 - **Compare to defaults**: Test with embedded defaults to isolate the issue
 

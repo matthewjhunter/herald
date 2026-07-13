@@ -57,7 +57,7 @@ JOIN user_feeds uf ON a.feed_id = uf.feed_id
 JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
 WHERE uf.user_id = @user_id
   AND rs.read = FALSE
-  AND a.security_score >= @min_security::double precision
+  AND a.security_threat <= @max_security_threat::double precision
   AND rs.interest_score >= @min_interest::double precision
 ORDER BY COALESCE(a.published_date, a.fetched_date) DESC
 LIMIT @lim;

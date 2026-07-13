@@ -115,6 +115,33 @@ func TestLoadConfig_RejectsUnknownKeys(t *testing.T) {
 	})
 }
 
+func TestLoadConfig_RejectsRenamedSecurityKeyWithHint(t *testing.T) {
+	withGlobals(t, func() {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.toml")
+		// A pre-plan-012 key whose meaning inverted. It must fail closed (the
+		// strict decoder rejects it) AND name the replacement, because silently
+		// reinterpreting a 7.0 safety floor as a 7.0 threat ceiling would pass
+		// almost everything -- fail open.
+		body := []byte("[thresholds]\nsecurity_score = 7.0\n")
+		if err := os.WriteFile(path, body, 0o644); err != nil {
+			t.Fatalf("write tmp config: %v", err)
+		}
+		configPath = path
+
+		err := loadConfig()
+		if err == nil {
+			t.Fatal("loadConfig with a renamed security key should error, got nil")
+		}
+		if !strings.Contains(err.Error(), "security_score") {
+			t.Errorf("error should name the offending key, got: %q", err.Error())
+		}
+		if !strings.Contains(err.Error(), "max_security_threat") {
+			t.Errorf("error should name the replacement key, got: %q", err.Error())
+		}
+	})
+}
+
 func TestLoadConfig_ParsesDurationString(t *testing.T) {
 	withGlobals(t, func() {
 		dir := t.TempDir()

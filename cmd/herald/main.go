@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	embedding "github.com/matthewjhunter/go-embedding"
@@ -93,6 +94,7 @@ func main() {
 	rootCmd.AddCommand(readCmd())
 	rootCmd.AddCommand(initConfigCmd())
 	rootCmd.AddCommand(resetScoresCmd())
+	rootCmd.AddCommand(screenCompareCmd())
 	rootCmd.AddCommand(resetCmd())
 	rootCmd.AddCommand(backfillEmbeddingsCmd())
 	rootCmd.AddCommand(embeddingDriftCmd())
@@ -150,12 +152,34 @@ func loadConfig() error {
 		// source excerpt; plain Error() only says "fields ... are missing".
 		var strict *toml.StrictMissingError
 		if errors.As(err, &strict) {
-			return fmt.Errorf("invalid config %s (unknown or misplaced key):\n%s", configPath, strict.String())
+			return fmt.Errorf("invalid config %s (unknown or misplaced key):\n%s%s", configPath, strict.String(), renamedSecurityKeyHint(strict.String()))
 		}
 		return fmt.Errorf("failed to parse config: %w", err)
 	}
 
 	return nil
+}
+
+// renamedSecurityKeyHint appends migration guidance when a config still uses a
+// pre-plan-012 security key. The strict decoder already fails closed on these --
+// they no longer exist in the struct -- but a bare "unknown key security_score"
+// is a trap: the value's MEANING inverted (7.0 was a safety floor; on the threat
+// scale it would pass almost everything), so silently accepting it would fail
+// OPEN. Naming the replacement, and flagging that the number must change too,
+// turns a confusing boot error into an actionable one.
+func renamedSecurityKeyHint(strictMsg string) string {
+	renames := []struct{ old, new, note string }{
+		{"security_score", "max_security_threat", "invert the value: a 7.0 safety floor becomes a 3.0 threat ceiling"},
+		{"security_medium_score", "security_borderline_threat", "invert similarly: 4.0 -> 6.0"},
+		{"min_security_score", "max_security_threat", "invert the value: a 7.0 floor becomes a 3.0 ceiling"},
+	}
+	var b strings.Builder
+	for _, r := range renames {
+		if strings.Contains(strictMsg, r.old) {
+			fmt.Fprintf(&b, "\n  note: '%s' was renamed to '%s' (plan 012, threat scale 0=clean); %s", r.old, r.new, r.note)
+		}
+	}
+	return b.String()
 }
 
 func createUserCmd() *cobra.Command {
@@ -680,7 +704,7 @@ func readCmd() *cobra.Command {
 			}
 			defer store.Close()
 
-			if err := store.UpdateReadState(userID, articleID, true, nil, nil, nil, nil); err != nil {
+			if err := store.UpdateReadState(userID, articleID, true, nil, nil, nil, nil, nil); err != nil {
 				return fmt.Errorf("failed to mark article as read: %w", err)
 			}
 

@@ -59,33 +59,42 @@ func (s *Stage) securityOne(ctx context.Context, article storage.Article) *stora
 		return nil
 	}
 
-	mediumScore := s.Cfg.Thresholds.SecurityMediumScore
-	if mediumScore == 0 {
-		mediumScore = 4.0
+	// Threat scale (plan 012): 0 = clean, higher = worse. A LOW threat passes.
+	//   threat <= passThreat            -> pass, queued for curation
+	//   passThreat < threat <= border   -> borderline, flagged for audit, excluded
+	//   threat > border                 -> hard block, excluded
+	passThreat := s.Cfg.Thresholds.MaxSecurityThreat
+	if passThreat == 0 {
+		passThreat = 3.0
+	}
+	borderThreat := s.Cfg.Thresholds.SecurityBorderlineThreat
+	if borderThreat == 0 {
+		borderThreat = 6.0
 	}
 
-	if !secResult.Safe || secResult.Score < mediumScore {
-		// Hard block: below the lower threshold entirely. Record the verdict; the
-		// score gates it out of every downstream (passing) query.
-		s.Store.ScreenArticleSecurity(article.ID, secResult.Score, secResult.Reasoning, false) //nolint:errcheck
-		s.Formatter.OutputProcessingStatus(article.ID, article.Title, 0, secResult.Score, false)
+	if secResult.Threat > borderThreat {
+		// Hard block: above the borderline ceiling. Record the verdict; the threat
+		// gates it out of every downstream (passing) query.
+		s.Store.ScreenArticleSecurity(article.ID, secResult.Threat, secResult.Category, secResult.Verified, false) //nolint:errcheck
+		s.Formatter.OutputProcessingStatus(article.ID, article.Title, 0, secResult.Threat, false)
 		return nil
 	}
 
-	if secResult.Score < s.Cfg.Thresholds.SecurityScore {
-		// Medium: clears the lower threshold but not the full one. Flag for audit.
-		s.Store.ScreenArticleSecurity(article.ID, secResult.Score, secResult.Reasoning, true) //nolint:errcheck
-		s.Formatter.OutputProcessingStatus(article.ID, article.Title, 0, secResult.Score, false)
+	if secResult.Threat > passThreat {
+		// Borderline: clears the hard block but not the pass ceiling. Flag for audit.
+		s.Store.ScreenArticleSecurity(article.ID, secResult.Threat, secResult.Category, secResult.Verified, true) //nolint:errcheck
+		s.Formatter.OutputProcessingStatus(article.ID, article.Title, 0, secResult.Threat, false)
 		return nil
 	}
 
-	// Passed. Record the verdict on the article; the per-user curation stage
-	// picks it up via the security threshold and assigns each user's interest.
-	if err := s.Store.ScreenArticleSecurity(article.ID, secResult.Score, secResult.Reasoning, false); err != nil {
+	// Passed (low threat). Record the verdict on the article; the per-user
+	// curation stage picks it up via the threat ceiling and assigns each user's
+	// interest.
+	if err := s.Store.ScreenArticleSecurity(article.ID, secResult.Threat, secResult.Category, secResult.Verified, false); err != nil {
 		s.Formatter.Warning("failed to record security verdict for article %d: %v", article.ID, err)
 		return nil
 	}
-	s.Formatter.Debug("article %d passed security (score %.1f), queued for curation: %s", article.ID, secResult.Score, article.Title)
+	s.Formatter.Debug("article %d passed security (threat %.1f), queued for curation: %s", article.ID, secResult.Threat, article.Title)
 	return &article
 }
 

@@ -28,7 +28,7 @@ func TestSecurityVerdictSharedAcrossUsers(t *testing.T) {
 			URL: "https://example.com/shared", PublishedDate: &now})
 
 		// One screen, no user_id.
-		if err := store.ScreenArticleSecurity(id, 8.0, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(id, 2, "none", false, false); err != nil {
 			t.Fatalf("ScreenArticleSecurity: %v", err)
 		}
 
@@ -36,7 +36,7 @@ func TestSecurityVerdictSharedAcrossUsers(t *testing.T) {
 			t.Fatalf("article should be screened once, still unscreened: %v", articleIDs(un))
 		}
 		for _, uid := range []int64{1, 2} {
-			cur, err := store.GetUnscoredCurationArticles(uid, 7.0, 10)
+			cur, err := store.GetUnscoredCurationArticles(uid, 3.0, 10)
 			if err != nil {
 				t.Fatalf("GetUnscoredCurationArticles user %d: %v", uid, err)
 			}
@@ -49,8 +49,8 @@ func TestSecurityVerdictSharedAcrossUsers(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetArticleSecurityScores: %v", err)
 		}
-		if scores[id] != 8.0 {
-			t.Errorf("GetArticleSecurityScores = %v, want 8.0", scores[id])
+		if scores[id] != 2.0 {
+			t.Errorf("GetArticleSecurityScores = %v, want 2.0 (threat, 0=clean)", scores[id])
 		}
 	})
 }
@@ -71,7 +71,7 @@ func TestGetScoreStatsCountsSkippedSeparately(t *testing.T) {
 		skipped, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "skip2", Title: "skip2",
 			URL: "https://example.com/skip2", PublishedDate: &now})
 
-		if err := store.ScreenArticleSecurity(passed, 8.0, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(passed, 2, "none", false, false); err != nil {
 			t.Fatalf("ScreenArticleSecurity: %v", err)
 		}
 		if err := store.SkipArticleSecurity(skipped, "content too short"); err != nil {
@@ -134,8 +134,89 @@ func TestSkipArticleSecurityMarksScreened(t *testing.T) {
 		if _, ok := scores[skipped]; ok {
 			t.Error("skipped article must not have a security score")
 		}
-		if cur, _ := store.GetUnscoredCurationArticles(1, 7.0, 10); len(cur) != 0 {
+		if cur, _ := store.GetUnscoredCurationArticles(1, 3.0, 10); len(cur) != 0 {
 			t.Errorf("skipped article must not await curation, got %v", articleIDs(cur))
 		}
 	})
+}
+
+// TestGetScreenedArticleSample backs the plan-012 comparison harness: it must
+// return only screened articles that still have content, and expose the stored
+// threat for the old_stored comparison.
+func TestGetScreenedArticleSample(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+	feedID, _ := store.AddFeed("https://example.com/feed", "Feed", "")
+
+	now := time.Now()
+	withContent, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "wc", Title: "wc",
+		URL: "https://example.com/wc", Content: "real body text", PublishedDate: &now})
+	if err := store.ScreenArticleSecurity(withContent, 2.0, "none", false, false); err != nil {
+		t.Fatalf("ScreenArticleSecurity: %v", err)
+	}
+	// Screened but empty content -> excluded by the content filter.
+	empty, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "empty", Title: "empty",
+		URL: "https://example.com/empty", Content: "", PublishedDate: &now})
+	_ = store.SkipArticleSecurity(empty, "no content")
+	// Has content but never screened -> excluded by the screened filter.
+	store.AddArticle(&Article{FeedID: feedID, GUID: "unscr", Title: "unscr", //nolint:errcheck
+		URL: "https://example.com/unscr", Content: "body", PublishedDate: &now})
+
+	sample, err := store.GetScreenedArticleSample(100)
+	if err != nil {
+		t.Fatalf("GetScreenedArticleSample: %v", err)
+	}
+	if len(sample) != 1 || sample[0].ID != withContent {
+		ids := make([]int64, len(sample))
+		for i, s := range sample {
+			ids[i] = s.ID
+		}
+		t.Fatalf("expected only the screened-with-content article %d, got %v", withContent, ids)
+	}
+	if sample[0].StoredThreat == nil || *sample[0].StoredThreat != 2.0 {
+		t.Errorf("StoredThreat = %v, want 2.0", sample[0].StoredThreat)
+	}
+	if sample[0].Content != "real body text" {
+		t.Errorf("Content = %q, want the article body", sample[0].Content)
+	}
+}
+
+// TestGetLowSafetyArticleSample backs the harness's --unsafe-first mode: it must
+// return screened-with-content articles worst-verdict-first. The query orders by
+// the raw security_threat column ASC; pre-rescore that column still holds the old
+// 10=safe value, so a LOW stored value means LOW safety = most-flagged, and ASC
+// correctly surfaces the most-flagged articles first.
+func TestGetLowSafetyArticleSample(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+	feedID, _ := store.AddFeed("https://example.com/feed", "Feed", "")
+
+	now := time.Now()
+	mk := func(guid string, storedValue float64) int64 {
+		id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: guid, Title: guid,
+			URL: "https://example.com/" + guid, Content: "body " + guid, PublishedDate: &now})
+		if err := store.ScreenArticleSecurity(id, storedValue, "none", false, false); err != nil {
+			t.Fatalf("ScreenArticleSecurity: %v", err)
+		}
+		return id
+	}
+	// On the old scale: 1 = nearly malicious (most flagged), 9 = clean (least).
+	mostFlagged := mk("most", 1.0)
+	middling := mk("mid", 5.0)
+	leastFlagged := mk("least", 9.0)
+
+	got, err := store.GetLowSafetyArticleSample(3)
+	if err != nil {
+		t.Fatalf("GetLowSafetyArticleSample: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 articles, got %d", len(got))
+	}
+	if got[0].ID != mostFlagged {
+		t.Errorf("first article = %d, want %d (most-flagged / lowest stored value first)", got[0].ID, mostFlagged)
+	}
+	if got[2].ID != leastFlagged {
+		t.Errorf("last article = %d, want %d (least-flagged / highest stored value last)", got[2].ID, leastFlagged)
+	}
+	_ = middling
 }

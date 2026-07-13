@@ -20,7 +20,11 @@ recency_window_hours = 48
 
 [thresholds]
 interest_score = 8.0
-security_score = 7.0
+# Threat scale (0 = clean, higher = worse). Articles pass at or below
+# max_security_threat, are flagged for audit up to security_borderline_threat,
+# and are hard-blocked above it.
+max_security_threat = 3.0
+security_borderline_threat = 6.0
 
 [preferences]
 keywords = []

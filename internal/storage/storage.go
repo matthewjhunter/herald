@@ -131,7 +131,7 @@ type GroupSummary struct {
 // NewsletterConfig holds the filtering criteria for a newsletter definition.
 type NewsletterConfig struct {
 	MinInterestScore  float64  `json:"min_interest_score"`
-	MinSecurityScore  float64  `json:"min_security_score"`
+	MaxSecurityThreat float64  `json:"max_security_threat"`
 	IncludeFeeds      []int64  `json:"include_feeds,omitempty"`
 	ExcludeFeeds      []int64  `json:"exclude_feeds,omitempty"`
 	IncludeCategories []string `json:"include_categories,omitempty"`

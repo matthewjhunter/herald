@@ -24,11 +24,11 @@ func TestArticleSummarySharedAcrossUsers(t *testing.T) {
 		now := time.Now()
 		id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "shared", Title: "shared",
 			URL: "https://example.com/shared", PublishedDate: &now})
-		if err := store.ScreenArticleSecurity(id, 8.0, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(id, 2, "none", false, false); err != nil {
 			t.Fatalf("ScreenArticleSecurity: %v", err)
 		}
 
-		if got, _ := store.GetUnsummarizedScoredArticles(7.0, 10); len(got) != 1 || got[0].ID != id {
+		if got, _ := store.GetUnsummarizedScoredArticles(3.0, 10); len(got) != 1 || got[0].ID != id {
 			t.Fatalf("article should await one global summarization, got %v", articleIDs(got))
 		}
 
@@ -40,7 +40,7 @@ func TestArticleSummarySharedAcrossUsers(t *testing.T) {
 		if err != nil || sum == nil || sum.AISummary != "one shared summary" {
 			t.Fatalf("GetArticleSummary = %+v err=%v, want the shared summary", sum, err)
 		}
-		if got, _ := store.GetUnsummarizedScoredArticles(7.0, 10); len(got) != 0 {
+		if got, _ := store.GetUnsummarizedScoredArticles(3.0, 10); len(got) != 0 {
 			t.Errorf("summarized article must leave the global queue, got %v", articleIDs(got))
 		}
 	})
@@ -112,7 +112,7 @@ func TestSummarizationSkipSharedAcrossUsers(t *testing.T) {
 		now := time.Now()
 		id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "skip", Title: "skip",
 			URL: "https://example.com/skip", PublishedDate: &now})
-		if err := store.ScreenArticleSecurity(id, 8.0, "ok", false); err != nil {
+		if err := store.ScreenArticleSecurity(id, 2, "none", false, false); err != nil {
 			t.Fatalf("ScreenArticleSecurity: %v", err)
 		}
 
@@ -120,7 +120,7 @@ func TestSummarizationSkipSharedAcrossUsers(t *testing.T) {
 			t.Fatalf("MarkSummarizationSkipped: %v", err)
 		}
 
-		if got, _ := store.GetUnsummarizedScoredArticles(7.0, 10); len(got) != 0 {
+		if got, _ := store.GetUnsummarizedScoredArticles(3.0, 10); len(got) != 0 {
 			t.Errorf("skipped article must stay out of the global queue, got %v", articleIDs(got))
 		}
 		// The marker row exists with an empty summary.

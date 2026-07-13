@@ -233,17 +233,17 @@ JOIN user_feeds uf ON a.feed_id = uf.feed_id
 JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
 WHERE uf.user_id = $1
   AND rs.read = FALSE
-  AND a.security_score >= $2::double precision
+  AND a.security_threat <= $2::double precision
   AND rs.interest_score >= $3::double precision
 ORDER BY COALESCE(a.published_date, a.fetched_date) DESC
 LIMIT $4
 `
 
 type GetUnreadArticlesForSummaryParams struct {
-	UserID      int64
-	MinSecurity float64
-	MinInterest float64
-	Lim         int32
+	UserID            int64
+	MaxSecurityThreat float64
+	MinInterest       float64
+	Lim               int32
 }
 
 type GetUnreadArticlesForSummaryRow struct {
@@ -262,7 +262,7 @@ type GetUnreadArticlesForSummaryRow struct {
 func (q *Queries) GetUnreadArticlesForSummary(ctx context.Context, arg GetUnreadArticlesForSummaryParams) ([]GetUnreadArticlesForSummaryRow, error) {
 	rows, err := q.db.Query(ctx, getUnreadArticlesForSummary,
 		arg.UserID,
-		arg.MinSecurity,
+		arg.MaxSecurityThreat,
 		arg.MinInterest,
 		arg.Lim,
 	)

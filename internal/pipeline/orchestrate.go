@@ -48,7 +48,7 @@ func (s *Stage) RunSummaries(ctx context.Context) (int, error) {
 	processed := 0
 	err := s.drain(
 		func(limit int) ([]storage.Article, error) {
-			return s.Store.GetUnsummarizedScoredArticles(s.Cfg.Thresholds.SecurityScore, limit)
+			return s.Store.GetUnsummarizedScoredArticles(s.Cfg.Thresholds.MaxSecurityThreat, limit)
 		},
 		func(arts []storage.Article) { processed += len(s.Summarize(ctx, arts)) },
 	)
@@ -72,7 +72,7 @@ func (s *Stage) Run(ctx context.Context) error {
 
 	if err := s.drain(
 		func(limit int) ([]storage.Article, error) {
-			return s.Store.GetUnscoredCurationArticles(s.UserID, s.Cfg.Thresholds.SecurityScore, limit)
+			return s.Store.GetUnscoredCurationArticles(s.UserID, s.Cfg.Thresholds.MaxSecurityThreat, limit)
 		},
 		func(arts []storage.Article) { s.Curate(ctx, arts) },
 	); err != nil {
@@ -134,7 +134,7 @@ func (s *Stage) clusterRecent(ctx context.Context) error {
 		return nil
 	}
 	since := time.Now().Add(-s.recencyWindow())
-	cohort, err := s.Store.GetUngroupedEmbeddedArticles(s.UserID, s.Embedder.Model(), s.Cfg.Thresholds.SecurityScore, since, clusterCohortLimit)
+	cohort, err := s.Store.GetUngroupedEmbeddedArticles(s.UserID, s.Embedder.Model(), s.Cfg.Thresholds.MaxSecurityThreat, since, clusterCohortLimit)
 	if err != nil {
 		return err
 	}

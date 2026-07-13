@@ -40,8 +40,11 @@ curation_model = "gemma4"
 # Minimum interest score (0-10) to trigger notification
 interest_score = 8
 
-# Minimum security score (0-10) to consider article safe
-security_score = 7
+# Security THREAT scale (0 = clean, 10 = confirmed malicious). An article passes
+# when its threat is at or below max_security_threat, is flagged for audit up to
+# security_borderline_threat, and is hard-blocked above it.
+max_security_threat = 3
+security_borderline_threat = 6
 
 [preferences]
 # Keywords that indicate interesting topics
@@ -69,7 +72,7 @@ group_summary = 0.5
 # base_url = "https://nenya.example.net/v1"
 # model = "claude-sonnet-4-6"
 min_interest_score = 7.0
-min_security_score = 7.0
+max_security_threat = 3.0
 max_input_tokens = 170000
 body_char_cap = 6000
 max_output_tokens = 16000

@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
+	"github.com/matthewjhunter/airlock/detect"
+	"github.com/matthewjhunter/airlock/screen"
 	"github.com/matthewjhunter/herald/internal/storage"
 )
 
@@ -34,11 +37,32 @@ func (p *AIProcessor) BackendAvailable() bool {
 	return !p.client.isOpen()
 }
 
+// SecurityResult is Herald's security verdict on the airlock THREAT scale:
+// 0 = clean, higher = worse (plan 012). This is the opposite polarity from the
+// old safety score (10 = safe); the rename of the storage column and this type's
+// fields is what keeps the flip from happening silently.
+//
+// It is payload-free. The durable fields (Threat, Category, Verified) carry no
+// attacker bytes -- no quoted evidence, no model prose. The two component scores
+// are exposed for the plan-012 comparison harness; only the durable fields reach
+// the database.
 type SecurityResult struct {
-	Safe          bool    `json:"safe"`
-	Score         float64 `json:"score"`
-	Reasoning     string  `json:"reasoning"`
-	SanitizedText string  `json:"sanitized_text"`
+	// Threat is the combined verdict actually stored: max(LLMThreat, RegexThreat).
+	Threat float64
+	// Category is the LLM's classification (screen.Categories vocabulary, or
+	// "none"/"unclassified"). The regex detector does not set it -- its category
+	// vocabulary differs -- so a regex-only hit stores category "none" with a
+	// non-zero Threat, which is honest: a rule fired that the model did not classify.
+	Category string
+	// Verified reports the LLM's cited evidence was located in the screened
+	// content. A verdict citing evidence that is not present is void, not weak,
+	// and SecurityCheck rejects it rather than returning it.
+	Verified bool
+
+	// LLMThreat is screen.Verdict.Threat (0..10). Component, not stored.
+	LLMThreat float64
+	// RegexThreat is airlock/detect's Score()/10 (0..10). Component, not stored.
+	RegexThreat float64
 }
 
 type CurationResult struct {
@@ -93,18 +117,31 @@ func newPromptLoaderSafe(store, config any) *PromptLoader {
 // a per-user prompt. Only curation (relevance) is per-user.
 func (p *AIProcessor) SecurityCheck(ctx context.Context, title, content string) (*SecurityResult, error) {
 	const globalUser = int64(0)
-	promptTemplate, err := p.promptLoader.GetPrompt(globalUser, PromptTypeSecurity)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load security prompt: %w", err)
-	}
 
-	data, err := fencedArticleData(title, content)
-	if err != nil {
-		return nil, fmt.Errorf("failed to prepare security prompt content: %w", err)
-	}
-	prompt, err := ExecutePrompt(promptTemplate, data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to render security prompt: %w", err)
+	// One screened span per article: airlock's prompt screens a single Content
+	// block, so title and content are folded together and one verdict covers both.
+	screened := title + "\n\n" + content
+
+	// Render the prompt. Default = airlock's screen prompt with Herald's feed
+	// carve-outs; if an operator has set a DB/config override, render that instead
+	// (decision 2). airlock's Render neutralizes and fences the content; the
+	// override path relies on fencedArticleData for the same wrap/neutralize.
+	var promptText string
+	if override, ok := p.promptLoader.SecurityOverride(); ok {
+		data, err := fencedArticleData(title, content)
+		if err != nil {
+			return nil, fmt.Errorf("failed to prepare security prompt content: %w", err)
+		}
+		promptText, err = ExecutePrompt(override, data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to render security override prompt: %w", err)
+		}
+	} else {
+		rendered, err := screen.Render(screened, screen.Options{Exclusions: heraldCarveouts})
+		if err != nil {
+			return nil, fmt.Errorf("failed to render security prompt: %w", err)
+		}
+		promptText = rendered.Text
 	}
 
 	temperature := p.promptLoader.GetTemperature(globalUser, PromptTypeSecurity)
@@ -116,33 +153,48 @@ func (p *AIProcessor) SecurityCheck(ctx context.Context, title, content string) 
 	callCtx, cancel := p.withCallTimeout(ctx)
 	defer cancel()
 
-	responseText, err := p.client.generate(callCtx, model, prompt, temperature)
+	responseText, err := p.client.generate(callCtx, model, promptText, temperature)
 	if err != nil {
 		return nil, fmt.Errorf("ollama security check failed: %w", err)
 	}
 
-	extracted := extractJSON(responseText)
-	if strings.TrimSpace(extracted) == "" {
+	if strings.TrimSpace(responseText) == "" {
 		// Model burned output budget on a reasoning trace before emitting JSON.
 		// Return as a retryable error — not a security verdict.
 		return nil, fmt.Errorf("security check returned no JSON (model reasoning exhausted output budget)")
 	}
 
-	var result SecurityResult
-	if err := json.Unmarshal([]byte(extracted), &result); err != nil {
-		// Model returned malformed JSON. Treat as a transient model failure
-		// so the caller can retry, not as a permanent security block.
-		return nil, fmt.Errorf("security check returned malformed JSON: %w", err)
+	// ParseVerdict tolerates the wrappers models add (markdown fences, leading
+	// commentary) and neutralizes/bounds the attacker-derived fields. An override
+	// that does not ask for airlock's JSON shape lands here as a parse error,
+	// which we return as a failed screen (retryable) -- never "no threat".
+	verdict, err := screen.ParseVerdict(responseText)
+	if err != nil {
+		return nil, fmt.Errorf("security check returned unparseable verdict: %w", err)
 	}
 
-	// The prompt asks for a 0–10 scale (10=safe). Some models respond on a
-	// 0–1 scale instead. Detect this by checking for Safe=true with a score
-	// that would be nonsensically low on the 0–10 scale, and normalize.
-	if result.Safe && result.Score <= 1.0 {
-		result.Score *= 10.0
+	// Reduce to the payload-free record. Finding re-verifies the model's cited
+	// evidence against the screened content: a verdict citing a span that is not
+	// there is fabricated, and Finding returns an error rather than a weak pass.
+	// Treat that as a failed (retryable) screen.
+	finding, err := verdict.Finding(screened)
+	if err != nil {
+		return nil, fmt.Errorf("security check produced an unusable verdict: %w", err)
 	}
 
-	return &result, nil
+	// Deterministic prescreen (Phase 3): run the regex corpus over the same
+	// neutralized content the model effectively saw. It corroborates the model
+	// and catches obvious hits cheaply; it never lowers the score.
+	regexThreat := float64(detect.Detect(neutralizeFence(screened)).Score()) / 10.0
+
+	llmThreat := float64(finding.Threat)
+	return &SecurityResult{
+		Threat:      math.Max(llmThreat, regexThreat),
+		Category:    finding.Category,
+		Verified:    finding.Verified,
+		LLMThreat:   llmThreat,
+		RegexThreat: regexThreat,
+	}, nil
 }
 
 // CurateArticle scores an article for interest/relevance.
