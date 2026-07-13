@@ -24,9 +24,9 @@ WHERE user_id = @user_id
   AND interest_score IS NOT NULL;
 
 -- name: GetArticleSecurityScores :many
-SELECT id, security_score FROM articles
+SELECT id, security_threat FROM articles
 WHERE id = ANY(@article_ids::bigint[])
-  AND security_score IS NOT NULL;
+  AND security_threat IS NOT NULL;
 
 -- name: UpdateGroupSummary :exec
 INSERT INTO group_summaries (group_id, headline, summary, article_count, max_interest_score, generated_at)

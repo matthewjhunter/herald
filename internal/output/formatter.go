@@ -246,16 +246,16 @@ func (f *Formatter) OutputHighInterestNotification(articles []storage.Article, s
 }
 
 // OutputProcessingStatus outputs article processing status
-func (f *Formatter) OutputProcessingStatus(articleID int64, title string, interestScore, securityScore float64, safe bool) {
+func (f *Formatter) OutputProcessingStatus(articleID int64, title string, interestScore, securityThreat float64, safe bool) {
 	switch f.format {
 	case FormatJSON:
 		json.NewEncoder(f.out).Encode(map[string]any{
-			"event":          "article_processed",
-			"article_id":     articleID,
-			"title":          title,
-			"interest_score": interestScore,
-			"security_score": securityScore,
-			"safe":           safe,
+			"event":           "article_processed",
+			"article_id":      articleID,
+			"title":           title,
+			"interest_score":  interestScore,
+			"security_threat": securityThreat,
+			"safe":            safe,
 		})
 	case FormatText:
 		status := "processed"
@@ -263,13 +263,13 @@ func (f *Formatter) OutputProcessingStatus(articleID int64, title string, intere
 			status = "unsafe"
 		}
 		fmt.Fprintf(f.out, "event=article_%s\tid=%d\tinterest=%.1f\tsecurity=%.1f\ttitle=%s\n",
-			status, articleID, interestScore, securityScore, title)
+			status, articleID, interestScore, securityThreat, title)
 	case FormatHuman:
 		if !safe {
-			fmt.Fprintf(f.out, "⚠️  Unsafe article (security: %.1f): %s\n", securityScore, title)
+			fmt.Fprintf(f.out, "⚠️  Unsafe article (security: %.1f): %s\n", securityThreat, title)
 		} else {
 			fmt.Fprintf(f.out, "📊 Processed: %s (interest: %.1f, security: %.1f)\n",
-				title, interestScore, securityScore)
+				title, interestScore, securityThreat)
 		}
 	}
 }

@@ -680,7 +680,7 @@ func readCmd() *cobra.Command {
 			}
 			defer store.Close()
 
-			if err := store.UpdateReadState(userID, articleID, true, nil, nil, nil, nil); err != nil {
+			if err := store.UpdateReadState(userID, articleID, true, nil, nil, nil, nil, nil); err != nil {
 				return fmt.Errorf("failed to mark article as read: %w", err)
 			}
 

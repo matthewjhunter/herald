@@ -103,7 +103,7 @@ func (e *Engine) selectDigestArticles(userID int64, newsletterID *int64) ([]stor
 		return articles, err
 	}
 	sum := e.config.Summary
-	return e.store.GetUnreadArticlesForSummary(userID, sum.MinSecurityScore, sum.MinInterestScore, 1000)
+	return e.store.GetUnreadArticlesForSummary(userID, sum.MaxSecurityThreat, sum.MinInterestScore, 1000)
 }
 
 // BeginAISummary guards one in-flight summary per user and creates the

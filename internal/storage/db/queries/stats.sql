@@ -4,9 +4,9 @@ SELECT
   COALESCE(SUM(CASE WHEN a.security_screened_at IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS scored,
   COALESCE(SUM(CASE WHEN a.security_screened_at IS NULL AND a.security_attempts < 3 THEN 1 ELSE 0 END), 0)::int AS pending,
   COALESCE(SUM(CASE WHEN a.security_screened_at IS NULL AND a.security_attempts >= 3 THEN 1 ELSE 0 END), 0)::int AS stuck,
-  COALESCE(SUM(CASE WHEN a.security_score >= 7 THEN 1 ELSE 0 END), 0)::int AS security_passed,
-  COALESCE(SUM(CASE WHEN a.security_score IS NOT NULL AND a.security_score < 7 THEN 1 ELSE 0 END), 0)::int AS security_rejected,
-  COALESCE(SUM(CASE WHEN a.security_screened_at IS NOT NULL AND a.security_score IS NULL THEN 1 ELSE 0 END), 0)::int AS security_skipped,
+  COALESCE(SUM(CASE WHEN a.security_threat <= 3 THEN 1 ELSE 0 END), 0)::int AS security_passed,
+  COALESCE(SUM(CASE WHEN a.security_threat IS NOT NULL AND a.security_threat > 3 THEN 1 ELSE 0 END), 0)::int AS security_rejected,
+  COALESCE(SUM(CASE WHEN a.security_screened_at IS NOT NULL AND a.security_threat IS NULL THEN 1 ELSE 0 END), 0)::int AS security_skipped,
   COALESCE(SUM(CASE WHEN rs.interest_score IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS curated
 FROM articles a
 JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = @user_id

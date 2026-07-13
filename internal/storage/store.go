@@ -98,11 +98,13 @@ type Store interface {
 
 	// Read state
 	UpdateStarred(userID, articleID int64, starred bool) error
-	UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64, securityReason *string, securityFlagged *bool) error
+	UpdateReadState(userID, articleID int64, read bool, interestScore, securityThreat *float64, securityCategory *string, securityVerified, securityFlagged *bool) error
 	// Security verdict lives on the article (#141): screened once, shared by all
 	// subscribers. ScreenArticleSecurity/SkipArticleSecurity record the verdict;
-	// GetUnscreenedArticles drives the global once-per-cycle security pass.
-	ScreenArticleSecurity(articleID int64, securityScore float64, securityReason string, securityFlagged bool) error
+	// GetUnscreenedArticles drives the global once-per-cycle security pass. The
+	// verdict is payload-free (plan 012): threat (0=clean), category (closed
+	// vocabulary), verified -- never the model's quoted evidence or prose.
+	ScreenArticleSecurity(articleID int64, securityThreat float64, securityCategory string, securityVerified, securityFlagged bool) error
 	SkipArticleSecurity(articleID int64, reason string) error
 	IncrementArticleSecurityAttempts(articleID int64) error
 	GetUnscreenedArticles(limit int) ([]Article, error)

@@ -50,9 +50,13 @@ type Config struct {
 	} `toml:"ollama"`
 
 	Thresholds struct {
-		InterestScore       float64 `toml:"interest_score"`
-		SecurityScore       float64 `toml:"security_score"`
-		SecurityMediumScore float64 `toml:"security_medium_score"`
+		InterestScore float64 `toml:"interest_score"`
+		// Threat scale (plan 012): 0 = clean, higher = worse. An article PASSES
+		// when its threat is at or below MaxSecurityThreat, is flagged for audit
+		// (but still excluded) up to SecurityBorderlineThreat, and hard-blocked
+		// above it. This is the inverse of the old 10-is-safe security_score.
+		MaxSecurityThreat        float64 `toml:"max_security_threat"`
+		SecurityBorderlineThreat float64 `toml:"security_borderline_threat"`
 	} `toml:"thresholds"`
 
 	Limits struct {
@@ -122,14 +126,14 @@ type Config struct {
 	// from config — it comes from the HERALD_SUMMARY_API_KEY environment variable
 	// so the secret is never committed.
 	Summary struct {
-		BaseURL          string   `toml:"base_url"`           // OpenAI-compatible /v1 endpoint
-		Model            string   `toml:"model"`              // e.g. claude-sonnet-4-6
-		MinInterestScore float64  `toml:"min_interest_score"` // interest floor for included articles
-		MinSecurityScore float64  `toml:"min_security_score"` // security floor (gate)
-		MaxInputTokens   int      `toml:"max_input_tokens"`   // budget bound; trims oldest overflow
-		BodyCharCap      int      `toml:"body_char_cap"`      // per-article body truncation
-		MaxOutputTokens  int      `toml:"max_output_tokens"`  // completion cap
-		Timeout          Duration `toml:"timeout"`
+		BaseURL           string   `toml:"base_url"`            // OpenAI-compatible /v1 endpoint
+		Model             string   `toml:"model"`               // e.g. claude-sonnet-4-6
+		MinInterestScore  float64  `toml:"min_interest_score"`  // interest floor for included articles
+		MaxSecurityThreat float64  `toml:"max_security_threat"` // threat ceiling: exclude articles above it (0 = clean)
+		MaxInputTokens    int      `toml:"max_input_tokens"`    // budget bound; trims oldest overflow
+		BodyCharCap       int      `toml:"body_char_cap"`       // per-article body truncation
+		MaxOutputTokens   int      `toml:"max_output_tokens"`   // completion cap
+		Timeout           Duration `toml:"timeout"`
 		// DisableThinking turns off a reasoning backend's thinking pass (Qwen3 via
 		// Lemonade) so the completion is real content, not reasoning_content.
 		DisableThinking bool `toml:"disable_thinking"`
@@ -188,8 +192,8 @@ func DefaultConfig() *Config {
 	cfg.Grouping.MinClusterSize = 2
 	cfg.Grouping.RecencyWindowHours = 48
 	cfg.Thresholds.InterestScore = 8.0
-	cfg.Thresholds.SecurityScore = 7.0
-	cfg.Thresholds.SecurityMediumScore = 4.0
+	cfg.Thresholds.MaxSecurityThreat = 3.0
+	cfg.Thresholds.SecurityBorderlineThreat = 6.0
 	cfg.Limits.MaxFeedsPerUser = 1000
 	cfg.Limits.MaxFilterRulesPerUser = 1000
 	cfg.Limits.MaxNewslettersPerUser = 50
@@ -202,7 +206,7 @@ func DefaultConfig() *Config {
 	// AI Summary feature: disabled until Summary.BaseURL is set.
 	cfg.Summary.Model = "claude-sonnet-4-6"
 	cfg.Summary.MinInterestScore = 7.0
-	cfg.Summary.MinSecurityScore = 7.0
+	cfg.Summary.MaxSecurityThreat = 3.0
 	cfg.Summary.MaxInputTokens = 170000
 	cfg.Summary.BodyCharCap = 6000
 	cfg.Summary.MaxOutputTokens = 16000

@@ -13,13 +13,14 @@ ON CONFLICT (user_id, article_id) DO UPDATE SET starred = excluded.starred;
 -- name: UpsertReadStateScores :exec
 -- AI pipeline: record scores, mark ai_scored, leave the user's read flag alone.
 INSERT INTO read_state
-  (user_id, article_id, read, interest_score, security_score, security_reason, security_flagged, ai_scored)
+  (user_id, article_id, read, interest_score, security_threat, security_category, security_verified, security_flagged, ai_scored)
 VALUES
-  (@user_id, @article_id, FALSE, @interest_score, @security_score, @security_reason, COALESCE(@security_flagged, FALSE), TRUE)
+  (@user_id, @article_id, FALSE, @interest_score, @security_threat, @security_category, @security_verified, COALESCE(@security_flagged, FALSE), TRUE)
 ON CONFLICT (user_id, article_id) DO UPDATE SET
   interest_score = excluded.interest_score,
-  security_score = excluded.security_score,
-  security_reason = excluded.security_reason,
+  security_threat = excluded.security_threat,
+  security_category = excluded.security_category,
+  security_verified = excluded.security_verified,
   security_flagged = COALESCE(excluded.security_flagged, read_state.security_flagged),
   ai_scored = TRUE;
 
@@ -35,16 +36,16 @@ SELECT
   f.id AS feed_id,
   COALESCE(uf.user_title, f.title) AS feed_title,
   COUNT(*) FILTER (WHERE a.security_screened_at IS NOT NULL)::int AS total_scored,
-  COUNT(*) FILTER (WHERE a.security_score >= 7.0)::int AS sec_pass,
-  COUNT(*) FILTER (WHERE a.security_score >= 4.0 AND a.security_score < 7.0)::int AS sec_borderline,
-  COUNT(*) FILTER (WHERE a.security_score IS NOT NULL AND a.security_score < 4.0)::int AS sec_fail,
+  COUNT(*) FILTER (WHERE a.security_threat <= 3.0)::int AS sec_pass,
+  COUNT(*) FILTER (WHERE a.security_threat > 3.0 AND a.security_threat <= 6.0)::int AS sec_borderline,
+  COUNT(*) FILTER (WHERE a.security_threat IS NOT NULL AND a.security_threat > 6.0)::int AS sec_fail,
   -- Screened but skipped (no content / too short): security_screened_at set,
-  -- score left NULL. Counted separately so it isn't mistaken for a pass and so
+  -- threat left NULL. Counted separately so it isn't mistaken for a pass and so
   -- total_scored = sec_pass + sec_borderline + sec_fail + sec_skipped (#123).
-  COUNT(*) FILTER (WHERE a.security_screened_at IS NOT NULL AND a.security_score IS NULL)::int AS sec_skipped,
-  COUNT(*) FILTER (WHERE a.security_score >= 7.0 AND rs.interest_score >= 8.0)::int AS int_high,
-  COUNT(*) FILTER (WHERE a.security_score >= 7.0 AND rs.interest_score >= 5.0 AND rs.interest_score < 8.0)::int AS int_medium,
-  COUNT(*) FILTER (WHERE a.security_score >= 7.0 AND rs.interest_score IS NOT NULL AND rs.interest_score < 5.0)::int AS int_low
+  COUNT(*) FILTER (WHERE a.security_screened_at IS NOT NULL AND a.security_threat IS NULL)::int AS sec_skipped,
+  COUNT(*) FILTER (WHERE a.security_threat <= 3.0 AND rs.interest_score >= 8.0)::int AS int_high,
+  COUNT(*) FILTER (WHERE a.security_threat <= 3.0 AND rs.interest_score >= 5.0 AND rs.interest_score < 8.0)::int AS int_medium,
+  COUNT(*) FILTER (WHERE a.security_threat <= 3.0 AND rs.interest_score IS NOT NULL AND rs.interest_score < 5.0)::int AS int_low
 FROM feeds f
 JOIN user_feeds uf ON uf.feed_id = f.id AND uf.user_id = @user_id
 JOIN articles a ON a.feed_id = f.id
@@ -64,13 +65,15 @@ WHERE user_id = @user_id;
 
 -- name: ResetArticleScores :execrows
 UPDATE articles
-SET security_score = NULL, security_reason = NULL, security_flagged = FALSE,
-    security_screened_at = NULL, security_attempts = 0
+SET security_threat = NULL, security_category = NULL, security_verified = NULL,
+    security_flagged = FALSE, security_screened_at = NULL, security_attempts = 0
 WHERE feed_id IN (SELECT feed_id FROM user_feeds WHERE user_id = @user_id);
 
 -- name: ResetArticleScoresBelow :execrows
+-- Re-screen articles that previously FAILED: on the threat scale that is a HIGH
+-- score (above the ceiling), where the old safety scale made it a LOW one.
 UPDATE articles
-SET security_score = NULL, security_reason = NULL, security_flagged = FALSE,
-    security_screened_at = NULL, security_attempts = 0
+SET security_threat = NULL, security_category = NULL, security_verified = NULL,
+    security_flagged = FALSE, security_screened_at = NULL, security_attempts = 0
 WHERE feed_id IN (SELECT feed_id FROM user_feeds WHERE user_id = @user_id)
-  AND security_score IS NOT NULL AND security_score < @below_score::double precision;
+  AND security_threat IS NOT NULL AND security_threat > @above_threat::double precision;

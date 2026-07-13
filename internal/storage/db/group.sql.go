@@ -107,14 +107,14 @@ func (q *Queries) GetArticleInterestScores(ctx context.Context, arg GetArticleIn
 }
 
 const getArticleSecurityScores = `-- name: GetArticleSecurityScores :many
-SELECT id, security_score FROM articles
+SELECT id, security_threat FROM articles
 WHERE id = ANY($1::bigint[])
-  AND security_score IS NOT NULL
+  AND security_threat IS NOT NULL
 `
 
 type GetArticleSecurityScoresRow struct {
-	ID            int64
-	SecurityScore *float64
+	ID             int64
+	SecurityThreat *float64
 }
 
 func (q *Queries) GetArticleSecurityScores(ctx context.Context, articleIds []int64) ([]GetArticleSecurityScoresRow, error) {
@@ -126,7 +126,7 @@ func (q *Queries) GetArticleSecurityScores(ctx context.Context, articleIds []int
 	items := []GetArticleSecurityScoresRow{}
 	for rows.Next() {
 		var i GetArticleSecurityScoresRow
-		if err := rows.Scan(&i.ID, &i.SecurityScore); err != nil {
+		if err := rows.Scan(&i.ID, &i.SecurityThreat); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

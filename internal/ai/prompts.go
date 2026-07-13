@@ -169,6 +169,33 @@ func (pl *PromptLoader) GetPrompt(userID int64, promptType PromptType) (string, 
 	return defaultPrompt, nil
 }
 
+// SecurityOverride returns an operator-supplied security prompt if one is set,
+// and whether one exists. Resolution matches GetPrompt's non-default tiers for
+// the global security verdict (user_id=0): database admin override first, then
+// the config file. It deliberately does NOT fall back to the embedded default --
+// the caller uses the absence of an override to mean "use airlock's screen
+// prompt" (plan 012, decision 2).
+//
+// An override is trusted operator text, but the reply parser is fixed
+// (screen.ParseVerdict), so an override that does not ask for airlock's JSON
+// shape will fail to parse. The caller must treat a parse failure as a failed
+// screen (fail closed), never as "no threat".
+func (pl *PromptLoader) SecurityOverride() (string, bool) {
+	if pl.store != nil {
+		if store, ok := pl.store.(storage.Store); ok {
+			if p, err := store.GetUserPrompt(0, string(PromptTypeSecurity)); err == nil && p != "" {
+				return p, true
+			}
+		}
+	}
+	if pl.config != nil {
+		if config, ok := pl.config.(*storage.Config); ok && config.Prompts.Security != "" {
+			return config.Prompts.Security, true
+		}
+	}
+	return "", false
+}
+
 // GetTemperature gets the temperature for a prompt type with fallback
 // Priority: user database -> config file -> default
 func (pl *PromptLoader) GetTemperature(userID int64, promptType PromptType) float64 {

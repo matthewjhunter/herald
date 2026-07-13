@@ -4,17 +4,17 @@ import "time"
 
 // EngineConfig configures the Herald content engine.
 type EngineConfig struct {
-	DBPath                  string
-	OllamaBaseURL           string
-	SecurityModel           string
-	CurationModel           string
-	InterestThreshold       float64
-	SecurityThreshold       float64
-	SecurityMediumThreshold float64  // lower bound for medium path (default 4.0); articles below SecurityThreshold but above this pass without AI processing, flagged for audit
-	Keywords                []string // user interest keywords for curation scoring
-	UserID                  int64    // primary user ID; DB preferences override CLI flags
-	ReadOnly                bool     // when true, skip AI processor and fetcher creation
-	MaxParallel             int      // max concurrent AI pipeline workers; 0 or 1 = serial
+	DBPath                   string
+	OllamaBaseURL            string
+	SecurityModel            string
+	CurationModel            string
+	InterestThreshold        float64
+	MaxSecurityThreat        float64  // threat scale (0=clean): pass when threat <= this (default 3.0)
+	SecurityBorderlineThreat float64  // upper bound for the flagged-but-excluded band (default 6.0); above it is a hard block
+	Keywords                 []string // user interest keywords for curation scoring
+	UserID                   int64    // primary user ID; DB preferences override CLI flags
+	ReadOnly                 bool     // when true, skip AI processor and fetcher creation
+	MaxParallel              int      // max concurrent AI pipeline workers; 0 or 1 = serial
 
 	// AI Summary cloud backend (independent of ReadOnly — the read-only web
 	// process still offers it). Empty SummaryBaseURL disables the feature. The
@@ -101,7 +101,7 @@ type Newsletter struct {
 // NewsletterConfig holds the filtering criteria for a newsletter.
 type NewsletterConfig struct {
 	MinInterestScore  float64  `json:"min_interest_score"`
-	MinSecurityScore  float64  `json:"min_security_score"`
+	MaxSecurityThreat float64  `json:"max_security_threat"`
 	IncludeFeeds      []int64  `json:"include_feeds,omitempty"`
 	ExcludeFeeds      []int64  `json:"exclude_feeds,omitempty"`
 	IncludeCategories []string `json:"include_categories,omitempty"`

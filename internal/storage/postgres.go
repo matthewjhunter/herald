@@ -386,7 +386,7 @@ func (s *PostgresStore) UpdateStarred(userID, articleID int64, starred bool) err
 	return nil
 }
 
-func (s *PostgresStore) UpdateReadState(userID, articleID int64, read bool, interestScore, securityScore *float64, securityReason *string, securityFlagged *bool) error {
+func (s *PostgresStore) UpdateReadState(userID, articleID int64, read bool, interestScore, securityThreat *float64, securityCategory *string, securityVerified, securityFlagged *bool) error {
 	var err error
 	if interestScore != nil {
 		// security_flagged is typed interface{} (COALESCE(?, FALSE) is untyped):
@@ -396,12 +396,13 @@ func (s *PostgresStore) UpdateReadState(userID, articleID int64, read bool, inte
 			flagVal = *securityFlagged
 		}
 		err = s.q.UpsertReadStateScores(context.Background(), db.UpsertReadStateScoresParams{
-			UserID:          userID,
-			ArticleID:       articleID,
-			InterestScore:   interestScore,
-			SecurityScore:   securityScore,
-			SecurityReason:  securityReason,
-			SecurityFlagged: flagVal,
+			UserID:           userID,
+			ArticleID:        articleID,
+			InterestScore:    interestScore,
+			SecurityThreat:   securityThreat,
+			SecurityCategory: securityCategory,
+			SecurityVerified: securityVerified,
+			SecurityFlagged:  flagVal,
 		})
 	} else {
 		err = s.q.UpsertReadStateRead(context.Background(), db.UpsertReadStateReadParams{
@@ -466,12 +467,12 @@ func (s *PostgresStore) IncrementAIRetries(userID, articleID int64) error {
 // now (#141): this resets the shared article rows for the user's feeds, plus the
 // user's own interest scores. If securityOnly, only articles below belowScore are
 // reset. Returns the number of article rows reset.
-func (s *PostgresStore) ResetScores(userID int64, securityOnly bool, belowScore float64) (int64, error) {
+func (s *PostgresStore) ResetScores(userID int64, securityOnly bool, aboveThreat float64) (int64, error) {
 	ctx := context.Background()
 	if securityOnly {
 		n, err := s.q.ResetArticleScoresBelow(ctx, db.ResetArticleScoresBelowParams{
-			UserID:     userID,
-			BelowScore: belowScore,
+			UserID:      userID,
+			AboveThreat: aboveThreat,
 		})
 		if err != nil {
 			return 0, fmt.Errorf("reset scores: %w", err)
@@ -823,9 +824,9 @@ func (s *PostgresStore) GetUnscoredArticleCount(userID int64) (int, error) {
 	return count, nil
 }
 
-func (s *PostgresStore) GetUnsummarizedScoredArticles(securityThreshold float64, limit int) ([]Article, error) {
+func (s *PostgresStore) GetUnsummarizedScoredArticles(maxSecurityThreat float64, limit int) ([]Article, error) {
 	rows, err := s.q.GetUnsummarizedScoredArticles(context.Background(), db.GetUnsummarizedScoredArticlesParams{
-		SecurityThreshold: securityThreshold,
+		MaxSecurityThreat: maxSecurityThreat,
 		Lim:               int32(limit),
 	})
 	if err != nil {
@@ -853,12 +854,13 @@ func (s *PostgresStore) SetInterestScore(userID, articleID int64, interestScore 
 
 // ScreenArticleSecurity records the security verdict on the article itself
 // (#141). See the SQLite implementation.
-func (s *PostgresStore) ScreenArticleSecurity(articleID int64, securityScore float64, securityReason string, securityFlagged bool) error {
+func (s *PostgresStore) ScreenArticleSecurity(articleID int64, securityThreat float64, securityCategory string, securityVerified, securityFlagged bool) error {
 	if err := s.q.ScreenArticleSecurity(context.Background(), db.ScreenArticleSecurityParams{
-		SecurityScore:   securityScore,
-		SecurityReason:  securityReason,
-		SecurityFlagged: securityFlagged,
-		ID:              articleID,
+		SecurityThreat:   securityThreat,
+		SecurityCategory: securityCategory,
+		SecurityVerified: &securityVerified,
+		SecurityFlagged:  securityFlagged,
+		ID:               articleID,
 	}); err != nil {
 		return fmt.Errorf("screen article security: %w", err)
 	}
@@ -866,12 +868,10 @@ func (s *PostgresStore) ScreenArticleSecurity(articleID int64, securityScore flo
 }
 
 // SkipArticleSecurity marks an article screened without a score (no content /
-// too short). See the SQLite implementation.
+// too short). The reason is herald-authored and logged only -- it is no longer
+// persisted (plan 012 dropped security_reason). See the SQLite implementation.
 func (s *PostgresStore) SkipArticleSecurity(articleID int64, reason string) error {
-	if err := s.q.SkipArticleSecurity(context.Background(), db.SkipArticleSecurityParams{
-		SecurityReason: reason,
-		ID:             articleID,
-	}); err != nil {
+	if err := s.q.SkipArticleSecurity(context.Background(), articleID); err != nil {
 		return fmt.Errorf("skip article security: %w", err)
 	}
 	return nil
@@ -903,10 +903,10 @@ func (s *PostgresStore) GetUnscreenedArticles(limit int) ([]Article, error) {
 // GetUnscoredCurationArticles returns articles that passed the security screen
 // but have not yet been interest-scored (interest_score IS NULL). Backfill input
 // for the staged pipeline's curation stage. See the SQLite implementation.
-func (s *PostgresStore) GetUnscoredCurationArticles(userID int64, securityThreshold float64, limit int) ([]Article, error) {
+func (s *PostgresStore) GetUnscoredCurationArticles(userID int64, maxSecurityThreat float64, limit int) ([]Article, error) {
 	rows, err := s.q.GetUnscoredCurationArticles(context.Background(), db.GetUnscoredCurationArticlesParams{
 		UserID:            userID,
-		SecurityThreshold: securityThreshold,
+		MaxSecurityThreat: maxSecurityThreat,
 		Lim:               int32(limit),
 	})
 	if err != nil {
@@ -922,12 +922,12 @@ func (s *PostgresStore) GetUnscoredCurationArticles(userID int64, securityThresh
 // GetUngroupedEmbeddedArticles returns security-passed, embedded (status OK),
 // still-ungrouped articles published/fetched since the cutoff. The cluster
 // stage's recency window. See the SQLite implementation.
-func (s *PostgresStore) GetUngroupedEmbeddedArticles(userID int64, model string, securityThreshold float64, since time.Time, limit int) ([]Article, error) {
+func (s *PostgresStore) GetUngroupedEmbeddedArticles(userID int64, model string, maxSecurityThreat float64, since time.Time, limit int) ([]Article, error) {
 	rows, err := s.q.GetUngroupedEmbeddedArticles(context.Background(), db.GetUngroupedEmbeddedArticlesParams{
 		Model:             model,
 		Status:            int16(EmbedStatusOK),
 		UserID:            userID,
-		SecurityThreshold: securityThreshold,
+		MaxSecurityThreat: maxSecurityThreat,
 		Since:             since,
 		Lim:               int32(limit),
 	})
@@ -1561,7 +1561,7 @@ func (s *PostgresStore) GetArticleSecurityScores(articleIDs []int64) (map[int64]
 	}
 	scores := make(map[int64]float64, len(rows))
 	for _, r := range rows {
-		scores[r.ID] = derefFloat(r.SecurityScore)
+		scores[r.ID] = derefFloat(r.SecurityThreat)
 	}
 	return scores, nil
 }
@@ -2577,9 +2577,9 @@ func (s *PostgresStore) GetNewsletterArticles(userID int64, config *NewsletterCo
 		query += ` AND rs.interest_score >= ?`
 		args = append(args, config.MinInterestScore)
 	}
-	if config.MinSecurityScore > 0 {
-		query += ` AND a.security_score >= ?`
-		args = append(args, config.MinSecurityScore)
+	if config.MaxSecurityThreat > 0 {
+		query += ` AND a.security_threat <= ?`
+		args = append(args, config.MaxSecurityThreat)
 	}
 	if len(config.IncludeFeeds) > 0 {
 		placeholders := make([]string, len(config.IncludeFeeds))

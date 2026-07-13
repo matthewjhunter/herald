@@ -31,7 +31,7 @@ LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = @user_id
 WHERE uf.user_id = @user_id
   AND (
     (a.security_screened_at IS NULL AND a.security_attempts < 3)
-    OR (a.security_score >= 7.0 AND rs.interest_score IS NULL)
+    OR (a.security_threat <= 3.0 AND rs.interest_score IS NULL)
   );
 
 -- name: GetUnsummarizedScoredArticles :many
@@ -39,7 +39,7 @@ SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
        a.author, a.published_date, a.fetched_date
 FROM articles a
 LEFT JOIN article_summaries asumm ON asumm.article_id = a.id
-WHERE a.security_score >= @security_threshold::double precision AND asumm.article_id IS NULL
+WHERE a.security_threat <= @max_security_threat::double precision AND asumm.article_id IS NULL
 ORDER BY a.published_date DESC
 LIMIT @lim;
 
@@ -58,7 +58,7 @@ FROM articles a
 JOIN user_feeds uf ON a.feed_id = uf.feed_id
 LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
 WHERE uf.user_id = @user_id
-  AND a.security_score >= @security_threshold::double precision
+  AND a.security_threat <= @max_security_threat::double precision
   AND rs.interest_score IS NULL
 ORDER BY a.published_date DESC
 LIMIT @lim;
@@ -71,7 +71,7 @@ JOIN user_feeds uf ON a.feed_id = uf.feed_id
 JOIN article_embeddings ae ON ae.article_id = a.id
     AND ae.embedding_model = @model AND ae.status = @status
 WHERE uf.user_id = @user_id
-  AND a.security_score >= @security_threshold::double precision
+  AND a.security_threat <= @max_security_threat::double precision
   AND COALESCE(a.published_date, a.fetched_date) >= @since::timestamptz
   AND NOT EXISTS (
       SELECT 1 FROM article_group_members agm
@@ -113,15 +113,19 @@ ON CONFLICT (user_id, article_id) DO UPDATE SET
 
 -- name: ScreenArticleSecurity :exec
 UPDATE articles
-SET security_score = @security_score::double precision,
-    security_reason = @security_reason::text,
+SET security_threat = @security_threat::double precision,
+    security_category = @security_category::text,
+    security_verified = @security_verified,
     security_flagged = @security_flagged,
     security_screened_at = NOW()
 WHERE id = @id;
 
 -- name: SkipArticleSecurity :exec
+-- Marks an article screened-but-skipped (screened_at set, threat left NULL). The
+-- skip reason is herald-authored, not attacker text, but the column that held it
+-- is gone (plan 012); screened_at + NULL threat already encodes the state.
 UPDATE articles
-SET security_reason = @security_reason::text, security_screened_at = NOW()
+SET security_screened_at = NOW()
 WHERE id = @id;
 
 -- name: IncrementArticleSecurityAttempts :exec

@@ -43,13 +43,14 @@ type Article struct {
 	LinkedContent      string
 	FullTextFetched    bool
 	ImagesCached       bool
-	SecurityScore      *float64
-	SecurityReason     *string
+	SecurityThreat     *float64
 	SecurityFlagged    bool
 	SecurityScreenedAt *time.Time
 	SecurityAttempts   int
 	SearchVector       *string
 	LinksExtracted     bool
+	SecurityCategory   *string
+	SecurityVerified   *bool
 }
 
 type ArticleAuthor struct {
@@ -212,17 +213,18 @@ type NewsletterIssue struct {
 }
 
 type ReadState struct {
-	UserID          int64
-	ArticleID       int64
-	Read            bool
-	Starred         bool
-	InterestScore   *float64
-	SecurityScore   *float64
-	ReadDate        *time.Time
-	AiScored        bool
-	AiRetries       int
-	SecurityFlagged bool
-	SecurityReason  *string
+	UserID           int64
+	ArticleID        int64
+	Read             bool
+	Starred          bool
+	InterestScore    *float64
+	SecurityThreat   *float64
+	ReadDate         *time.Time
+	AiScored         bool
+	AiRetries        int
+	SecurityFlagged  bool
+	SecurityCategory *string
+	SecurityVerified *bool
 }
 
 type Session struct {

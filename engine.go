@@ -51,11 +51,11 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	if cfg.InterestThreshold == 0 {
 		cfg.InterestThreshold = 8.0
 	}
-	if cfg.SecurityThreshold == 0 {
-		cfg.SecurityThreshold = 7.0
+	if cfg.MaxSecurityThreat == 0 {
+		cfg.MaxSecurityThreat = 3.0
 	}
-	if cfg.SecurityMediumThreshold == 0 {
-		cfg.SecurityMediumThreshold = 4.0
+	if cfg.SecurityBorderlineThreat == 0 {
+		cfg.SecurityBorderlineThreat = 6.0
 	}
 
 	store, err := storage.NewStore(cfg.DBPath)
@@ -70,8 +70,8 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	storeCfg.Ollama.SecurityModel = cfg.SecurityModel
 	storeCfg.Ollama.CurationModel = cfg.CurationModel
 	storeCfg.Thresholds.InterestScore = cfg.InterestThreshold
-	storeCfg.Thresholds.SecurityScore = cfg.SecurityThreshold
-	storeCfg.Thresholds.SecurityMediumScore = cfg.SecurityMediumThreshold
+	storeCfg.Thresholds.MaxSecurityThreat = cfg.MaxSecurityThreat
+	storeCfg.Thresholds.SecurityBorderlineThreat = cfg.SecurityBorderlineThreat
 	storeCfg.Preferences.Keywords = cfg.Keywords
 
 	// Fetcher is always created; it is a stateless HTTP client wrapper with no
@@ -600,19 +600,19 @@ func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, er
 
 // MarkArticleRead marks an article as read.
 func (e *Engine) MarkArticleRead(userID, articleID int64) error {
-	return e.store.UpdateReadState(userID, articleID, true, nil, nil, nil, nil)
+	return e.store.UpdateReadState(userID, articleID, true, nil, nil, nil, nil, nil)
 }
 
 // SetArticleRead sets the read state of an article for a user to an explicit
 // value, allowing an article to be marked unread again (e.g. a manual toggle).
 func (e *Engine) SetArticleRead(userID, articleID int64, read bool) error {
-	return e.store.UpdateReadState(userID, articleID, read, nil, nil, nil, nil)
+	return e.store.UpdateReadState(userID, articleID, read, nil, nil, nil, nil, nil)
 }
 
 // MarkArticlesRead marks a list of articles as read.
 func (e *Engine) MarkArticlesRead(userID int64, articleIDs []int64) error {
 	for _, id := range articleIDs {
-		if err := e.store.UpdateReadState(userID, id, true, nil, nil, nil, nil); err != nil {
+		if err := e.store.UpdateReadState(userID, id, true, nil, nil, nil, nil, nil); err != nil {
 			return err
 		}
 	}
