@@ -17,4 +17,5 @@ package ai
 // prompt.
 var heraldCarveouts = []string{
 	"Links to alternative front-ends or mirrors such as nitter, xcancel, or teddit",
+	"News references to diseases, pathogens, biosecurity incidents, weapons, or other hazardous topics -- naming or reporting a danger is subject matter, not an instruction to an AI",
 }
