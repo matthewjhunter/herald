@@ -1566,6 +1566,21 @@ func (s *PostgresStore) GetArticleSecurityScores(articleIDs []int64) (map[int64]
 	return scores, nil
 }
 
+// GetScreenedArticleSample returns a random sample of already-screened articles
+// that still have content, for the plan-012 comparison harness. Diagnostic only;
+// it persists nothing and is not user-scoped.
+func (s *PostgresStore) GetScreenedArticleSample(limit int) ([]ScreenedArticle, error) {
+	rows, err := s.q.GetScreenedArticleSample(context.Background(), int32(limit))
+	if err != nil {
+		return nil, fmt.Errorf("get screened article sample: %w", err)
+	}
+	out := make([]ScreenedArticle, len(rows))
+	for i, r := range rows {
+		out[i] = ScreenedArticle{ID: r.ID, Title: r.Title, Content: derefString(r.Content), StoredThreat: r.SecurityThreat}
+	}
+	return out, nil
+}
+
 func (s *PostgresStore) UpdateGroupSummary(groupID int64, headline, summary string, articleCount int, maxInterestScore *float64) error {
 	if err := s.q.UpdateGroupSummary(context.Background(), db.UpdateGroupSummaryParams{
 		GroupID:          groupID,

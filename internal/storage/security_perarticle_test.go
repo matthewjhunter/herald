@@ -139,3 +139,44 @@ func TestSkipArticleSecurityMarksScreened(t *testing.T) {
 		}
 	})
 }
+
+// TestGetScreenedArticleSample backs the plan-012 comparison harness: it must
+// return only screened articles that still have content, and expose the stored
+// threat for the old_stored comparison.
+func TestGetScreenedArticleSample(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+	feedID, _ := store.AddFeed("https://example.com/feed", "Feed", "")
+
+	now := time.Now()
+	withContent, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "wc", Title: "wc",
+		URL: "https://example.com/wc", Content: "real body text", PublishedDate: &now})
+	if err := store.ScreenArticleSecurity(withContent, 2.0, "none", false, false); err != nil {
+		t.Fatalf("ScreenArticleSecurity: %v", err)
+	}
+	// Screened but empty content -> excluded by the content filter.
+	empty, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "empty", Title: "empty",
+		URL: "https://example.com/empty", Content: "", PublishedDate: &now})
+	_ = store.SkipArticleSecurity(empty, "no content")
+	// Has content but never screened -> excluded by the screened filter.
+	store.AddArticle(&Article{FeedID: feedID, GUID: "unscr", Title: "unscr", //nolint:errcheck
+		URL: "https://example.com/unscr", Content: "body", PublishedDate: &now})
+
+	sample, err := store.GetScreenedArticleSample(100)
+	if err != nil {
+		t.Fatalf("GetScreenedArticleSample: %v", err)
+	}
+	if len(sample) != 1 || sample[0].ID != withContent {
+		ids := make([]int64, len(sample))
+		for i, s := range sample {
+			ids[i] = s.ID
+		}
+		t.Fatalf("expected only the screened-with-content article %d, got %v", withContent, ids)
+	}
+	if sample[0].StoredThreat == nil || *sample[0].StoredThreat != 2.0 {
+		t.Errorf("StoredThreat = %v, want 2.0", sample[0].StoredThreat)
+	}
+	if sample[0].Content != "real body text" {
+		t.Errorf("Content = %q, want the article body", sample[0].Content)
+	}
+}

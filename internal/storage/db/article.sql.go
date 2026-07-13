@@ -156,6 +156,48 @@ func (q *Queries) GetArticlesNeedingFullText(ctx context.Context, lim int32) ([]
 	return items, nil
 }
 
+const getScreenedArticleSample = `-- name: GetScreenedArticleSample :many
+SELECT id, title, content, security_threat
+FROM articles
+WHERE security_screened_at IS NOT NULL AND content <> ''
+ORDER BY RANDOM()
+LIMIT $1
+`
+
+type GetScreenedArticleSampleRow struct {
+	ID             int64
+	Title          string
+	Content        *string
+	SecurityThreat *float64
+}
+
+// A random sample of already-screened articles that still have content, for the
+// plan-012 score-comparison harness (herald screen-compare). Diagnostic only.
+func (q *Queries) GetScreenedArticleSample(ctx context.Context, lim int32) ([]GetScreenedArticleSampleRow, error) {
+	rows, err := q.db.Query(ctx, getScreenedArticleSample, lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetScreenedArticleSampleRow{}
+	for rows.Next() {
+		var i GetScreenedArticleSampleRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Content,
+			&i.SecurityThreat,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getUngroupedEmbeddedArticles = `-- name: GetUngroupedEmbeddedArticles :many
 SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
        a.author, a.published_date, a.fetched_date

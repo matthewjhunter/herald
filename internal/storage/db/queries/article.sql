@@ -130,3 +130,12 @@ WHERE id = @id;
 
 -- name: IncrementArticleSecurityAttempts :exec
 UPDATE articles SET security_attempts = security_attempts + 1 WHERE id = @id;
+
+-- name: GetScreenedArticleSample :many
+-- A random sample of already-screened articles that still have content, for the
+-- plan-012 score-comparison harness (herald screen-compare). Diagnostic only.
+SELECT id, title, content, security_threat
+FROM articles
+WHERE security_screened_at IS NOT NULL AND content <> ''
+ORDER BY RANDOM()
+LIMIT @lim;
