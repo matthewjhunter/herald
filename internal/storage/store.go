@@ -122,6 +122,9 @@ type Store interface {
 	// GetScreenedArticleSample returns a random sample of screened articles with
 	// content, for the plan-012 score-comparison harness. Diagnostic; read-only.
 	GetScreenedArticleSample(limit int) ([]ScreenedArticle, error)
+	// GetLowSafetyArticleSample returns the lowest-scoring screened articles first,
+	// for the harness's --unsafe-first mode. Diagnostic; read-only.
+	GetLowSafetyArticleSample(limit int) ([]ScreenedArticle, error)
 	SetInterestScore(userID, articleID int64, interestScore float64) error
 	IncrementAIRetries(userID, articleID int64) error
 	ResetScores(userID int64, securityOnly bool, belowScore float64) (int64, error)

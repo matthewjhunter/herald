@@ -1581,6 +1581,20 @@ func (s *PostgresStore) GetScreenedArticleSample(limit int) ([]ScreenedArticle, 
 	return out, nil
 }
 
+// GetLowSafetyArticleSample returns the lowest-scoring screened articles (worst
+// stored verdict first) for the plan-012 harness's --unsafe-first mode. Read-only.
+func (s *PostgresStore) GetLowSafetyArticleSample(limit int) ([]ScreenedArticle, error) {
+	rows, err := s.q.GetLowSafetyArticleSample(context.Background(), int32(limit))
+	if err != nil {
+		return nil, fmt.Errorf("get low-safety article sample: %w", err)
+	}
+	out := make([]ScreenedArticle, len(rows))
+	for i, r := range rows {
+		out[i] = ScreenedArticle{ID: r.ID, Title: r.Title, Content: derefString(r.Content), StoredThreat: r.SecurityThreat}
+	}
+	return out, nil
+}
+
 func (s *PostgresStore) UpdateGroupSummary(groupID int64, headline, summary string, articleCount int, maxInterestScore *float64) error {
 	if err := s.q.UpdateGroupSummary(context.Background(), db.UpdateGroupSummaryParams{
 		GroupID:          groupID,

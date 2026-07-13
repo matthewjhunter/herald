@@ -139,3 +139,13 @@ FROM articles
 WHERE security_screened_at IS NOT NULL AND content <> ''
 ORDER BY RANDOM()
 LIMIT @lim;
+
+-- name: GetLowSafetyArticleSample :many
+-- The lowest-scoring screened articles (worst stored verdict first), for the
+-- plan-012 harness's --unsafe-first mode. Pre-rescore the stored column still
+-- holds the old 10=safe value, so ASC surfaces what prod flagged. Diagnostic only.
+SELECT id, title, content, security_threat
+FROM articles
+WHERE security_screened_at IS NOT NULL AND content <> '' AND security_threat IS NOT NULL
+ORDER BY security_threat ASC, RANDOM()
+LIMIT @lim;

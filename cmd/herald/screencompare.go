@@ -32,6 +32,7 @@ import (
 // so keep the sample modest.
 func screenCompareCmd() *cobra.Command {
 	var sample int
+	var unsafeFirst bool
 	cmd := &cobra.Command{
 		Use:   "screen-compare",
 		Short: "Compare regex/old-prompt/new-prompt/combined security scores over a sample (plan 012; diagnostic, persists nothing)",
@@ -49,7 +50,13 @@ func screenCompareCmd() *cobra.Command {
 				return fmt.Errorf("create AI processor (is Ollama running?): %w", err)
 			}
 
-			arts, err := store.GetScreenedArticleSample(sample)
+			sampler := store.GetScreenedArticleSample
+			if unsafeFirst {
+				// Bias toward the articles prod flagged: worst stored verdict
+				// first. This is where old and new prompts most likely disagree.
+				sampler = store.GetLowSafetyArticleSample
+			}
+			arts, err := sampler(sample)
 			if err != nil {
 				return fmt.Errorf("sample screened articles: %w", err)
 			}
@@ -132,6 +139,7 @@ func screenCompareCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&sample, "sample", 50, "number of screened articles to sample")
+	cmd.Flags().BoolVar(&unsafeFirst, "unsafe-first", false, "bias the sample toward the lowest-scoring (prod-flagged) articles instead of random")
 	return cmd
 }
 

@@ -180,3 +180,43 @@ func TestGetScreenedArticleSample(t *testing.T) {
 		t.Errorf("Content = %q, want the article body", sample[0].Content)
 	}
 }
+
+// TestGetLowSafetyArticleSample backs the harness's --unsafe-first mode: it must
+// return screened-with-content articles worst-verdict-first. The query orders by
+// the raw security_threat column ASC; pre-rescore that column still holds the old
+// 10=safe value, so a LOW stored value means LOW safety = most-flagged, and ASC
+// correctly surfaces the most-flagged articles first.
+func TestGetLowSafetyArticleSample(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+	feedID, _ := store.AddFeed("https://example.com/feed", "Feed", "")
+
+	now := time.Now()
+	mk := func(guid string, storedValue float64) int64 {
+		id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: guid, Title: guid,
+			URL: "https://example.com/" + guid, Content: "body " + guid, PublishedDate: &now})
+		if err := store.ScreenArticleSecurity(id, storedValue, "none", false, false); err != nil {
+			t.Fatalf("ScreenArticleSecurity: %v", err)
+		}
+		return id
+	}
+	// On the old scale: 1 = nearly malicious (most flagged), 9 = clean (least).
+	mostFlagged := mk("most", 1.0)
+	middling := mk("mid", 5.0)
+	leastFlagged := mk("least", 9.0)
+
+	got, err := store.GetLowSafetyArticleSample(3)
+	if err != nil {
+		t.Fatalf("GetLowSafetyArticleSample: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 articles, got %d", len(got))
+	}
+	if got[0].ID != mostFlagged {
+		t.Errorf("first article = %d, want %d (most-flagged / lowest stored value first)", got[0].ID, mostFlagged)
+	}
+	if got[2].ID != leastFlagged {
+		t.Errorf("last article = %d, want %d (least-flagged / highest stored value last)", got[2].ID, leastFlagged)
+	}
+	_ = middling
+}

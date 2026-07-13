@@ -156,6 +156,49 @@ func (q *Queries) GetArticlesNeedingFullText(ctx context.Context, lim int32) ([]
 	return items, nil
 }
 
+const getLowSafetyArticleSample = `-- name: GetLowSafetyArticleSample :many
+SELECT id, title, content, security_threat
+FROM articles
+WHERE security_screened_at IS NOT NULL AND content <> '' AND security_threat IS NOT NULL
+ORDER BY security_threat ASC, RANDOM()
+LIMIT $1
+`
+
+type GetLowSafetyArticleSampleRow struct {
+	ID             int64
+	Title          string
+	Content        *string
+	SecurityThreat *float64
+}
+
+// The lowest-scoring screened articles (worst stored verdict first), for the
+// plan-012 harness's --unsafe-first mode. Pre-rescore the stored column still
+// holds the old 10=safe value, so ASC surfaces what prod flagged. Diagnostic only.
+func (q *Queries) GetLowSafetyArticleSample(ctx context.Context, lim int32) ([]GetLowSafetyArticleSampleRow, error) {
+	rows, err := q.db.Query(ctx, getLowSafetyArticleSample, lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetLowSafetyArticleSampleRow{}
+	for rows.Next() {
+		var i GetLowSafetyArticleSampleRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Content,
+			&i.SecurityThreat,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getScreenedArticleSample = `-- name: GetScreenedArticleSample :many
 SELECT id, title, content, security_threat
 FROM articles
