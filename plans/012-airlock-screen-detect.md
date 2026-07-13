@@ -115,22 +115,31 @@ conditions) are carried into the phases below. 011 is marked SUPERSEDED.
    `screen.ParseVerdict` -> `Verdict.Finding`. `airlock/screen` never calls a
    model; it only renders and parses.
 
-2. **The default security prompt becomes airlock's, tuned via `Exclusions`.**
-   Herald's `security.txt` is replaced by `screen.Render(content, Options{
-   Exclusions: heraldCarveouts})`. The Herald-specific false positives (nitter
-   mirrors, affiliate links, quoted exploit code, "scam as topic", Gemma's
-   politics/controversy flagging) move from prose baked into the prompt to the
-   `Exclusions` extension point -- short phrases, per airlock's guidance.
-   - **Consequence to accept or reject:** this retires the admin-overridable
-     DB security prompt (`PromptType Security`, user_id=0 override at
-     `ollama.go:96`). Security is already global-only and excluded from
-     per-user settable prompts (`engine.go:1361-1368`), so the override is an
-     operator-only knob that `Exclusions` largely replaces. **Recommend
-     retiring it** and letting `Exclusions` (config-supplied) be the tuning
-     surface. If the operator wants to keep the DB override, the fallback is to
-     store `screen.PromptTemplate()` as the default prompt text and keep the
-     loader -- but then Herald owns a copy of airlock's prompt again, which is
-     the drift this plan exists to end. Decide before Phase 1.
+2. **airlock's prompt is the default; the DB override stays as an escape hatch.**
+   The *default* security prompt becomes `screen.PromptTemplate()` rendered via
+   `screen.Render(content, Options{Exclusions: heraldCarveouts})`. The
+   Herald-specific false positives (nitter mirrors, affiliate links, quoted
+   exploit code, "scam as topic", Gemma's politics/controversy flagging) move
+   from prose baked into a prompt to the `Exclusions` extension point -- short
+   phrases, per airlock's guidance.
+
+   The admin-overridable DB security prompt (`PromptType Security`, user_id=0
+   override at `ollama.go:96`) is **kept**. Operator rationale: a screening
+   prompt is exactly the kind of thing that needs updating without a code deploy
+   -- a model starts over-flagging, a new evasion appears, and the fix should be
+   editable in the running system, not gated behind a release. So the loader
+   stays and resolution is: **DB override (user_id=0) if present, else airlock's
+   embedded default.** `screen.PromptTemplate()` gives the operator the current
+   airlock text to start an override from.
+   - The drift risk this reintroduces (an override copy diverging from airlock's
+     default) is accepted deliberately: an override is a *local* deviation the
+     operator chose, not a silent fork of the default. It is not free, though:
+     the reply parser is fixed (`screen.ParseVerdict`), so an override that
+     changes the requested JSON shape breaks parsing -- Phase 1 step 2 requires
+     the loader to validate that or fail closed to the default.
+   - **When an override is active, the A/B in Phase 4 compares against that
+     override, not the embedded default** -- the operator measures what actually
+     runs.
 
 3. **Title + Content shape.** airlock's prompt screens a single `Content` span;
    Herald screens `Title` and `Content` as two fenced blocks. Fold them into one
@@ -153,12 +162,21 @@ conditions) are carried into the phases below. 011 is marked SUPERSEDED.
 1. Add `heraldCarveouts` (a `[]string` of the domain exclusions, ported from
    the "Do NOT flag" list in `security.txt` as short phrases). Keep them in one
    named place -- config or a single `var` -- so the tuning surface is obvious.
-2. Rewrite `SecurityCheck` (`ollama.go`): build the prompt with
-   `screen.Render(title+"\n\n"+content, screen.Options{Exclusions: heraldCarveouts})`,
-   send `prompt.Text` via `p.client.generate`, and parse the reply with
-   `screen.ParseVerdict`. Drop `extractJSON`, the bespoke `SecurityResult`
-   unmarshal, and the 0-1 scale-guess heuristic -- `ParseVerdict` already
-   tolerates markdown-fenced and prefixed replies and bounds the fields.
+2. Rewrite `SecurityCheck` (`ollama.go`) with two render paths, one parser:
+   - **Default (no DB override):** build the prompt with
+     `screen.Render(title+"\n\n"+content, screen.Options{Exclusions: heraldCarveouts})`
+     and send `prompt.Text`.
+   - **DB override present (user_id=0):** render the operator's template through
+     Herald's existing loader path (`fencedArticleData` already neutralizes and
+     fences via `airlock/wrap`), exactly as today -- the override is trusted
+     operator text, and the *content* it wraps is still neutralized.
+   - **Both paths parse the reply with `screen.ParseVerdict`.** Drop
+     `extractJSON`, the bespoke `SecurityResult` unmarshal, and the 0-1
+     scale-guess heuristic -- `ParseVerdict` tolerates markdown-fenced and
+     prefixed replies and bounds the fields. Because the parser is fixed, an
+     override that changes the requested JSON shape breaks it: validate the
+     override renders parseable output (a startup or save-time check), or fail
+     closed to the default with a loud warning. Never fail *open* to "no threat".
 3. Reduce to a durable record at the stage boundary: call
    `verdict.Finding(screenedContent)`. A verdict whose evidence does not appear
    in the content is **void, not weak** -- `Finding` returns an error; treat it
@@ -222,6 +240,55 @@ silently reading a flipped number.
    catches the injections the regex corpus misses. Note the tradeoff; do not
    make it silently.
 
+## Phase 4 -- an ephemeral score-comparison harness (rescore sanity check)
+
+Before nulling production and rescoring under new code, the operator wants to
+see *how much the number moves and why* -- not a leap of faith. Build a one-off
+diagnostic that runs the detectors side by side over a sample and reports the
+deltas. **It persists nothing**: no columns, no verdict rows, just a report
+(stdout table / CSV) the operator reads and discards.
+
+What it computes, per sampled article, all on one **threat** scale (0 = clean):
+
+| Signal | Source |
+|---|---|
+| `regex` | `detect.Detect(content).Score() / 10.0` |
+| `old_prompt` | the **legacy** `security.txt` verdict, converted `10 - score` |
+| `new_prompt` | `screen.Verdict.Threat` under the airlock prompt (or active override) |
+| `combined` | `max(new_prompt, regex)` -- the value 012 will actually store |
+| `old_stored` | the article's current `security_score`, converted `10 - score` |
+
+The four comparisons the operator asked for, as report columns:
+
+1. **regex alone** vs the LLM signals -- where does a deterministic rule fire
+   that the model missed, and vice versa? (High `regex`, low `new_prompt` =
+   a rule the model shrugged at; the inverse = an injection the corpus doesn't
+   cover, which is the argument for keeping the model call.)
+2. **old_prompt vs new_prompt** -- the controlled A/B: same article, same model,
+   same moment, only the prompt differs. This isolates the carve-out port
+   (Phase 1 step 1) from every other change. A large swing here is the risk the
+   STOP conditions guard.
+3. **combined vs old_stored** -- what the rescore will actually do to each
+   article's classification (pass / borderline / fail), which is the number that
+   changes downstream behavior.
+
+Design notes:
+
+- **Converting `10 - score` for display is fine here** and does not violate the
+  "do not convert stored values" rule below -- that rule forbids a *migration*
+  that rewrites the DB. This is a read-only report that never writes back.
+- **Preserve the legacy prompt as a fixture** (e.g.
+  `internal/ai/testdata/security_legacy.txt`) so `old_prompt` can be re-run
+  live after the default has been swapped. Delete it once the rescore is
+  signed off -- it is scaffolding, not a maintained second prompt.
+- Sample deliberately: include known-malicious and known-benign fixtures plus a
+  random slice of real screened articles, so the table shows both tails, not
+  just the calm middle. Print per-article rows and a summary (classification
+  shift counts, mean |combined - old_stored|, count where regex-only would have
+  flagged).
+- This harness is also what produces the empirical number behind the
+  "~10-point swing" STOP condition -- run it, read it, *then* decide to rescore.
+
 ## Migration: rescore, do not convert
 
 Same strategy 011 prescribed, and it now covers both the scale flip *and* the
@@ -239,6 +306,10 @@ the operator described.
 
 ## Verification
 
+- **Run the Phase 4 harness first, and read it.** It is the gate on the whole
+  rescore: it quantifies old_prompt-vs-new_prompt and combined-vs-old_stored
+  before a single production row is nulled. Do not proceed to the migration on
+  faith -- proceed on the harness output.
 - **Golden-set classification is stable.** Take a corpus of already-screened
   articles, re-screen under the new code, and confirm the pass/borderline/fail
   *classification* lands materially where it did. This is a representation +
