@@ -38,7 +38,7 @@ Fetches RSS 2.0 and Atom 1.0 feeds over HTTP. Sends `If-None-Match` and `If-Modi
 
 Drives all Ollama inference. Three distinct operations:
 
-- **Security check** — sends article title and content to the security model (Gemma), parses a JSON response with `safe`, `score`, and `reasoning` fields. On parse failure, defaults to unsafe.
+- **Security check** — renders airlock's prompt-injection screening prompt (via `airlock/screen`, with Herald's feed-specific carve-outs), sends the fenced article to the security model (Gemma), and parses the reply with `screen.ParseVerdict` into a threat score (0 = clean, higher = worse), a category, and a cited evidence span. The model's citation is re-verified against the article -- a quote that is not present is a fabricated verdict and is rejected. A deterministic regex prescreen (`airlock/detect`) runs on the same content; the stored threat is the max of the two. On parse failure, the screen fails closed (retryable), never "no threat".
 - **Curation** — sends title, content, and user keywords to the curation model (Llama), parses `interest_score` and `reasoning`. On parse failure, returns a neutral score of 5.0.
 - **Summarization** — generates an AI summary for individual articles, and coherent narrative summaries for article groups. Summaries are per-user and cached in the database.
 
@@ -66,7 +66,7 @@ New Article
     ▼
 Security Check (Gemma)
     │
-    ├─ unsafe (score < threshold) ──► stored with safe=false, skipped
+    ├─ unsafe (threat > threshold) ──► stored, excluded from downstream
     │
     ▼
 Interest Scoring (Llama)
@@ -93,7 +93,7 @@ The security model receives article title and truncated content (2000 chars). Th
 
 The security model's purpose is purely protective — it does not score relevance or filter by topic. An article about a controversial subject is not inherently unsafe. Only content that appears to be attempting to manipulate downstream AI processing is flagged.
 
-The security prompt is not user-customizable. This is intentional: allowing a user to modify the security prompt would create an obvious prompt injection vector.
+The security prompt is not *user*-customizable: allowing a regular user to modify it would create an obvious prompt injection vector. An operator can still override the global default (via the `user_id=0` admin prompt) to hot-patch screening without a redeploy -- the default is airlock's screening prompt, and an override that stops producing airlock's JSON verdict fails the parse (and the screen) closed rather than opening to "no threat".
 
 ### Interest Curation
 
@@ -141,7 +141,7 @@ PostgreSQL schema managed by [goose](https://github.com/pressly/goose) migration
 | `articles` | Article content: title, URL, content, summary, author, published date |
 | `article_authors` | Normalized author records per article (supports multi-author) |
 | `article_categories` | Normalized category tags per article |
-| `read_state` | Per-user read flag, starred flag, interest score, security score |
+| `read_state` | Per-user read flag, starred flag, interest score, security threat |
 | `user_preferences` | Key-value preference store per user (keywords, thresholds, notification settings) |
 | `user_feeds` | Many-to-many subscription mapping between users and feeds |
 | `article_summaries` | Cached AI summaries, one per article, shared by all users |

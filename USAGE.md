@@ -244,8 +244,8 @@ Adjust notification sensitivity:
 
 ```yaml
 thresholds:
-  interest_score: 9.0    # Only notify for exceptional articles
-  security_score: 6.0    # More permissive security
+  interest_score: 9.0         # Only notify for exceptional articles
+  max_security_threat: 5.0    # More permissive: a higher threat ceiling admits more
 ```
 
 ### Preferred Sources
@@ -393,11 +393,11 @@ curl https://example.com/feed.xml
 
 ### All Articles Rejected
 
-Security threshold may be too high:
+Security threshold may be too strict:
 
 ```yaml
 thresholds:
-  security_score: 5.0  # Lower threshold
+  max_security_threat: 5.0  # Raise the threat ceiling to admit more articles
 ```
 
 ### No Notifications

@@ -131,8 +131,9 @@ security_model = "gemma3:4b"
 curation_model = "llama3.1:8b"
 
 [thresholds]
-interest_score = 8.0    # articles above this score trigger notifications
-security_score = 7.0    # articles below this score are flagged unsafe
+interest_score = 8.0           # articles above this score trigger notifications
+max_security_threat = 3.0      # threat scale (0=clean); articles above this are excluded
+security_borderline_threat = 6.0  # above max_security_threat up to this: flagged for audit
 
 [preferences]
 keywords = ["security"]

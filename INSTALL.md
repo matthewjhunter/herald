@@ -68,7 +68,7 @@ ollama:
 
 thresholds:
   interest_score: 8.0         # Notify for articles scoring >= 8
-  security_score: 7.0         # Reject articles scoring < 7
+  max_security_threat: 3.0     # Reject articles with threat > 3 (0=clean)
 
 preferences:
   keywords:                   # Topics of interest
@@ -234,7 +234,7 @@ Edit `config/config.toml`:
 
 ```yaml
 thresholds:
-  security_score: 6.0    # More permissive (faster)
+  max_security_threat: 5.0    # More permissive: higher threat ceiling
   interest_score: 9.0    # Only notify for very high scores
 ```
 

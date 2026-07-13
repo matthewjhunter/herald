@@ -170,7 +170,7 @@ ollama:
   curation_model: llama3.1:8b
 thresholds:
   interest_score: 8.0
-  security_score: 7.0
+  max_security_threat: 3.0
 preferences:
   keywords: []
   preferred_sources: []

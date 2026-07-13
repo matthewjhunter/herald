@@ -113,7 +113,7 @@ Location: `config/config.toml`
 
 Key settings:
 - `thresholds.interest_score`: Notification threshold (default: 8.0)
-- `thresholds.security_score`: Security threshold (default: 7.0)
+- `thresholds.max_security_threat`: Security threat ceiling, 0=clean (default: 3.0); articles above it are excluded
 - `preferences.keywords`: Topics of interest
 - `ollama.security_model`: Security screening model (gemma3:4b)
 - `ollama.curation_model`: Interest scoring model (llama3.1:8b)
