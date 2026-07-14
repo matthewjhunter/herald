@@ -252,11 +252,10 @@ func TestUpdateReadState(t *testing.T) {
 
 	// AI scores the article, then user marks it as read (separate operations).
 	interestScore := 8.5
-	securityScore := 9.0
-	if err := store.UpdateReadState(1, articleID, false, &interestScore, &securityScore, nil, nil, nil); err != nil {
+	if err := store.UpdateReadState(1, articleID, false, &interestScore); err != nil {
 		t.Fatalf("UpdateReadState (AI scores) failed: %v", err)
 	}
-	if err := store.UpdateReadState(1, articleID, true, nil, nil, nil, nil, nil); err != nil {
+	if err := store.UpdateReadState(1, articleID, true, nil); err != nil {
 		t.Fatalf("UpdateReadState (user read) failed: %v", err)
 	}
 
@@ -292,8 +291,7 @@ func TestGetArticlesByInterestScore(t *testing.T) {
 		articleID, _ := store.AddArticle(article)
 
 		score := scores[i]
-		secScore := 9.0
-		store.UpdateReadState(1, articleID, false, &score, &secScore, nil, nil, nil)
+		store.UpdateReadState(1, articleID, false, &score)
 	}
 
 	// Get articles with score >= 8.0
@@ -333,9 +331,8 @@ func TestGetArticlesByInterestScore_TimeDecay(t *testing.T) {
 
 	// Both get raw score 9.0
 	rawScore := 9.0
-	secScore := 9.0
-	store.UpdateReadState(1, art1, false, &rawScore, &secScore, nil, nil, nil)
-	store.UpdateReadState(1, art2, false, &rawScore, &secScore, nil, nil, nil)
+	store.UpdateReadState(1, art1, false, &rawScore)
+	store.UpdateReadState(1, art2, false, &rawScore)
 
 	articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil)
 	if err != nil {
@@ -600,7 +597,7 @@ func TestGetArticlesIncludeReadAndFlags(t *testing.T) {
 	})
 
 	// Mark one read and star it; leave the other untouched.
-	if err := store.UpdateReadState(1, readID, true, nil, nil, nil, nil, nil); err != nil {
+	if err := store.UpdateReadState(1, readID, true, nil); err != nil {
 		t.Fatalf("UpdateReadState: %v", err)
 	}
 	if err := store.UpdateStarred(1, readID, true); err != nil {
@@ -784,12 +781,11 @@ func TestReadStatePerUserIsolation(t *testing.T) {
 
 	// User 1 scores the article
 	score1 := 9.0
-	sec := 8.0
-	store.UpdateReadState(1, articleID, false, &score1, &sec, nil, nil, nil)
+	store.UpdateReadState(1, articleID, false, &score1)
 
 	// User 2 scores the same article differently
 	score2 := 3.0
-	store.UpdateReadState(2, articleID, false, &score2, &sec, nil, nil, nil)
+	store.UpdateReadState(2, articleID, false, &score2)
 
 	// User 1 should see their score
 	articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil)
@@ -813,7 +809,7 @@ func TestReadStatePerUserIsolation(t *testing.T) {
 	}
 
 	// User 1 marks read (AI already scored it above), user 2 still unread
-	store.UpdateReadState(1, articleID, true, nil, nil, nil, nil, nil)
+	store.UpdateReadState(1, articleID, true, nil)
 	articles, _, _ = store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil)
 	if len(articles) != 0 {
 		t.Errorf("user 1 after mark-read: expected 0 articles, got %d", len(articles))
@@ -1273,11 +1269,10 @@ func TestPostgresBackend(t *testing.T) {
 		}
 
 		score := 9.0
-		sec := 8.0
-		if err := store.UpdateReadState(1, aid, false, &score, &sec, nil, nil, nil); err != nil {
+		if err := store.UpdateReadState(1, aid, false, &score); err != nil {
 			t.Fatalf("UpdateReadState (AI): %v", err)
 		}
-		if err := store.UpdateReadState(1, aid, true, nil, nil, nil, nil, nil); err != nil {
+		if err := store.UpdateReadState(1, aid, true, nil); err != nil {
 			t.Fatalf("UpdateReadState (read): %v", err)
 		}
 
@@ -1300,9 +1295,9 @@ func TestPostgresBackend(t *testing.T) {
 		art2, _ := store.AddArticle(&Article{FeedID: fid, GUID: "recent", Title: "Recent",
 			URL: "https://pg.example.com/recent", PublishedDate: &recent})
 
-		raw, sec := 9.0, 9.0
-		store.UpdateReadState(1, art1, false, &raw, &sec, nil, nil, nil)
-		store.UpdateReadState(1, art2, false, &raw, &sec, nil, nil, nil)
+		raw := 9.0
+		store.UpdateReadState(1, art1, false, &raw)
+		store.UpdateReadState(1, art2, false, &raw)
 
 		articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil)
 		if err != nil {
@@ -2932,7 +2927,7 @@ func TestDeleteUser(t *testing.T) {
 			t.Fatalf("subscribe del: %v", err)
 		}
 		score := 0.8
-		if err := store.UpdateReadState(delID, articleID, false, &score, &score, nil, nil, nil); err != nil {
+		if err := store.UpdateReadState(delID, articleID, false, &score); err != nil {
 			t.Fatalf("UpdateReadState del: %v", err)
 		}
 
@@ -3010,7 +3005,7 @@ func TestDeleteUser(t *testing.T) {
 		if err := store.SubscribeUserToFeed(keepID, feedID); err != nil {
 			t.Fatalf("subscribe keep: %v", err)
 		}
-		if err := store.UpdateReadState(keepID, articleID, false, &score, &score, nil, nil, nil); err != nil {
+		if err := store.UpdateReadState(keepID, articleID, false, &score); err != nil {
 			t.Fatalf("UpdateReadState keep: %v", err)
 		}
 		if err := store.SetUserPreference(keepID, "theme", "light"); err != nil {

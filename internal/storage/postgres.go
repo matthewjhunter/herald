@@ -386,23 +386,13 @@ func (s *PostgresStore) UpdateStarred(userID, articleID int64, starred bool) err
 	return nil
 }
 
-func (s *PostgresStore) UpdateReadState(userID, articleID int64, read bool, interestScore, securityThreat *float64, securityCategory *string, securityVerified, securityFlagged *bool) error {
+func (s *PostgresStore) UpdateReadState(userID, articleID int64, read bool, interestScore *float64) error {
 	var err error
 	if interestScore != nil {
-		// security_flagged is typed interface{} (COALESCE(?, FALSE) is untyped):
-		// pass the bool value or nil, matching the hand-written behavior.
-		var flagVal any
-		if securityFlagged != nil {
-			flagVal = *securityFlagged
-		}
 		err = s.q.UpsertReadStateScores(context.Background(), db.UpsertReadStateScoresParams{
-			UserID:           userID,
-			ArticleID:        articleID,
-			InterestScore:    interestScore,
-			SecurityThreat:   securityThreat,
-			SecurityCategory: securityCategory,
-			SecurityVerified: securityVerified,
-			SecurityFlagged:  flagVal,
+			UserID:        userID,
+			ArticleID:     articleID,
+			InterestScore: interestScore,
 		})
 	} else {
 		err = s.q.UpsertReadStateRead(context.Background(), db.UpsertReadStateReadParams{

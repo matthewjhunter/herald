@@ -179,39 +179,25 @@ func (q *Queries) UpsertReadStateRead(ctx context.Context, arg UpsertReadStateRe
 
 const upsertReadStateScores = `-- name: UpsertReadStateScores :exec
 INSERT INTO read_state
-  (user_id, article_id, read, interest_score, security_threat, security_category, security_verified, security_flagged, ai_scored)
+  (user_id, article_id, read, interest_score, ai_scored)
 VALUES
-  ($1, $2, FALSE, $3, $4, $5, $6, COALESCE($7, FALSE), TRUE)
+  ($1, $2, FALSE, $3, TRUE)
 ON CONFLICT (user_id, article_id) DO UPDATE SET
   interest_score = excluded.interest_score,
-  security_threat = excluded.security_threat,
-  security_category = excluded.security_category,
-  security_verified = excluded.security_verified,
-  security_flagged = COALESCE(excluded.security_flagged, read_state.security_flagged),
   ai_scored = TRUE
 `
 
 type UpsertReadStateScoresParams struct {
-	UserID           int64
-	ArticleID        int64
-	InterestScore    *float64
-	SecurityThreat   *float64
-	SecurityCategory *string
-	SecurityVerified *bool
-	SecurityFlagged  interface{}
+	UserID        int64
+	ArticleID     int64
+	InterestScore *float64
 }
 
-// AI pipeline: record scores, mark ai_scored, leave the user's read flag alone.
+// AI pipeline: record the per-user interest score, mark ai_scored, leave the
+// user's read flag alone. The security verdict is global and lives on articles
+// (never read_state) -- see migration 0008.
 func (q *Queries) UpsertReadStateScores(ctx context.Context, arg UpsertReadStateScoresParams) error {
-	_, err := q.db.Exec(ctx, upsertReadStateScores,
-		arg.UserID,
-		arg.ArticleID,
-		arg.InterestScore,
-		arg.SecurityThreat,
-		arg.SecurityCategory,
-		arg.SecurityVerified,
-		arg.SecurityFlagged,
-	)
+	_, err := q.db.Exec(ctx, upsertReadStateScores, arg.UserID, arg.ArticleID, arg.InterestScore)
 	return err
 }
 

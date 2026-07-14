@@ -213,18 +213,14 @@ type NewsletterIssue struct {
 }
 
 type ReadState struct {
-	UserID           int64
-	ArticleID        int64
-	Read             bool
-	Starred          bool
-	InterestScore    *float64
-	SecurityThreat   *float64
-	ReadDate         *time.Time
-	AiScored         bool
-	AiRetries        int
-	SecurityFlagged  bool
-	SecurityCategory *string
-	SecurityVerified *bool
+	UserID        int64
+	ArticleID     int64
+	Read          bool
+	Starred       bool
+	InterestScore *float64
+	ReadDate      *time.Time
+	AiScored      bool
+	AiRetries     int
 }
 
 type Session struct {
