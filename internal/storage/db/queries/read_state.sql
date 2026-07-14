@@ -64,7 +64,8 @@ WHERE user_id = @user_id;
 -- name: ResetArticleScores :execrows
 UPDATE articles
 SET security_threat = NULL, security_category = NULL, security_verified = NULL,
-    security_flagged = FALSE, security_screened_at = NULL, security_attempts = 0
+    security_flagged = FALSE, security_screened_at = NULL, security_attempts = 0,
+    screening_claimed_at = NULL
 WHERE feed_id IN (SELECT feed_id FROM user_feeds WHERE user_id = @user_id);
 
 -- name: ResetArticleScoresBelow :execrows
@@ -72,6 +73,7 @@ WHERE feed_id IN (SELECT feed_id FROM user_feeds WHERE user_id = @user_id);
 -- score (above the ceiling), where the old safety scale made it a LOW one.
 UPDATE articles
 SET security_threat = NULL, security_category = NULL, security_verified = NULL,
-    security_flagged = FALSE, security_screened_at = NULL, security_attempts = 0
+    security_flagged = FALSE, security_screened_at = NULL, security_attempts = 0,
+    screening_claimed_at = NULL
 WHERE feed_id IN (SELECT feed_id FROM user_feeds WHERE user_id = @user_id)
   AND security_threat IS NOT NULL AND security_threat > @above_threat::double precision;

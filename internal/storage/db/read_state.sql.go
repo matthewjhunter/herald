@@ -96,7 +96,8 @@ func (q *Queries) IncrementAIRetries(ctx context.Context, arg IncrementAIRetries
 const resetArticleScores = `-- name: ResetArticleScores :execrows
 UPDATE articles
 SET security_threat = NULL, security_category = NULL, security_verified = NULL,
-    security_flagged = FALSE, security_screened_at = NULL, security_attempts = 0
+    security_flagged = FALSE, security_screened_at = NULL, security_attempts = 0,
+    screening_claimed_at = NULL
 WHERE feed_id IN (SELECT feed_id FROM user_feeds WHERE user_id = $1)
 `
 
@@ -111,7 +112,8 @@ func (q *Queries) ResetArticleScores(ctx context.Context, userID int64) (int64, 
 const resetArticleScoresBelow = `-- name: ResetArticleScoresBelow :execrows
 UPDATE articles
 SET security_threat = NULL, security_category = NULL, security_verified = NULL,
-    security_flagged = FALSE, security_screened_at = NULL, security_attempts = 0
+    security_flagged = FALSE, security_screened_at = NULL, security_attempts = 0,
+    screening_claimed_at = NULL
 WHERE feed_id IN (SELECT feed_id FROM user_feeds WHERE user_id = $1)
   AND security_threat IS NOT NULL AND security_threat > $2::double precision
 `

@@ -890,6 +890,35 @@ func (s *PostgresStore) GetUnscreenedArticles(limit int) ([]Article, error) {
 	return articles, nil
 }
 
+func (s *PostgresStore) ClaimUnscreenedArticles(limit int, leaseSeconds float64) ([]Article, error) {
+	rows, err := s.q.ClaimUnscreenedArticles(context.Background(), db.ClaimUnscreenedArticlesParams{
+		LeaseSeconds: leaseSeconds,
+		Lim:          int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("claim unscreened articles: %w", err)
+	}
+	articles := make([]Article, len(rows))
+	for i, r := range rows {
+		articles[i] = coreArticle(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate)
+	}
+	return articles, nil
+}
+
+func (s *PostgresStore) ReleaseSecurityClaim(articleID int64) error {
+	if err := s.q.ReleaseSecurityClaim(context.Background(), articleID); err != nil {
+		return fmt.Errorf("release security claim: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) RefundSecurityClaim(articleID int64) error {
+	if err := s.q.RefundSecurityClaim(context.Background(), articleID); err != nil {
+		return fmt.Errorf("refund security claim: %w", err)
+	}
+	return nil
+}
+
 // GetUnscoredCurationArticles returns articles that passed the security screen
 // but have not yet been interest-scored (interest_score IS NULL). Backfill input
 // for the staged pipeline's curation stage. See the SQLite implementation.

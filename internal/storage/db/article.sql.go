@@ -44,6 +44,81 @@ func (q *Queries) AddArticle(ctx context.Context, arg AddArticleParams) (int64, 
 	return id, err
 }
 
+const claimUnscreenedArticles = `-- name: ClaimUnscreenedArticles :many
+UPDATE articles a
+SET screening_claimed_at = NOW(), security_attempts = a.security_attempts + 1
+FROM (
+    SELECT id FROM articles
+    WHERE security_screened_at IS NULL
+      AND security_attempts < 3
+      AND (screening_claimed_at IS NULL
+           OR screening_claimed_at < NOW() - make_interval(secs => $1::double precision))
+    ORDER BY published_date DESC
+    LIMIT $2
+    FOR UPDATE SKIP LOCKED
+) claimed
+WHERE a.id = claimed.id
+RETURNING a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+          a.author, a.published_date, a.fetched_date
+`
+
+type ClaimUnscreenedArticlesParams struct {
+	LeaseSeconds float64
+	Lim          int32
+}
+
+type ClaimUnscreenedArticlesRow struct {
+	ID            int64
+	FeedID        int64
+	Guid          string
+	Title         string
+	Url           string
+	Content       *string
+	Summary       *string
+	Author        *string
+	PublishedDate *time.Time
+	FetchedDate   time.Time
+}
+
+// Atomically claim up to @lim unscreened articles for a screener worker (#233):
+// pick rows not yet screened, within the retry budget, and either unclaimed or
+// whose prior claim lease has expired (@lease_seconds ago). FOR UPDATE SKIP
+// LOCKED means concurrent workers never contend on or double-grab a row. The
+// claim is stamped and the attempt counted here, not on failure, so a poison
+// article that keeps crashing a worker is bounded by security_attempts < 3
+// instead of being reclaimed forever; a clean backend-unavailable result refunds
+// the attempt (RefundSecurityClaim).
+func (q *Queries) ClaimUnscreenedArticles(ctx context.Context, arg ClaimUnscreenedArticlesParams) ([]ClaimUnscreenedArticlesRow, error) {
+	rows, err := q.db.Query(ctx, claimUnscreenedArticles, arg.LeaseSeconds, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ClaimUnscreenedArticlesRow{}
+	for rows.Next() {
+		var i ClaimUnscreenedArticlesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Guid,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Summary,
+			&i.Author,
+			&i.PublishedDate,
+			&i.FetchedDate,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const findDuplicateArticle = `-- name: FindDuplicateArticle :one
 SELECT id FROM articles
 WHERE title = $1 AND published_date = $2
@@ -658,13 +733,40 @@ func (q *Queries) MarkArticleFullTextFetched(ctx context.Context, id int64) erro
 	return err
 }
 
+const refundSecurityClaim = `-- name: RefundSecurityClaim :exec
+UPDATE articles
+SET screening_claimed_at = NULL,
+    security_attempts = GREATEST(security_attempts - 1, 0)
+WHERE id = $1
+`
+
+// Clear the claim AND return the attempt after a backend-unavailable result: we
+// never got a verdict, so an olla outage must not burn the retry budget (#100).
+func (q *Queries) RefundSecurityClaim(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, refundSecurityClaim, id)
+	return err
+}
+
+const releaseSecurityClaim = `-- name: ReleaseSecurityClaim :exec
+UPDATE articles SET screening_claimed_at = NULL WHERE id = $1
+`
+
+// Clear the claim after a genuine (non-backend) screening failure so the row can
+// be retried without waiting for the lease to expire. The attempt was already
+// counted at claim time.
+func (q *Queries) ReleaseSecurityClaim(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, releaseSecurityClaim, id)
+	return err
+}
+
 const screenArticleSecurity = `-- name: ScreenArticleSecurity :exec
 UPDATE articles
 SET security_threat = $1::double precision,
     security_category = $2::text,
     security_verified = $3,
     security_flagged = $4,
-    security_screened_at = NOW()
+    security_screened_at = NOW(),
+    screening_claimed_at = NULL
 WHERE id = $5
 `
 
@@ -708,7 +810,8 @@ func (q *Queries) SetInterestScore(ctx context.Context, arg SetInterestScorePara
 
 const skipArticleSecurity = `-- name: SkipArticleSecurity :exec
 UPDATE articles
-SET security_screened_at = NOW()
+SET security_screened_at = NOW(),
+    screening_claimed_at = NULL
 WHERE id = $1
 `
 

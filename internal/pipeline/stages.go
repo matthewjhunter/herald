@@ -49,12 +49,15 @@ func (s *Stage) securityOne(ctx context.Context, article storage.Article) *stora
 	secResult, err := s.AI.SecurityCheck(ctx, article.Title, content)
 	if err != nil {
 		s.Formatter.Warning("security check failed for article %d: %v", article.ID, err)
-		// Only a genuine model-response failure counts against the retry budget;
-		// a backend-unavailable error means we never got a verdict, so re-queue
-		// without incrementing and let a later cycle retry once the backend
-		// recovers (#100).
-		if !errors.Is(err, ai.ErrBackendUnavailable) {
-			s.Store.IncrementArticleSecurityAttempts(article.ID) //nolint:errcheck
+		// The attempt was counted when the article was claimed (#233). A genuine
+		// model-response failure keeps that attempt (bounding retries) and just
+		// releases the claim so it can be retried before the lease expires. A
+		// backend-unavailable error means we never got a verdict, so refund the
+		// attempt too -- an olla outage must not burn the retry budget (#100).
+		if errors.Is(err, ai.ErrBackendUnavailable) {
+			s.Store.RefundSecurityClaim(article.ID) //nolint:errcheck
+		} else {
+			s.Store.ReleaseSecurityClaim(article.ID) //nolint:errcheck
 		}
 		return nil
 	}

@@ -162,17 +162,20 @@ func TestSecurityStageGatesAndMarks(t *testing.T) {
 }
 
 func TestSecurityRetryBudget(t *testing.T) {
-	// A backend-unavailable error must NOT burn the retry budget (#100): the
-	// article keeps coming back. A genuine verdict failure does, so after three
-	// it drops out of the unscored queue.
+	// The retry budget is spent at claim time now (#233): each RunSecurity cycle
+	// claims the article once, incrementing its attempt. A genuine verdict failure
+	// keeps that attempt (so after three cycles it drops out of the queue); a
+	// backend-unavailable error refunds it (#100), so the article keeps coming
+	// back. These drive RunSecurity (the real claim-based drain), not Security()
+	// directly, since the claim is where the attempt is counted.
 	t.Run("backend unavailable does not increment", func(t *testing.T) {
 		fake := &fakeAI{available: true, securityFn: func(string, string) (*ai.SecurityResult, error) {
 			return nil, ai.ErrBackendUnavailable
 		}}
 		st, store, feedID := newHarness(t, fake)
-		art := seed(t, store, feedID, "x", strings.Repeat("x", 500))
+		seed(t, store, feedID, "x", strings.Repeat("x", 500))
 		for range 4 {
-			st.Security(context.Background(), []storage.Article{art})
+			st.RunSecurity(context.Background()) //nolint:errcheck
 		}
 		unscored, _ := store.GetUnscreenedArticles(10)
 		if len(unscored) != 1 {
@@ -185,9 +188,9 @@ func TestSecurityRetryBudget(t *testing.T) {
 			return nil, errors.New("unparseable verdict")
 		}}
 		st, store, feedID := newHarness(t, fake)
-		art := seed(t, store, feedID, "x", strings.Repeat("x", 500))
+		seed(t, store, feedID, "x", strings.Repeat("x", 500))
 		for range 3 {
-			st.Security(context.Background(), []storage.Article{art})
+			st.RunSecurity(context.Background()) //nolint:errcheck
 		}
 		unscored, _ := store.GetUnscreenedArticles(10)
 		if len(unscored) != 0 {

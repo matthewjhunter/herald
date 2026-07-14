@@ -14,6 +14,13 @@ const clusterCohortLimit = 500
 // drainBatch is how many articles each stage pulls per query.
 const drainBatch = 100
 
+// securityClaimLeaseSeconds is how long a claimed-but-not-yet-verdicted article
+// stays off other screeners' queues (#233). It must comfortably exceed the
+// worst-case single-article screen latency (olla round-trip); a crashed worker's
+// claim is reclaimable only after this window, so too short risks a double
+// screen, too long delays recovery. 10 minutes is well clear of a Gemma call.
+const securityClaimLeaseSeconds = 600
+
 // RunSecurity screens every not-yet-screened article exactly once, globally. The
 // security verdict is a property of the content, shared by all subscribers
 // (#141), so this runs once per cycle rather than once per user — and it checks
@@ -28,7 +35,9 @@ func (s *Stage) RunSecurity(ctx context.Context) (int, error) {
 	}
 	processed := 0
 	err := s.drain(
-		func(limit int) ([]storage.Article, error) { return s.Store.GetUnscreenedArticles(limit) },
+		func(limit int) ([]storage.Article, error) {
+			return s.Store.ClaimUnscreenedArticles(limit, securityClaimLeaseSeconds)
+		},
 		func(arts []storage.Article) { processed += len(s.Security(ctx, arts)) },
 	)
 	return processed, err
