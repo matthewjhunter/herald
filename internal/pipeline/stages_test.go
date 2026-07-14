@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -32,7 +33,11 @@ type fakeAI struct {
 	secCalls, sumCalls, curCalls int
 }
 
-func (f *fakeAI) BackendAvailable() bool { return f.available }
+func (f *fakeAI) BackendAvailable() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.available
+}
 
 func (f *fakeAI) GenerateGroupSummary(_ context.Context, _ int64, topic string, articles []ai.GroupSummaryInput) (*ai.GroupSummaryResult, error) {
 	if f.groupSummaryFn != nil {
@@ -197,6 +202,72 @@ func TestSecurityRetryBudget(t *testing.T) {
 			t.Fatalf("article should drop out after 3 verdict failures, got %v", ids(unscored))
 		}
 	})
+}
+
+// TestSecurityStopsClaimingWhenBreakerTripsMidDrain guards the #233 interaction:
+// the claim counts an attempt per article, so if the drain kept claiming after
+// the breaker opens mid-batch (while Security self-skips), a backend outage would
+// burn the retry budget on unscreened articles and strand the queue. Here the
+// breaker trips on the first call (during batch 1); with the guard, later batches
+// are never claimed, so an oldest (batch-2) article keeps its full 3-attempt
+// budget. Without the guard it would have been claimed once (budget 2).
+func TestSecurityStopsClaimingWhenBreakerTripsMidDrain(t *testing.T) {
+	fake := &fakeAI{available: true}
+	fake.securityFn = func(string, string) (*ai.SecurityResult, error) {
+		fake.mu.Lock()
+		fake.available = false // breaker opens on the first real failure
+		fake.mu.Unlock()
+		return nil, ai.ErrBackendUnavailable
+	}
+	st, store, feedID := newHarness(t, fake)
+
+	// One definitively-oldest article (lands in batch 2), plus a full first batch
+	// of newer ones so the drain must fetch a second batch to reach the old one.
+	old := time.Now().Add(-72 * time.Hour)
+	oldID, err := store.AddArticle(&storage.Article{
+		FeedID: feedID, GUID: "oldest", Title: "oldest",
+		URL: "https://example.com/oldest", Content: strings.Repeat("x", 500), PublishedDate: &old,
+	})
+	if err != nil {
+		t.Fatalf("seed oldest: %v", err)
+	}
+	for i := 0; i < drainBatch+4; i++ {
+		seed(t, store, feedID, fmt.Sprintf("n%d", i), strings.Repeat("x", 500))
+	}
+
+	if _, err := st.RunSecurity(context.Background()); err != nil {
+		t.Fatalf("RunSecurity: %v", err)
+	}
+
+	// Probe the oldest article's remaining claim budget: with an expired lease it
+	// is claimable (3 - attempts) times before the attempts<3 cap excludes it. 3
+	// means no attempt was burned -- the guard stopped the drain before batch 2.
+	if got := remainingClaimBudget(t, store, oldID); got != 3 {
+		t.Fatalf("oldest article claim budget = %d, want 3 (a mid-drain breaker burned the retry budget)", got)
+	}
+}
+
+// remainingClaimBudget counts how many times articleID can still be claimed
+// (lease expired) before the attempts cap excludes it: 3 - current attempts.
+func remainingClaimBudget(t *testing.T, store storage.Store, articleID int64) int {
+	t.Helper()
+	for n := 0; n <= 4; n++ {
+		got, err := store.ClaimUnscreenedArticles(500, 0)
+		if err != nil {
+			t.Fatalf("claim probe: %v", err)
+		}
+		found := false
+		for _, a := range got {
+			if a.ID == articleID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return n
+		}
+	}
+	return 99 // never excluded -- unexpected
 }
 
 func TestSecurityStageSkipsWhenBreakerOpen(t *testing.T) {

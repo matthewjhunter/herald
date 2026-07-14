@@ -36,6 +36,15 @@ func (s *Stage) RunSecurity(ctx context.Context) (int, error) {
 	processed := 0
 	err := s.drain(
 		func(limit int) ([]storage.Article, error) {
+			// Stop claiming the moment the breaker opens. The claim counts an
+			// attempt per article (#233); if we kept claiming while Security
+			// self-skips an open breaker, a backend outage would burn the retry
+			// budget on unscreened articles and strand the whole queue in a few
+			// cycles. Articles already claimed in the batch that tripped the
+			// breaker are refunded per-article in securityOne (#100).
+			if !s.AI.BackendAvailable() {
+				return nil, nil
+			}
 			return s.Store.ClaimUnscreenedArticles(limit, securityClaimLeaseSeconds)
 		},
 		func(arts []storage.Article) { processed += len(s.Security(ctx, arts)) },
