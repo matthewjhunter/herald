@@ -149,3 +149,33 @@ FROM articles
 WHERE security_screened_at IS NOT NULL AND content <> '' AND security_threat IS NOT NULL
 ORDER BY security_threat ASC, RANDOM()
 LIMIT @lim;
+
+-- name: GetReaderPipelineCounts :one
+-- Reader-page status gauge (#232): partition the user's in-view article set into
+-- three DISJOINT states for an at-a-glance donut --
+--   pending (grey)  fetched but not yet screened (pipeline behind)
+--   ready   (yellow) screened, security-passed, still unread (the inbox)
+--   read    (green)  the user has read it
+-- Blocked articles (screened but over the threat ceiling) are omitted: they are
+-- not part of the user's reading, so they do not belong in the ring. Scoped to
+-- the user's subscribed feeds, optionally one feed (@feed_id = 0 for all), and
+-- bounded to a recent window (@since, on fetched_date) so the counts track
+-- current flow rather than lifetime totals.
+SELECT
+  COUNT(*) FILTER (
+    WHERE NOT COALESCE(rs.read, FALSE) AND a.security_screened_at IS NULL
+  )::int AS pending,
+  COUNT(*) FILTER (
+    WHERE NOT COALESCE(rs.read, FALSE)
+      AND a.security_screened_at IS NOT NULL
+      AND a.security_threat IS NOT NULL
+      AND a.security_threat <= @max_threat::double precision
+  )::int AS ready,
+  COUNT(*) FILTER (
+    WHERE COALESCE(rs.read, FALSE)
+  )::int AS read
+FROM articles a
+JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = @user_id
+LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = @user_id
+WHERE a.fetched_date >= @since
+  AND (@feed_id::bigint = 0 OR a.feed_id = @feed_id::bigint);

@@ -199,6 +199,64 @@ func (q *Queries) GetLowSafetyArticleSample(ctx context.Context, lim int32) ([]G
 	return items, nil
 }
 
+const getReaderPipelineCounts = `-- name: GetReaderPipelineCounts :one
+SELECT
+  COUNT(*) FILTER (
+    WHERE NOT COALESCE(rs.read, FALSE) AND a.security_screened_at IS NULL
+  )::int AS pending,
+  COUNT(*) FILTER (
+    WHERE NOT COALESCE(rs.read, FALSE)
+      AND a.security_screened_at IS NOT NULL
+      AND a.security_threat IS NOT NULL
+      AND a.security_threat <= $1::double precision
+  )::int AS ready,
+  COUNT(*) FILTER (
+    WHERE COALESCE(rs.read, FALSE)
+  )::int AS read
+FROM articles a
+JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = $2
+LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = $2
+WHERE a.fetched_date >= $3
+  AND ($4::bigint = 0 OR a.feed_id = $4::bigint)
+`
+
+type GetReaderPipelineCountsParams struct {
+	MaxThreat float64
+	UserID    int64
+	Since     time.Time
+	FeedID    int64
+}
+
+type GetReaderPipelineCountsRow struct {
+	Pending int
+	Ready   int
+	Read    int
+}
+
+// Reader-page status gauge (#232): partition the user's in-view article set into
+// three DISJOINT states for an at-a-glance donut --
+//
+//	pending (grey)  fetched but not yet screened (pipeline behind)
+//	ready   (yellow) screened, security-passed, still unread (the inbox)
+//	read    (green)  the user has read it
+//
+// Blocked articles (screened but over the threat ceiling) are omitted: they are
+// not part of the user's reading, so they do not belong in the ring. Scoped to
+// the user's subscribed feeds, optionally one feed (@feed_id = 0 for all), and
+// bounded to a recent window (@since, on fetched_date) so the counts track
+// current flow rather than lifetime totals.
+func (q *Queries) GetReaderPipelineCounts(ctx context.Context, arg GetReaderPipelineCountsParams) (GetReaderPipelineCountsRow, error) {
+	row := q.db.QueryRow(ctx, getReaderPipelineCounts,
+		arg.MaxThreat,
+		arg.UserID,
+		arg.Since,
+		arg.FeedID,
+	)
+	var i GetReaderPipelineCountsRow
+	err := row.Scan(&i.Pending, &i.Ready, &i.Read)
+	return i, err
+}
+
 const getScreenedArticleSample = `-- name: GetScreenedArticleSample :many
 SELECT id, title, content, security_threat
 FROM articles
