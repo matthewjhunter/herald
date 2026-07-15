@@ -385,7 +385,47 @@ func processCmd() *cobra.Command {
 // doFetch runs the complete fetch+process cycle once. Both the `fetch` command
 // and the `daemon` command call this. It uses the package-level cfg and
 // outputFormat variables.
-func doFetch(ctx context.Context) error {
+// stage identifies one of the daemon's three independent loops (#233). Splitting
+// them lets a slow screen drain (LLM-bound) run at its own cadence without
+// blocking feed fetching (network-bound) or per-user curation.
+type stage string
+
+const (
+	stageFetch  stage = "fetch"
+	stageScreen stage = "screen"
+	stageCurate stage = "curate"
+)
+
+type stageSet map[stage]bool
+
+func (s stageSet) has(st stage) bool { return s[st] }
+
+func allStages() stageSet {
+	return stageSet{stageFetch: true, stageScreen: true, stageCurate: true}
+}
+
+// parseStages parses a comma-separated stage list (e.g. "screen"); empty means
+// all three, preserving the single-service default.
+func parseStages(csv string) (stageSet, error) {
+	if strings.TrimSpace(csv) == "" {
+		return allStages(), nil
+	}
+	set := stageSet{}
+	for _, part := range strings.Split(csv, ",") {
+		switch st := stage(strings.TrimSpace(part)); st {
+		case stageFetch, stageScreen, stageCurate:
+			set[st] = true
+		default:
+			return nil, fmt.Errorf("unknown stage %q (valid: fetch, screen, curate)", part)
+		}
+	}
+	return set, nil
+}
+
+// runCycle runs one pass of the selected stages against a freshly opened store.
+// With all three stages (the default) it is the original fetch+process cycle;
+// the daemon can also run any subset as its own loop.
+func runCycle(ctx context.Context, stages stageSet) error {
 	cycleStart := time.Now()
 	formatter := output.NewFormatter(output.Format(outputFormat))
 
@@ -423,18 +463,112 @@ func doFetch(ctx context.Context) error {
 		}
 	}()
 
-	// Get all feeds due to fetch this cycle. Adaptive scheduling stages
-	// next_fetch_at across feeds, so it's normal for an individual cycle to
-	// have zero due — the AI passes downstream still need to run to drain
-	// pending work from prior cycles, so we don't early-return on this.
-	subscribedFeeds, err := store.GetAllSubscribedFeeds()
-	if err != nil {
-		return fmt.Errorf("failed to get subscribed feeds: %w", err)
+	// FETCH stage: pull every due feed once and enrich the new articles.
+	if stages.has(stageFetch) {
+		fr, err := runFetchStage(ctx, store, formatter)
+		if err != nil {
+			return err
+		}
+		fetchResult = fr
 	}
 
-	// Fetch each feed once (efficient)
+	// The screen and curate stages both need the AI backend; skip building the
+	// processor when this loop runs neither. Each drains pending work from prior
+	// cycles regardless of whether this cycle fetched anything new.
+	if !stages.has(stageScreen) && !stages.has(stageCurate) {
+		if fetchResult != nil {
+			return formatter.OutputFetchResult(fetchResult)
+		}
+		return nil
+	}
+
+	processor, err := ai.NewAIProcessor(cfg.Ollama.BaseURL, cfg.Ollama.SecurityModel, cfg.Ollama.CurationModel, store, cfg)
+	if err != nil {
+		formatter.Warning("failed to create AI processor: %v", err)
+		formatter.Warning("skipping AI processing (Ollama may not be running)")
+		if fetchResult != nil {
+			return formatter.OutputFetchResult(fetchResult)
+		}
+		return nil
+	}
+	aiBackendUp = processor.BackendAvailable()
+
+	groupMatcher, err := newGroupMatcher()
+	if err != nil {
+		formatter.Warning("failed to create group matcher: %v", err)
+		formatter.Warning("skipping embedding backfill and group matching")
+	}
+
+	// SCREEN stage: security screening and summarization are global -- each
+	// article is screened and summarized once, the verdict/summary shared by every
+	// subscriber (#141, #162). Runs before curation so this cycle's freshly
+	// screened articles are available to it. One breaker check, not one per user
+	// (#111). Concurrency-safe against other screen workers via the claim/lease
+	// on the article queue (#233).
+	if stages.has(stageScreen) {
+		securityStage := newPipelineStage(store, processor, groupMatcher, formatter, cfg.DefaultUserID)
+		totalProcessed, err := securityStage.RunSecurity(ctx)
+		if err != nil {
+			formatter.Warning("security pass failed: %v", err)
+		}
+		if _, err := securityStage.RunSummaries(ctx); err != nil {
+			formatter.Warning("summarize pass failed: %v", err)
+		}
+		if fetchResult != nil {
+			fetchResult.ProcessedCount = totalProcessed
+		}
+	}
+
+	// CURATE stage: the per-user pipeline. Each user's curation/grouping is driven
+	// from its own state-driven, newest-first query off the shared article
+	// verdicts, so freshly screened articles are curated ahead of older backlog.
+	if stages.has(stageCurate) {
+		allUserIDs, err := store.GetAllSubscribingUsers()
+		if err != nil {
+			return fmt.Errorf("failed to get subscribing users: %w", err)
+		}
+		if len(allUserIDs) == 0 {
+			formatter.Warning("no users with subscriptions")
+		}
+		for _, userID := range allUserIDs {
+			stage := newPipelineStage(store, processor, groupMatcher, formatter, userID)
+			if err := stage.Run(ctx); err != nil {
+				formatter.Warning("pipeline failed for user %d: %v", userID, err)
+			}
+		}
+	}
+
+	// Fetch-cycle summary + high-interest notification: only when this loop
+	// fetched (a screen/curate-only loop has no fetch tally to report).
+	if fetchResult != nil {
+		highInterestArticles, scores, err := store.GetArticlesByInterestScore(cfg.DefaultUserID, cfg.Thresholds.InterestScore, 10, 0, nil)
+		if err != nil {
+			return fmt.Errorf("failed to get high-interest articles: %w", err)
+		}
+		fetchResult.HighInterest = len(highInterestArticles)
+		if err := formatter.OutputFetchResult(fetchResult); err != nil {
+			return err
+		}
+		if len(highInterestArticles) > 0 {
+			if err := formatter.OutputHighInterestNotification(highInterestArticles, scores); err != nil {
+				formatter.Warning("notification output failed: %v", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// runFetchStage fetches every due feed once and enriches the new articles
+// (full text, outbound links, images, favicons). Returns the cycle's fetch tally.
+func runFetchStage(ctx context.Context, store storage.Store, formatter *output.Formatter) (*output.FetchResult, error) {
+	subscribedFeeds, err := store.GetAllSubscribedFeeds()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get subscribed feeds: %w", err)
+	}
+
 	fetcher := feeds.NewFetcher(store)
-	fetchResult = &output.FetchResult{FeedsTotal: len(subscribedFeeds)}
+	fetchResult := &output.FetchResult{FeedsTotal: len(subscribedFeeds)}
 	for _, feed := range subscribedFeeds {
 		feedCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		result, err := fetcher.FetchFeed(feedCtx, feed)
@@ -455,138 +589,50 @@ func doFetch(ctx context.Context) error {
 
 		fetchResult.FeedsDownloaded++
 
-		// Store articles (global, fetched once)
 		stored, err := fetcher.StoreArticles(feed.ID, result.Feed)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: error storing articles from %s: %v\n", feed.URL, err)
 		}
 		fetchResult.NewArticles += len(stored)
 
-		// Persist cache headers for next conditional request
 		if result.ETag != "" || result.LastModified != "" {
 			store.UpdateFeedCacheHeaders(feed.ID, result.ETag, result.LastModified)
 		}
 
-		// Update last fetched timestamp
 		if err := store.UpdateFeedLastFetched(feed.ID); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to update last_fetched for %s: %v\n", feed.URL, err)
 		}
 	}
 
-	// Fetch full text for any articles whose feed content appears truncated.
-	// This runs after all feeds are stored so the AI pipeline gets the best content.
+	// Full text for truncated feed content, run after all feeds are stored so the
+	// AI pipeline gets the best content.
 	if fullTextUpdated, err := fetcher.FetchFullTextForArticles(ctx); err != nil {
 		formatter.Warning("full-text fetch error: %v", err)
 	} else if fullTextUpdated > 0 {
 		fmt.Fprintf(os.Stdout, "Updated full text for %d articles\n", fullTextUpdated)
 	}
 
-	// Index outbound links (from the now-enriched body/summary) for the
-	// "which feed linked to this?" lookup. Runs after full-text so it sees the
-	// best content; backfills existing articles over cycles.
+	// Index outbound links from the enriched body for the "who linked this?"
+	// lookup; backfills existing articles over cycles.
 	if linksExtracted, err := fetcher.ExtractLinksForArticles(ctx); err != nil {
 		formatter.Warning("link extraction error: %v", err)
 	} else if linksExtracted > 0 {
 		fmt.Fprintf(os.Stdout, "Extracted links for %d articles\n", linksExtracted)
 	}
 
-	// Cache images referenced in article content.
 	if imagesStored, err := fetcher.CacheArticleImages(ctx); err != nil {
 		formatter.Warning("image cache error: %v", err)
 	} else if imagesStored > 0 {
 		fmt.Fprintf(os.Stdout, "Cached %d article images\n", imagesStored)
 	}
 
-	// Fetch and cache favicons for any newly-subscribed feeds.
 	if faviconStored, err := fetcher.FetchFaviconsForFeeds(ctx); err != nil {
 		formatter.Warning("favicon fetch error: %v", err)
 	} else if faviconStored > 0 {
 		fmt.Fprintf(os.Stdout, "Cached favicons for %d feeds\n", faviconStored)
 	}
 
-	// Run AI passes every cycle, regardless of whether new articles were fetched
-	// this cycle — pending work from prior cycles (unscored articles, missing
-	// summaries from transient failures) needs to drain.
-	processor, err := ai.NewAIProcessor(cfg.Ollama.BaseURL, cfg.Ollama.SecurityModel, cfg.Ollama.CurationModel, store, cfg)
-	if err != nil {
-		formatter.Warning("failed to create AI processor: %v", err)
-		formatter.Warning("skipping AI processing (Ollama may not be running)")
-		return formatter.OutputFetchResult(fetchResult)
-	}
-	aiBackendUp = processor.BackendAvailable()
-
-	// Get all users who have subscriptions
-	allUserIDs, err := store.GetAllSubscribingUsers()
-	if err != nil {
-		return fmt.Errorf("failed to get subscribing users: %w", err)
-	}
-
-	if len(allUserIDs) == 0 {
-		formatter.Warning("no users with subscriptions")
-		return formatter.OutputFetchResult(fetchResult)
-	}
-
-	groupMatcher, err := newGroupMatcher()
-	if err != nil {
-		formatter.Warning("failed to create group matcher: %v", err)
-		formatter.Warning("skipping embedding backfill and group matching")
-	}
-
-	// Security screening and summarization are global: each article is screened
-	// and summarized once, with the verdict and summary shared by every
-	// subscriber (#141, #162), so run both once per cycle before the per-user
-	// pipelines rather than redoing them per user. One breaker check, not one
-	// per user (#111).
-	securityStage := newPipelineStage(store, processor, groupMatcher, formatter, cfg.DefaultUserID)
-	totalProcessed, err := securityStage.RunSecurity(ctx)
-	if err != nil {
-		formatter.Warning("security pass failed: %v", err)
-	}
-	if _, err := securityStage.RunSummaries(ctx); err != nil {
-		formatter.Warning("summarize pass failed: %v", err)
-	}
-
-	// Run the per-user pipeline for each subscribing user. It drives every stage
-	// from its own state-driven, newest-first query, reading the article-level
-	// security verdict to decide what to curate, so this cycle's freshly
-	// screened articles are processed ahead of older backlog, and anything left
-	// pending from prior cycles drains the same way. Self-skips when the AI
-	// backend is unavailable.
-	for _, userID := range allUserIDs {
-		stage := newPipelineStage(store, processor, groupMatcher, formatter, userID)
-		if err := stage.Run(ctx); err != nil {
-			formatter.Warning("pipeline failed for user %d: %v", userID, err)
-		}
-	}
-
-	fetchResult.ProcessedCount = totalProcessed
-
-	// Get and output high-interest articles
-	// Show high-interest articles for the first subscribing user.
-	var displayUserID int64 = 1
-	if len(allUserIDs) > 0 {
-		displayUserID = allUserIDs[0]
-	}
-	highInterestArticles, scores, err := store.GetArticlesByInterestScore(displayUserID, cfg.Thresholds.InterestScore, 10, 0, nil)
-	if err != nil {
-		return fmt.Errorf("failed to get high-interest articles: %w", err)
-	}
-
-	fetchResult.HighInterest = len(highInterestArticles)
-
-	// Output result summary
-	if err := formatter.OutputFetchResult(fetchResult); err != nil {
-		return err
-	}
-
-	// Output high-interest notifications
-	if len(highInterestArticles) > 0 {
-		if err := formatter.OutputHighInterestNotification(highInterestArticles, scores); err != nil {
-			formatter.Warning("notification output failed: %v", err)
-		}
-	}
-
-	return nil
+	return fetchResult, nil
 }
 
 // processNewsletters creates a temporary Engine and processes due newsletters.
@@ -621,7 +667,7 @@ func fetchCmd() *cobra.Command {
 		Use:   "fetch",
 		Short: "Fetch all feeds and process articles with AI",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return doFetch(context.Background())
+			return runCycle(context.Background(), allStages())
 		},
 	}
 }

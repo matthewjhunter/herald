@@ -211,3 +211,40 @@ func TestPersistentPreRun_HonorsSkipAnnotation(t *testing.T) {
 		}
 	})
 }
+
+func TestParseStages(t *testing.T) {
+	all := allStages()
+	// Empty means all three (single-service default).
+	got, err := parseStages("")
+	if err != nil {
+		t.Fatalf("empty: %v", err)
+	}
+	for st := range all {
+		if !got.has(st) {
+			t.Errorf("empty should enable %q", st)
+		}
+	}
+
+	// A subset enables only the named stages.
+	got, err = parseStages("screen")
+	if err != nil {
+		t.Fatalf("screen: %v", err)
+	}
+	if !got.has(stageScreen) || got.has(stageFetch) || got.has(stageCurate) {
+		t.Errorf(`"screen" should enable only screen, got %v`, got)
+	}
+
+	// Comma-separated, whitespace-tolerant.
+	got, err = parseStages("fetch, curate")
+	if err != nil {
+		t.Fatalf("fetch,curate: %v", err)
+	}
+	if !got.has(stageFetch) || !got.has(stageCurate) || got.has(stageScreen) {
+		t.Errorf(`"fetch, curate" should enable fetch+curate only, got %v`, got)
+	}
+
+	// Unknown stage is rejected (fail-closed rather than silently doing nothing).
+	if _, err := parseStages("frobnicate"); err == nil {
+		t.Error("unknown stage should error")
+	}
+}

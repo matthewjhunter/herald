@@ -51,6 +51,45 @@ WHERE a.security_screened_at IS NULL AND a.security_attempts < 3
 ORDER BY a.published_date DESC
 LIMIT @lim;
 
+-- name: ClaimUnscreenedArticles :many
+-- Atomically claim up to @lim unscreened articles for a screener worker (#233):
+-- pick rows not yet screened, within the retry budget, and either unclaimed or
+-- whose prior claim lease has expired (@lease_seconds ago). FOR UPDATE SKIP
+-- LOCKED means concurrent workers never contend on or double-grab a row. The
+-- claim is stamped and the attempt counted here, not on failure, so a poison
+-- article that keeps crashing a worker is bounded by security_attempts < 3
+-- instead of being reclaimed forever; a clean backend-unavailable result refunds
+-- the attempt (RefundSecurityClaim).
+UPDATE articles a
+SET screening_claimed_at = NOW(), security_attempts = a.security_attempts + 1
+FROM (
+    SELECT id FROM articles
+    WHERE security_screened_at IS NULL
+      AND security_attempts < 3
+      AND (screening_claimed_at IS NULL
+           OR screening_claimed_at < NOW() - make_interval(secs => @lease_seconds::double precision))
+    ORDER BY published_date DESC
+    LIMIT @lim
+    FOR UPDATE SKIP LOCKED
+) claimed
+WHERE a.id = claimed.id
+RETURNING a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+          a.author, a.published_date, a.fetched_date;
+
+-- name: ReleaseSecurityClaim :exec
+-- Clear the claim after a genuine (non-backend) screening failure so the row can
+-- be retried without waiting for the lease to expire. The attempt was already
+-- counted at claim time.
+UPDATE articles SET screening_claimed_at = NULL WHERE id = @id;
+
+-- name: RefundSecurityClaim :exec
+-- Clear the claim AND return the attempt after a backend-unavailable result: we
+-- never got a verdict, so an olla outage must not burn the retry budget (#100).
+UPDATE articles
+SET screening_claimed_at = NULL,
+    security_attempts = GREATEST(security_attempts - 1, 0)
+WHERE id = @id;
+
 -- name: GetUnscoredCurationArticles :many
 SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
        a.author, a.published_date, a.fetched_date
@@ -117,7 +156,8 @@ SET security_threat = @security_threat::double precision,
     security_category = @security_category::text,
     security_verified = @security_verified,
     security_flagged = @security_flagged,
-    security_screened_at = NOW()
+    security_screened_at = NOW(),
+    screening_claimed_at = NULL
 WHERE id = @id;
 
 -- name: SkipArticleSecurity :exec
@@ -125,7 +165,8 @@ WHERE id = @id;
 -- skip reason is herald-authored, not attacker text, but the column that held it
 -- is gone (plan 012); screened_at + NULL threat already encodes the state.
 UPDATE articles
-SET security_screened_at = NOW()
+SET security_screened_at = NOW(),
+    screening_claimed_at = NULL
 WHERE id = @id;
 
 -- name: IncrementArticleSecurityAttempts :exec

@@ -129,6 +129,18 @@ type Store interface {
 	SkipArticleSecurity(articleID int64, reason string) error
 	IncrementArticleSecurityAttempts(articleID int64) error
 	GetUnscreenedArticles(limit int) ([]Article, error)
+	// ClaimUnscreenedArticles atomically claims up to limit unscreened articles for
+	// a screener worker (#233), skipping rows another worker holds and reclaiming
+	// any whose lease (leaseSeconds) has expired. It counts the attempt; a clean
+	// backend-unavailable result must refund it via RefundSecurityClaim, and a
+	// genuine failure clears the claim via ReleaseSecurityClaim.
+	ClaimUnscreenedArticles(limit int, leaseSeconds float64) ([]Article, error)
+	// ReleaseSecurityClaim clears an article's claim after a genuine screening
+	// failure so it can be retried before the lease expires (attempt already spent).
+	ReleaseSecurityClaim(articleID int64) error
+	// RefundSecurityClaim clears the claim and returns the attempt after a
+	// backend-unavailable result, so an olla outage does not burn the retry budget.
+	RefundSecurityClaim(articleID int64) error
 	// GetScreenedArticleSample returns a random sample of screened articles with
 	// content, for the plan-012 score-comparison harness. Diagnostic; read-only.
 	GetScreenedArticleSample(limit int) ([]ScreenedArticle, error)

@@ -51,6 +51,7 @@ type Article struct {
 	LinksExtracted     bool
 	SecurityCategory   *string
 	SecurityVerified   *bool
+	ScreeningClaimedAt *time.Time
 }
 
 type ArticleAuthor struct {
