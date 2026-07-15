@@ -231,6 +231,34 @@ func TestSecurityCheck_ChunkErrorFailsClosed(t *testing.T) {
 	}
 }
 
+// The security verdict is a tiny JSON object; herald must not ask the backend
+// for the full 2048-token budget. An oversized output request needlessly crowds
+// a backend's context window (a small-context GPU intermittently 500s "Context
+// size has been exceeded") and lets a model run away. The security path caps
+// output at securityMaxTokens.
+func TestSecurityCheck_UsesSmallOutputBudget(t *testing.T) {
+	var gotMaxTokens int
+	reply := `{"threat":0,"category":"none","evidence":"","reason":"clean"}`
+	p := fakeModelServerFunc(t, nil, func(reqBody string) string {
+		var req struct {
+			MaxTokens int `json:"max_tokens"`
+		}
+		_ = json.Unmarshal([]byte(reqBody), &req)
+		gotMaxTokens = req.MaxTokens
+		return reply
+	})
+
+	if _, err := p.SecurityCheck(context.Background(), "Recipe", "Combine flour and water."); err != nil {
+		t.Fatalf("SecurityCheck: %v", err)
+	}
+	if gotMaxTokens != securityMaxTokens {
+		t.Errorf("security request max_tokens = %d, want %d (the verdict is tiny; do not request the full chat budget)", gotMaxTokens, securityMaxTokens)
+	}
+	if securityMaxTokens >= chatMaxTokens {
+		t.Errorf("securityMaxTokens (%d) should be well below chatMaxTokens (%d)", securityMaxTokens, chatMaxTokens)
+	}
+}
+
 func TestChunkText(t *testing.T) {
 	// Fits in one window -> returned unchanged, no copy needed.
 	if got := chunkText("short", 100, 10); len(got) != 1 || got[0] != "short" {
