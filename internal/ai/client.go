@@ -191,14 +191,6 @@ type modelsResponse struct {
 // distinguish non-retryable auth/permission failures from transient errors.
 // A built-in circuit breaker blocks all calls after repeated 4xx failures.
 func (c *openAIClient) generate(ctx context.Context, model, prompt string, temperature float64) (string, error) {
-	return c.generateWithBudget(ctx, model, prompt, temperature, chatMaxTokens)
-}
-
-// generateWithBudget is generate with an explicit output-token cap. Most stages
-// use the default chatMaxTokens (via generate); the security screen passes a much
-// smaller budget because its verdict is a tiny JSON object and a large output
-// request needlessly crowds a backend's context window (see securityMaxTokens).
-func (c *openAIClient) generateWithBudget(ctx context.Context, model, prompt string, temperature float64, maxTokens int) (string, error) {
 	if c.isOpen() {
 		c.mu.Lock()
 		status := c.lastStatus
@@ -224,7 +216,7 @@ func (c *openAIClient) generateWithBudget(ctx context.Context, model, prompt str
 			{Role: "user", Content: prompt},
 		},
 		Temperature: temperature,
-		MaxTokens:   maxTokens,
+		MaxTokens:   chatMaxTokens,
 		Stream:      false,
 	}
 
