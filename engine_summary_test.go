@@ -236,8 +236,8 @@ func TestGenerateForConfig(t *testing.T) {
 		id, _ := store.AddArticle(&storage.Article{FeedID: feedID, GUID: guid, Title: guid,
 			URL: "https://example.com/" + guid, Content: "<p>body " + guid + "</p>", PublishedDate: &now})
 		i := 8.0
-		store.ScreenArticleSecurity(id, 1, "none", false, false)      //nolint:errcheck
-		store.UpdateReadState(uid, id, false, &i) //nolint:errcheck
+		store.ScreenArticleSecurity(id, 1, "none", false, false) //nolint:errcheck
+		store.UpdateReadState(uid, id, false, &i)                //nolint:errcheck
 		return id
 	}
 	a1 := mk(feedA, "a1")
