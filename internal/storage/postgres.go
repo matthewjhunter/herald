@@ -1401,6 +1401,23 @@ func (s *PostgresStore) GetProcessingStats(userID int64) (*ProcessingStats, erro
 	}, nil
 }
 
+func (s *PostgresStore) GetReaderPipelineCounts(userID, feedID int64, since time.Time, maxThreat float64) (ReaderPipelineCounts, error) {
+	row, err := s.q.GetReaderPipelineCounts(context.Background(), db.GetReaderPipelineCountsParams{
+		UserID:    userID,
+		FeedID:    feedID,
+		Since:     since,
+		MaxThreat: maxThreat,
+	})
+	if err != nil {
+		return ReaderPipelineCounts{}, fmt.Errorf("get reader pipeline counts: %w", err)
+	}
+	return ReaderPipelineCounts{
+		Pending: row.Pending,
+		Ready:   row.Ready,
+		Read:    row.Read,
+	}, nil
+}
+
 // RecordCycleStats persists one completed daemon cycle, then prunes to a bounded
 // history so the table can't grow without limit on a long-running daemon.
 func (s *PostgresStore) RecordCycleStats(cs CycleStats) error {

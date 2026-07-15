@@ -489,3 +489,66 @@
 }
 .htmx-indicator { display: none; font-size: 0.85rem; color: var(--pico-muted-color); }
 .htmx-request .htmx-indicator { display: inline; }
+
+/* Reader status gauge (#232): an at-a-glance donut of the in-view article set,
+   partitioned into pending (grey, still screening), unread/ready (yellow), and
+   read (green). Counts are scoped to the active feed and the last 7 days. */
+.reader-gauge {
+    --rg-grey: var(--pico-muted-color, #9ca3af);
+    --rg-yellow: #d9a400;
+    --rg-green: #2e9e5b;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.5rem 0.4rem 0.75rem;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+    margin-bottom: 0.25rem;
+}
+.reader-gauge-ring {
+    flex: 0 0 auto;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    background: conic-gradient(
+        var(--rg-grey) 0 var(--grey-end, 0%),
+        var(--rg-yellow) var(--grey-end, 0%) var(--yellow-end, 0%),
+        var(--rg-green) var(--yellow-end, 0%) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+.reader-gauge-ring::before {
+    content: "";
+    position: absolute;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--pico-background-color, #fff);
+}
+.reader-gauge-empty {
+    background: var(--pico-muted-border-color);
+}
+.reader-gauge-center {
+    position: relative;
+    font-size: 0.85rem;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--pico-color);
+}
+.reader-gauge-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    font-size: 0.75rem;
+    color: var(--pico-muted-color);
+}
+.rg-dot::before {
+    content: "\25CF";
+    margin-right: 0.3rem;
+    font-size: 0.7rem;
+    vertical-align: baseline;
+}
+.rg-grey::before { color: var(--rg-grey); }
+.rg-yellow::before { color: var(--rg-yellow); }
+.rg-green::before { color: var(--rg-green); }

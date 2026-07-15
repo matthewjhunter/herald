@@ -1438,6 +1438,26 @@ func (e *Engine) GetProcessingStats(userID int64) (*ProcessingStats, error) {
 	}, nil
 }
 
+// ReaderGaugeWindow bounds the reader status gauge (#232) to recent flow, so the
+// counts track what is currently moving through the pipeline rather than lifetime
+// totals (which would leave the ring almost entirely "read" for an active reader).
+const ReaderGaugeWindow = 7 * 24 * time.Hour
+
+// GetReaderGauge returns the reader-page status counts for the user's in-view
+// article set: their subscribed feeds, or one feed when feedID > 0. Scoped to the
+// last ReaderGaugeWindow of fetched articles.
+func (e *Engine) GetReaderGauge(userID, feedID int64) (ReaderGauge, error) {
+	e.mu.RLock()
+	maxThreat := e.config.Thresholds.MaxSecurityThreat
+	e.mu.RUnlock()
+	since := time.Now().Add(-ReaderGaugeWindow)
+	c, err := e.store.GetReaderPipelineCounts(userID, feedID, since, maxThreat)
+	if err != nil {
+		return ReaderGauge{}, err
+	}
+	return ReaderGauge{Pending: c.Pending, Ready: c.Ready, Read: c.Read}, nil
+}
+
 // GetRecentCycleStats returns the most recent completed daemon cycles, newest
 // first, for the processing-status view.
 func (e *Engine) GetRecentCycleStats(limit int) ([]CycleStats, error) {

@@ -252,6 +252,31 @@ type homeData struct {
 	ActiveNewsletter int64
 	ActiveStarred    bool
 	ActiveSummary    bool
+	Gauge            *readerGauge
+}
+
+// readerGauge is the reader-page status widget's render data (#232): the three
+// in-view counts plus the cumulative conic-gradient boundaries (grey 0..GreyEnd,
+// yellow GreyEnd..YellowEnd, green YellowEnd..100).
+type readerGauge struct {
+	Pending   int
+	Ready     int
+	Read      int
+	Total     int
+	GreyEnd   int // cumulative percent: end of the pending (grey) arc
+	YellowEnd int // cumulative percent: end of the ready (yellow) arc
+}
+
+// buildReaderGauge converts raw counts into render data, computing the two
+// cumulative arc boundaries with integer round-half-up (no math import needed).
+func buildReaderGauge(g herald.ReaderGauge) readerGauge {
+	total := g.Pending + g.Ready + g.Read
+	rg := readerGauge{Pending: g.Pending, Ready: g.Ready, Read: g.Read, Total: total}
+	if total > 0 {
+		rg.GreyEnd = (g.Pending*100 + total/2) / total
+		rg.YellowEnd = ((g.Pending+g.Ready)*100 + total/2) / total
+	}
+	return rg
 }
 
 type articleListData struct {
@@ -605,6 +630,10 @@ func (h *handlers) handleHome(w http.ResponseWriter, r *http.Request) {
 	if newsletters, err := h.engine.GetNewsletterStats(uid); err == nil {
 		data.Newsletters = newsletters
 	}
+	if g, err := h.engine.GetReaderGauge(uid, 0); err == nil {
+		rg := buildReaderGauge(g)
+		data.Gauge = &rg
+	}
 
 	h.renderPage(w, r, "home.html", data)
 }
@@ -821,6 +850,12 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 	if stats, err := h.engine.GetFeedStats(uid); err == nil && stats != nil {
 		sidebarData.Feeds = stats.Feeds
 		sidebarData.TotalUnread = stats.Total.UnreadArticles
+	}
+	// Gauge scopes to the active feed; group/starred views (feedID == 0) show the
+	// all-feeds gauge for now (per-group/starred scoping is a follow-up).
+	if g, err := h.engine.GetReaderGauge(uid, feedID); err == nil {
+		rg := buildReaderGauge(g)
+		sidebarData.Gauge = &rg
 	}
 	if groups, err := h.engine.GetGroupStats(uid); err == nil {
 		sidebarData.Groups = groups

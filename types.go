@@ -274,6 +274,16 @@ type ProcessingStats struct {
 	FeedsErroring    int
 }
 
+// ReaderGauge is the reader-page status widget's three disjoint states for the
+// in-view article set (#232): Pending (fetched, not yet screened), Ready
+// (screened + security-passed + unread), Read. Blocked articles (over the threat
+// ceiling) are excluded. Bounded to recent flow, not lifetime totals.
+type ReaderGauge struct {
+	Pending int
+	Ready   int
+	Read    int
+}
+
 // CycleStats is one completed run of the fetch+process daemon cycle, persisted so
 // the web UI can report throughput and backend health.
 type CycleStats struct {

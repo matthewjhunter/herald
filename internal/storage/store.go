@@ -52,6 +52,16 @@ type ProcessingStats struct {
 	FeedsErroring    int // feeds whose latest fetch failed (consecutive_errors > 0)
 }
 
+// ReaderPipelineCounts is the reader-page status gauge's three disjoint states
+// for the in-view article set (#232): pending = fetched but not yet screened,
+// ready = screened + security-passed + unread, read = read. Blocked articles
+// (screened but over the threat ceiling) are excluded. (storage-internal type)
+type ReaderPipelineCounts struct {
+	Pending int
+	Ready   int
+	Read    int
+}
+
 // CycleStats is one completed run of the fetch+process daemon cycle. Persisted so
 // the web UI can show throughput and backend health without access to the
 // daemon's in-memory state. (storage-internal type)
@@ -130,6 +140,10 @@ type Store interface {
 	ResetScores(userID int64, securityOnly bool, belowScore float64) (int64, error)
 	GetScoreStats(userID int64) (*ScoreStatsResult, error)
 	GetProcessingStats(userID int64) (*ProcessingStats, error)
+	// GetReaderPipelineCounts returns the reader-gauge counts (#232) for the
+	// user's in-view article set: subscribed feeds (or one feed when feedID > 0),
+	// fetched at or after since. See ReaderPipelineCounts.
+	GetReaderPipelineCounts(userID, feedID int64, since time.Time, maxThreat float64) (ReaderPipelineCounts, error)
 	RecordCycleStats(stats CycleStats) error
 	GetRecentCycleStats(limit int) ([]CycleStats, error)
 
