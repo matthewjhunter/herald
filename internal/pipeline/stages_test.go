@@ -288,6 +288,40 @@ func TestSecurityStageSkipsWhenBreakerOpen(t *testing.T) {
 	}
 }
 
+func TestSecurityStageRefundsClaimWhenBreakerOpensAfterClaim(t *testing.T) {
+	// Reproduce the batch-drop leak: the drain claims a batch (attempt +1, claim
+	// stamped) while the backend looks available, then the breaker opens before
+	// the security stage runs. The stage must refund every already-claimed article
+	// instead of silently dropping the batch. Without the refund, an olla restart
+	// burns the retry budget on in-flight articles and parks them at attempts>=3
+	// with their claims still held -- the 2026-07-15 rescore stall, where a single
+	// restart window left ~7.9k articles stranded.
+	fake := &fakeAI{available: false}
+	st, store, feedID := newHarness(t, fake)
+	art := seed(t, store, feedID, "x", strings.Repeat("x", 500))
+
+	// Stand in for the drain's claim, which happened before the breaker opened.
+	claimed, err := store.ClaimUnscreenedArticles(500, securityClaimLeaseSeconds)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if len(claimed) != 1 {
+		t.Fatalf("expected 1 claimed article, got %d", len(claimed))
+	}
+
+	// Breaker is open: the stage must skip the backend but give the claim back.
+	if passed := st.Security(context.Background(), claimed); len(passed) != 0 {
+		t.Fatalf("expected no articles to advance with breaker open, got %v", ids(passed))
+	}
+	if fake.secCalls != 0 {
+		t.Fatalf("expected zero security calls with breaker open, got %d", fake.secCalls)
+	}
+	// Fully refunded: the retry budget is intact (3), so the article is not parked.
+	if got := remainingClaimBudget(t, store, art.ID); got != 3 {
+		t.Fatalf("claim budget after breaker-open skip = %d, want 3 (batch drop burned the retry budget)", got)
+	}
+}
+
 func TestArticleContentSanitizes(t *testing.T) {
 	a := storage.Article{
 		Content:       `<p>Breaking news body.</p><script>steal()</script>`,

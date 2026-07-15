@@ -24,6 +24,15 @@ import (
 func (s *Stage) Security(ctx context.Context, in []storage.Article) []storage.Article {
 	if !s.AI.BackendAvailable() {
 		s.Formatter.Warning("pipeline: skipping security stage — AI backend unavailable (breaker open)")
+		// The drain already claimed this batch (attempt +1, claim stamped) while
+		// the breaker looked closed; it can open in the window before we run. Refund
+		// every claim rather than dropping the batch: we never screened these, so a
+		// backend outage must not burn their retry budget (#100). Without this, an
+		// olla restart parks whole batches at security_attempts>=3 with claims still
+		// held, stranding the queue until an operator resets them.
+		for _, a := range in {
+			s.Store.RefundSecurityClaim(a.ID) //nolint:errcheck
+		}
 		return nil
 	}
 	return s.mapArticles(ctx, in, s.securityOne)
