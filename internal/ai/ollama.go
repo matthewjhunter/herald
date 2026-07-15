@@ -190,7 +190,7 @@ func (p *AIProcessor) screenSpan(ctx context.Context, model string, temperature 
 	callCtx, cancel := p.withCallTimeout(ctx)
 	defer cancel()
 
-	responseText, err := p.client.generate(callCtx, model, promptText, temperature)
+	responseText, err := p.client.generateWithBudget(callCtx, model, promptText, temperature, securityMaxTokens)
 	if err != nil {
 		return screen.Finding{}, fmt.Errorf("ollama security check failed: %w", err)
 	}
@@ -328,6 +328,16 @@ const (
 	maxScreenChunkLen  = 10000
 	screenChunkOverlap = 1000
 )
+
+// securityMaxTokens caps the output budget for a single security screen. The
+// verdict is a small JSON object (threat, category, short evidence/reason --
+// typically well under 100 tokens), and unlike a reasoning model's chat turn it
+// carries no long thinking pass: Gemma emits the JSON directly. Requesting the
+// full chatMaxTokens here is wasteful and, on a small-context backend, pushes
+// prompt + chunk + reserved output past the window (HTTP 500 "Context size has
+// been exceeded"). 512 is generous for the verdict while leaving ample context
+// headroom on every backend.
+const securityMaxTokens = 512
 
 // chunkText splits s into windows of at most size runes that overlap by overlap
 // runes. It returns s unchanged in a single-element slice when it already fits,
