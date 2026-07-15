@@ -34,11 +34,10 @@ func TestGetReaderPipelineCounts(t *testing.T) {
 		store.ScreenArticleSecurity(add("ready1"), 1, "none", false, false) //nolint:errcheck
 		// blocked: screened but over the ceiling -- excluded from the gauge
 		store.ScreenArticleSecurity(add("blocked1"), 8, "prompt_injection", true, true) //nolint:errcheck
-		// read: screened + passed + marked read (old UpdateReadState signature on
-		// this branch; #230 not yet merged)
+		// read: screened + passed + marked read
 		rd := add("read1")
 		store.ScreenArticleSecurity(rd, 0, "none", false, false) //nolint:errcheck
-		if err := store.UpdateReadState(1, rd, true, nil, nil, nil, nil, nil); err != nil {
+		if err := store.UpdateReadState(1, rd, true, nil); err != nil {
 			t.Fatalf("mark read: %v", err)
 		}
 

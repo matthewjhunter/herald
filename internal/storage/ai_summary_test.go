@@ -17,11 +17,11 @@ func seedScored(t *testing.T, store Store, feedID, userID int64, guid string, re
 	if err := store.ScreenArticleSecurity(id, 10-security, "none", false, false); err != nil {
 		t.Fatalf("ScreenArticleSecurity: %v", err)
 	}
-	if err := store.UpdateReadState(userID, id, false, &interest, nil, nil, nil, nil); err != nil {
+	if err := store.UpdateReadState(userID, id, false, &interest); err != nil {
 		t.Fatalf("UpdateReadState scores: %v", err)
 	}
 	if read {
-		if err := store.UpdateReadState(userID, id, true, nil, nil, nil, nil, nil); err != nil {
+		if err := store.UpdateReadState(userID, id, true, nil); err != nil {
 			t.Fatalf("UpdateReadState read: %v", err)
 		}
 	}

@@ -1,0 +1,66 @@
+default_user_id = 1
+
+[database]
+  path = "postgres://localhost:5432/herald?sslmode=disable"
+
+[ollama]
+  base_url = "http://localhost:11434"
+  api_key = ""
+  security_model = "gemma3:4b"
+  curation_model = "llama3.1:8b"
+  timeout = "2m0s"
+  max_parallel = 0
+  max_concurrent = 8
+
+[thresholds]
+  interest_score = 8.0
+  security_score = 7.0
+  security_medium_score = 4.0
+
+[limits]
+  max_feeds_per_user = 1000
+  max_filter_rules_per_user = 1000
+  max_newsletters_per_user = 50
+
+[preferences]
+
+[summarization]
+  min_article_length = 200
+  max_summary_length = 500
+
+[grouping]
+  enabled = true
+  similarity_threshold = 0.75
+  cluster_threshold = 0.75
+  min_cluster_size = 2
+  recency_window_hours = 48
+
+[temperatures]
+  security = 0.3
+  curation = 0.5
+  summarization = 0.3
+  group_summary = 0.5
+  newsletter = 0.0
+  summary = 0.6
+
+[summary]
+  base_url = ""
+  model = "claude-sonnet-4-6"
+  min_interest_score = 7.0
+  min_security_score = 7.0
+  max_input_tokens = 170000
+  body_char_cap = 6000
+  max_output_tokens = 16000
+  timeout = "5m0s"
+  disable_thinking = false
+
+[web]
+  addr = ""
+  [web.webauth]
+    issuer_url = ""
+    webauth_url = ""
+    cookie = ""
+    client_id = ""
+    callback_url = ""
+  [web.admin]
+    role = ""

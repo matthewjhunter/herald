@@ -600,19 +600,19 @@ func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, er
 
 // MarkArticleRead marks an article as read.
 func (e *Engine) MarkArticleRead(userID, articleID int64) error {
-	return e.store.UpdateReadState(userID, articleID, true, nil, nil, nil, nil, nil)
+	return e.store.UpdateReadState(userID, articleID, true, nil)
 }
 
 // SetArticleRead sets the read state of an article for a user to an explicit
 // value, allowing an article to be marked unread again (e.g. a manual toggle).
 func (e *Engine) SetArticleRead(userID, articleID int64, read bool) error {
-	return e.store.UpdateReadState(userID, articleID, read, nil, nil, nil, nil, nil)
+	return e.store.UpdateReadState(userID, articleID, read, nil)
 }
 
 // MarkArticlesRead marks a list of articles as read.
 func (e *Engine) MarkArticlesRead(userID int64, articleIDs []int64) error {
 	for _, id := range articleIDs {
-		if err := e.store.UpdateReadState(userID, id, true, nil, nil, nil, nil, nil); err != nil {
+		if err := e.store.UpdateReadState(userID, id, true, nil); err != nil {
 			return err
 		}
 	}

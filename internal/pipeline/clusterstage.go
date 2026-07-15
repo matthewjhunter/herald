@@ -143,7 +143,7 @@ func (s *Stage) joinArticle(groupID, articleID int64) bool {
 	}
 	if muted, err := s.Store.IsGroupMuted(groupID); err == nil && muted {
 		read := true
-		s.Store.UpdateReadState(s.UserID, articleID, read, nil, nil, nil, nil, nil) //nolint:errcheck
+		s.Store.UpdateReadState(s.UserID, articleID, read, nil) //nolint:errcheck
 	}
 	return true
 }

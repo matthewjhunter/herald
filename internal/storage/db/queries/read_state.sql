@@ -11,17 +11,15 @@ VALUES (@user_id, @article_id, @starred)
 ON CONFLICT (user_id, article_id) DO UPDATE SET starred = excluded.starred;
 
 -- name: UpsertReadStateScores :exec
--- AI pipeline: record scores, mark ai_scored, leave the user's read flag alone.
+-- AI pipeline: record the per-user interest score, mark ai_scored, leave the
+-- user's read flag alone. The security verdict is global and lives on articles
+-- (never read_state) -- see migration 0008.
 INSERT INTO read_state
-  (user_id, article_id, read, interest_score, security_threat, security_category, security_verified, security_flagged, ai_scored)
+  (user_id, article_id, read, interest_score, ai_scored)
 VALUES
-  (@user_id, @article_id, FALSE, @interest_score, @security_threat, @security_category, @security_verified, COALESCE(@security_flagged, FALSE), TRUE)
+  (@user_id, @article_id, FALSE, @interest_score, TRUE)
 ON CONFLICT (user_id, article_id) DO UPDATE SET
   interest_score = excluded.interest_score,
-  security_threat = excluded.security_threat,
-  security_category = excluded.security_category,
-  security_verified = excluded.security_verified,
-  security_flagged = COALESCE(excluded.security_flagged, read_state.security_flagged),
   ai_scored = TRUE;
 
 -- name: UpsertReadStateRead :exec

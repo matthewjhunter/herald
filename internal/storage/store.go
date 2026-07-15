@@ -119,7 +119,7 @@ type Store interface {
 
 	// Read state
 	UpdateStarred(userID, articleID int64, starred bool) error
-	UpdateReadState(userID, articleID int64, read bool, interestScore, securityThreat *float64, securityCategory *string, securityVerified, securityFlagged *bool) error
+	UpdateReadState(userID, articleID int64, read bool, interestScore *float64) error
 	// Security verdict lives on the article (#141): screened once, shared by all
 	// subscribers. ScreenArticleSecurity/SkipArticleSecurity record the verdict;
 	// GetUnscreenedArticles drives the global once-per-cycle security pass. The

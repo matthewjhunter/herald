@@ -42,8 +42,8 @@ func TestMigrationsBuildAndAreIdempotent(t *testing.T) {
 	if err := db.QueryRow("SELECT max(version_id) FROM goose_db_version").Scan(&maxVersion); err != nil {
 		t.Fatalf("read goose version: %v", err)
 	}
-	if maxVersion != 7 {
-		t.Errorf("goose max version = %d, want 7", maxVersion)
+	if maxVersion != 8 {
+		t.Errorf("goose max version = %d, want 8", maxVersion)
 	}
 
 	// 0003 must leave the embedding columns as pgvector vectors, not BYTEA.
@@ -142,5 +142,51 @@ func TestRunMigrationsAdvisoryLockSerializes(t *testing.T) {
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("runMigrations did not complete after the lock was released")
+	}
+}
+
+// TestReadStateHasNoSecurityColumns pins the plan-012 invariant that the
+// security verdict is global: it lives only on articles, never denormalized
+// into per-user read_state rows. Migration 0008 dropped the four columns; this
+// guards against a future migration re-adding threat data to per-user state.
+func TestReadStateHasNoSecurityColumns(t *testing.T) {
+	dsn, drop := testDSN(t)
+	defer drop()
+
+	s, err := NewStore(dsn)
+	if err != nil {
+		t.Fatalf("open/migrate: %v", err)
+	}
+	defer s.Close()
+
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("open for column check: %v", err)
+	}
+	defer db.Close()
+
+	for _, col := range []string{"security_threat", "security_category", "security_verified", "security_flagged"} {
+		var present bool
+		if err := db.QueryRow(
+			`SELECT EXISTS (
+			   SELECT 1 FROM information_schema.columns
+			   WHERE table_name = 'read_state' AND column_name = $1)`, col).Scan(&present); err != nil {
+			t.Fatalf("inspect read_state.%s: %v", col, err)
+		}
+		if present {
+			t.Errorf("read_state.%s exists; threat data must live only on articles (global verdict, #141)", col)
+		}
+	}
+
+	// interest_score is per-user and must remain.
+	var interestPresent bool
+	if err := db.QueryRow(
+		`SELECT EXISTS (
+		   SELECT 1 FROM information_schema.columns
+		   WHERE table_name = 'read_state' AND column_name = 'interest_score')`).Scan(&interestPresent); err != nil {
+		t.Fatalf("inspect read_state.interest_score: %v", err)
+	}
+	if !interestPresent {
+		t.Error("read_state.interest_score missing; per-user interest must stay on read_state")
 	}
 }
