@@ -60,14 +60,18 @@ func (s *Stage) maxParallel() int {
 // returns, in input order, the articles for which fn returned a non-nil result
 // (i.e. those that advanced to the next stage). fn must be safe for concurrent
 // use; it only touches the store and the AI backend, both of which are.
+//
+// Every input is handed to fn exactly once, even under a cancelled ctx. That is
+// deliberate: the security stage claims its batch up front (an attempt and a
+// held claim per row), and fn is what refunds them, so short-circuiting the loop
+// on cancellation would strand the un-dispatched tail with a burned attempt and
+// a held claim (#245). fn is expected to check ctx and return cheaply when it is
+// cancelled -- a fast no-op for the non-claiming stages, a refund for security.
 func (s *Stage) mapArticles(ctx context.Context, in []storage.Article, fn func(context.Context, storage.Article) *storage.Article) []storage.Article {
 	results := make([]*storage.Article, len(in))
 	sem := make(chan struct{}, s.maxParallel())
 	var wg sync.WaitGroup
 	for i, article := range in {
-		if ctx.Err() != nil {
-			break
-		}
 		sem <- struct{}{}
 		wg.Add(1)
 		go func(i int, article storage.Article) {

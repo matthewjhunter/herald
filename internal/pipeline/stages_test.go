@@ -322,6 +322,37 @@ func TestSecurityStageRefundsClaimWhenBreakerOpensAfterClaim(t *testing.T) {
 	}
 }
 
+func TestSecurityStageRefundsClaimWhenContextCancelled(t *testing.T) {
+	// #245: the drain claims a batch (attempt +1, claim stamped), then the ctx is
+	// cancelled mid-batch (daemon shutdown). Every claimed article must still be
+	// refunded -- the old mapArticles ctx-cancel break stranded the un-dispatched
+	// tail with a burned attempt and a held claim.
+	fake := &fakeAI{available: true}
+	st, store, feedID := newHarness(t, fake)
+	art := seed(t, store, feedID, "x", strings.Repeat("x", 500))
+
+	claimed, err := store.ClaimUnscreenedArticles(500, securityClaimLeaseSeconds)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if len(claimed) != 1 {
+		t.Fatalf("expected 1 claimed article, got %d", len(claimed))
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancelled before the stage runs, standing in for a mid-batch shutdown
+
+	if passed := st.Security(ctx, claimed); len(passed) != 0 {
+		t.Fatalf("expected no articles to advance under a cancelled ctx, got %v", ids(passed))
+	}
+	if fake.secCalls != 0 {
+		t.Fatalf("expected zero security calls under a cancelled ctx, got %d", fake.secCalls)
+	}
+	if got := remainingClaimBudget(t, store, art.ID); got != 3 {
+		t.Fatalf("claim budget after cancelled-ctx skip = %d, want 3 (stranded tail burned the retry budget)", got)
+	}
+}
+
 func TestArticleContentSanitizes(t *testing.T) {
 	a := storage.Article{
 		Content:       `<p>Breaking news body.</p><script>steal()</script>`,

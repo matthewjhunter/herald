@@ -39,6 +39,15 @@ func (s *Stage) Security(ctx context.Context, in []storage.Article) []storage.Ar
 }
 
 func (s *Stage) securityOne(ctx context.Context, article storage.Article) *storage.Article {
+	// The drain already claimed this article (attempt +1, claim stamped). If the
+	// ctx was cancelled before we got here (daemon shutdown mid-batch), we never
+	// screen it, so refund the claim rather than letting it strand at a burned
+	// attempt with a held claim (#245).
+	if ctx.Err() != nil {
+		s.Store.RefundSecurityClaim(article.ID) //nolint:errcheck
+		return nil
+	}
+
 	content := articleContent(article)
 	if content == "" {
 		s.Formatter.Warning("skipping article %d %q: no content", article.ID, article.Title)
