@@ -1707,3 +1707,29 @@ func TestHandleAdminUserDelete_ReservedUserRejected(t *testing.T) {
 		t.Errorf("DELETE reserved user: got %d, want 400", rr.Code)
 	}
 }
+
+// TestHandleHome_ReaderGauge checks the reader status gauge (#232) renders in the
+// sidebar on the full page load.
+func TestHandleHome_ReaderGauge(t *testing.T) {
+	tf := newTestFixtures(t)
+	rr := authedRequest(t, tf, "GET", "/", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	if !strings.Contains(rr.Body.String(), "reader-gauge") {
+		t.Error("home sidebar should render the reader status gauge")
+	}
+}
+
+// TestHandleArticleList_ReaderGaugeOOB checks the gauge rides along on the OOB
+// sidebar refresh so it stays in sync when the active view changes.
+func TestHandleArticleList_ReaderGaugeOOB(t *testing.T) {
+	tf := newTestFixtures(t)
+	rr := authedRequest(t, tf, "GET", "/articles", map[string]string{"HX-Request": "true"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	if !strings.Contains(rr.Body.String(), "reader-gauge") {
+		t.Error("article-list OOB sidebar should include the reader gauge")
+	}
+}

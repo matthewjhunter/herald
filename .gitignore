@@ -21,6 +21,7 @@ feedreader
 
 # Config files (may contain sensitive data)
 config/config.yaml
+config/config.toml
 
 # Log files
 *.log

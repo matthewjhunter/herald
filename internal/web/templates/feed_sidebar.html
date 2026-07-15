@@ -1,4 +1,20 @@
 {{define "feed_sidebar_content"}}
+{{with .Gauge}}
+<div class="reader-gauge" title="Pending {{.Pending}} (screening) &middot; Unread {{.Ready}} &middot; Read {{.Read}} &mdash; last 7 days">
+    {{if .Total}}
+    <div class="reader-gauge-ring" style="--grey-end:{{.GreyEnd}}%;--yellow-end:{{.YellowEnd}}%;">
+        <span class="reader-gauge-center">{{.Ready}}</span>
+    </div>
+    {{else}}
+    <div class="reader-gauge-ring reader-gauge-empty"><span class="reader-gauge-center">0</span></div>
+    {{end}}
+    <div class="reader-gauge-legend">
+        <span class="rg-dot rg-grey">{{.Pending}}</span>
+        <span class="rg-dot rg-yellow">{{.Ready}}</span>
+        <span class="rg-dot rg-green">{{.Read}}</span>
+    </div>
+</div>
+{{end}}
 <nav>
     <a href="#" hx-get="/articles" hx-target="#article-list" hx-swap="innerHTML"       class="{{if and (not .ActiveFeed) (not .ActiveStarred) (not .ActiveGroup)}}active{{end}}">
         All Articles
