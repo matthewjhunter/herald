@@ -839,6 +839,22 @@ func TestHandleSidebar(t *testing.T) {
 	}
 }
 
+// TestHandleSidebar_ReaderGauge guards against the gauge disappearing when the
+// sidebar is refetched via the feeds-changed htmx trigger (e.g. after opening
+// an article), which hits this endpoint directly rather than riding along on
+// an OOB swap from another handler.
+func TestHandleSidebar_ReaderGauge(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	rr := authedRequest(t, tf, "GET", "/sidebar", map[string]string{"HX-Request": "true"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	if !strings.Contains(rr.Body.String(), "reader-gauge") {
+		t.Error("sidebar refresh should include the reader status gauge")
+	}
+}
+
 func TestHandleFeedsManage(t *testing.T) {
 	tf := newTestFixtures(t)
 

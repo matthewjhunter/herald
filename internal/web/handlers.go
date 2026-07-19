@@ -1066,6 +1066,12 @@ func (h *handlers) handleSidebar(w http.ResponseWriter, r *http.Request) {
 	if newsletters, err := h.engine.GetNewsletterStats(uid); err == nil {
 		data.Newsletters = newsletters
 	}
+	// Gauge scopes to the active feed; group/starred views (feed_id == 0) show
+	// the all-feeds gauge for now (per-group/starred scoping is a follow-up).
+	if g, err := h.engine.GetReaderGauge(uid, data.ActiveFeed); err == nil {
+		rg := buildReaderGauge(g)
+		data.Gauge = &rg
+	}
 
 	h.renderFragment(w, "feed_sidebar_content", data)
 }
