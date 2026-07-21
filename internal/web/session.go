@@ -2,10 +2,7 @@ package web
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -70,33 +67,14 @@ func (s heraldSessionStore) DeleteExpired(_ context.Context, cutoff time.Time) (
 //
 // A missing or unusable key does not take the service down: tokens are an
 // availability-cheap, confidentiality-valuable concern, so we degrade rather
-// than fail closed. When the key is absent or invalid we generate an ephemeral
-// process key and warn loudly. Tokens stay encrypted at rest either way; the
-// only cost of the ephemeral path is that sessions don't survive a restart
-// (rows sealed under the old key no longer decrypt, so those users re-login). It
-// never falls back to storing tokens in the clear.
+// than fail closed. session.NewKeyringFromBase64 generates an ephemeral
+// process key and warns loudly rather than failing when the key is absent or
+// invalid. Tokens stay encrypted at rest either way; the only cost of the
+// ephemeral path is that sessions don't survive a restart (rows sealed under
+// the old key no longer decrypt, so those users re-login). It never falls
+// back to storing tokens in the clear.
 func newSessionKeyring(encKeyB64 string) (*session.Keyring, error) {
-	kr := session.NewKeyring()
-	if encKeyB64 != "" {
-		if raw, err := base64.StdEncoding.DecodeString(encKeyB64); err != nil {
-			log.Printf("WARNING: HERALD_SESSION_ENC_KEY is not valid base64 (%v); using an ephemeral key -- sessions will not survive a restart. Fix the key in the host secret store.", err)
-		} else if err := kr.Add("k1", raw); err != nil {
-			log.Printf("WARNING: HERALD_SESSION_ENC_KEY is unusable (%v); using an ephemeral key -- sessions will not survive a restart. Fix the key in the host secret store.", err)
-		} else {
-			return kr, nil
-		}
-	} else {
-		log.Printf("WARNING: HERALD_SESSION_ENC_KEY is not set; using an ephemeral key. OIDC session tokens are still encrypted at rest, but sessions will not survive a restart. Set a persistent key in production.")
-	}
-
-	eph := make([]byte, 32)
-	if _, err := rand.Read(eph); err != nil {
-		return nil, fmt.Errorf("generate ephemeral session key: %w", err)
-	}
-	if err := kr.Add("ephemeral", eph); err != nil {
-		return nil, fmt.Errorf("ephemeral session key: %w", err)
-	}
-	return kr, nil
+	return session.NewKeyringFromBase64(encKeyB64, "HERALD_SESSION_ENC_KEY", log.Printf)
 }
 
 // newSessionManager constructs the shared server-side session manager over the
@@ -184,9 +162,10 @@ func (h *handlers) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// localPath is the SanitizeRedirect guard: only same-origin local paths from
-	// the redirect cookie are honored as the post-login destination.
-	redirectTo := localPath(oidclient.FlowCookieValue(r, oidclient.CookieRedirect))
+	// oidclient.LocalPath is the SanitizeRedirect guard: only same-origin
+	// local paths from the redirect cookie are honored as the post-login
+	// destination.
+	redirectTo := oidclient.LocalPath(oidclient.FlowCookieValue(r, oidclient.CookieRedirect))
 	if redirectTo == "" {
 		redirectTo = "/"
 	}

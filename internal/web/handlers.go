@@ -586,7 +586,7 @@ func (h *handlers) handleRoot(w http.ResponseWriter, r *http.Request) {
 // optional return_to is accepted only if it is a same-origin relative path.
 func (h *handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 	returnTo := "/"
-	if rt := localPath(r.URL.Query().Get("return_to")); rt != "" {
+	if rt := oidclient.LocalPath(r.URL.Query().Get("return_to")); rt != "" {
 		returnTo = rt
 	}
 	if h.validator == nil || !h.validator.Ready() {

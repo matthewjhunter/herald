@@ -3,7 +3,6 @@ package web
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -341,45 +340,5 @@ func TestSessionAuthenticate_ExpiredSessionRejected(t *testing.T) {
 	}
 	if _, err := engine.GetSession(id); err == nil {
 		t.Error("expired session should have been deleted on rejection")
-	}
-}
-
-// TestNewSessionKeyring_FailOpen verifies the service never fails over a key
-// problem: a good key becomes the persistent "k1", while an absent or invalid
-// key degrades to an ephemeral key (still encrypting, just not surviving a
-// restart) rather than erroring. ActiveID reflects which path was taken.
-func TestNewSessionKeyring_FailOpen(t *testing.T) {
-	good := make([]byte, 32)
-	if _, err := rand.Read(good); err != nil {
-		t.Fatal(err)
-	}
-	cases := []struct {
-		name       string
-		key        string
-		wantActive string
-	}{
-		{"valid key", base64.StdEncoding.EncodeToString(good), "k1"},
-		{"unset", "", "ephemeral"},
-		{"not base64", "@@@not-base64@@@", "ephemeral"},
-		{"wrong length", base64.StdEncoding.EncodeToString([]byte("too-short")), "ephemeral"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			kr, err := newSessionKeyring(tc.key)
-			if err != nil {
-				t.Fatalf("newSessionKeyring must not error on a key problem, got: %v", err)
-			}
-			if kr.ActiveID() != tc.wantActive {
-				t.Errorf("active key id = %q, want %q", kr.ActiveID(), tc.wantActive)
-			}
-			blob, err := kr.Seal([]byte("token"), []byte("sid"))
-			if err != nil {
-				t.Fatalf("Seal: %v", err)
-			}
-			got, err := kr.Open(blob, []byte("sid"))
-			if err != nil || string(got) != "token" {
-				t.Errorf("round trip: got %q, %v", got, err)
-			}
-		})
 	}
 }
