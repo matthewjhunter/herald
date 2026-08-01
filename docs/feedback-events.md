@@ -137,7 +137,36 @@ distinguished:
 | `bulk_dismissed` | `handleMarkAllRead`, `handleGroupMarkRead`, `handleSummaryMarkRead` | Queue bankruptcy. **Carries no interest signal at all.** Record it, weight it zero, and keep it only so the other kinds are not contaminated by it. |
 | `external_read` | Fever API item mark (`fever.go`, `MarkArticleRead`) | Ambiguous -- see below. |
 | `external_bulk_read` | Fever feed/group/all mark | Same as `bulk_dismissed`. |
+| `clickthrough` | outbound link beacon | Reader left for the original site. Positive, but see below -- it must be read against `content_length`. |
 | `search_result_click` | search UI | Query plus chosen result: a relevance pair, and a statement of interest the keyword prefs never captured. |
+
+### Clickthrough is conditional on how much text the reader had
+
+Leaving for the original site looks like a clean positive and mostly is, but its
+strength depends entirely on whether the reader had a choice. A truncated feed
+publishes a two-line teaser; clicking out is the only way to read the piece at
+all, so the click says little beyond "opened it" and should sit barely above a
+passive read. On a full-text article the same click means the reader wanted the
+source, the comments, or the images -- a genuinely strong signal.
+
+Herald can already tell these apart: `articles.content` is what the feed sent
+and `linked_content` is the fetched full text. Both are folded into
+`content_length`, with `has_full_text` recording whether the fetch happened.
+
+**Store the covariate, not the weight.** The event records how much text was
+available and leaves the curve to the consumer. Baking a multiplier in at
+collection time would mean every event recorded under the old curve becomes
+unusable the first time it is retuned -- the same reason provenance is
+snapshotted rather than joined.
+
+`content_length` rides on *every* event, not just clickthroughs, because dwell
+needs the same denominator.
+
+Capture is an `hx-post` beacon on the existing outbound links rather than a
+redirect through Herald: the `href` keeps the real URL, so copy-link, the status
+bar, and middle-click stay honest, and navigation does not depend on the beacon
+succeeding. Middle-click and copy-paste do not fire it, so clickthroughs
+undercount rather than misattribute -- the right direction to fail.
 
 `bulk_dismissed` is the reason this table exists. Without it, a nightly
 mark-all-read of forty articles looks identical to forty articles the reader
@@ -151,15 +180,39 @@ trusted as engagement the way `article_opened` can. It gets its own kind and its
 own `surface`, so an operator whose reading happens mostly through a Fever client
 can be handled separately rather than silently mislabeled.
 
-### Derived: dwell time
+### Derived: dwell time, and why it only works in one direction
 
-Dwell is valuable and needs no client-side JavaScript, no beacon, and no CSP
-widening. It falls out of the event stream at analysis time: the gap between an
-`article_opened` event and that user's next event is a serviceable proxy for
-time on article. Sessions ending mid-article produce an open-ended interval;
-discard those rather than guessing. Herald should not add a tracking script to
-the authenticated reader to measure this more precisely -- the approximation is
-worth far less than the privacy boundary it would cost.
+Dwell needs no client-side JavaScript, no beacon, and no CSP widening. It falls
+out of the event stream at analysis time: the gap between an `article_opened`
+event and that user's next event.
+
+**The signal is asymmetric, and only the short end is trustworthy.** A three
+second gap is strong evidence the reader opened the article, saw what it was,
+and bailed. A forty minute gap is evidence of nothing at all -- a switched tab, a
+phone call, a walk away from the desk, a browser left open overnight. Herald
+cannot distinguish "read carefully" from "abandoned in a background tab", and
+server-side timing never will.
+
+So the rule is: **dwell may lower a score, never raise it.**
+
+- Below a floor (a few seconds, or far under the reading time implied by
+  `content_length`), record a bounce. This is the useful case, it is common, and
+  it is reliable.
+- Above a ceiling (start at five minutes, operator-tunable), treat the value as
+  **censored, not large**. The reader may have read every word or may have gone
+  to lunch; the honest encoding is "unknown", and the difference between twenty
+  minutes and two hours carries no information whatever.
+- In between, a weak positive at most.
+
+Compare against `content_length` rather than against absolute seconds. Ninety
+seconds is a complete read of a short post and a skim of a long one.
+
+The Page Visibility API could tell Herald when the tab lost focus and would
+genuinely sharpen this. It is not worth it: it means shipping JavaScript into the
+authenticated reader, which is exactly the boundary `docs/analytics.md` draws,
+and it would upgrade "unknown" to "slightly less unknown" while making a much
+worse promise about what Herald watches. The bounce signal is the part with real
+value, and it needs none of that.
 
 ## Prediction provenance
 
@@ -178,7 +231,10 @@ Every event snapshots, at the moment of the interaction:
   `user_prompts`, and enough to partition the corpus by prompt generation). If
   reconstructing the prompt text itself later matters, `user_prompts` needs
   proper versioning first -- that is a separate change and not a prerequisite.
-- `rules_fired` -- the `filter_rules` rows that contributed, as JSONB
+- `rules_fired` -- the `filter_rules` rows that contributed, as JSONB. **Always
+  NULL today**: filter rules turn out to be CRUD-only, with no consumer anywhere
+  in the scoring path (#259). The column ships unpopulated and stays that way
+  until rules actually do something.
 - `list_position` -- where in the rendered list the article appeared
 - `surface` -- `web-list`, `web-article`, `web-search`, `fever`, `digest`,
   `newsletter`
@@ -241,6 +297,11 @@ CREATE TABLE feedback_events (
     -- as a content negative (see "Unsubscribe needs a reason")
     feed_status    TEXT,
     feed_errors    INTEGER,
+
+    -- how much body text the reader had, and whether full text was fetched --
+    -- the covariates that make clickthrough and dwell interpretable
+    content_length INTEGER,
+    has_full_text  BOOLEAN,
 
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -305,12 +366,39 @@ time, at zero training cost and with same-day adaptation. Collect as though a
 fine-tune is coming; do not train one until the simple approach has visibly
 topped out.
 
+## What shipped, and what it does not cover
+
+Collection landed in PR #260 (schema, write paths, passive signals). Known gaps,
+all deliberate:
+
+- **Fever bulk marks record nothing.** `FeverMarkFeedRead` and its siblings work
+  by timestamp cutoff and never materialize article IDs, so enumerating them
+  needs `RETURNING` on those queries. Bulk dismissal carries no interest signal
+  anyway; the cost is that a consumer counting "articles passed over"
+  undercounts for readers who live in a Fever client.
+- **`rules_fired` is always NULL**, per #259 above.
+- **`prompt_hash` is a hash, not the prompt.** `user_prompts` is mutated in
+  place with no history (#258), so the text behind a hash cannot be recovered
+  after an edit. The hash is enough to partition the corpus by prompt
+  generation, which is what the consumers need.
+- **Search-result clicks record `article_opened` with `surface = web-search`**,
+  not a distinct kind, and the query text is not captured at all. Query-to-result
+  pairs are therefore not yet collectable -- that belongs with the explicit
+  controls (#252).
+- **Dwell is derivable but nothing computes it.** Correctly a consumer concern.
+
+Article-scoped writes are gated on subscription (a join to `user_feeds`,
+matching plan 003). The clickthrough beacon takes an article ID straight from
+the request, so without it a crafted POST could write articles the reader does
+not subscribe to into their own corpus.
+
 ## Open questions
 
 - Should `bulk_dismissed` record every article ID in the batch, or one event
   with a count? Per-article is more faithful and makes a nightly clear-out of
   200 articles produce 200 rows. Leaning per-article, since the batch composition
-  is itself informative (what did the reader *not* open?).
+  is itself informative (what did the reader *not* open?). **Resolved:** shipped
+  per-article.
 - Does an `article_opened` event fire on re-opening an already-read article?
   Re-reads are a positive signal and worth keeping, but they inflate open counts.
 - Should the digest/newsletter surface record impressions (what was sent) as
