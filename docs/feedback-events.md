@@ -5,8 +5,15 @@ Herald predicted about an article, what the reader actually did with it, and
 which of those two disagreed.
 
 Status: **design, not built**. Nothing in this document ships until the schema
-below lands. See issue #TBD-1 (this doc), and the consumers that depend on it:
-rule mining, the per-user kNN scorer, and per-model feedback.
+below lands.
+
+- **#251** -- this table and its write paths (everything else depends on it)
+- **#252** -- explicit vote controls, reason axes, unsubscribe reason
+- **#253** -- exploration slot
+- **#254** -- mining events into proposed filter rules
+- **#255** -- per-user kNN scorer over pgvector
+- **#256** -- feedback for the summary, grouping, security, and link-extraction
+  models
 
 ## Why
 
