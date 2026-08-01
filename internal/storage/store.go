@@ -213,6 +213,15 @@ type Store interface {
 	GetFeedAuthors(feedID int64) ([]string, error)
 	GetFeedCategories(feedID int64) ([]string, error)
 
+	// Feedback events -- append-only signal log (#251,
+	// docs/feedback-events.md). Writes snapshot the prediction provenance in
+	// the same statement; there is deliberately no update or delete path
+	// except user deletion.
+	RecordFeedbackEvent(ev FeedbackEvent) error
+	RecordFeedbackEventsBatch(ev FeedbackEvent, articleIDs []int64) error
+	RecordFeedFeedbackEvent(ev FeedbackEvent) error
+	ListFeedbackEvents(userID int64, limit int) ([]FeedbackEventRow, error)
+
 	// Filter rules
 	AddFilterRule(rule *FilterRule) (int64, error)
 	GetFilterRules(userID int64, feedID *int64) ([]FilterRule, error)

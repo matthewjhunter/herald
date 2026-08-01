@@ -164,6 +164,29 @@ type FeedTag struct {
 	CreatedAt time.Time
 }
 
+type FeedbackEvent struct {
+	ID            int64
+	UserID        int64
+	ArticleID     *int64
+	FeedID        *int64
+	ArticleTitle  *string
+	ArticleUrl    *string
+	Embedding     *pgvector.Vector
+	Kind          string
+	Axis          *string
+	AxisValue     *string
+	InterestScore *float64
+	ScoreModel    *string
+	PromptHash    *string
+	RulesFired    []byte
+	ListPosition  *int
+	Surface       string
+	Exploration   bool
+	FeedStatus    *string
+	FeedErrors    *int
+	CreatedAt     time.Time
+}
+
 type FeverCredential struct {
 	UserID int64
 	ApiKey string
