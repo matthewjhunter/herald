@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -327,6 +328,122 @@ func TestDeleteUserRemovesFeedbackEvents(t *testing.T) {
 		}
 		if len(events) != 0 {
 			t.Errorf("got %d feedback events after user deletion, want none", len(events))
+		}
+	})
+}
+
+// TestFeedbackCapturesContentCovariates: a clickthrough is only interpretable
+// against how much text the reader already had. On a truncated stub, clicking
+// out is the only way to read the article at all and so barely outranks a
+// passive read; on a full-text article the same click means the reader wanted
+// the source. The event stores the covariate and leaves the weighting to the
+// consumer, so the curve can be retuned without re-collecting.
+func TestFeedbackCapturesContentCovariates(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		userID, feedID, _ := feedbackFixture(t, store)
+		now := time.Now()
+
+		stubID, err := store.AddArticle(&Article{
+			FeedID: feedID, GUID: "stub", Title: "Teaser",
+			URL: "https://example.test/stub", Content: "<p>Read the rest at...</p>",
+			PublishedDate: &now,
+		})
+		if err != nil {
+			t.Fatalf("AddArticle stub: %v", err)
+		}
+		fullID, err := store.AddArticle(&Article{
+			FeedID: feedID, GUID: "full", Title: "The Whole Thing",
+			URL: "https://example.test/full", Content: "<p>Body.</p>",
+			PublishedDate: &now,
+		})
+		if err != nil {
+			t.Fatalf("AddArticle full: %v", err)
+		}
+		// Full text arrives via the fetcher, not AddArticle.
+		if err := store.UpdateArticleLinkedContent(fullID, "https://example.test/full",
+			strings.Repeat("full text of the article. ", 200)); err != nil {
+			t.Fatalf("UpdateArticleLinkedContent: %v", err)
+		}
+
+		for _, id := range []int64{stubID, fullID} {
+			if err := store.RecordFeedbackEvent(FeedbackEvent{
+				UserID: userID, ArticleID: id,
+				Kind: FeedbackClickthrough, Surface: SurfaceWebArticle,
+			}); err != nil {
+				t.Fatalf("RecordFeedbackEvent %d: %v", id, err)
+			}
+		}
+
+		events, err := store.ListFeedbackEvents(userID, 10)
+		if err != nil {
+			t.Fatalf("ListFeedbackEvents: %v", err)
+		}
+		byArticle := make(map[int64]FeedbackEventRow)
+		for _, ev := range events {
+			if ev.ArticleID != nil {
+				byArticle[*ev.ArticleID] = ev
+			}
+		}
+
+		stub, ok := byArticle[stubID]
+		if !ok {
+			t.Fatal("no event for the stub article")
+		}
+		if stub.ContentLength == nil || *stub.ContentLength == 0 {
+			t.Errorf("stub content_length = %v, want the length of what the reader could see", stub.ContentLength)
+		}
+		if stub.HasFullText == nil || *stub.HasFullText {
+			t.Errorf("stub has_full_text = %v, want false: a clickthrough here is mandatory, not a choice", stub.HasFullText)
+		}
+
+		full, ok := byArticle[fullID]
+		if !ok {
+			t.Fatal("no event for the full-text article")
+		}
+		if full.HasFullText == nil || !*full.HasFullText {
+			t.Errorf("full has_full_text = %v, want true", full.HasFullText)
+		}
+		if full.ContentLength == nil || stub.ContentLength == nil || *full.ContentLength <= *stub.ContentLength {
+			t.Errorf("content_length: full = %v, stub = %v; the full-text article must measure longer or the covariate cannot separate them",
+				full.ContentLength, stub.ContentLength)
+		}
+	})
+}
+
+// TestFeedbackRequiresSubscription: an event may only be recorded for an
+// article in a feed the user subscribes to, matching the article-access gate in
+// plan 003. Otherwise a crafted request could write arbitrary articles into a
+// reader's corpus.
+func TestFeedbackRequiresSubscription(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		userID, _, _ := feedbackFixture(t, store)
+		now := time.Now()
+
+		otherFeed, err := store.AddFeed("https://other.test/feed", "Not Subscribed", "")
+		if err != nil {
+			t.Fatalf("AddFeed: %v", err)
+		}
+		foreignID, err := store.AddArticle(&Article{
+			FeedID: otherFeed, GUID: "x1", Title: "Someone Else's Article",
+			URL: "https://other.test/x1", PublishedDate: &now,
+		})
+		if err != nil {
+			t.Fatalf("AddArticle: %v", err)
+		}
+
+		if err := store.RecordFeedbackEvent(FeedbackEvent{
+			UserID: userID, ArticleID: foreignID,
+			Kind: FeedbackClickthrough, Surface: SurfaceWebArticle,
+		}); err != nil {
+			t.Fatalf("RecordFeedbackEvent: %v, want a silent no-op", err)
+		}
+
+		events, err := store.ListFeedbackEvents(userID, 10)
+		if err != nil {
+			t.Fatalf("ListFeedbackEvents: %v", err)
+		}
+		if len(events) != 0 {
+			t.Errorf("got %d events for an unsubscribed feed's article, want none", len(events))
 		}
 	})
 }

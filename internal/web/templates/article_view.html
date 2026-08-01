@@ -50,11 +50,15 @@
 {{end}}
 
 <div class="article-actions">
-    <a href="{{.URL}}" target="_blank" rel="noopener" role="button" class="outline" data-original>
+    {{/* hx-post is a beacon: the href keeps the real URL so copy-link and the
+         status bar stay honest, and navigation does not depend on it (#251). */}}
+    <a href="{{.URL}}" target="_blank" rel="noopener" role="button" class="outline" data-original
+       hx-post="/articles/{{.ID}}/visit" hx-swap="none">
         {{if .LinkedURL}}Open Post{{else}}Open Original{{end}}
     </a>
     {{if .LinkedURL}}
-    <a href="{{.LinkedURL}}" target="_blank" rel="noopener" role="button" class="outline">
+    <a href="{{.LinkedURL}}" target="_blank" rel="noopener" role="button" class="outline"
+       hx-post="/articles/{{.ID}}/visit" hx-swap="none">
         Open Article
     </a>
     {{end}}

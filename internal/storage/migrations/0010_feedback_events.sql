@@ -61,6 +61,24 @@ CREATE TABLE IF NOT EXISTS feedback_events (
     feed_status    TEXT,
     feed_errors    INTEGER,
 
+    -- How much body text the reader actually had in front of them, and whether
+    -- full text had been fetched. These are the covariates that make the other
+    -- signals interpretable:
+    --
+    --   * A clickthrough out of a 200-character stub is close to mandatory --
+    --     it is the only way to read the piece at all -- while the same click
+    --     on a full-text article means the reader wanted the source. Same
+    --     event, very different strength.
+    --   * Dwell means nothing without length. Thirty seconds on a short post is
+    --     engagement; thirty seconds on a long one is a bounce.
+    --
+    -- The WEIGHT stays out of the table on purpose. Storing the covariate and
+    -- leaving the curve to the consumer means the weighting can be retuned
+    -- later; baking it in at collection time would make every event recorded
+    -- under the old curve unusable.
+    content_length INTEGER,
+    has_full_text  BOOLEAN,
+
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

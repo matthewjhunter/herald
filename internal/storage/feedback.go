@@ -64,6 +64,12 @@ const (
 	FeedbackFeedUnsubscribe FeedbackKind = "feed_unsubscribe"
 	// FeedbackSearchResultClick pairs a query with a chosen result.
 	FeedbackSearchResultClick FeedbackKind = "search_result_click"
+	// FeedbackClickthrough is the reader leaving for the original site. A
+	// positive, but one that must be read against ContentLength: on a truncated
+	// stub, clicking out is the only way to read the article at all, so it
+	// barely outranks a passive read. On a full-text article it means the
+	// reader wanted the source, which is a much stronger statement.
+	FeedbackClickthrough FeedbackKind = "clickthrough"
 )
 
 // FeedbackSurface is where the interaction happened. Fever traffic in
@@ -127,6 +133,11 @@ type FeedbackEventRow struct {
 	Exploration   bool
 	FeedStatus    *string
 	FeedErrors    *int
+	// ContentLength is how much body text the reader had in Herald, and
+	// HasFullText whether the linked article had been fetched. Together they
+	// gate how much a clickthrough is worth and make dwell interpretable.
+	ContentLength *int
+	HasFullText   *bool
 	CreatedAt     time.Time
 	HasEmbedding  bool
 }
@@ -137,18 +148,31 @@ type FeedbackEventRow struct {
 // keeps no history (#258), so this is the most that can be recovered. A NULL
 // hash means the user has no custom curation prompt and the built-in default
 // was in force.
+// content_length counts the body the reader could actually see in Herald: the
+// feed's content (falling back to the summary when the feed sends none) plus
+// any fetched full text. has_full_text says whether the linked article had been
+// fetched at all. A stub post is a short content_length with no full text, and
+// on one of those a clickthrough is close to mandatory rather than a choice.
+//
+// The join to user_feeds is the subscription guard: an event may only be
+// recorded for an article in a feed the user subscribes to, matching the
+// article-access gate in plan 003. An unsubscribed article inserts nothing.
 const insertArticleFeedback = `
 INSERT INTO feedback_events (
     user_id, article_id, feed_id, article_title, article_url, embedding,
     kind, axis, axis_value,
     interest_score, score_model, prompt_hash,
-    list_position, surface, exploration, feed_status, feed_errors)
+    list_position, surface, exploration, feed_status, feed_errors,
+    content_length, has_full_text)
 SELECT
     $1, a.id, a.feed_id, a.title, a.url, ae.embedding,
     $3, NULLIF($4, ''), NULLIF($5, ''),
     rs.interest_score, up.model, encode(sha256(up.prompt_template::bytea), 'hex'),
-    $6, $7, $8, f.status, f.consecutive_errors
+    $6, $7, $8, f.status, f.consecutive_errors,
+    length(COALESCE(NULLIF(a.content, ''), a.summary, '')) + length(COALESCE(a.linked_content, '')),
+    COALESCE(a.linked_content, '') <> ''
 FROM articles a
+JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = $1
 LEFT JOIN article_embeddings ae ON ae.article_id = a.id
 LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = $1
 LEFT JOIN feeds f ON f.id = a.feed_id
@@ -215,7 +239,7 @@ func (s *PostgresStore) ListFeedbackEvents(userID int64, limit int) ([]FeedbackE
 SELECT id, user_id, article_id, feed_id, article_title, article_url, kind,
        axis, axis_value, interest_score, score_model, prompt_hash,
        list_position, surface, exploration, feed_status, feed_errors,
-       created_at, embedding IS NOT NULL
+       content_length, has_full_text, created_at, embedding IS NOT NULL
 FROM feedback_events
 WHERE user_id = $1
 ORDER BY created_at DESC, id DESC
@@ -232,8 +256,8 @@ LIMIT $2`
 		if err := rows.Scan(&r.ID, &r.UserID, &r.ArticleID, &r.FeedID, &r.ArticleTitle,
 			&r.ArticleURL, &r.Kind, &r.Axis, &r.AxisValue, &r.InterestScore,
 			&r.ScoreModel, &r.PromptHash, &r.ListPosition, &r.Surface,
-			&r.Exploration, &r.FeedStatus, &r.FeedErrors, &r.CreatedAt,
-			&r.HasEmbedding); err != nil {
+			&r.Exploration, &r.FeedStatus, &r.FeedErrors, &r.ContentLength,
+			&r.HasFullText, &r.CreatedAt, &r.HasEmbedding); err != nil {
 			return nil, fmt.Errorf("scan feedback event: %w", err)
 		}
 		out = append(out, r)

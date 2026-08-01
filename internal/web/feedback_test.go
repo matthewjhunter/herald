@@ -204,6 +204,50 @@ func TestFeedbackUnsubscribeSnapshotsFeedHealth(t *testing.T) {
 	}
 }
 
+// TestFeedbackClickthroughBeacon: leaving for the original site is a positive
+// signal, but only interpretable against how much text the reader already had,
+// so the event must carry the content covariates.
+func TestFeedbackClickthroughBeacon(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	rr := authedRequest(t, tf, "POST", fmt.Sprintf("/articles/%d/visit", tf.articleID), nil)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("visit beacon: status %d", rr.Code)
+	}
+
+	ev := onlyEvent(t, tf)
+	if ev.Kind != string(storage.FeedbackClickthrough) {
+		t.Errorf("kind = %q, want %q", ev.Kind, storage.FeedbackClickthrough)
+	}
+	if ev.ContentLength == nil {
+		t.Error("content_length not captured: a clickthrough cannot be weighted without it")
+	}
+	if ev.HasFullText == nil {
+		t.Error("has_full_text not captured")
+	}
+}
+
+// TestFeedbackClickthroughRejectsOtherUsersArticle: the beacon takes an article
+// ID from the request, so it must not let a reader write articles they do not
+// subscribe to into their own corpus.
+func TestFeedbackClickthroughRejectsOtherUsersArticle(t *testing.T) {
+	tf := newTestFixtures(t)
+	otherUserID, otherToken := secondTestUser(t, tf)
+
+	rr := authedRequestAs(t, tf, otherToken, "POST", fmt.Sprintf("/articles/%d/visit", tf.articleID))
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("visit beacon: status %d", rr.Code)
+	}
+
+	events, err := tf.store.ListFeedbackEvents(otherUserID, 10)
+	if err != nil {
+		t.Fatalf("ListFeedbackEvents: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("got %d events for an article the user does not subscribe to, want none", len(events))
+	}
+}
+
 // TestOpenSurfaceRejectsForgedValues: the surface and position ride in on query
 // parameters, which are reader-controlled. Unknown values must not be written
 // through into the corpus.

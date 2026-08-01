@@ -39,6 +39,33 @@ func openSurface(r *http.Request) storage.FeedbackSurface {
 	}
 }
 
+// handleArticleVisit records that the reader left for the original site. It is
+// a beacon, not a redirect: the outbound link keeps the real URL in its href, so
+// copy-link, the status bar, and middle-click all stay honest and the navigation
+// does not depend on this request succeeding. The cost is that middle-click and
+// copy-paste do not fire it, so clickthroughs are undercounted rather than
+// misattributed.
+//
+// How much the click is worth depends on content_length, which the event
+// snapshots: on a truncated stub, clicking out is the only way to read the
+// article, so it barely outranks a passive read. That weighting is a consumer
+// decision (#251).
+func (h *handlers) handleArticleVisit(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	articleID, err := strconv.ParseInt(r.PathValue("articleID"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid article ID", http.StatusBadRequest)
+		return
+	}
+	h.engine.RecordFeedback(storage.FeedbackEvent{
+		UserID:    uid,
+		ArticleID: articleID,
+		Kind:      storage.FeedbackClickthrough,
+		Surface:   storage.SurfaceWebArticle,
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // groupArticleIDs returns the article IDs currently in a group, for events that
 // cover a whole cluster (bulk dismissal, mute, disband). Ownership is enforced
 // by the engine. Returns nil on error: a missing feedback event is a gap in the
