@@ -184,6 +184,8 @@ type FeedbackEvent struct {
 	Exploration   bool
 	FeedStatus    *string
 	FeedErrors    *int
+	ContentLength *int
+	HasFullText   *bool
 	CreatedAt     time.Time
 }
 
