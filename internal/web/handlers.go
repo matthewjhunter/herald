@@ -301,6 +301,13 @@ type articleRow struct {
 	Read             bool
 	Starred          bool
 	SecurityFlagged  bool
+	// Surface and Position ride along on the row's open link so the feedback
+	// event knows where the reader was and how far down the list the article
+	// sat (#251). Position is 1-based and counts from the top of the result
+	// set, not the page. Items near the top are opened more regardless of
+	// quality; without it a model trained on opens learns "be at the top".
+	Surface  string
+	Position int
 }
 
 type searchResultsData struct {
@@ -828,7 +835,7 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 	}
 	summaries := h.articleSummaries(ids)
 
-	for _, a := range articles {
+	for i, a := range articles {
 		data.Articles = append(data.Articles, articleRow{
 			ID:               a.ID,
 			Title:            a.Title,
@@ -839,6 +846,8 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 			SecurityFlagged:  a.SecurityFlagged,
 			Read:             a.Read,
 			Starred:          a.Starred,
+			Surface:          string(storage.SurfaceWebList),
+			Position:         offset + i + 1,
 		})
 	}
 
@@ -875,12 +884,14 @@ func (h *handlers) renderLinkedBy(w http.ResponseWriter, uid int64, targetURL st
 		return
 	}
 	data := searchResultsData{Heading: "Feeds that linked to " + targetURL}
-	for _, b := range links {
+	for i, b := range links {
 		data.Articles = append(data.Articles, articleRow{
 			ID:               b.ArticleID,
 			Title:            b.Title,
 			FeedTitle:        b.FeedTitle,
 			PublishedDateFmt: formatDate(bestDate(b.PublishedDate, &b.FetchedDate)),
+			Surface:          string(storage.SurfaceWebSearch),
+			Position:         i + 1,
 		})
 	}
 	h.renderFragment(w, "search_results", data)
@@ -937,7 +948,7 @@ func (h *handlers) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	summaries := h.articleSummaries(ids)
 
-	for _, r := range results {
+	for i, r := range results {
 		data.Articles = append(data.Articles, articleRow{
 			ID:               r.ID,
 			Title:            r.Title,
@@ -945,6 +956,8 @@ func (h *handlers) handleSearch(w http.ResponseWriter, r *http.Request) {
 			FeedTitle:        feedTitles[r.FeedID],
 			PublishedDateFmt: formatDate(bestDate(r.PublishedDate, &r.FetchedDate)),
 			AISummary:        summaries[r.ID],
+			Surface:          string(storage.SurfaceWebSearch),
+			Position:         offset + i + 1,
 		})
 	}
 
@@ -968,6 +981,17 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 
 	// Auto-mark as read
 	h.engine.MarkArticleRead(uid, articleID)
+
+	// The reader chose this article out of a list: engagement, and the one read
+	// path that genuinely says so (#251). ?from and ?pos are set by the row that
+	// was clicked, so the event knows which list and how far down.
+	h.engine.RecordFeedback(storage.FeedbackEvent{
+		UserID:       uid,
+		ArticleID:    articleID,
+		Kind:         storage.FeedbackArticleOpened,
+		Surface:      openSurface(r),
+		ListPosition: openPosition(r),
+	})
 
 	// Sanitize HTML content, then rewrite <img src> to local cached URLs.
 	// Share a single seen map across both content blocks so images that appear
@@ -1103,6 +1127,14 @@ func (h *handlers) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to mark read", http.StatusInternalServerError)
 			return
 		}
+		// Queue bankruptcy, not a judgment on any of these articles. Recorded
+		// per-article and weighted zero by consumers: its only job is to keep
+		// these reads from being mistaken for engagement (#251).
+		h.engine.RecordFeedbackBatch(storage.FeedbackEvent{
+			UserID:  uid,
+			Kind:    storage.FeedbackBulkDismissed,
+			Surface: storage.SurfaceWebList,
+		}, ids)
 	}
 
 	w.Header().Set("HX-Trigger", "articles-marked-read")
@@ -1116,10 +1148,21 @@ func (h *handlers) handleGroupMute(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid group ID", http.StatusBadRequest)
 		return
 	}
+	// Membership must be read before the mute: muting marks the group read and
+	// the cluster is what the signal is about.
+	ids := h.groupArticleIDs(uid, groupID)
 	if err := h.engine.MuteGroup(uid, groupID); err != nil {
 		http.Error(w, "failed to mute group", http.StatusInternalServerError)
 		return
 	}
+	// "Enough of THIS STORY" -- a negative on the cluster, not a standing topic
+	// ban. Consumers must decay it quickly and must not mine a lasting topic
+	// rule out of it (#251).
+	h.engine.RecordFeedbackBatch(storage.FeedbackEvent{
+		UserID:  uid,
+		Kind:    storage.FeedbackGroupMute,
+		Surface: storage.SurfaceWebGroup,
+	}, ids)
 	w.Header().Set("HX-Redirect", "/")
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -1131,10 +1174,18 @@ func (h *handlers) handleGroupDisband(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid group ID", http.StatusBadRequest)
 		return
 	}
+	ids := h.groupArticleIDs(uid, groupID)
 	if err := h.engine.DisbandGroup(uid, groupID); err != nil {
 		http.Error(w, "failed to disband group", http.StatusInternalServerError)
 		return
 	}
+	// The grouping was wrong: a label on similarity, not on interest. These
+	// articles should not have been clustered together (#251).
+	h.engine.RecordFeedbackBatch(storage.FeedbackEvent{
+		UserID:  uid,
+		Kind:    storage.FeedbackGroupDisband,
+		Surface: storage.SurfaceWebGroup,
+	}, ids)
 	w.Header().Set("HX-Redirect", "/")
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -1146,10 +1197,18 @@ func (h *handlers) handleGroupMarkRead(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid group ID", http.StatusBadRequest)
 		return
 	}
+	// Snapshot the membership before marking: the group's articles are what the
+	// dismissal covers, and reading them after the fact is no cheaper.
+	ids := h.groupArticleIDs(uid, groupID)
 	if err := h.engine.MarkGroupRead(uid, groupID, 0); err != nil {
 		http.Error(w, "failed to mark group read", http.StatusInternalServerError)
 		return
 	}
+	h.engine.RecordFeedbackBatch(storage.FeedbackEvent{
+		UserID:  uid,
+		Kind:    storage.FeedbackBulkDismissed,
+		Surface: storage.SurfaceWebGroup,
+	}, ids)
 	w.Header().Set("HX-Trigger", "feeds-changed")
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -1300,6 +1359,19 @@ func (h *handlers) handleStarToggle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A star is a strong positive. An unstar retracts it -- it is not a
+	// negative, and consumers must not read it as one (#251).
+	kind := storage.FeedbackUnstar
+	if starred {
+		kind = storage.FeedbackStar
+	}
+	h.engine.RecordFeedback(storage.FeedbackEvent{
+		UserID:    uid,
+		ArticleID: articleID,
+		Kind:      kind,
+		Surface:   storage.SurfaceWebArticle,
+	})
+
 	// Return updated star button
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	nextState := "true"
@@ -1333,6 +1405,20 @@ func (h *handlers) handleReadToggle(w http.ResponseWriter, r *http.Request) {
 		h.renderError(w, http.StatusInternalServerError, "Failed to toggle read state")
 		return
 	}
+
+	// Marking read without opening is a deliberate dismissal (weak negative);
+	// marking unread again says the reader wants it back (weak positive).
+	// Neither is the same signal as opening the article (#251).
+	kind := storage.FeedbackReadToggledOff
+	if read {
+		kind = storage.FeedbackReadToggledOn
+	}
+	h.engine.RecordFeedback(storage.FeedbackEvent{
+		UserID:    uid,
+		ArticleID: articleID,
+		Kind:      kind,
+		Surface:   storage.SurfaceWebList,
+	})
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, readToggleButton(articleID, read))
@@ -1469,6 +1555,19 @@ func (h *handlers) handleFeedUnsubscribe(w http.ResponseWriter, r *http.Request)
 		h.renderError(w, http.StatusBadRequest, "Invalid feed ID")
 		return
 	}
+
+	// Recorded BEFORE the unsubscribe, not after: unsubscribing the last
+	// subscriber deletes the feed row (DeleteOrphanedFeed), and the event
+	// snapshots that row's health -- status and consecutive_errors -- which is
+	// what lets a consumer tell a dead-feed cleanup from a content judgment. An
+	// unsubscribe that then fails leaves a stray event, which is much cheaper
+	// than systematically losing the ones that matter (#251).
+	h.engine.RecordFeedFeedback(storage.FeedbackEvent{
+		UserID:  uid,
+		FeedID:  feedID,
+		Kind:    storage.FeedbackFeedUnsubscribe,
+		Surface: storage.SurfaceWebFeeds,
+	})
 
 	if err := h.engine.UnsubscribeFeed(uid, feedID); err != nil {
 		h.renderError(w, http.StatusInternalServerError, "Failed to unsubscribe")

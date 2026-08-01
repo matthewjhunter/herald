@@ -63,6 +63,18 @@ func (q *Queries) DeleteUserFeedTags(ctx context.Context, userID int64) error {
 	return err
 }
 
+const deleteUserFeedbackEvents = `-- name: DeleteUserFeedbackEvents :exec
+DELETE FROM feedback_events WHERE user_id = $1
+`
+
+// The FK would cascade this anyway; it is explicit because feedback events are
+// behavioral data and "deleting my account leaves no residue" is a promise
+// worth enforcing visibly and testing directly (docs/feedback-events.md).
+func (q *Queries) DeleteUserFeedbackEvents(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, deleteUserFeedbackEvents, userID)
+	return err
+}
+
 const deleteUserFeeds = `-- name: DeleteUserFeeds :exec
 DELETE FROM user_feeds WHERE user_id = $1
 `

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/matthewjhunter/herald/internal/storage"
 )
 
 // handleFever is the single Fever API endpoint.
@@ -106,19 +108,44 @@ func (h *handlers) feverMark(userID int64, r *http.Request) {
 	switch entity {
 	case "item":
 		var err error
+		// Fever read marks get their own kind and surface. Third-party clients
+		// auto-mark on scroll, on their own schedule, with behavior Herald
+		// neither controls nor can introspect -- so a Fever "read" cannot be
+		// trusted as engagement the way opening an article in the web reader
+		// can. Stars are the reader's own deliberate act either way (#251).
+		var kind storage.FeedbackKind
 		switch as {
 		case "read":
 			err = h.engine.MarkArticleRead(userID, id)
+			kind = storage.FeedbackExternalRead
 		case "unread":
 			err = h.engine.MarkArticleUnread(userID, id)
+			kind = storage.FeedbackReadToggledOff
 		case "saved":
 			err = h.engine.StarArticle(userID, id, true)
+			kind = storage.FeedbackStar
 		case "unsaved":
 			err = h.engine.StarArticle(userID, id, false)
+			kind = storage.FeedbackUnstar
 		}
 		if err != nil {
 			log.Printf("fever: mark item %d as=%q user=%d: %v", id, as, userID, err)
 		}
+		if err == nil && kind != "" {
+			h.engine.RecordFeedback(storage.FeedbackEvent{
+				UserID:    userID,
+				ArticleID: id,
+				Kind:      kind,
+				Surface:   storage.SurfaceFever,
+			})
+		}
+	// Known gap: the bulk branches below record no feedback events. Fever marks
+	// feed/group/all read by timestamp (FeverMarkFeedRead and friends take a
+	// `before` cutoff), so the affected article IDs are never materialized and
+	// enumerating them would mean a second scan per call. Bulk dismissal
+	// carries no interest signal in the first place -- the cost is only that a
+	// consumer counting "articles passed over" undercounts for Fever-heavy
+	// readers. Enumerating needs RETURNING on those queries (#251).
 	case "feed":
 		if as == "read" {
 			if err := h.engine.FeverMarkFeedRead(userID, id, before); err != nil {

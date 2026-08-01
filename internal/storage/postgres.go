@@ -241,6 +241,7 @@ func (s *PostgresStore) DeleteUser(userID int64) error {
 		qtx.DeleteUserPrompts,
 		qtx.DeleteUserFilterRules,
 		qtx.DeleteUserArticleGroups,
+		qtx.DeleteUserFeedbackEvents,
 		qtx.DeleteUserRow,
 	}
 	for _, step := range steps {

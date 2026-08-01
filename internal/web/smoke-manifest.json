@@ -120,6 +120,15 @@
       "complete": true
     },
     {
+      "method": "POST",
+      "pattern": "/articles/{articleID}/visit",
+      "effect": "mutating",
+      "example_params": {
+        "articleID": "1"
+      },
+      "complete": true
+    },
+    {
       "method": "GET",
       "pattern": "/auth/callback",
       "effect": "read_only",

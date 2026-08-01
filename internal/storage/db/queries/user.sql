@@ -43,5 +43,11 @@ DELETE FROM filter_rules WHERE user_id = @user_id;
 -- name: DeleteUserArticleGroups :exec
 DELETE FROM article_groups WHERE user_id = @user_id;
 
+-- name: DeleteUserFeedbackEvents :exec
+-- The FK would cascade this anyway; it is explicit because feedback events are
+-- behavioral data and "deleting my account leaves no residue" is a promise
+-- worth enforcing visibly and testing directly (docs/feedback-events.md).
+DELETE FROM feedback_events WHERE user_id = @user_id;
+
 -- name: DeleteUserRow :exec
 DELETE FROM users WHERE id = @id;

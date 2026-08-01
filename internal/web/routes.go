@@ -129,6 +129,7 @@ func NewRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	mux.Handle("POST /articles/mark-all-read", auth(http.HandlerFunc(h.handleMarkAllRead)), smoke.Form(url.Values{"ids": {"1"}}))
 	mux.Handle("POST /articles/{articleID}/star", auth(http.HandlerFunc(h.handleStarToggle)), smoke.Example("articleID", "1"), smoke.Form(url.Values{"starred": {"true"}}))
 	mux.Handle("POST /articles/{articleID}/read", auth(http.HandlerFunc(h.handleReadToggle)), smoke.Example("articleID", "1"), smoke.Form(url.Values{"read": {"false"}}))
+	mux.Handle("POST /articles/{articleID}/visit", auth(http.HandlerFunc(h.handleArticleVisit)), smoke.Example("articleID", "1"))
 	mux.Handle("GET /images/{imageID}", auth(http.HandlerFunc(h.handleArticleImage)), smoke.Example("imageID", "1"))
 	mux.Handle("GET /feeds/{feedID}/favicon", auth(http.HandlerFunc(h.handleFeedFavicon)), smoke.Example("feedID", "1"))
 	mux.Handle("GET /feeds/export.opml", auth(http.HandlerFunc(h.handleOPMLExport)))
