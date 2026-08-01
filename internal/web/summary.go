@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/matthewjhunter/herald/internal/storage"
 )
 
 // summaryRow is one entry in the AI Summary list pane.
@@ -153,6 +155,13 @@ func (h *handlers) handleSummaryMarkRead(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "failed to mark read", http.StatusInternalServerError)
 		return
 	}
+	// Clearing everything a digest covered: dismissal, carrying no signal about
+	// the individual articles (#251).
+	h.engine.RecordFeedbackBatch(storage.FeedbackEvent{
+		UserID:  uid,
+		Kind:    storage.FeedbackBulkDismissed,
+		Surface: storage.SurfaceWebSummary,
+	}, s.ArticleIDs)
 	w.Header().Set("HX-Trigger", "feeds-changed")
 	w.WriteHeader(http.StatusNoContent)
 }

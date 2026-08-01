@@ -1,6 +1,6 @@
 {{define "article_row"}}
 <div class="article-row {{if .Read}}read{{end}}" data-article-id="{{.ID}}"
-     hx-get="/articles/{{.ID}}"
+     hx-get="/articles/{{.ID}}{{if .Surface}}?from={{.Surface}}{{if .Position}}&pos={{.Position}}{{end}}{{end}}"
      hx-target="#reading-pane"
      hx-swap="innerHTML">
     <h4>
