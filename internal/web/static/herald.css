@@ -579,3 +579,23 @@
 .vote-control { display: inline-flex; align-items: center; gap: 0.15rem; }
 .row-vote { opacity: 0.55; transition: opacity 0.12s ease-in-out; }
 .article-row:hover .row-vote, .row-vote:focus-within { opacity: 1; }
+
+/* Headline and vote buttons share one row: the list is scanned by headline, so
+   the buttons must not cost a line of their own. min-width:0 lets a long
+   headline shrink and wrap instead of pushing the buttons off the edge --
+   flex items default to min-width:auto and would refuse to shrink. */
+.article-row-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+.article-row-head h4 {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.article-row-head .row-vote {
+    flex: 0 0 auto;
+    /* Nudge up to sit optically level with the headline's cap height. */
+    margin-top: -0.1rem;
+}
