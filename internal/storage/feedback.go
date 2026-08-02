@@ -88,8 +88,7 @@ const (
 // These deliberately do NOT reuse filter_rules.axis, which is constrained to
 // author/category/tag and cannot express three of the five reasons a reader
 // actually gives. Mining these into rules (#254) is therefore a translation
-// step, not a direct copy -- and it needs #259 first, since nothing in the
-// scoring path reads filter_rules today.
+// step, not a direct copy.
 type FeedbackAxis string
 
 const (
@@ -205,11 +204,15 @@ type FeedbackEventRow struct {
 	InterestScore *float64
 	ScoreModel    *string
 	PromptHash    *string
-	ListPosition  *int
-	Surface       string
-	Exploration   bool
-	FeedStatus    *string
-	FeedErrors    *int
+	// RulesFired is raw JSONB: the filter rules that adjusted this article's
+	// score (#259), or nil when none matched. Left unparsed deliberately --
+	// the Go-side shape is a consumer concern and there is no consumer yet.
+	RulesFired   []byte
+	ListPosition *int
+	Surface      string
+	Exploration  bool
+	FeedStatus   *string
+	FeedErrors   *int
 	// ContentLength is how much body text the reader had in Herald, and
 	// HasFullText whether the linked article had been fetched. Together they
 	// gate how much a clickthrough is worth and make dwell interpretable.
@@ -235,20 +238,27 @@ type FeedbackEventRow struct {
 // fetched at all. A stub post is a short content_length with no full text, and
 // on one of those a clickthrough is close to mandatory rather than a choice.
 //
+// rules_fired records the filter rules that moved this article's score (#259).
+// It snapshots at INTERACTION time rather than scoring time, which is correct
+// under the query-time design: the rules were part of the score the reader was
+// actually shown. jsonb_agg over no rows yields SQL NULL, which is the wanted
+// encoding for "no rules fired" -- better than writing an empty array on every
+// event for every user who has no rules.
+//
 // The join to user_feeds is the subscription guard: an event may only be
 // recorded for an article in a feed the user subscribes to, matching the
 // article-access gate in plan 003. An unsubscribed article inserts nothing.
-const insertArticleFeedback = `
+var insertArticleFeedback = `
 INSERT INTO feedback_events (
     user_id, article_id, feed_id, article_title, article_url, embedding,
     kind, axis, axis_value,
-    interest_score, score_model, prompt_hash,
+    interest_score, score_model, prompt_hash, rules_fired,
     list_position, surface, exploration, feed_status, feed_errors,
     content_length, has_full_text)
 SELECT
     $1, a.id, a.feed_id, a.title, a.url, ae.embedding,
     $3, NULLIF($4, ''), NULLIF($5, ''),
-    rs.interest_score, rs.score_model, rs.prompt_hash,
+    rs.interest_score, rs.score_model, rs.prompt_hash, frs.rules,
     $6, $7, $8, f.status, f.consecutive_errors,
     length(COALESCE(NULLIF(a.content, ''), a.summary, '')) + length(COALESCE(a.linked_content, '')),
     COALESCE(a.linked_content, '') <> ''
@@ -257,6 +267,17 @@ JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = $1
 LEFT JOIN article_embeddings ae ON ae.article_id = a.id
 LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = $1
 LEFT JOIN feeds f ON f.id = a.feed_id
+LEFT JOIN LATERAL (
+    SELECT jsonb_agg(jsonb_build_object(
+               'rule_id', fr.id,
+               'axis',    fr.axis,
+               'value',   fr.value::text,
+               'score',   fr.score,
+               'feed_id', fr.feed_id
+           ) ORDER BY fr.id) AS rules
+    FROM filter_rules fr
+    WHERE ` + filterRuleMatch("$1") + `
+) frs ON TRUE
 WHERE a.id = ANY($2::bigint[])`
 
 // RecordFeedbackEvent appends one article-scoped event. An event for an article
@@ -317,7 +338,7 @@ func (s *PostgresStore) ListFeedbackEvents(userID int64, limit int) ([]FeedbackE
 	}
 	const q = `
 SELECT id, user_id, article_id, feed_id, article_title, article_url, kind,
-       axis, axis_value, interest_score, score_model, prompt_hash,
+       axis, axis_value, interest_score, score_model, prompt_hash, rules_fired,
        list_position, surface, exploration, feed_status, feed_errors,
        content_length, has_full_text, created_at, embedding IS NOT NULL
 FROM feedback_events
@@ -335,7 +356,7 @@ LIMIT $2`
 		var r FeedbackEventRow
 		if err := rows.Scan(&r.ID, &r.UserID, &r.ArticleID, &r.FeedID, &r.ArticleTitle,
 			&r.ArticleURL, &r.Kind, &r.Axis, &r.AxisValue, &r.InterestScore,
-			&r.ScoreModel, &r.PromptHash, &r.ListPosition, &r.Surface,
+			&r.ScoreModel, &r.PromptHash, &r.RulesFired, &r.ListPosition, &r.Surface,
 			&r.Exploration, &r.FeedStatus, &r.FeedErrors, &r.ContentLength,
 			&r.HasFullText, &r.CreatedAt, &r.HasEmbedding); err != nil {
 			return nil, fmt.Errorf("scan feedback event: %w", err)
