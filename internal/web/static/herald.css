@@ -552,3 +552,30 @@
 .rg-grey::before { color: var(--rg-grey); }
 .rg-yellow::before { color: var(--rg-yellow); }
 .rg-green::before { color: var(--rg-green); }
+
+/* Unsubscribe reason menu (#252): inline, not a modal -- the reason is
+   optional and must not cost more than the unsubscribe itself. */
+.unsub-reason-menu {
+    position: absolute;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.5rem;
+    background: var(--pico-card-background-color);
+    border: 1px solid var(--pico-muted-border-color);
+    border-radius: var(--pico-border-radius);
+    box-shadow: var(--pico-card-box-shadow);
+}
+.unsub-reason-menu button {
+    margin: 0;
+    padding: 0.2rem 0.6rem;
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+
+/* Vote control (#252). Sits inside a clickable article row, so it needs to
+   read as a distinct target rather than part of the row's own hit area. */
+.vote-control { display: inline-flex; align-items: center; gap: 0.15rem; }
+.row-vote { opacity: 0.55; transition: opacity 0.12s ease-in-out; }
+.article-row:hover .row-vote, .row-vote:focus-within { opacity: 1; }

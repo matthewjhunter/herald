@@ -117,6 +117,15 @@ type ArticleSummary struct {
 	GeneratedAt time.Time
 }
 
+type ArticleVote struct {
+	UserID    int64
+	ArticleID int64
+	Vote      int16
+	Reason    *string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 type CycleStat struct {
 	ID                 int64
 	CompletedAt        time.Time

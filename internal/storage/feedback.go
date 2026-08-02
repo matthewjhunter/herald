@@ -64,6 +64,16 @@ const (
 	FeedbackFeedUnsubscribe FeedbackKind = "feed_unsubscribe"
 	// FeedbackSearchResultClick pairs a query with a chosen result.
 	FeedbackSearchResultClick FeedbackKind = "search_result_click"
+	// FeedbackVoteUp and FeedbackVoteDown are the explicit controls (#252):
+	// the reader stating an opinion rather than Herald inferring one. These are
+	// the anchor the implicit signals calibrate against, and they are the only
+	// kinds that can carry a reason.
+	FeedbackVoteUp   FeedbackKind = "vote_up"
+	FeedbackVoteDown FeedbackKind = "vote_down"
+	// FeedbackVoteCleared is a retracted vote. Like FeedbackUnstar it is a
+	// withdrawal, not an opposite: clearing a downvote does not mean the reader
+	// liked the article.
+	FeedbackVoteCleared FeedbackKind = "vote_cleared"
 	// FeedbackClickthrough is the reader leaving for the original site. A
 	// positive, but one that must be read against ContentLength: on a truncated
 	// stub, clicking out is the only way to read the article at all, so it
@@ -71,6 +81,73 @@ const (
 	// reader wanted the source, which is a much stronger statement.
 	FeedbackClickthrough FeedbackKind = "clickthrough"
 )
+
+// Reason axes for an explicit vote (#252). Optional: a bare vote is a valid
+// label, and forcing a reason gets a random one.
+//
+// These deliberately do NOT reuse filter_rules.axis, which is constrained to
+// author/category/tag and cannot express three of the five reasons a reader
+// actually gives. Mining these into rules (#254) is therefore a translation
+// step, not a direct copy -- and it needs #259 first, since nothing in the
+// scoring path reads filter_rules today.
+type FeedbackAxis string
+
+const (
+	// AxisTopic is "not this subject". The strongest content signal here.
+	AxisTopic FeedbackAxis = "topic"
+	// AxisFeed is "not from this feed" -- about the publisher, not the subject.
+	AxisFeed FeedbackAxis = "feed"
+	// AxisSource is "not this linked-to domain", the site an aggregator points
+	// at rather than the aggregator itself.
+	AxisSource FeedbackAxis = "source"
+	// AxisDuplicate is "already saw this". Not a judgment on the content at
+	// all: the reader wanted it once. Consumers must not mine it as a topic
+	// negative.
+	AxisDuplicate FeedbackAxis = "duplicate"
+	// AxisTiming is "wrong for me right now" -- interest without appetite. It
+	// should decay fast and must never harden into a standing rule.
+	AxisTiming FeedbackAxis = "timing"
+)
+
+// Reason axes for an unsubscribe (#252). Most unsubscribes are not content
+// judgments, and treating them as one teaches the model to avoid topics
+// because a server went away.
+const (
+	// AxisFeedBroken is a dead or malformed feed. Never a content negative.
+	AxisFeedBroken FeedbackAxis = "broken"
+	// AxisFeedVolume is "too much of it", not "wrong subject". At most a
+	// frequency signal.
+	AxisFeedVolume FeedbackAxis = "volume"
+	// AxisFeedNotInterested is the only unsubscribe reason that may propagate
+	// as a content negative -- and even then, only when the feed was healthy.
+	AxisFeedNotInterested FeedbackAxis = "not_interested"
+)
+
+// validVoteAxes and validUnsubscribeAxes are closed sets. The axis arrives from
+// a form field, so it is validated rather than trusted: an unchecked value
+// would let a caller write arbitrary strings into the training corpus, and a
+// consumer grouping by axis would silently split on typos.
+var validVoteAxes = map[FeedbackAxis]bool{
+	AxisTopic: true, AxisFeed: true, AxisSource: true,
+	AxisDuplicate: true, AxisTiming: true,
+}
+
+var validUnsubscribeAxes = map[FeedbackAxis]bool{
+	AxisFeedBroken: true, AxisFeedVolume: true, AxisFeedNotInterested: true,
+}
+
+// ValidVoteAxis reports whether a is a recognized vote reason. An empty axis is
+// valid: it means the reader voted without giving a reason.
+func ValidVoteAxis(a string) bool {
+	return a == "" || validVoteAxes[FeedbackAxis(a)]
+}
+
+// ValidUnsubscribeAxis reports whether a is a recognized unsubscribe reason.
+// Empty is valid and is the default -- an unlabeled unsubscribe is honest,
+// a guessed one is not.
+func ValidUnsubscribeAxis(a string) bool {
+	return a == "" || validUnsubscribeAxes[FeedbackAxis(a)]
+}
 
 // FeedbackSurface is where the interaction happened. Fever traffic in
 // particular has to stay separable: its read marks come from clients whose

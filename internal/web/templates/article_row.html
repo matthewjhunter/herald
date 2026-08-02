@@ -14,5 +14,10 @@
         {{.PublishedDateFmt}}
     </div>
     {{if .AISummary}}<p class="ai-summary-inline">{{.AISummary}}</p>{{end}}
+    {{/* Compact vote: the buttons consume their click so voting never opens
+         the article by accident (#252). */}}
+    <div class="row-vote" style="margin-top:0.25rem;">
+        {{template "vote_control" (dict "ID" .ID "Vote" .Vote "Surface" .Surface "Position" .Position "Compact" true)}}
+    </div>
 </div>
 {{end}}

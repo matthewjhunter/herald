@@ -199,10 +199,14 @@ func (h *handlers) parseTemplates() {
 		"emptyInts":    func() []int64 { return nil },
 		"emptyStrs":    func() []string { return nil },
 		"assetVersion": func() string { return version },
-		"buildVersion": func() string { return version },
-		"buildTime":    func() string { return buildTime },
-		"cleanTitle":   cleanTitle,
-		"printf":       fmt.Sprintf,
+		// The reason menu is defined in Go (#252) so the labels shown and the
+		// axis values stored cannot drift apart.
+		"voteReasons":        func() any { return voteReasons },
+		"unsubscribeReasons": func() any { return unsubscribeReasons },
+		"buildVersion":       func() string { return version },
+		"buildTime":          func() string { return buildTime },
+		"cleanTitle":         cleanTitle,
+		"printf":             fmt.Sprintf,
 		"secDonut": func(fs herald.FeedScoreStats) donutData {
 			return makeDonut(fs.SecPass, fs.SecBorderline, fs.SecFail,
 				fmt.Sprintf("%d%%", int(fs.SecPassPct())))
@@ -230,7 +234,7 @@ func (h *handlers) parseTemplates() {
 	tmplFS, _ := fs.Sub(embedded, "templates")
 
 	// Shared partials included in every page template.
-	shared := []string{"base.html", "nav.html", "settings_subnav.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "search_results.html", "ai_summary_list.html", "ai_summary_detail.html", "error.html"}
+	shared := []string{"base.html", "nav.html", "settings_subnav.html", "feed_sidebar.html", "article_list.html", "article_row.html", "article_view.html", "vote_control.html", "search_results.html", "ai_summary_list.html", "ai_summary_detail.html", "error.html"}
 
 	// Pages that get their own template tree.
 	pages := []string{"home.html", "feeds_manage.html", "settings.html", "settings_sync.html", "settings_prompts.html", "filters.html", "admin_prompts.html", "admin_digest.html", "admin_stats.html", "admin_users.html", "stats.html", "status.html", "newsletters_manage.html"}
@@ -358,6 +362,8 @@ type articleRow struct {
 	// quality; without it a model trained on opens learns "be at the top".
 	Surface  string
 	Position int
+	// Vote is the reader's explicit vote on this article (#252): -1, 0 or 1.
+	Vote int
 }
 
 type searchResultsData struct {
@@ -384,6 +390,13 @@ type articleViewData struct {
 	LinkedDomain           string
 	SanitizedLinkedContent template.HTML
 	LinkedBy               []backlinkRow
+	// Explicit vote state (#252). Surface and Position are echoed back into the
+	// vote control so a vote cast from the article view still records which
+	// list the reader arrived from.
+	Vote            int
+	Surface         string
+	Position        int
+	ShowVoteReasons bool
 }
 
 // backlinkRow is one feed/post in the user's subscriptions that linked to the
@@ -884,6 +897,9 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 		ids[i] = a.ID
 	}
 	summaries := h.articleSummaries(ids)
+	// One lookup for the whole page, like the summaries above -- a vote per row
+	// would be an N+1 on the hottest view in the app.
+	votes, _ := h.engine.GetArticleVotes(uid, ids)
 
 	for i, a := range articles {
 		data.Articles = append(data.Articles, articleRow{
@@ -898,6 +914,7 @@ func (h *handlers) handleArticleList(w http.ResponseWriter, r *http.Request) {
 			Starred:          a.Starred,
 			Surface:          string(storage.SurfaceWebList),
 			Position:         offset + i + 1,
+			Vote:             votes[a.ID],
 		})
 	}
 
@@ -997,6 +1014,7 @@ func (h *handlers) handleSearch(w http.ResponseWriter, r *http.Request) {
 		ids[i] = r.ID
 	}
 	summaries := h.articleSummaries(ids)
+	votes, _ := h.engine.GetArticleVotes(uid, ids)
 
 	for i, r := range results {
 		data.Articles = append(data.Articles, articleRow{
@@ -1008,6 +1026,7 @@ func (h *handlers) handleSearch(w http.ResponseWriter, r *http.Request) {
 			AISummary:        summaries[r.ID],
 			Surface:          string(storage.SurfaceWebSearch),
 			Position:         offset + i + 1,
+			Vote:             votes[r.ID],
 		})
 	}
 
@@ -1082,6 +1101,15 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 		// The article was just auto-marked read above, so the toggle starts
 		// in the read state (offering "Mark unread").
 		Read: true,
+		// Echo the arrival surface back into the vote control so a vote cast
+		// here still records which list the reader came from (#252).
+		Surface: string(openSurface(r)),
+	}
+	if pos := openPosition(r); pos != nil {
+		data.Position = *pos
+	}
+	if vote, _, verr := h.engine.GetArticleVote(uid, article.ID); verr == nil {
+		data.Vote = vote
 	}
 	if article.LinkedURL != "" {
 		if u, err := url.Parse(article.LinkedURL); err == nil {
@@ -1612,11 +1640,25 @@ func (h *handlers) handleFeedUnsubscribe(w http.ResponseWriter, r *http.Request)
 	// what lets a consumer tell a dead-feed cleanup from a content judgment. An
 	// unsubscribe that then fails leaves a stray event, which is much cheaper
 	// than systematically losing the ones that matter (#251).
+	// The reason is optional and defaults to unlabeled (#252). Only
+	// "not_interested" may ever propagate as a content negative, and even that
+	// is overridden by the feed-health snapshot the event carries: a feed with
+	// errors on record is presumed dead no matter which button was clicked.
+	// Bulk-downranking a dead feed's archive would teach the model to avoid
+	// topics because a server went away.
+	// Read from the query string, not the body: net/http's ParseForm only
+	// parses a body for POST/PUT/PATCH, so a reason sent as a DELETE body is
+	// silently dropped.
+	reason := r.URL.Query().Get("reason")
+	if !storage.ValidUnsubscribeAxis(reason) {
+		reason = ""
+	}
 	h.engine.RecordFeedFeedback(storage.FeedbackEvent{
 		UserID:  uid,
 		FeedID:  feedID,
 		Kind:    storage.FeedbackFeedUnsubscribe,
 		Surface: storage.SurfaceWebFeeds,
+		Axis:    reason,
 	})
 
 	if err := h.engine.UnsubscribeFeed(uid, feedID); err != nil {

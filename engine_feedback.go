@@ -1,6 +1,7 @@
 package herald
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/matthewjhunter/herald/internal/storage"
@@ -58,4 +59,73 @@ func (e *Engine) RecordFeedFeedback(ev storage.FeedbackEvent) {
 // ListFeedbackEvents returns a user's recorded events, newest first.
 func (e *Engine) ListFeedbackEvents(userID int64, limit int) ([]storage.FeedbackEventRow, error) {
 	return e.store.ListFeedbackEvents(userID, limit)
+}
+
+// VoteArticle records an explicit up/down vote and its optional reason (#252).
+//
+// Unlike the passive signals above, this one is NOT best-effort: the reader
+// deliberately stated an opinion and is watching for the control to change, so
+// a failure has to surface rather than be swallowed. Only the event write stays
+// best-effort, keeping the vote itself usable if the log write fails.
+//
+// vote is storage.VoteUp or storage.VoteDown. Returns the vote now in force so
+// the caller can re-render the control.
+func (e *Engine) VoteArticle(userID, articleID int64, vote int, reason string, surface storage.FeedbackSurface, position *int) (int, error) {
+	if !storage.ValidVoteAxis(reason) {
+		return 0, fmt.Errorf("unknown vote reason %q", reason)
+	}
+
+	// Voting the same way twice retracts, so the control is its own undo and
+	// the reader never has to hunt for a separate clear button.
+	current, _, err := e.store.GetArticleVote(userID, articleID)
+	if err != nil {
+		return 0, err
+	}
+	if current == vote {
+		cleared, cerr := e.store.ClearArticleVote(userID, articleID)
+		if cerr != nil {
+			return 0, cerr
+		}
+		if cleared {
+			e.RecordFeedback(storage.FeedbackEvent{
+				UserID: userID, ArticleID: articleID,
+				Kind: storage.FeedbackVoteCleared, Surface: surface,
+				ListPosition: position,
+			})
+		}
+		return 0, nil
+	}
+
+	ok, err := e.store.SetArticleVote(userID, articleID, vote, reason)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		// No row written: the article does not exist or is not in a feed this
+		// user subscribes to. Recording an event anyway would put an article
+		// they cannot read into their own training corpus.
+		return 0, fmt.Errorf("article %d not available to user %d", articleID, userID)
+	}
+
+	kind := storage.FeedbackVoteUp
+	if vote == storage.VoteDown {
+		kind = storage.FeedbackVoteDown
+	}
+	e.RecordFeedback(storage.FeedbackEvent{
+		UserID: userID, ArticleID: articleID,
+		Kind: kind, Surface: surface,
+		Axis:         reason,
+		ListPosition: position,
+	})
+	return vote, nil
+}
+
+// GetArticleVote returns the reader's current vote, or 0 if they have none.
+func (e *Engine) GetArticleVote(userID, articleID int64) (int, string, error) {
+	return e.store.GetArticleVote(userID, articleID)
+}
+
+// GetArticleVotes returns votes for a page of articles in one lookup.
+func (e *Engine) GetArticleVotes(userID int64, articleIDs []int64) (map[int64]int, error) {
+	return e.store.GetArticleVotes(userID, articleIDs)
 }

@@ -62,6 +62,7 @@
         Open Article
     </a>
     {{end}}
+    {{template "vote_control" (dict "ID" .ID "Vote" .Vote "Surface" .Surface "Position" .Position "ShowReasons" .ShowVoteReasons)}}
     <button class="outline {{if .Starred}}contrast{{end}}"
             data-star-toggle
             hx-post="/articles/{{.ID}}/star"
