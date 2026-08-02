@@ -576,18 +576,37 @@
 
 /* Vote control (#252). Sits inside a clickable article row, so it needs to
    read as a distinct target rather than part of the row's own hit area. */
-.vote-control { display: inline-flex; align-items: center; gap: 0.5rem; }
-/* Default sizing matches the surrounding buttons -- in the article view these
-   sit beside Star and Mark unread and a smaller pair reads as a different class
-   of control. */
-.vote-control button { margin: 0; }
+/* align-items:stretch, not center, is what makes these match their siblings in
+   the article view. The action row is a flex container, but the flex item there
+   is this wrapper span (it has to be -- it is the htmx swap target), so the
+   buttons inside it size to their own content and come out shorter than the
+   Star and Mark unread buttons beside them. Stretching passes the row's height
+   through to them. */
+.vote-control {
+    display: inline-flex;
+    align-items: stretch;
+    gap: 0.5rem;
+}
+.vote-control button {
+    margin: 0;
+    /* A single glyph would otherwise render a button a third the width of its
+       neighbours, which reads as a lesser control rather than a peer. */
+    min-width: 3.25rem;
+}
 /* The list row is scanned, not operated, so the buttons shrink out of the way
-   there and tighten their gap. */
-.vote-control-compact { gap: 0.15rem; }
+   there: no stretching, no minimum width, tighter gap. */
+.vote-control-compact {
+    align-items: center;
+    gap: 0.15rem;
+}
 .vote-control-compact button {
-    padding: 0.1rem 0.45rem;
-    font-size: 0.9em;
-    line-height: 1.2;
+    min-width: 0;
+    padding: 0 0.35rem;
+    font-size: 0.7em;
+    line-height: 1.5;
+    /* Pico gives buttons a border radius sized for full-height controls; at
+       this scale it reads as a lozenge unless it is tightened too. */
+    border-radius: 3px;
 }
 .row-vote { opacity: 0.55; transition: opacity 0.12s ease-in-out; }
 .article-row:hover .row-vote, .row-vote:focus-within { opacity: 1; }
