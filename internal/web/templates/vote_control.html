@@ -4,13 +4,16 @@
 
      In a list row (Compact) the buttons carry hx-trigger="click consume" so the
      click does not also fire the row's own hx-get and open the article -- a
-     vote must never cost the reader an accidental navigation. */}}
-<span class="vote-control" id="vote-{{.ID}}">
+     vote must never cost the reader an accidental navigation.
+
+     Sizing is a class, not an inline style: in the article view these sit in a
+     row with Star and Mark unread and must match them, while the list row wants
+     the shrunken variant. One hardcoded size cannot serve both. */}}
+<span class="vote-control{{if .Compact}} vote-control-compact{{end}}" id="vote-{{.ID}}">
     <button type="button"
             class="outline {{if eq .Vote 1}}contrast{{end}}"
             aria-label="{{if eq .Vote 1}}Retract upvote{{else}}More like this{{end}}"
             title="More like this"
-            style="margin:0;padding:0.1rem 0.45rem;font-size:0.9em;"
             hx-post="/articles/{{.ID}}/vote"
             hx-vals='{"vote":"up","from":"{{.Surface}}"{{if .Position}},"pos":"{{.Position}}"{{end}}{{if .Compact}},"compact":"1"{{end}}}'
             hx-target="#vote-{{.ID}}"
@@ -22,7 +25,6 @@
             class="outline {{if eq .Vote -1}}contrast{{end}}"
             aria-label="{{if eq .Vote -1}}Retract downvote{{else}}Less like this{{end}}"
             title="Less like this"
-            style="margin:0;padding:0.1rem 0.45rem;font-size:0.9em;"
             hx-post="/articles/{{.ID}}/vote"
             hx-vals='{"vote":"down","from":"{{.Surface}}"{{if .Position}},"pos":"{{.Position}}"{{end}}{{if .Compact}},"compact":"1"{{end}}}'
             hx-target="#vote-{{.ID}}"
