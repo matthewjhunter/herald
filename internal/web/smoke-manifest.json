@@ -129,6 +129,14 @@
       "complete": true
     },
     {
+      "method": "POST",
+      "pattern": "/articles/{articleID}/vote",
+      "effect": "mutating",
+      "request_body": "vote=up",
+      "content_type": "application/x-www-form-urlencoded",
+      "complete": false
+    },
+    {
       "method": "GET",
       "pattern": "/auth/callback",
       "effect": "read_only",

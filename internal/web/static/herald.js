@@ -301,18 +301,73 @@
         }
     });
 
-    // Unsubscribe feed handler
+    // Unsubscribe feed handler.
+    //
+    // The reason is optional and recorded as feedback (#252). It matters
+    // because an unsubscribe is a tempting but usually wrong content signal:
+    // dead feeds, format changes and volume cuts all land on the same button,
+    // and mining them as topic negatives teaches the model to avoid subjects
+    // because a server went away. "Just unsubscribe" is first and is the
+    // default -- an unlabeled unsubscribe is honest, a guessed one is not.
+    var UNSUB_REASONS = [
+        {value: '', label: 'Just unsubscribe'},
+        {value: 'broken', label: 'Feed is broken'},
+        {value: 'volume', label: 'Too much volume'},
+        {value: 'not_interested', label: 'Not interested'}
+    ];
+
+    function unsubscribeFeed(feedID, reason) {
+        // Reason rides in the query string: net/http does not parse a request
+        // body on DELETE, so a form-encoded body would be silently dropped.
+        var path = '/feeds/' + feedID;
+        if (reason) path += '?reason=' + encodeURIComponent(reason);
+        fetch(path, {method: 'DELETE'}).then(function(res) {
+            if (res.ok) window.location.href = '/';
+        });
+    }
+
+    function closeUnsubMenu() {
+        var open = document.getElementById('unsub-reason-menu');
+        if (open) open.remove();
+    }
+
     document.addEventListener('click', function(e) {
         var btn = e.target.closest('#unsubscribe-feed-btn');
-        if (!btn || !btn.dataset.feedId) return;
+        if (!btn || !btn.dataset.feedId) {
+            if (!e.target.closest('#unsub-reason-menu')) closeUnsubMenu();
+            return;
+        }
         var feedID = btn.dataset.feedId;
-        if (!confirm('Unsubscribe from this feed?')) return;
-        fetch('/feeds/' + feedID, {method: 'DELETE'})
-            .then(function(res) {
-                if (res.ok) {
-                    window.location.href = '/';
-                }
+        closeUnsubMenu();
+
+        var menu = document.createElement('div');
+        menu.id = 'unsub-reason-menu';
+        menu.className = 'unsub-reason-menu';
+        var label = document.createElement('small');
+        label.className = 'secondary';
+        label.textContent = 'Unsubscribe because:';
+        menu.appendChild(label);
+
+        UNSUB_REASONS.forEach(function(r) {
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'outline secondary';
+            b.textContent = r.label;
+            b.addEventListener('click', function() {
+                closeUnsubMenu();
+                unsubscribeFeed(feedID, r.value);
             });
+            menu.appendChild(b);
+        });
+
+        var cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'outline';
+        cancel.textContent = 'Cancel';
+        cancel.addEventListener('click', closeUnsubMenu);
+        menu.appendChild(cancel);
+
+        btn.parentNode.insertBefore(menu, btn.nextSibling);
     });
 
     // Mute group handler
