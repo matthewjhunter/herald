@@ -576,7 +576,19 @@
 
 /* Vote control (#252). Sits inside a clickable article row, so it needs to
    read as a distinct target rather than part of the row's own hit area. */
-.vote-control { display: inline-flex; align-items: center; gap: 0.15rem; }
+.vote-control { display: inline-flex; align-items: center; gap: 0.5rem; }
+/* Default sizing matches the surrounding buttons -- in the article view these
+   sit beside Star and Mark unread and a smaller pair reads as a different class
+   of control. */
+.vote-control button { margin: 0; }
+/* The list row is scanned, not operated, so the buttons shrink out of the way
+   there and tighten their gap. */
+.vote-control-compact { gap: 0.15rem; }
+.vote-control-compact button {
+    padding: 0.1rem 0.45rem;
+    font-size: 0.9em;
+    line-height: 1.2;
+}
 .row-vote { opacity: 0.55; transition: opacity 0.12s ease-in-out; }
 .article-row:hover .row-vote, .row-vote:focus-within { opacity: 1; }
 

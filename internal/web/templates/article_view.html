@@ -62,7 +62,6 @@
         Open Article
     </a>
     {{end}}
-    {{template "vote_control" (dict "ID" .ID "Vote" .Vote "Surface" .Surface "Position" .Position "ShowReasons" .ShowVoteReasons)}}
     <button class="outline {{if .Starred}}contrast{{end}}"
             data-star-toggle
             hx-post="/articles/{{.ID}}/star"
@@ -77,5 +76,9 @@
             data-feeds-changed>
         {{if .Read}}Mark unread{{else}}Mark read{{end}}
     </button>
+    {{/* Votes sit at the end of the row rather than among the navigation and
+         state controls: they are a judgment on the article, not an action on
+         it, and mixing them in makes both harder to find. */}}
+    {{template "vote_control" (dict "ID" .ID "Vote" .Vote "Surface" .Surface "Position" .Position "ShowReasons" .ShowVoteReasons)}}
 </div>
 {{end}}
