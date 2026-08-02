@@ -763,19 +763,41 @@ func (s *PostgresStore) GetArticle(articleID int64) (*Article, error) {
 	return &a, nil
 }
 
-func (s *PostgresStore) GetArticlesByInterestScore(userID int64, threshold float64, limit, offset int, filterThreshold *int) ([]Article, []float64, error) {
-	filterSQL, filterArgs := filterScoreClausePG(userID, filterThreshold)
-	query := `
+// buildInterestScoreQuery assembles the ranked-list query. Extracted from the
+// method so the no-rules fast path can be golden-tested without a database --
+// that equivalence is the thing most likely to rot silently.
+//
+// Order of operations: clamp, then decay. The decay factor is a recency
+// multiplier on a 0-10 quantity, so it has to see the final score. The
+// membership test compares the UNDECAYED effective score, matching the
+// pre-existing split where WHERE tests the raw value and ORDER BY the decayed
+// one: membership asks "is this interesting", ranking asks "what first".
+func buildInterestScoreQuery(applyRules bool, filterSQL string) string {
+	return `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date,
-		       COALESCE(rs.interest_score, 0) * (1.0 / (1.0 + GREATEST(0, EXTRACT(epoch FROM (NOW() - COALESCE(a.published_date, a.fetched_date))) / 86400.0) * 0.1)) AS decayed_score
+		       ` + effectiveScoreExpr(applyRules) + ` * (1.0 / (1.0 + GREATEST(0, EXTRACT(epoch FROM (NOW() - COALESCE(a.published_date, a.fetched_date))) / 86400.0) * 0.1)) AS decayed_score
 		FROM articles a
-		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
-		WHERE rs.interest_score >= ? AND rs.read = FALSE
+		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?` +
+		ruleScoreJoin(applyRules, "?") + `
+		WHERE ` + effectiveMembershipPredicate(applyRules) + ` AND rs.read = FALSE
 		` + filterSQL + `
 		ORDER BY decayed_score DESC
 		LIMIT ? OFFSET ?`
-	args := []any{userID, threshold}
+}
+
+func (s *PostgresStore) GetArticlesByInterestScore(userID int64, threshold float64, limit, offset int, filterThreshold *int, applyRules bool) ([]Article, []float64, error) {
+	filterSQL, filterArgs := filterScoreClausePG(userID, filterThreshold)
+	query := buildInterestScoreQuery(applyRules, filterSQL)
+	// Args are assembled in TEXT order: rebindNumeric numbers placeholders
+	// left to right, and the LATERAL sits in the FROM clause, ahead of the
+	// WHERE. Appending its user id later would silently shift every
+	// subsequent parameter and return plausible, wrong rows.
+	args := []any{userID}
+	if applyRules {
+		args = append(args, userID)
+	}
+	args = append(args, threshold)
 	args = append(args, filterArgs...)
 	args = append(args, limit, offset)
 	rows, err := s.pool.Query(context.Background(), rebindNumeric(query), args...)
@@ -2692,18 +2714,25 @@ func (s *PostgresStore) GetNewsletterStats(userID int64) ([]NewsletterStats, err
 	return stats, nil
 }
 
-func (s *PostgresStore) GetNewsletterArticles(userID int64, config *NewsletterConfig, since *time.Time, limit int) ([]Article, []float64, error) {
+func (s *PostgresStore) GetNewsletterArticles(userID int64, config *NewsletterConfig, since *time.Time, limit int, applyRules bool) ([]Article, []float64, error) {
 	query := `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-		       a.author, a.published_date, a.fetched_date, rs.interest_score
+		       a.author, a.published_date, a.fetched_date, ` + effectiveScoreExpr(applyRules) + `
 		FROM articles a
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = uf.user_id
+		JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = uf.user_id` +
+		ruleScoreJoin(applyRules, "?") + `
 		WHERE uf.user_id = ?`
-	args := []any{userID}
+	// Text order: the LATERAL placeholder precedes uf.user_id in the string,
+	// so its argument has to come first (rebindNumeric numbers positionally).
+	args := []any{}
+	if applyRules {
+		args = append(args, userID)
+	}
+	args = append(args, userID)
 
 	if config.MinInterestScore > 0 {
-		query += ` AND rs.interest_score >= ?`
+		query += ` AND ` + effectiveMembershipPredicate(applyRules)
 		args = append(args, config.MinInterestScore)
 	}
 	if config.MaxSecurityThreat > 0 {
@@ -2747,7 +2776,7 @@ func (s *PostgresStore) GetNewsletterArticles(userID int64, config *NewsletterCo
 		args = append(args, since)
 	}
 
-	query += ` ORDER BY rs.interest_score DESC LIMIT ?`
+	query += ` ORDER BY ` + effectiveScoreExpr(applyRules) + ` DESC LIMIT ?`
 	args = append(args, limit)
 
 	rows, err := s.pool.Query(context.Background(), rebindNumeric(query), args...)
@@ -2838,30 +2867,21 @@ func readFilterClausePG(includeRead bool) string {
 	return " AND (rs.article_id IS NULL OR rs.read = FALSE)"
 }
 
-// filterScoreClausePG is identical in logic to filterScoreClause but named
-// distinctly to avoid a duplicate-declaration collision with the SQLite version.
+// filterScoreClausePG is the VISIBILITY gate: an article is hidden when its
+// matching rules sum below the user's filter_threshold. Opt-in and off by
+// default (threshold nil disables it entirely), and unchanged by #259 -- the
+// score adjustment is a separate, independently-gated concern.
+//
+// Note the gate compares against the rule sum ALONE, while the effective score
+// compares against interest_score + rule sum. Two different numbers, both
+// reasonably called "score"; the settings copy has to say which is which.
 func filterScoreClausePG(userID int64, threshold *int) (string, []any) {
 	if threshold == nil {
 		return "", nil
 	}
 	sql := `AND (
 		NOT EXISTS (SELECT 1 FROM filter_rules WHERE user_id = ?)
-		OR (
-			SELECT COALESCE(SUM(fr.score), 0)
-			FROM filter_rules fr
-			WHERE fr.user_id = ?
-			  AND (fr.feed_id IS NULL OR fr.feed_id = a.feed_id)
-			  AND (
-				(fr.axis = 'author' AND EXISTS (
-				  SELECT 1 FROM article_authors aa
-				  WHERE aa.article_id = a.id AND aa.name = fr.value
-				))
-				OR (fr.axis IN ('category', 'tag') AND EXISTS (
-				  SELECT 1 FROM article_categories ac
-				  WHERE ac.article_id = a.id AND ac.category = fr.value
-				))
-			  )
-		) >= ?
+		OR (` + ruleScoreSum("?") + `) >= ?
 	)`
 	return sql, []any{userID, userID, *threshold}
 }

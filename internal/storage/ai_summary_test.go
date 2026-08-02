@@ -42,7 +42,7 @@ func TestGetUnreadArticlesForSummary(t *testing.T) {
 	seedScored(t, store, feedID, uid, "alreadyread", true, 8, 9)   // read
 	seedScored(t, store, feedID, uid, "lowsecurity", false, 5, 9)  // security < 7
 
-	got, err := store.GetUnreadArticlesForSummary(uid, 3, 7, 100)
+	got, err := store.GetUnreadArticlesForSummary(uid, 3, 7, 100, false)
 	if err != nil {
 		t.Fatalf("GetUnreadArticlesForSummary: %v", err)
 	}

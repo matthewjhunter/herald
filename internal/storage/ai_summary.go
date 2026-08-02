@@ -127,30 +127,59 @@ func (s *PostgresStore) GetAISummariesForNewsletter(userID, newsletterID int64, 
 	return out, nil
 }
 
-func (s *PostgresStore) GetUnreadArticlesForSummary(userID int64, maxSecurityThreat, minInterest float64, limit int) ([]Article, error) {
-	rows, err := s.q.GetUnreadArticlesForSummary(context.Background(), db.GetUnreadArticlesForSummaryParams{
-		UserID:            userID,
-		MaxSecurityThreat: maxSecurityThreat,
-		MinInterest:       minInterest,
-		Lim:               int32(limit),
-	})
+// GetUnreadArticlesForSummary selects the digest candidates.
+//
+// Hand-written rather than sqlc-generated (#259): a sqlc query is one fixed
+// string and cannot conditionally include the filter-rule LATERAL, so keeping
+// it there would impose a correlated subquery on every user forever, including
+// the overwhelmingly common case of having no rules at all. This follows the
+// existing exception pattern in vector.go, feedback.go and vote.go.
+//
+// Rules change digest MEMBERSHIP only -- ordering here is by date, not score.
+// That is still the meaningful effect: a negative rule evicts a topic from the
+// digest entirely.
+func (s *PostgresStore) GetUnreadArticlesForSummary(userID int64, maxSecurityThreat, minInterest float64, limit int, applyRules bool) ([]Article, error) {
+	query := `
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date
+		FROM articles a
+		JOIN user_feeds uf ON a.feed_id = uf.feed_id
+		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id` +
+		ruleScoreJoin(applyRules, "?") + `
+		WHERE uf.user_id = ?
+		  AND rs.read = FALSE
+		  AND a.security_threat <= ?
+		  AND ` + effectiveMembershipPredicate(applyRules) + `
+		ORDER BY COALESCE(a.published_date, a.fetched_date) DESC
+		LIMIT ?`
+
+	// Text order: the LATERAL placeholder comes before uf.user_id.
+	args := []any{}
+	if applyRules {
+		args = append(args, userID)
+	}
+	args = append(args, userID, maxSecurityThreat, minInterest, limit)
+
+	rows, err := s.pool.Query(context.Background(), rebindNumeric(query), args...)
 	if err != nil {
 		return nil, fmt.Errorf("get unread articles for summary: %w", err)
 	}
-	out := make([]Article, len(rows))
-	for i, r := range rows {
-		out[i] = Article{
-			ID:            r.ID,
-			FeedID:        r.FeedID,
-			GUID:          r.Guid,
-			Title:         r.Title,
-			URL:           r.Url,
-			Content:       derefString(r.Content),
-			Summary:       derefString(r.Summary),
-			Author:        derefString(r.Author),
-			PublishedDate: r.PublishedDate,
-			FetchedDate:   r.FetchedDate,
+	defer rows.Close()
+
+	var out []Article
+	for rows.Next() {
+		var (
+			id, feedID               int64
+			guid, title, url         string
+			content, summary, author *string
+			published                *time.Time
+			fetched                  time.Time
+		)
+		if err := rows.Scan(&id, &feedID, &guid, &title, &url,
+			&content, &summary, &author, &published, &fetched); err != nil {
+			return nil, fmt.Errorf("get unread articles for summary: %w", err)
 		}
+		out = append(out, coreArticle(id, feedID, guid, title, url, content, summary, author, published, fetched))
 	}
-	return out, nil
+	return out, rows.Err()
 }
