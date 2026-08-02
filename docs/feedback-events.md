@@ -4,13 +4,18 @@ Design doc for Herald's feedback event log: the append-only record of what
 Herald predicted about an article, what the reader actually did with it, and
 which of those two disagreed.
 
-Status: **design, not built**. Nothing in this document ships until the schema
-below lands.
+Status: **collection is built and running.** The event log, the passive signals,
+and the explicit controls have shipped; nothing yet consumes the corpus.
 
-- **#251** -- this table and its write paths (everything else depends on it)
-- **#252** -- explicit vote controls, reason axes, unsubscribe reason
-- **#253** -- exploration slot
-- **#254** -- mining events into proposed filter rules
+- **#251** -- this table and its write paths (everything else depends on it).
+  **Shipped** (PR #260).
+- **#252** -- explicit vote controls, reason axes, unsubscribe reason.
+  **Shipped** (PR #262).
+- **#258** -- prompt versioning and scoring-time provenance. **Shipped**
+  (PR #261). Not originally part of this plan; see "Prediction provenance".
+- **#253** -- exploration slot. Deprioritized on this instance, for a reason
+  worth reading before consuming the corpus -- see "Exploration".
+- **#254** -- mining events into proposed filter rules. Blocked on #259.
 - **#255** -- per-user kNN scorer over pgvector
 - **#256** -- feedback for the summary, grouping, security, and link-extraction
   models
@@ -81,12 +86,43 @@ Every event therefore records **which code path produced it**.
 
 | kind | Source | Meaning |
 |---|---|---|
-| `vote_up` / `vote_down` | new UI control | Direct label: wanted / did not want to see this |
+| `vote_up` / `vote_down` | vote control, article view and list row | Direct label: wanted / did not want to see this |
+| `vote_cleared` | same control, voting the same way twice | Retraction. Like `unstar`, a withdrawal and not an opposite -- clearing a downvote does not mean the reader liked the article |
 | `star` / `unstar` | `StarArticle` | Strong positive; unstar is a retraction, not a negative |
 | `group_mute` | `MuteGroup` (`handleGroupMute`) | Strong negative on a whole story cluster |
 | `group_disband` | `DisbandGroup` | Grouping was wrong -- a label on similarity, not on interest |
 | `feed_unsubscribe` | `UnsubscribeUserFromFeed` | Feed-level rejection -- but see below; it is not always a content judgment |
 | `summary_edit` | new UI control | Paired (bad, good) example -- the richest label Herald can collect |
+
+### Reason axes do not mirror `filter_rules`
+
+This document originally asserted that a vote's `axis` would mirror
+`filter_rules.axis`, making rule proposal a direct copy. **That was wrong**, and
+it is worth recording why rather than quietly dropping it.
+
+`filter_rules.axis` carries `CHECK (axis IN ('author', 'category', 'tag'))`. The
+reasons a reader actually gives do not fit inside that vocabulary:
+
+| Vote reason | axis stored | Maps to a filter rule? |
+|---|---|---|
+| Not this topic | `topic` | Loosely -- `category` or `tag`, if the article carries either |
+| Not this feed | `feed` | No. Feed scoping is a column (`filter_rules.feed_id`), not an axis |
+| Not this source | `source` | No. The linked-to domain has no axis at all |
+| Already saw this | `duplicate` | No, and it is not a content judgment in the first place |
+| Not right now | `timing` | No, and it must never harden into a standing rule |
+
+Three of the five have no representation. So the shipped vocabulary is its own
+closed set, stored verbatim in `axis`, and **#254 is a translation step rather
+than a copy** -- it has to decide what a `source` rejection even means in a rules
+engine that cannot express one. That is on top of #259: nothing in the scoring
+path reads `filter_rules` today, so there is currently no engine to translate
+into.
+
+Axes are validated against the closed set at the handler. They arrive from a
+form field, and an unvalidated value would let a crafted request write arbitrary
+strings into the training corpus, where a consumer grouping by axis would
+silently split on typos. An unrecognized axis is dropped and the vote still
+counts -- a bare vote is a valid label.
 
 ### Unsubscribe needs a reason, not just a fact
 
@@ -110,9 +146,12 @@ for their publisher's outage.
 Two mitigations, both required:
 
 1. **Ask.** The unsubscribe control offers a one-click reason (`broken`,
-   `too much volume`, `not interested`, `no reason given`), stored in
-   `axis`/`axis_value`. Only `not interested` may propagate as a content
-   negative. Default to no reason and treat unlabeled unsubscribes as neutral.
+   `volume`, `not_interested`, or no reason), stored in `axis`. Only
+   `not_interested` may propagate as a content negative. "Just unsubscribe" is
+   listed first and is the default: an unlabeled unsubscribe is honest, and a
+   guessed one actively misleads. The unsubscribe vocabulary is validated
+   separately from the vote vocabulary -- a vote axis arriving on an unsubscribe
+   is a bug or a forgery, not a label, and is dropped.
 2. **Snapshot feed health.** `feeds` already carries `consecutive_errors`,
    `last_error`, and `status`. Copy them onto the event. A feed unsubscribed
    with a nonzero error count or `status != 'active'` is presumed broken and its
@@ -223,27 +262,73 @@ not the score, and then the corpus can never answer "was the model wrong here?"
 Every event snapshots, at the moment of the interaction:
 
 - `interest_score` -- what the scorer said
-- `score_model` -- which Ollama model produced it
-- `prompt_hash` -- which prompt produced the score. Note that `user_prompts` has
-  **no version column today** -- only `updated_at`, and the row is mutated in
-  place, so an edited prompt leaves no trace of what the previous text was.
-  Snapshot a hash of `prompt_template` on the event (cheap, no schema change to
-  `user_prompts`, and enough to partition the corpus by prompt generation). If
-  reconstructing the prompt text itself later matters, `user_prompts` needs
-  proper versioning first -- that is a separate change and not a prerequisite.
+- `score_model` -- which model produced it
+- `prompt_hash` -- which prompt produced it. See "Provenance is recorded at
+  scoring time" below; this is the part the first implementation got wrong.
 - `rules_fired` -- the `filter_rules` rows that contributed, as JSONB. **Always
   NULL today**: filter rules turn out to be CRUD-only, with no consumer anywhere
   in the scoring path (#259). The column ships unpopulated and stays that way
   until rules actually do something.
 - `list_position` -- where in the rendered list the article appeared
-- `surface` -- `web-list`, `web-article`, `web-search`, `fever`, `digest`,
-  `newsletter`
+- `surface` -- `web-list`, `web-article`, `web-search`, `web-group`,
+  `web-summary`, `web-feeds`, `fever`
 - `exploration` -- whether this article was injected by the exploration slot
 
 Snapshotting rather than joining is deliberate. Scores get rewritten, prompts get
 edited, rules get deleted. A join against live tables reconstructs *today's*
 prediction, not the one the reader was reacting to, and silently rewrites
 history. The redundancy is the point.
+
+### Provenance is recorded at scoring time, not at read time
+
+The first implementation snapshotted `score_model` and `prompt_hash` by joining
+`user_prompts` when the **reader** acted. That satisfies the letter of
+"snapshot, don't join" while breaking its intent: it reconstructs the prompt in
+force at *read* time, which is a different prompt whenever one was edited
+between scoring and reading -- precisely the case that matters, since evaluating
+an edit is the entire reason the labels are collected.
+
+`read_state` therefore carries `score_model` and `prompt_hash`, written by the
+curation stage at the moment the score is produced. That is the only point where
+the answer is known for certain. The feedback insert copies them forward rather
+than deriving them.
+
+Both columns stay NULL for scores written before this landed. **NULL means
+unknown, never "current."** A consumer that backfills the gap from `user_prompts`
+would attribute old scores to a prompt that never saw them, which is worse than
+having no attribution at all.
+
+### Every prompt tier has an identity (#258)
+
+`prompt_hash` was originally specified as a hash of the user's `prompt_template`
+row. On a stock instance that produces NULL on every event, which is how the
+problem was found in production: `user_prompts` was empty, no `[prompts]` config
+section existed, curation ran on the built-in template, and **every event
+recorded no provenance at all**. The default deployment was the unattributable
+one.
+
+Prompt resolution walks four tiers -- embedded default, config file, admin
+override (`user_id = 0`), user row -- and the bottom two have no row to hash. So
+`prompt_versions` is **content-addressed**: keyed by the sha256 of the resolved
+template text, with a `source` column recording which tier supplied it. Hash
+answers "which prompt", source answers "how did it come to be used", and they
+are deliberately separate questions. A built-in prompt now registers itself the
+first time a process resolves it, so a stock instance is as attributable as a
+customized one.
+
+Two consequences worth knowing:
+
+- **The text behind a hash is recoverable.** The original design accepted a bare
+  fingerprint. Versions store the template, so a hash on a two-year-old event
+  can be read back.
+- **Reverting a prompt appends rather than rewinds.** A version you rejected
+  stays on the record, because scores written under it must remain
+  attributable.
+
+Resolution returns template, model, temperature and hash as one unit. Fetching
+them through separate accessors is what allowed a hash and a model to describe
+different prompts -- the structural cause of the bug above, not merely an
+inefficiency.
 
 `list_position` deserves specific mention: items at the top of a list get opened
 more regardless of quality. A model trained on position-blind data learns "be at
@@ -263,13 +348,44 @@ articles (start at 3%, operator-configurable, defaults on) into the list, flagge
 `exploration = TRUE`. Upvotes on those are the highest-value labels in the
 system, because they are the only evidence of false negatives that exists.
 
+### How much this matters depends on how the reader scans
+
+The argument above assumes the reader only ever sees what the scorer ranked
+highly -- true when a list is long, ranked, and skimmed from the top until
+attention runs out. It is **not** true of a reader who scans every headline in
+the queue before deciding what to open.
+
+That distinction changes what an absent signal means:
+
+- **Ranked-and-truncated reading:** an unopened article may simply never have
+  been seen. Absence carries no information, and a low-scored article that was
+  never rendered cannot contradict the score that buried it.
+- **Full-scan reading:** an unopened article was seen and passed over. Absence
+  is a **real weak negative**, and a high-scored article that was scanned and
+  skipped is direct evidence of a false positive -- collected for free, with no
+  exploration slot at all.
+
+The instance this was built for is the second kind, which is why #253 is
+deprioritized here rather than treated as a prerequisite for #255. A consumer
+that assumes standard position bias would misread this corpus: it would discard
+as "unseen" exactly the passed-over articles that carry signal.
+
+Herald does not currently record which mode a reader is in, and it cannot infer
+it -- `list_position` tells you where an article sat, not how far down the reader
+looked. Any consumer that treats non-interaction as a negative must make that
+assumption explicit and operator-configurable rather than baking it in. On an
+instance with ranked-and-truncated readers, the exploration slot goes back to
+being the only source of false-negative evidence.
+
 ## Schema
 
 Postgres only (Herald dropped SQLite; storage is sqlc/pgx). New migration.
 
+Migration `0010_feedback_events.sql`, as shipped:
+
 ```sql
 CREATE TABLE feedback_events (
-    id             BIGSERIAL PRIMARY KEY,
+    id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     user_id        BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 
     -- Referent. article_id goes NULL when the article is pruned; the
@@ -281,7 +397,7 @@ CREATE TABLE feedback_events (
     embedding      vector(768),
 
     kind           TEXT NOT NULL,
-    axis           TEXT,          -- mirrors filter_rules.axis when a reason was given
+    axis           TEXT,          -- reason vocabulary; NOT filter_rules.axis, see above
     axis_value     TEXT,
 
     -- prediction provenance, snapshotted at interaction time
@@ -316,10 +432,24 @@ A reader who upvotes, then downvotes, then upvotes again has produced three
 events and changed their mind twice; that sequence is more informative than the
 final state, and `read_state` already holds the final state anyway.
 
-The `axis` / `axis_value` columns intentionally mirror `filter_rules`. A
-downvote with a reason ("not this topic", "not this source") is a supervised
-label on exactly the dimension the rules engine already operates on, which is
-what makes automatic rule proposal tractable instead of guesswork.
+### Supporting tables
+
+Three other migrations carry pieces of this design:
+
+- **`0011_prompt_versions.sql`** -- append-only, content-addressed prompt
+  history, plus `user_prompts.template_hash` so resolution stays a single
+  indexed lookup on the hot path. See "Every prompt tier has an identity".
+- **`0012_read_state_provenance.sql`** -- `read_state.score_model` and
+  `read_state.prompt_hash`, written when the score is produced.
+- **`0013_article_votes.sql`** -- current vote state, `(user_id, article_id)`,
+  `vote` constrained to `-1` or `1` with no zero: a retraction deletes the row,
+  so "no opinion" has exactly one representation.
+
+`article_votes` holds **state only**; the history stays here in
+`feedback_events`. It is deliberately not a column on `read_state`: a vote is an
+opinion the reader volunteered, while read state is bookkeeping Herald maintains
+on their behalf. Separate tables keep "never voted" distinguishable from "voted
+neutral", and stop `ResetReadStateScores` from silently discarding opinions.
 
 ## Durability
 
@@ -344,10 +474,27 @@ rather than being hardcoded.
 
 Freeze a labeled held-out set before building any consumer. Without it, every
 subsequent "improvement" is a vibe, and there is no way to tell whether a new
-scorer beats the current prompt or merely differs from it. Issue #93 already
-plans an AI evaluation harness (injection-resistance first, corpus outside the
-repo); the interest-scoring benchmark should live in that harness rather than
-becoming a second parallel eval mechanism.
+scorer beats the current prompt or merely differs from it.
+
+**Correction to an earlier version of this doc:** it said the interest-scoring
+benchmark should live in #93's harness. It should not. #93 is unbuilt, and what
+it specifies is a live-model, non-deterministic, opt-in
+(`HERALD_RUN_LLM_EVALS=1`), off-CI evaluator aimed at injection resistance. A
+kNN scorer calls no model and can be benchmarked deterministically in ordinary
+CI. Putting it behind an opt-in LLM harness would mean it never runs.
+
+What #93 *does* get from this table is the answer to its own open question about
+where curation labels come from. `feedback_events` beats raw read/star history
+because it keeps engagement separate from queue-clearing and carries the score,
+model, prompt hash and list position each label was reacting to. An evaluator
+using it has to respect the per-kind caveats above: `bulk_dismissed` weighted
+zero, `unstar` and `vote_cleared` as retractions rather than negatives,
+`group_mute` decaying, unsubscribes with `consecutive_errors > 0` treated as
+dead-feed cleanup, and dwell only ever lowering.
+
+The frozen set stays out of the repo, but for a different reason than #93's:
+that rule exists to keep malicious payloads out of version control, while this
+one is a reading history, which is a quasi-identifier.
 
 ## Rollout
 
@@ -355,10 +502,24 @@ The log is inert on its own -- it changes no behavior and shows the reader
 nothing. That is a feature: it can ship first, accumulate real data, and let the
 modeling decisions be made against a real corpus instead of a guess.
 
-1. Schema + write path, wired into every source in the taxonomy above.
-2. The vote control and reason axes -- the explicit labels.
+1. ~~Schema + write path, wired into every source in the taxonomy above.~~
+   Shipped, PR #260.
+2. ~~The vote control and reason axes -- the explicit labels.~~ Shipped,
+   PR #262.
 3. Exploration slot, so negatives are not the only labels available.
+   Deprioritized -- see "How much this matters depends on how the reader scans".
 4. Consumers: rule mining, then the kNN scorer, then anything heavier.
+
+Collection changes and consumer changes are not interchangeable in ordering. A
+consumer built in six months can run against six months of accumulated data; a
+collection gap can never be filled retroactively. When in doubt, ship the
+collection change first.
+
+That asymmetry has already been paid once. Provenance recording (#258) landed
+after 38,000 articles had been scored without it. Those scores cannot be
+attributed after the fact, and rescoring them would only recover articles the
+reader had not yet read -- a few hundred, against a queue that refills with
+correctly-attributed scores in under a week. The backlog was written off.
 
 On modeling weight: with one primary reader and a few hundred labels a month,
 kNN over the existing pgvector embeddings will outperform a fine-tune for a long
@@ -368,8 +529,9 @@ topped out.
 
 ## What shipped, and what it does not cover
 
-Collection landed in PR #260 (schema, write paths, passive signals). Known gaps,
-all deliberate:
+Collection landed in PR #260 (schema, write paths, passive signals), the
+explicit controls in PR #262, and provenance in PR #261. Known gaps, all
+deliberate:
 
 - **Fever bulk marks record nothing.** `FeverMarkFeedRead` and its siblings work
   by timestamp cutoff and never materialize article IDs, so enumerating them
@@ -377,20 +539,27 @@ all deliberate:
   anyway; the cost is that a consumer counting "articles passed over"
   undercounts for readers who live in a Fever client.
 - **`rules_fired` is always NULL**, per #259 above.
-- **`prompt_hash` is a hash, not the prompt.** `user_prompts` is mutated in
-  place with no history (#258), so the text behind a hash cannot be recovered
-  after an edit. The hash is enough to partition the corpus by prompt
-  generation, which is what the consumers need.
+- **Scores written before #258 have no provenance**, and it cannot be
+  reconstructed. NULL there means unknown.
 - **Search-result clicks record `article_opened` with `surface = web-search`**,
-  not a distinct kind, and the query text is not captured at all. Query-to-result
-  pairs are therefore not yet collectable -- that belongs with the explicit
-  controls (#252).
+  not a distinct kind, and the query text is still not captured. Query-to-result
+  pairs remain uncollectable. This was scoped into #252 and did not ship with
+  it; it needs its own issue.
 - **Dwell is derivable but nothing computes it.** Correctly a consumer concern.
+- **The vote control has no keyboard shortcut.** Two clicks is cheap enough that
+  the controls get used, but a reader working a long queue will feel it.
 
 Article-scoped writes are gated on subscription (a join to `user_feeds`,
-matching plan 003). The clickthrough beacon takes an article ID straight from
-the request, so without it a crafted POST could write articles the reader does
-not subscribe to into their own corpus.
+matching plan 003). The clickthrough beacon and the vote endpoint both take an
+article ID straight from the request, so without it a crafted POST could write
+articles the reader does not subscribe to into their own corpus. The vote upsert
+carries the same guard, and a vote that writes no row records no event.
+
+Reader-supplied context is validated rather than trusted throughout: `surface`
+resolves against a closed set and falls back to the default, `list_position` is
+bounded, and both axis vocabularies are closed sets checked separately. A forged
+value can at worst mislabel that reader's own training data; the corpus stays
+well-formed.
 
 ## Open questions
 
@@ -404,3 +573,13 @@ not subscribe to into their own corpus.
 - Should the digest/newsletter surface record impressions (what was sent) as
   well as interactions? Without impressions there is no denominator for the
   notification path.
+- Should non-interaction be materialized as a negative label, or left for the
+  consumer to infer? It depends entirely on the reader's scanning mode, which
+  Herald does not record and cannot detect. Materializing it would bake an
+  assumption into the corpus that a later consumer cannot undo; leaving it means
+  every consumer re-derives the same judgment. Leaning toward leaving it, with
+  the mode as operator config when a consumer needs it.
+- How should a consumer weight a vote against a passive signal on the same
+  article? A downvote on something the reader also opened and read to the end is
+  a genuine conflict, not noise, and the explicit label should presumably win --
+  but "presumably" is not a rule, and nothing tests it yet.
