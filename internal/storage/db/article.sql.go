@@ -790,21 +790,36 @@ func (q *Queries) ScreenArticleSecurity(ctx context.Context, arg ScreenArticleSe
 }
 
 const setInterestScore = `-- name: SetInterestScore :exec
-INSERT INTO read_state (user_id, article_id, read, interest_score, ai_scored)
-VALUES ($1, $2, FALSE, $3::double precision, TRUE)
+INSERT INTO read_state (user_id, article_id, read, interest_score, ai_scored, score_model, prompt_hash)
+VALUES ($1, $2, FALSE, $3::double precision, TRUE,
+        NULLIF($4::text, ''), NULLIF($5::text, ''))
 ON CONFLICT (user_id, article_id) DO UPDATE SET
   interest_score = excluded.interest_score,
-  ai_scored = TRUE
+  ai_scored = TRUE,
+  score_model = excluded.score_model,
+  prompt_hash = excluded.prompt_hash
 `
 
 type SetInterestScoreParams struct {
 	UserID        int64
 	ArticleID     int64
 	InterestScore float64
+	ScoreModel    string
+	PromptHash    string
 }
 
+// score_model/prompt_hash are captured here, at scoring time, because this is
+// the only point where which model and prompt produced the score is known for
+// certain (#258). Reconstructing them later reads back whatever is current, not
+// what was in force.
 func (q *Queries) SetInterestScore(ctx context.Context, arg SetInterestScoreParams) error {
-	_, err := q.db.Exec(ctx, setInterestScore, arg.UserID, arg.ArticleID, arg.InterestScore)
+	_, err := q.db.Exec(ctx, setInterestScore,
+		arg.UserID,
+		arg.ArticleID,
+		arg.InterestScore,
+		arg.ScoreModel,
+		arg.PromptHash,
+	)
 	return err
 }
 

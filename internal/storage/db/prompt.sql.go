@@ -67,6 +67,45 @@ func (q *Queries) GetAllUserPreferences(ctx context.Context, userID int64) ([]Ge
 	return items, nil
 }
 
+const getPromptTemplateByHash = `-- name: GetPromptTemplateByHash :one
+SELECT prompt_template FROM prompt_versions
+WHERE template_hash = $1
+ORDER BY id ASC
+LIMIT 1
+`
+
+// Recover the text behind a hash recorded elsewhere (feedback events, scores).
+// Any scope will do: the hash identifies the text, not who used it.
+func (q *Queries) GetPromptTemplateByHash(ctx context.Context, templateHash string) (string, error) {
+	row := q.db.QueryRow(ctx, getPromptTemplateByHash, templateHash)
+	var prompt_template string
+	err := row.Scan(&prompt_template)
+	return prompt_template, err
+}
+
+const getPromptVersion = `-- name: GetPromptVersion :one
+SELECT id, user_id, prompt_type, prompt_template, template_hash, temperature, model, source, created_at
+FROM prompt_versions
+WHERE id = $1
+`
+
+func (q *Queries) GetPromptVersion(ctx context.Context, id int64) (PromptVersion, error) {
+	row := q.db.QueryRow(ctx, getPromptVersion, id)
+	var i PromptVersion
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.PromptType,
+		&i.PromptTemplate,
+		&i.TemplateHash,
+		&i.Temperature,
+		&i.Model,
+		&i.Source,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getUserPreference = `-- name: GetUserPreference :one
 SELECT value FROM user_preferences WHERE user_id = $1 AND key = $2
 `
@@ -117,6 +156,37 @@ func (q *Queries) GetUserPromptModel(ctx context.Context, arg GetUserPromptModel
 	return model, err
 }
 
+const getUserPromptResolved = `-- name: GetUserPromptResolved :one
+SELECT prompt_template, template_hash, temperature, model FROM user_prompts
+WHERE user_id = $1 AND prompt_type = $2
+`
+
+type GetUserPromptResolvedParams struct {
+	UserID     int64
+	PromptType string
+}
+
+type GetUserPromptResolvedRow struct {
+	PromptTemplate string
+	TemplateHash   *string
+	Temperature    *float64
+	Model          *string
+}
+
+// One lookup for everything resolution needs, replacing the three separate
+// GetUserPrompt* round trips per article per user.
+func (q *Queries) GetUserPromptResolved(ctx context.Context, arg GetUserPromptResolvedParams) (GetUserPromptResolvedRow, error) {
+	row := q.db.QueryRow(ctx, getUserPromptResolved, arg.UserID, arg.PromptType)
+	var i GetUserPromptResolvedRow
+	err := row.Scan(
+		&i.PromptTemplate,
+		&i.TemplateHash,
+		&i.Temperature,
+		&i.Model,
+	)
+	return i, err
+}
+
 const getUserPromptTemperature = `-- name: GetUserPromptTemperature :one
 SELECT temperature FROM user_prompts
 WHERE user_id = $1 AND prompt_type = $2
@@ -132,6 +202,84 @@ func (q *Queries) GetUserPromptTemperature(ctx context.Context, arg GetUserPromp
 	var temperature *float64
 	err := row.Scan(&temperature)
 	return temperature, err
+}
+
+const insertPromptVersion = `-- name: InsertPromptVersion :one
+INSERT INTO prompt_versions
+  (user_id, prompt_type, prompt_template, template_hash, temperature, model, source)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id
+`
+
+type InsertPromptVersionParams struct {
+	UserID         int64
+	PromptType     string
+	PromptTemplate string
+	TemplateHash   string
+	Temperature    *float64
+	Model          *string
+	Source         string
+}
+
+// Append-only (#258): every call adds a row. A revert appends the older text as
+// a new version rather than rewinding, so ordering stays a truthful record.
+func (q *Queries) InsertPromptVersion(ctx context.Context, arg InsertPromptVersionParams) (int64, error) {
+	row := q.db.QueryRow(ctx, insertPromptVersion,
+		arg.UserID,
+		arg.PromptType,
+		arg.PromptTemplate,
+		arg.TemplateHash,
+		arg.Temperature,
+		arg.Model,
+		arg.Source,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const listPromptVersions = `-- name: ListPromptVersions :many
+SELECT id, user_id, prompt_type, prompt_template, template_hash, temperature, model, source, created_at
+FROM prompt_versions
+WHERE user_id = $1 AND prompt_type = $2
+ORDER BY id DESC
+LIMIT $3
+`
+
+type ListPromptVersionsParams struct {
+	UserID     int64
+	PromptType string
+	Lim        int32
+}
+
+func (q *Queries) ListPromptVersions(ctx context.Context, arg ListPromptVersionsParams) ([]PromptVersion, error) {
+	rows, err := q.db.Query(ctx, listPromptVersions, arg.UserID, arg.PromptType, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PromptVersion{}
+	for rows.Next() {
+		var i PromptVersion
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.PromptType,
+			&i.PromptTemplate,
+			&i.TemplateHash,
+			&i.Temperature,
+			&i.Model,
+			&i.Source,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listUserPrompts = `-- name: ListUserPrompts :many
@@ -177,6 +325,42 @@ func (q *Queries) ListUserPrompts(ctx context.Context, userID int64) ([]ListUser
 	return items, nil
 }
 
+const registerPromptVersion = `-- name: RegisterPromptVersion :exec
+INSERT INTO prompt_versions
+  (user_id, prompt_type, prompt_template, template_hash, temperature, model, source)
+SELECT $1, $2, $3, $4, $5, $6, $7
+WHERE NOT EXISTS (
+  SELECT 1 FROM prompt_versions
+  WHERE user_id = $1 AND prompt_type = $2 AND template_hash = $4
+)
+`
+
+type RegisterPromptVersionParams struct {
+	UserID         int64
+	PromptType     string
+	PromptTemplate string
+	TemplateHash   string
+	Temperature    *float64
+	Model          *string
+	Source         string
+}
+
+// Idempotent registration for the tiers with no row of their own (embedded
+// default, config file). Called once per process per distinct hash, never on
+// the hot path -- prompt resolution is cached and must not write.
+func (q *Queries) RegisterPromptVersion(ctx context.Context, arg RegisterPromptVersionParams) error {
+	_, err := q.db.Exec(ctx, registerPromptVersion,
+		arg.UserID,
+		arg.PromptType,
+		arg.PromptTemplate,
+		arg.TemplateHash,
+		arg.Temperature,
+		arg.Model,
+		arg.Source,
+	)
+	return err
+}
+
 const setUserPreference = `-- name: SetUserPreference :exec
 INSERT INTO user_preferences (user_id, key, value)
 VALUES ($1, $2, $3)
@@ -195,10 +379,11 @@ func (q *Queries) SetUserPreference(ctx context.Context, arg SetUserPreferencePa
 }
 
 const setUserPrompt = `-- name: SetUserPrompt :exec
-INSERT INTO user_prompts (user_id, prompt_type, prompt_template, temperature, model, updated_at)
-VALUES ($1, $2, $3, $4, $5, NOW())
+INSERT INTO user_prompts (user_id, prompt_type, prompt_template, template_hash, temperature, model, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, NOW())
 ON CONFLICT (user_id, prompt_type) DO UPDATE SET
   prompt_template = excluded.prompt_template,
+  template_hash = excluded.template_hash,
   temperature = excluded.temperature,
   model = COALESCE(excluded.model, user_prompts.model),
   updated_at = NOW()
@@ -208,15 +393,20 @@ type SetUserPromptParams struct {
 	UserID         int64
 	PromptType     string
 	PromptTemplate string
+	TemplateHash   *string
 	Temperature    *float64
 	Model          *string
 }
 
+// The current pointer. History lives in prompt_versions (#258); this row is
+// what prompt resolution reads on the hot path, so it keeps its own copy of the
+// hash rather than joining to find it.
 func (q *Queries) SetUserPrompt(ctx context.Context, arg SetUserPromptParams) error {
 	_, err := q.db.Exec(ctx, setUserPrompt,
 		arg.UserID,
 		arg.PromptType,
 		arg.PromptTemplate,
+		arg.TemplateHash,
 		arg.Temperature,
 		arg.Model,
 	)

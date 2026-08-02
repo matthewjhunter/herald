@@ -238,6 +238,18 @@ type NewsletterIssue struct {
 	SentAt         *time.Time
 }
 
+type PromptVersion struct {
+	ID             int64
+	UserID         int64
+	PromptType     string
+	PromptTemplate string
+	TemplateHash   string
+	Temperature    *float64
+	Model          *string
+	Source         string
+	CreatedAt      time.Time
+}
+
 type ReadState struct {
 	UserID        int64
 	ArticleID     int64
@@ -247,6 +259,8 @@ type ReadState struct {
 	ReadDate      *time.Time
 	AiScored      bool
 	AiRetries     int
+	ScoreModel    *string
+	PromptHash    *string
 }
 
 type Session struct {
@@ -291,4 +305,5 @@ type UserPrompt struct {
 	Model          *string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+	TemplateHash   *string
 }

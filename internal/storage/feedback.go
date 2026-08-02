@@ -142,12 +142,16 @@ type FeedbackEventRow struct {
 	HasEmbedding  bool
 }
 
-// insertArticleFeedback snapshots provenance for article-scoped events. The
-// prompt hash is a fingerprint used to partition the corpus by prompt
-// generation, not a security control -- user_prompts is mutated in place and
-// keeps no history (#258), so this is the most that can be recovered. A NULL
-// hash means the user has no custom curation prompt and the built-in default
-// was in force.
+// insertArticleFeedback snapshots provenance for article-scoped events.
+//
+// score_model and prompt_hash are copied forward from read_state, where the
+// curation stage wrote them at scoring time (#258). They are deliberately NOT
+// re-derived from user_prompts here: that would resolve the prompt in force
+// when the READER acted, which is a different prompt whenever one was edited
+// between scoring and reading -- precisely when the labels matter most. NULL
+// means the score predates provenance recording and its origin is unknown; it
+// does not mean "the current prompt".
+//
 // content_length counts the body the reader could actually see in Herald: the
 // feed's content (falling back to the summary when the feed sends none) plus
 // any fetched full text. has_full_text says whether the linked article had been
@@ -167,7 +171,7 @@ INSERT INTO feedback_events (
 SELECT
     $1, a.id, a.feed_id, a.title, a.url, ae.embedding,
     $3, NULLIF($4, ''), NULLIF($5, ''),
-    rs.interest_score, up.model, encode(sha256(up.prompt_template::bytea), 'hex'),
+    rs.interest_score, rs.score_model, rs.prompt_hash,
     $6, $7, $8, f.status, f.consecutive_errors,
     length(COALESCE(NULLIF(a.content, ''), a.summary, '')) + length(COALESCE(a.linked_content, '')),
     COALESCE(a.linked_content, '') <> ''
@@ -176,7 +180,6 @@ JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = $1
 LEFT JOIN article_embeddings ae ON ae.article_id = a.id
 LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = $1
 LEFT JOIN feeds f ON f.id = a.feed_id
-LEFT JOIN user_prompts up ON up.user_id = $1 AND up.prompt_type = 'curation'
 WHERE a.id = ANY($2::bigint[])`
 
 // RecordFeedbackEvent appends one article-scoped event. An event for an article

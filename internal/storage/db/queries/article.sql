@@ -144,11 +144,18 @@ UPDATE articles SET linked_url = @linked_url, linked_content = @linked_content W
 UPDATE articles SET full_text_fetched = TRUE WHERE id = @id;
 
 -- name: SetInterestScore :exec
-INSERT INTO read_state (user_id, article_id, read, interest_score, ai_scored)
-VALUES (@user_id, @article_id, FALSE, @interest_score::double precision, TRUE)
+-- score_model/prompt_hash are captured here, at scoring time, because this is
+-- the only point where which model and prompt produced the score is known for
+-- certain (#258). Reconstructing them later reads back whatever is current, not
+-- what was in force.
+INSERT INTO read_state (user_id, article_id, read, interest_score, ai_scored, score_model, prompt_hash)
+VALUES (@user_id, @article_id, FALSE, @interest_score::double precision, TRUE,
+        NULLIF(@score_model::text, ''), NULLIF(@prompt_hash::text, ''))
 ON CONFLICT (user_id, article_id) DO UPDATE SET
   interest_score = excluded.interest_score,
-  ai_scored = TRUE;
+  ai_scored = TRUE,
+  score_model = excluded.score_model,
+  prompt_hash = excluded.prompt_hash;
 
 -- name: ScreenArticleSecurity :exec
 UPDATE articles
