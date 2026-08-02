@@ -177,7 +177,41 @@ distinguished:
 | `external_read` | Fever API item mark (`fever.go`, `MarkArticleRead`) | Ambiguous -- see below. |
 | `external_bulk_read` | Fever feed/group/all mark | Same as `bulk_dismissed`. |
 | `clickthrough` | outbound link beacon | Reader left for the original site. Positive, but see below -- it must be read against `content_length`. |
-| `search_result_click` | search UI | Query plus chosen result: a relevance pair, and a statement of interest the keyword prefs never captured. |
+| `search_result_click` | search UI | Reserved, unused. Search is not mined as a passive interest signal -- see below. |
+
+### Search is not a passive interest signal
+
+An earlier version of this doc listed a search-result click as "a relevance
+pair, and a statement of interest the keyword prefs never captured", and
+scoped query capture into #252. **That is dropped deliberately.** Search
+interactions are not mined as passive signals, and the query text is not
+recorded.
+
+The two are different labels wearing the same shape:
+
+- A search click is a **relevance** label. It says this document matched that
+  query. The reader already knew what they wanted and went to find it.
+- Every other signal here is an **interest** label. It says the reader wanted
+  this surfaced *unprompted*, which is the only question the curation scorer
+  actually asks.
+
+Mining search would answer the wrong question well. A reader searching for a
+term they have no standing interest in -- checking a fact, chasing a reference,
+looking up something for someone else -- produces a strong-looking positive on a
+topic they would not want in tomorrow's queue. The corpus would learn "surface
+more of what he looked up", which is close to the opposite of what it is for.
+
+Search also carries the sharpest privacy edge in the app. Queries are far more
+revealing than reading, and "Herald keeps every search you type" is a much worse
+sentence than anything else in this design, for a signal that answers the wrong
+question anyway.
+
+If search-driven interest ever matters, it should arrive through the explicit
+controls: the reader can vote on a search result exactly as they can anywhere
+else, and that vote is an interest label because they chose to give it. The
+`search_result_click` kind and the `web-search` surface stay defined so that
+existing events remain readable and so an explicit vote from search records
+where it came from.
 
 ### Clickthrough is conditional on how much text the reader had
 
@@ -542,9 +576,8 @@ deliberate:
 - **Scores written before #258 have no provenance**, and it cannot be
   reconstructed. NULL there means unknown.
 - **Search-result clicks record `article_opened` with `surface = web-search`**,
-  not a distinct kind, and the query text is still not captured. Query-to-result
-  pairs remain uncollectable. This was scoped into #252 and did not ship with
-  it; it needs its own issue.
+  and the query text is not captured. Not a gap -- a decision; see "Search is
+  not a passive interest signal". No issue is open for it.
 - **Dwell is derivable but nothing computes it.** Correctly a consumer concern.
 - **The vote control has no keyboard shortcut.** Two clicks is cheap enough that
   the controls get used, but a reader working a long queue will feel it.
