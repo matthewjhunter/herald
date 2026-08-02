@@ -227,6 +227,14 @@ type Store interface {
 	// docs/feedback-events.md). Writes snapshot the prediction provenance in
 	// the same statement; there is deliberately no update or delete path
 	// except user deletion.
+	// Explicit votes (#252). Current state only -- the history is in
+	// feedback_events. Set/Clear report whether a row changed so the caller
+	// does not log an event for a no-op or an unsubscribed article.
+	SetArticleVote(userID, articleID int64, vote int, reason string) (bool, error)
+	ClearArticleVote(userID, articleID int64) (bool, error)
+	GetArticleVote(userID, articleID int64) (vote int, reason string, err error)
+	GetArticleVotes(userID int64, articleIDs []int64) (map[int64]int, error)
+
 	RecordFeedbackEvent(ev FeedbackEvent) error
 	RecordFeedbackEventsBatch(ev FeedbackEvent, articleIDs []int64) error
 	RecordFeedFeedbackEvent(ev FeedbackEvent) error
