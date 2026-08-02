@@ -579,8 +579,8 @@ deliberate:
   and the query text is not captured. Not a gap -- a decision; see "Search is
   not a passive interest signal". No issue is open for it.
 - **Dwell is derivable but nothing computes it.** Correctly a consumer concern.
-- **The vote control has no keyboard shortcut.** Two clicks is cheap enough that
-  the controls get used, but a reader working a long queue will feel it.
+- **The vote control has no keyboard shortcut, and is not getting one.** Two
+  clicks is cheap enough in practice. Not a gap; no issue is open for it.
 
 Article-scoped writes are gated on subscription (a join to `user_feeds`,
 matching plan 003). The clickthrough beacon and the vote endpoint both take an
