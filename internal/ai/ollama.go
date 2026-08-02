@@ -68,6 +68,12 @@ type SecurityResult struct {
 type CurationResult struct {
 	InterestScore float64 `json:"interest_score"`
 	Reasoning     string  `json:"reasoning"`
+
+	// Provenance of this score, filled in by CurateArticle rather than by the
+	// model. Carried out to the caller so it can be recorded at scoring time,
+	// which is the only moment it is known for certain (#258).
+	Model      string `json:"-"`
+	PromptHash string `json:"-"`
 }
 
 // NewAIProcessor creates a new AI processor backed by an OpenAI-compatible
@@ -244,7 +250,7 @@ func (p *AIProcessor) CurateArticle(ctx context.Context, userID int64, title, co
 		keywordStr = strings.Join(keywords, ", ")
 	}
 
-	promptTemplate, err := p.promptLoader.GetPrompt(userID, PromptTypeCuration)
+	resolved, err := p.promptLoader.Resolve(userID, PromptTypeCuration)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load curation prompt: %w", err)
 	}
@@ -254,15 +260,23 @@ func (p *AIProcessor) CurateArticle(ctx context.Context, userID int64, title, co
 		return nil, fmt.Errorf("failed to prepare curation prompt content: %w", err)
 	}
 	data["Keywords"] = keywordStr
-	prompt, err := ExecutePrompt(promptTemplate, data)
+	prompt, err := ExecutePrompt(resolved.Template, data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to render curation prompt: %w", err)
 	}
 
-	temperature := p.promptLoader.GetTemperature(userID, PromptTypeCuration)
-	model := p.promptLoader.GetModel(userID, PromptTypeCuration)
+	temperature := resolved.Temperature
+	model := resolved.Model
 	if model == "" {
 		model = p.curationModel
+	}
+	// The effective model can come from the processor default, below every tier
+	// the loader knows about, so provenance is stamped from what was actually
+	// sent rather than from what resolution proposed.
+	provenance := func(r *CurationResult) *CurationResult {
+		r.Model = model
+		r.PromptHash = resolved.Hash
+		return r
 	}
 
 	callCtx, cancel := p.withCallTimeout(ctx)
@@ -275,21 +289,21 @@ func (p *AIProcessor) CurateArticle(ctx context.Context, userID int64, title, co
 
 	extracted := extractJSON(responseText)
 	if strings.TrimSpace(extracted) == "" {
-		return &CurationResult{
+		return provenance(&CurationResult{
 			InterestScore: 0,
 			Reasoning:     "Curation returned no content (likely max_tokens exhausted by model reasoning) -- not scored",
-		}, nil
+		}), nil
 	}
 
 	var result CurationResult
 	if err := json.Unmarshal([]byte(extracted), &result); err != nil {
-		return &CurationResult{
+		return provenance(&CurationResult{
 			InterestScore: 0,
 			Reasoning:     "Curation response did not match expected JSON format -- possible prompt injection",
-		}, nil
+		}), nil
 	}
 
-	return &result, nil
+	return provenance(&result), nil
 }
 
 // ListModels returns the names of all models available at the configured endpoint.

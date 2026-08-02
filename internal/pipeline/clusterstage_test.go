@@ -78,7 +78,7 @@ func TestClusterFormsNewGroupFromSiblings(t *testing.T) {
 		if err := store.UpdateArticleAISummary(art.ID, "summary of "+art.GUID); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.SetInterestScore(1, art.ID, 8); err != nil {
+		if err := store.SetInterestScore(1, art.ID, 8, "", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -128,7 +128,7 @@ func TestClusterSkipsTopicRefineOnEmptySummary(t *testing.T) {
 		if err := store.UpdateArticleAISummary(art.ID, "summary of "+art.GUID); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.SetInterestScore(1, art.ID, 8); err != nil {
+		if err := store.SetInterestScore(1, art.ID, 8, "", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -167,7 +167,7 @@ func TestClusterRecentRespectsToggle(t *testing.T) {
 			if err := store.ScreenArticleSecurity(art.ID, 1, "none", false, false); err != nil {
 				t.Fatal(err)
 			}
-			if err := store.SetInterestScore(1, art.ID, 8); err != nil {
+			if err := store.SetInterestScore(1, art.ID, 8, "", ""); err != nil {
 				t.Fatal(err)
 			}
 		}

@@ -180,6 +180,9 @@ func NewRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 	// "curation" prompt so the two don't interact.
 	mux.Handle("POST /settings/prompts/{promptType}", auth(http.HandlerFunc(h.handleUserPromptSave)), smoke.Example("promptType", "group_summary"), smoke.Form(url.Values{"template": {"Summarize the group: {{.Articles}}"}}))
 	mux.Handle("DELETE /settings/prompts/{promptType}", auth(http.HandlerFunc(h.handleUserPromptReset)), smoke.Example("promptType", "curation"))
+	// Revert a prompt to an earlier version (#258). Appends a new version
+	// rather than rewinding, so the history stays a record of what was in force.
+	mux.Handle("POST /settings/prompts/{promptType}/revert/{versionID}", auth(http.HandlerFunc(h.handleUserPromptRevert)), smoke.Example("promptType", "curation"), smoke.Example("versionID", "1"))
 
 	// Admin-only routes.
 	adminAuth := h.requireAdmin

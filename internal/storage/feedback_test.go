@@ -42,13 +42,12 @@ func TestRecordFeedbackEventSnapshotsProvenance(t *testing.T) {
 	eachStore(t, func(t *testing.T, store Store) {
 		userID, _, articleID := feedbackFixture(t, store)
 
-		score := 7.5
-		if err := store.UpdateReadState(userID, articleID, false, &score); err != nil {
-			t.Fatalf("UpdateReadState: %v", err)
-		}
 		model := "qwen3:14b"
-		if err := store.SetUserPrompt(userID, "curation", "score this: {{.Title}}", nil, &model); err != nil {
-			t.Fatalf("SetUserPrompt: %v", err)
+		promptHash := HashPromptTemplate("score this: {{.Title}}")
+		// Provenance is written where the score is written (#258), not looked
+		// up later from whatever prompt happens to be current.
+		if err := store.SetInterestScore(userID, articleID, 7.5, model, promptHash); err != nil {
+			t.Fatalf("SetInterestScore: %v", err)
 		}
 
 		pos := 4
@@ -60,10 +59,12 @@ func TestRecordFeedbackEventSnapshotsProvenance(t *testing.T) {
 			t.Fatalf("RecordFeedbackEvent: %v", err)
 		}
 
-		// Everything the event referenced now changes underneath it.
-		newScore := 1.0
-		if err := store.UpdateReadState(userID, articleID, true, &newScore); err != nil {
-			t.Fatalf("UpdateReadState (rescore): %v", err)
+		// Everything the event referenced now changes underneath it: the
+		// article is rescored by a different model under a different prompt,
+		// and the user's prompt row is edited too.
+		if err := store.SetInterestScore(userID, articleID, 1.0, "other-model",
+			HashPromptTemplate("COMPLETELY DIFFERENT PROMPT")); err != nil {
+			t.Fatalf("SetInterestScore (rescore): %v", err)
 		}
 		if err := store.SetUserPrompt(userID, "curation", "COMPLETELY DIFFERENT PROMPT", nil, &model); err != nil {
 			t.Fatalf("SetUserPrompt (edit): %v", err)
@@ -84,8 +85,8 @@ func TestRecordFeedbackEventSnapshotsProvenance(t *testing.T) {
 		if ev.ScoreModel == nil || *ev.ScoreModel != model {
 			t.Errorf("score_model = %v, want %q", ev.ScoreModel, model)
 		}
-		if ev.PromptHash == nil || *ev.PromptHash == "" {
-			t.Errorf("prompt_hash not captured")
+		if ev.PromptHash == nil || *ev.PromptHash != promptHash {
+			t.Errorf("prompt_hash = %v, want the hash in force when the score was written (%q)", ev.PromptHash, promptHash)
 		}
 		if ev.ListPosition == nil || *ev.ListPosition != 4 {
 			t.Errorf("list_position = %v, want 4", ev.ListPosition)
@@ -455,4 +456,92 @@ func testVector(v float32) []float32 {
 		vec[i] = v
 	}
 	return vec
+}
+
+// TestFeedbackUsesScoringTimeProvenance is the regression this change exists
+// for. The prompt is edited between the moment the article is scored and the
+// moment the reader acts on it. The event must report the prompt that produced
+// the score, not the one in force when the click happened -- and a prompt edit
+// is precisely when that distinction matters, because evaluating the edit is
+// the reason the labels are collected at all.
+func TestFeedbackUsesScoringTimeProvenance(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		userID, _, articleID := feedbackFixture(t, store)
+
+		scoringHash := HashPromptTemplate("the prompt that scored it")
+		if err := store.SetInterestScore(userID, articleID, 9.0, "scoring-model", scoringHash); err != nil {
+			t.Fatalf("SetInterestScore: %v", err)
+		}
+
+		// The reader edits their curation prompt before working the queue.
+		newModel := "rewritten-model"
+		if err := store.SetUserPrompt(userID, "curation", "a rewritten prompt", nil, &newModel); err != nil {
+			t.Fatalf("SetUserPrompt: %v", err)
+		}
+
+		if err := store.RecordFeedbackEvent(FeedbackEvent{
+			UserID: userID, ArticleID: articleID,
+			Kind: FeedbackArticleOpened, Surface: SurfaceWebList,
+		}); err != nil {
+			t.Fatalf("RecordFeedbackEvent: %v", err)
+		}
+
+		events, err := store.ListFeedbackEvents(userID, 10)
+		if err != nil {
+			t.Fatalf("ListFeedbackEvents: %v", err)
+		}
+		if len(events) != 1 {
+			t.Fatalf("got %d events, want 1", len(events))
+		}
+		ev := events[0]
+
+		if ev.PromptHash == nil || *ev.PromptHash != scoringHash {
+			t.Errorf("prompt_hash = %v, want the scoring-time hash %q -- the read-time prompt leaked in",
+				ev.PromptHash, scoringHash)
+		}
+		if ev.ScoreModel == nil || *ev.ScoreModel != "scoring-model" {
+			t.Errorf("score_model = %v, want %q", ev.ScoreModel, "scoring-model")
+		}
+	})
+}
+
+// A score written before provenance existed leaves both columns NULL. NULL must
+// read as "unknown", never as "whatever is current" -- a consumer that fills the
+// gap from user_prompts would attribute old scores to a prompt that never saw
+// them.
+func TestFeedbackProvenanceNullWhenUnrecorded(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		userID, _, articleID := feedbackFixture(t, store)
+
+		// Scored the old way: a score, no provenance.
+		score := 5.0
+		if err := store.UpdateReadState(userID, articleID, false, &score); err != nil {
+			t.Fatalf("UpdateReadState: %v", err)
+		}
+		model := "current-model"
+		if err := store.SetUserPrompt(userID, "curation", "the current prompt", nil, &model); err != nil {
+			t.Fatalf("SetUserPrompt: %v", err)
+		}
+
+		if err := store.RecordFeedbackEvent(FeedbackEvent{
+			UserID: userID, ArticleID: articleID,
+			Kind: FeedbackArticleOpened, Surface: SurfaceWebList,
+		}); err != nil {
+			t.Fatalf("RecordFeedbackEvent: %v", err)
+		}
+
+		events, err := store.ListFeedbackEvents(userID, 10)
+		if err != nil {
+			t.Fatalf("ListFeedbackEvents: %v", err)
+		}
+		if len(events) != 1 {
+			t.Fatalf("got %d events, want 1", len(events))
+		}
+		if events[0].PromptHash != nil {
+			t.Errorf("prompt_hash = %q, want NULL -- an unrecorded origin must not be backfilled from the current prompt", *events[0].PromptHash)
+		}
+		if events[0].ScoreModel != nil {
+			t.Errorf("score_model = %q, want NULL", *events[0].ScoreModel)
+		}
+	})
 }

@@ -39,6 +39,38 @@
                 {{end}}
             </div>
         </form>
+        {{if .History}}
+        <details style="margin-top:0.75rem;">
+            <summary style="cursor:pointer;font-size:0.9em;">History ({{len .History}})</summary>
+            <p class="secondary" style="font-size:0.8em;margin:0.5rem 0;">
+                Reverting appends a new version rather than erasing the one you are replacing,
+                so scores already written keep pointing at the prompt that produced them.
+            </p>
+            <table style="font-size:0.8em;">
+                <tbody>
+                    {{range .History}}
+                    <tr>
+                        <td style="white-space:nowrap;">{{.When}}</td>
+                        <td><code>{{.ShortHash}}</code></td>
+                        <td class="secondary">{{.Source}}</td>
+                        <td style="font-family:monospace;">{{.Preview}}</td>
+                        <td style="white-space:nowrap;">
+                            {{if .Current}}
+                            <small class="secondary">in force</small>
+                            {{else}}
+                            <button type="button" class="outline secondary" style="margin:0;padding:0.15rem 0.5rem;font-size:0.85em;"
+                                    hx-post="/settings/prompts/{{$entry.Type}}/revert/{{.ID}}"
+                                    hx-confirm="Make this version of '{{$entry.Label}}' current again?">
+                                Revert
+                            </button>
+                            {{end}}
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </details>
+        {{end}}
     </article>
     {{else}}
     <p class="secondary">No AI prompts configured.</p>

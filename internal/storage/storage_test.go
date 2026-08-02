@@ -2567,7 +2567,7 @@ func TestMarkSecurityScoredAndCurationQueue(t *testing.T) {
 		if err := store.ScreenArticleSecurity(scored, 2, "none", false, false); err != nil {
 			t.Fatalf("ScreenArticleSecurity scored: %v", err)
 		}
-		if err := store.SetInterestScore(1, scored, 6.0); err != nil {
+		if err := store.SetInterestScore(1, scored, 6.0, "", ""); err != nil {
 			t.Fatalf("SetInterestScore: %v", err)
 		}
 
@@ -2589,7 +2589,7 @@ func TestMarkSecurityScoredAndCurationQueue(t *testing.T) {
 
 		// Curate it, then re-screen: the interest score must survive (security and
 		// interest live in different tables now) and it must drop out of curation.
-		if err := store.SetInterestScore(1, passed, 7.5); err != nil {
+		if err := store.SetInterestScore(1, passed, 7.5, "", ""); err != nil {
 			t.Fatalf("SetInterestScore passed: %v", err)
 		}
 		if err := store.ScreenArticleSecurity(passed, 2, "none", false, false); err != nil {
@@ -2618,7 +2618,7 @@ func TestSetInterestScorePreservesSecurity(t *testing.T) {
 		if err := store.ScreenArticleSecurity(id, 2, "none", false, false); err != nil {
 			t.Fatalf("ScreenArticleSecurity: %v", err)
 		}
-		if err := store.SetInterestScore(1, id, 6.0); err != nil {
+		if err := store.SetInterestScore(1, id, 6.0, "", ""); err != nil {
 			t.Fatalf("SetInterestScore: %v", err)
 		}
 
@@ -2735,7 +2735,7 @@ func TestGetProcessingStats(t *testing.T) {
 	if err := store.ScreenArticleSecurity(a2, 2, "none", false, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetInterestScore(1, a2, 7); err != nil {
+	if err := store.SetInterestScore(1, a2, 7, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.UpdateArticleAISummary(a2, "a real summary"); err != nil {

@@ -1697,6 +1697,98 @@ func (e *Engine) GetPrompt(userID int64, promptType string) (*PromptDetail, erro
 	}, nil
 }
 
+// PromptHistoryEntry is one past version of a prompt, for the settings UI.
+type PromptHistoryEntry struct {
+	ID        int64
+	Hash      string
+	Template  string
+	Model     string
+	Source    string
+	CreatedAt time.Time
+	// Current marks the version whose text matches what is in force now.
+	Current bool
+}
+
+// ListPromptHistory returns past versions of a prompt, newest first (#258).
+// Access is scoped to the caller's own rows -- prompt text is user-authored
+// content and one reader's prompts are not another's to read.
+func (e *Engine) ListPromptHistory(userID int64, promptType string, limit int) ([]PromptHistoryEntry, error) {
+	if !allowedPromptTypes[promptType] {
+		return nil, fmt.Errorf("unknown or restricted prompt type: %q", promptType)
+	}
+	// The summarization prompt is global (#162): its history lives on user 0.
+	scope := userID
+	if promptType == "summarization" {
+		scope = 0
+	}
+	versions, err := e.store.ListPromptVersions(scope, promptType, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	currentHash := ""
+	if r, err := ai.NewPromptLoader(e.store, e.config).Resolve(scope, ai.PromptType(promptType)); err == nil {
+		currentHash = r.Hash
+	}
+
+	out := make([]PromptHistoryEntry, 0, len(versions))
+	for _, v := range versions {
+		out = append(out, PromptHistoryEntry{
+			ID:        v.ID,
+			Hash:      v.TemplateHash,
+			Template:  v.Template,
+			Model:     v.Model,
+			Source:    v.Source,
+			CreatedAt: v.CreatedAt,
+			Current:   v.TemplateHash == currentHash,
+		})
+	}
+	return out, nil
+}
+
+// RevertPrompt makes an earlier version current again. It appends rather than
+// rewinding: the revert is itself an event, and a history that quietly dropped
+// the rejected version would lose the record of what was in force while the
+// scores under it were written.
+func (e *Engine) RevertPrompt(userID int64, promptType string, versionID int64) error {
+	if !allowedPromptTypes[promptType] {
+		return fmt.Errorf("unknown or restricted prompt type: %q", promptType)
+	}
+	if promptType == "summarization" && userID != 0 {
+		return fmt.Errorf("summarization prompt is global; revert it as admin")
+	}
+	v, err := e.store.GetPromptVersion(versionID)
+	if err != nil {
+		return err
+	}
+	if v == nil {
+		return fmt.Errorf("prompt version %d not found", versionID)
+	}
+	// A version id is a bare integer, so ownership is checked rather than
+	// assumed: without this, guessing an id would read back another user's
+	// prompt text through the revert path.
+	scope := userID
+	if promptType == "summarization" {
+		scope = 0
+	}
+	if v.UserID != scope && v.UserID != 0 {
+		return fmt.Errorf("prompt version %d not found", versionID)
+	}
+	if v.PromptType != promptType {
+		return fmt.Errorf("prompt version %d is not a %s prompt", versionID, promptType)
+	}
+
+	var temp *float64
+	if v.Temperature > 0 {
+		temp = &v.Temperature
+	}
+	var model *string
+	if v.Model != "" {
+		model = &v.Model
+	}
+	return e.store.SetUserPrompt(scope, promptType, v.Template, temp, model)
+}
+
 // ListModels returns available Ollama models.
 func (e *Engine) ListModels(ctx context.Context) ([]string, error) {
 	if e.ai == nil {

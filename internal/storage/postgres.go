@@ -287,14 +287,73 @@ func (s *PostgresStore) GetUserPromptModel(userID int64, promptType string) (str
 	return derefString(model), nil
 }
 
+// SetUserPrompt moves the current pointer and appends a version (#258). Both
+// happen here rather than at the call sites so an edit cannot land without
+// history: overwriting in place is the exact failure this replaces.
+//
+// The version is appended first. A save that writes history but fails to move
+// the pointer leaves a harmless orphan; the reverse would lose the record of a
+// prompt that is now live.
 func (s *PostgresStore) SetUserPrompt(userID int64, promptType, promptTemplate string, temperature *float64, model *string) error {
+	hash := HashPromptTemplate(promptTemplate)
+
+	source := SourceUser
+	if userID == 0 {
+		source = SourceAdmin
+	}
+	v := PromptVersion{
+		UserID:       userID,
+		PromptType:   promptType,
+		Template:     promptTemplate,
+		TemplateHash: hash,
+		Source:       source,
+	}
+	if temperature != nil {
+		v.Temperature = *temperature
+	}
+	if model != nil {
+		v.Model = *model
+	}
+	if _, err := s.InsertPromptVersion(v); err != nil {
+		return err
+	}
+
 	return s.q.SetUserPrompt(context.Background(), db.SetUserPromptParams{
 		UserID:         userID,
 		PromptType:     promptType,
 		PromptTemplate: promptTemplate,
+		TemplateHash:   &hash,
 		Temperature:    temperature,
 		Model:          model,
 	})
+}
+
+// GetUserPromptResolved returns template, hash, temperature and model in one
+// lookup. Prompt resolution runs per article per user, and fetching these
+// through three separate queries was both slower and the structural cause of
+// the provenance bug in #258: values fetched at different moments could
+// describe different prompts.
+func (s *PostgresStore) GetUserPromptResolved(userID int64, promptType string) (template, hash string, temperature float64, model string, err error) {
+	row, err := s.q.GetUserPromptResolved(context.Background(), db.GetUserPromptResolvedParams{
+		UserID:     userID,
+		PromptType: promptType,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", "", 0, "", nil
+		}
+		return "", "", 0, "", fmt.Errorf("get user prompt resolved: %w", err)
+	}
+	if row.TemplateHash != nil {
+		hash = *row.TemplateHash
+	}
+	if row.Temperature != nil {
+		temperature = *row.Temperature
+	}
+	if row.Model != nil {
+		model = *row.Model
+	}
+	return row.PromptTemplate, hash, temperature, model, nil
 }
 
 func (s *PostgresStore) DeleteUserPrompt(userID int64, promptType string) error {
@@ -831,12 +890,16 @@ func (s *PostgresStore) GetUnsummarizedScoredArticles(maxSecurityThreat float64,
 }
 
 // SetInterestScore records the curation interest score without touching the
-// security verdict. See the SQLite implementation.
-func (s *PostgresStore) SetInterestScore(userID, articleID int64, interestScore float64) error {
+// security verdict, along with the model and prompt hash that produced it
+// (#258). Empty provenance strings are stored as NULL, which reads as "origin
+// unknown" rather than "the prompt currently in force".
+func (s *PostgresStore) SetInterestScore(userID, articleID int64, interestScore float64, scoreModel, promptHash string) error {
 	if err := s.q.SetInterestScore(context.Background(), db.SetInterestScoreParams{
 		UserID:        userID,
 		ArticleID:     articleID,
 		InterestScore: interestScore,
+		ScoreModel:    scoreModel,
+		PromptHash:    promptHash,
 	}); err != nil {
 		return fmt.Errorf("set interest score: %w", err)
 	}

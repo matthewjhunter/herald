@@ -217,7 +217,11 @@ func (s *Stage) curateOne(ctx context.Context, article storage.Article, security
 	}
 	// Record only the interest score; the security verdict was written by the
 	// security stage and must not be clobbered (SetInterestScore leaves it).
-	s.Store.SetInterestScore(s.UserID, article.ID, curResult.InterestScore) //nolint:errcheck
+	// Model and prompt hash go down with it: this is the one point where which
+	// prompt produced this score is known, and reconstructing it later reads
+	// back whatever is current instead (#258).
+	s.Store.SetInterestScore(s.UserID, article.ID, curResult.InterestScore, //nolint:errcheck
+		curResult.Model, curResult.PromptHash)
 	s.Formatter.OutputProcessingStatus(article.ID, article.Title, curResult.InterestScore, securityScore, true)
 	s.Formatter.Info("scored article %d: interest=%.1f security=%.1f: %s", article.ID, curResult.InterestScore, securityScore, article.Title)
 	return &article

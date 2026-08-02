@@ -108,6 +108,16 @@ type Store interface {
 	GetUserPromptTemperature(userID int64, promptType string) (float64, error)
 	GetUserPromptModel(userID int64, promptType string) (string, error)
 	SetUserPrompt(userID int64, promptType, promptTemplate string, temperature *float64, model *string) error
+
+	// Append-only prompt history (#258). Versions are content-addressed by the
+	// sha256 of the template, so the builtin and config tiers -- which have no
+	// row of their own -- get stable identities too.
+	GetUserPromptResolved(userID int64, promptType string) (template, hash string, temperature float64, model string, err error)
+	InsertPromptVersion(v PromptVersion) (int64, error)
+	RegisterPromptVersion(v PromptVersion) error
+	ListPromptVersions(userID int64, promptType string, limit int) ([]PromptVersion, error)
+	GetPromptVersion(id int64) (*PromptVersion, error)
+	GetPromptTemplateByHash(hash string) (string, error)
 	DeleteUserPrompt(userID int64, promptType string) error
 	ListUserPrompts(userID int64) ([]UserPrompt, error)
 
@@ -147,7 +157,7 @@ type Store interface {
 	// GetLowSafetyArticleSample returns the lowest-scoring screened articles first,
 	// for the harness's --unsafe-first mode. Diagnostic; read-only.
 	GetLowSafetyArticleSample(limit int) ([]ScreenedArticle, error)
-	SetInterestScore(userID, articleID int64, interestScore float64) error
+	SetInterestScore(userID, articleID int64, interestScore float64, scoreModel, promptHash string) error
 	IncrementAIRetries(userID, articleID int64) error
 	ResetScores(userID int64, securityOnly bool, belowScore float64) (int64, error)
 	GetScoreStats(userID int64) (*ScoreStatsResult, error)

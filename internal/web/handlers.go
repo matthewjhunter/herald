@@ -80,6 +80,9 @@ type promptUIEntry struct {
 	Model           string
 	IsCustom        bool
 	AvailableModels []string
+	// History is the append-only version list for this prompt (#258), newest
+	// first. Empty for a prompt that has never been edited.
+	History []promptVersionUI
 }
 
 // userPromptTypeOrder and adminPromptTypeOrder define the display order for
@@ -97,6 +100,34 @@ var promptLabels = map[string]string{
 	"newsletter":    "Newsletter",
 }
 
+// promptVersionUI is one row of prompt history in the settings UI.
+type promptVersionUI struct {
+	ID        int64
+	ShortHash string
+	Preview   string
+	Source    string
+	When      string
+	Current   bool
+}
+
+// promptHistoryLimit bounds the history shown per prompt. The table is
+// append-only and a heavy editor accumulates rows indefinitely, so the UI shows
+// a recent window rather than everything.
+const promptHistoryLimit = 20
+
+// promptPreviewLen is how much of a past template the history list shows. Full
+// text stays out of the list: these are multi-kilobyte prompts and the list is
+// for picking one, not reading it.
+const promptPreviewLen = 120
+
+func promptPreview(t string) string {
+	t = strings.Join(strings.Fields(t), " ")
+	if len(t) <= promptPreviewLen {
+		return t
+	}
+	return t[:promptPreviewLen] + "..."
+}
+
 // loadPromptEntries builds the UI entry list for a given userID and prompt
 // type list (userPromptTypeOrder or adminPromptTypeOrder).
 func (h *handlers) loadPromptEntries(userID int64, promptTypes []string) []promptUIEntry {
@@ -107,14 +138,33 @@ func (h *handlers) loadPromptEntries(userID int64, promptTypes []string) []promp
 		if err != nil {
 			continue
 		}
-		entries = append(entries, promptUIEntry{
+		entry := promptUIEntry{
 			Type:            pt,
 			Label:           promptLabels[pt],
 			Template:        detail.Template,
 			Model:           detail.Model,
 			IsCustom:        detail.IsCustom,
 			AvailableModels: models,
-		})
+		}
+		// History is best effort: a prompt that cannot list its past versions
+		// still renders and stays editable.
+		if history, herr := h.engine.ListPromptHistory(userID, pt, promptHistoryLimit); herr == nil {
+			for _, v := range history {
+				hash := v.Hash
+				if len(hash) > 8 {
+					hash = hash[:8]
+				}
+				entry.History = append(entry.History, promptVersionUI{
+					ID:        v.ID,
+					ShortHash: hash,
+					Preview:   promptPreview(v.Template),
+					Source:    v.Source,
+					When:      v.CreatedAt.Local().Format("Jan 2, 2006 3:04 PM"),
+					Current:   v.Current,
+				})
+			}
+		}
+		entries = append(entries, entry)
 	}
 	return entries
 }
@@ -1803,6 +1853,28 @@ func (h *handlers) handleFeverCredentialDelete(w http.ResponseWriter, r *http.Re
 }
 
 // --- AI prompt handlers ---
+
+// handleUserPromptRevert makes an earlier version of a prompt current again
+// (#258). The revert appends a new version rather than rewinding history.
+func (h *handlers) handleUserPromptRevert(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	promptType := r.PathValue("promptType")
+
+	versionID, err := strconv.ParseInt(r.PathValue("versionID"), 10, 64)
+	if err != nil {
+		h.renderError(w, http.StatusBadRequest, "Invalid version")
+		return
+	}
+	// Ownership is enforced in the engine: a version id is a bare integer and
+	// must not be usable to read back another account's prompt text.
+	if err := h.engine.RevertPrompt(uid, promptType, versionID); err != nil {
+		log.Printf("herald-web: revert prompt failed for user %d type %q version %d: %v", uid, promptType, versionID, err)
+		h.renderError(w, http.StatusBadRequest, "Could not revert to that version")
+		return
+	}
+	w.Header().Set("HX-Refresh", "true")
+	w.WriteHeader(http.StatusNoContent)
+}
 
 func (h *handlers) handleUserPromptSave(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID

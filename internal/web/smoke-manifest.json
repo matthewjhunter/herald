@@ -473,6 +473,16 @@
       "complete": true
     },
     {
+      "method": "POST",
+      "pattern": "/settings/prompts/{promptType}/revert/{versionID}",
+      "effect": "mutating",
+      "example_params": {
+        "promptType": "curation",
+        "versionID": "1"
+      },
+      "complete": true
+    },
+    {
       "method": "GET",
       "pattern": "/settings/sync",
       "effect": "read_only",
