@@ -7,8 +7,16 @@
     {{template "settings-subnav" (dict "Active" "filters" "IsAdmin" .IsAdmin)}}
 
     <p class="secondary">
-        Rules score articles by author, category, or tag. Scores are additive.
-        Set a <strong>filter threshold</strong> below; articles scoring below it are hidden.
+        Rules adjust an article's interest score by author, category, or tag, and
+        scores are additive. A positive rule ranks matching articles higher and
+        makes them likelier to reach your digest and notifications; a negative
+        rule pushes them down. This takes effect immediately, including on
+        articles already scored -- nothing is re-run.
+    </p>
+    <p class="secondary">
+        The <strong>filter threshold</strong> below is separate: it hides
+        articles outright. It compares against the rule total alone, not the
+        adjusted interest score, and it is off unless you set it.
     </p>
 
     <article>
@@ -19,7 +27,7 @@
                     <label for="filter_threshold">Threshold</label>
                     <input type="number" id="filter_threshold" name="filter_threshold"
                            value="{{.FilterThreshold}}" step="1">
-                    <small>0 = disabled (show all articles). Articles with total rule score below this are hidden.</small>
+                    <small>0 = disabled (show all articles). Hides any article whose <em>rule total</em> is below this. Rules still adjust ranking when this is 0.</small>
                 </div>
                 <div><button type="submit">Save</button></div>
             </div>
@@ -70,6 +78,7 @@
                 <div>
                     <label for="score">Score</label>
                     <input type="number" id="score" name="score" value="1" required>
+                    <small>Added to the 0-10 interest score; the result is clamped to that range.</small>
                 </div>
             </div>
             <button type="submit">Add Rule</button>
