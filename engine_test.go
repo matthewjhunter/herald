@@ -1086,3 +1086,33 @@ func TestDeleteUserGuard(t *testing.T) {
 		t.Errorf("DeleteUser(%d) unexpected error: %v", id, err2)
 	}
 }
+
+// TestRulesApplyIndependentOfThreshold pins the decoupling in #259: a rule must
+// take effect on its own. Requiring the reader to also set filter_threshold --
+// a separate control that governs hiding, not ranking -- is what made a newly
+// added rule appear to do nothing.
+func TestRulesApplyIndependentOfThreshold(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	uid, err := engine.store.CreateUser("reader")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	if engine.applyFilterRules(uid) {
+		t.Error("applyFilterRules true with no rules defined")
+	}
+
+	if _, err := engine.AddFilterRule(uid, FilterRule{Axis: "author", Value: "Alice", Score: 5}); err != nil {
+		t.Fatalf("AddFilterRule: %v", err)
+	}
+
+	if !engine.applyFilterRules(uid) {
+		t.Error("applyFilterRules false despite the user having a rule")
+	}
+	// The gate stays disabled -- filter_threshold was never set.
+	if got := engine.resolveFilterThreshold(uid); got != nil {
+		t.Errorf("resolveFilterThreshold = %v, want nil with threshold unset", got)
+	}
+}
