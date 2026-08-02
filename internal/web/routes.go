@@ -43,9 +43,11 @@ func NewRouter(engine *herald.Engine, validator *oidclient.Client, adminRole str
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	// Static files — no auth required.
+	// Static files — no auth required. Cached per staticCacheControl: assets are
+	// requested with ?v=<sha>, so a deploy changes the URL and the content at
+	// any one URL really is immutable.
 	staticFS, _ := fs.Sub(embedded, "static")
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)),
+	mux.Handle("GET /static/", staticCacheControl(http.StripPrefix("/static/", http.FileServerFS(staticFS))),
 		smoke.Skip("static file server subtree"))
 
 	// The server-side session manager needs a validator (it is the Renewer and
