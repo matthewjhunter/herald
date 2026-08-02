@@ -3,21 +3,24 @@
      hx-get="/articles/{{.ID}}{{if .Surface}}?from={{.Surface}}{{if .Position}}&pos={{.Position}}{{end}}{{end}}"
      hx-target="#reading-pane"
      hx-swap="innerHTML">
-    <h4>
-        {{if .Starred}}<span class="starred" aria-label="starred">&#9733;</span> {{end}}
-        {{if .SecurityFlagged}}<span class="security-flag" title="Security flagged — not AI-summarized, pending audit" aria-label="security flagged">&#9888;</span> {{end}}
-        {{cleanTitle .Title}}
-    </h4>
+    {{/* Headline and vote share one row so the buttons cost no vertical space.
+         The compact vote consumes its click so voting never opens the article
+         by accident (#252). */}}
+    <div class="article-row-head">
+        <h4>
+            {{if .Starred}}<span class="starred" aria-label="starred">&#9733;</span> {{end}}
+            {{if .SecurityFlagged}}<span class="security-flag" title="Security flagged — not AI-summarized, pending audit" aria-label="security flagged">&#9888;</span> {{end}}
+            {{cleanTitle .Title}}
+        </h4>
+        <div class="row-vote">
+            {{template "vote_control" (dict "ID" .ID "Vote" .Vote "Surface" .Surface "Position" .Position "Compact" true)}}
+        </div>
+    </div>
     <div class="meta">
         {{if .FeedTitle}}{{.FeedTitle}} &middot; {{end}}
         {{if .Author}}{{.Author}} &middot; {{end}}
         {{.PublishedDateFmt}}
     </div>
     {{if .AISummary}}<p class="ai-summary-inline">{{.AISummary}}</p>{{end}}
-    {{/* Compact vote: the buttons consume their click so voting never opens
-         the article by accident (#252). */}}
-    <div class="row-vote" style="margin-top:0.25rem;">
-        {{template "vote_control" (dict "ID" .ID "Vote" .Vote "Surface" .Surface "Position" .Position "Compact" true)}}
-    </div>
 </div>
 {{end}}
