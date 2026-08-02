@@ -23,6 +23,15 @@ default endpoint.
   queries, and read state never reach an analytics host. This boundary is
   structural: the tracker snippet lives only in the public page layout
   (`base_public.html`), and the CSP is only widened on public-page responses.
+- **Personalization data never leaves your server.** Herald records what you do
+  with articles -- opens, votes, stars, dismissals -- in a `feedback_events`
+  table so its interest scoring can learn from you (see
+  `docs/feedback-events.md`). That is local state, not tracking, and the
+  distinction is not a matter of intent: **there is no code path that transmits
+  it anywhere.** No third party, no Herald project endpoint, no default upload,
+  no opt-out telemetry. It sits in your own Postgres beside the read state you
+  already store, it is deleted with your account, and adding any egress path
+  would require changing that design document first.
 
 ## Enabling it
 
