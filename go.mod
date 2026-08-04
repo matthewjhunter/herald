@@ -14,7 +14,7 @@ require (
 	github.com/mmcdole/gofeed v1.4.0
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/pgvector/pgvector-go v0.4.1
-	github.com/pgvector/pgvector-go/pgx v0.4.0
+	github.com/pgvector/pgvector-go/pgx v0.4.1
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/net v0.57.0
