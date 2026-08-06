@@ -1,6 +1,6 @@
 {{define "feed_sidebar_content"}}
 {{with .Gauge}}
-<div class="reader-gauge" title="Pending {{.Pending}} (screening) &middot; Unread {{.Ready}} &middot; Read {{.Read}} &mdash; last 7 days">
+<div class="reader-gauge" title="Last 7 days &mdash; pending: waiting on AI screening; unread: scored, not yet read; read: already seen">
     {{if .Total}}
     <div class="reader-gauge-ring" style="--grey-end:{{.GreyEnd}}%;--yellow-end:{{.YellowEnd}}%;">
         <span class="reader-gauge-center">{{.Ready}}</span>
@@ -9,9 +9,9 @@
     <div class="reader-gauge-ring reader-gauge-empty"><span class="reader-gauge-center">0</span></div>
     {{end}}
     <div class="reader-gauge-legend">
-        <span class="rg-dot rg-grey">{{.Pending}}</span>
-        <span class="rg-dot rg-yellow">{{.Ready}}</span>
-        <span class="rg-dot rg-green">{{.Read}}</span>
+        <span class="rg-dot rg-grey">{{.Pending}} <span class="rg-label">pending</span></span>
+        <span class="rg-dot rg-yellow">{{.Ready}} <span class="rg-label">unread</span></span>
+        <span class="rg-dot rg-green">{{.Read}} <span class="rg-label">read</span></span>
     </div>
 </div>
 {{end}}
