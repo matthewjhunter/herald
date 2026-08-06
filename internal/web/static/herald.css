@@ -543,12 +543,18 @@
     font-size: 0.75rem;
     color: var(--pico-muted-color);
 }
+.rg-dot {
+    white-space: nowrap;
+    color: var(--pico-color);
+}
 .rg-dot::before {
     content: "\25CF";
     margin-right: 0.3rem;
     font-size: 0.7rem;
     vertical-align: baseline;
 }
+/* The count carries the emphasis; the label just says what it counts. */
+.rg-label { color: var(--pico-muted-color); }
 .rg-grey::before { color: var(--rg-grey); }
 .rg-yellow::before { color: var(--rg-yellow); }
 .rg-green::before { color: var(--rg-green); }
