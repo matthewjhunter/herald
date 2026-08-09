@@ -139,19 +139,33 @@ func compile(pattern string) (*regexp.Regexp, error) {
 	return re, nil
 }
 
-// New builds a Matcher from a user's rules, silently dropping those the SQL
-// matcher owns.
+// New builds a Matcher for a user's rules, or returns nil when SQL can handle
+// all of them.
+//
+// A nil Matcher is the instruction to use the SQL path unchanged, and it is the
+// common case: most users have no pattern rules at all. When even one rule does
+// need Go, the Matcher takes over ALL of that user's rules, including the exact
+// metadata ones SQL could have matched, and the caller must then disable the
+// SQL rule join and the SQL visibility gate.
+//
+// All-or-nothing rather than splitting the work is forced by the visibility
+// gate, which compares the SUM of a user's matching rules against a threshold.
+// A split leaves neither side holding the whole sum: SQL cannot see the pattern
+// rules, and Go would have to be told the SQL subtotal for every row. Doing
+// every rule in one place is both simpler and the only version that is right.
+// The cost is that these users re-evaluate their exact rules in Go, which is a
+// handful of string comparisons.
 //
 // A pattern that does not compile is an error rather than a rule that quietly
 // matches nothing. Rules are validated at save time, so reaching this is a bug
 // or a hand-edited database, and either deserves to be noisy.
 func New(rules []Rule) (*Matcher, error) {
+	if !slices.ContainsFunc(rules, Rule.evaluatedInGo) {
+		return nil, nil
+	}
 	m := &Matcher{}
 	byAxis := make(map[string]*axisRules)
 	for _, r := range rules {
-		if !r.evaluatedInGo() {
-			continue
-		}
 		cr := compiledRule{Rule: r, order: m.count}
 		if r.MatchMode == MatchRegex {
 			re, err := compile(r.Value)
@@ -205,19 +219,20 @@ func (ax *axisRules) buildUnion() {
 	}
 }
 
-// Empty reports whether the matcher holds no rules, in which case callers can
-// skip building Subjects entirely.
-func (m *Matcher) Empty() bool { return m.count == 0 }
+// Empty reports whether there is nothing for this matcher to do. A nil
+// Matcher -- what New returns when SQL can handle every rule -- is empty, so
+// callers can hold one without nil checks at each use.
+func (m *Matcher) Empty() bool { return m == nil || m.count == 0 }
 
 // NeedsMetadata reports whether any rule matches on the author, category or
 // tag axes, which live in their own tables and cost an extra query to load. A
 // user whose rules are all on title or summary should not pay for it.
-func (m *Matcher) NeedsMetadata() bool { return m.needsMetadata }
+func (m *Matcher) NeedsMetadata() bool { return m != nil && m.needsMetadata }
 
 // NeedsContent reports whether any rule matches on the article body. Callers
 // that can avoid selecting it should ask first.
 func (m *Matcher) NeedsContent() bool {
-	return slices.ContainsFunc(m.axes, func(ax *axisRules) bool { return ax.axis == AxisContent })
+	return m != nil && slices.ContainsFunc(m.axes, func(ax *axisRules) bool { return ax.axis == AxisContent })
 }
 
 // Score returns the summed score of every rule matching this article, and the
@@ -227,6 +242,9 @@ func (m *Matcher) NeedsContent() bool {
 // rule matching the same article both apply, which is the same arithmetic the
 // SQL side does with SUM.
 func (m *Matcher) Score(feedID int64, s Subject) (int, []int64) {
+	if m == nil {
+		return 0, nil
+	}
 	var (
 		total int
 		fired []compiledRule

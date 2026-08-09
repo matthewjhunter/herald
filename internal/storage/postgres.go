@@ -1230,6 +1230,38 @@ func (s *PostgresStore) GetArticleCategories(articleID int64) ([]string, error) 
 	return cats, nil
 }
 
+// GetArticleMetadataBatch returns the normalized authors and categories for a
+// page of articles, keyed by article id.
+//
+// Two round trips for a whole page, rather than the two per article the
+// singular getters above would cost. Pattern filter rules on the author,
+// category or tag axes need this for every row they score (#274); rules that
+// only touch the article's own text do not, and callers should not ask.
+func (s *PostgresStore) GetArticleMetadataBatch(articleIDs []int64) (map[int64][]string, map[int64][]string, error) {
+	authors := make(map[int64][]string, len(articleIDs))
+	categories := make(map[int64][]string, len(articleIDs))
+	if len(articleIDs) == 0 {
+		return authors, categories, nil
+	}
+
+	authorRows, err := s.q.GetArticleAuthorsBatch(context.Background(), articleIDs)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get article authors batch: %w", err)
+	}
+	for _, r := range authorRows {
+		authors[r.ArticleID] = append(authors[r.ArticleID], r.Name)
+	}
+
+	categoryRows, err := s.q.GetArticleCategoriesBatch(context.Background(), articleIDs)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get article categories batch: %w", err)
+	}
+	for _, r := range categoryRows {
+		categories[r.ArticleID] = append(categories[r.ArticleID], r.Category)
+	}
+	return authors, categories, nil
+}
+
 // --- Feed metadata discovery ---
 
 func (s *PostgresStore) GetFeedAuthors(feedID int64) ([]string, error) {

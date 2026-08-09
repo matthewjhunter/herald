@@ -221,6 +221,9 @@ type Store interface {
 	StoreArticleCategories(articleID int64, categories []string) error
 	GetArticleAuthors(articleID int64) ([]ArticleAuthor, error)
 	GetArticleCategories(articleID int64) ([]string, error)
+	// GetArticleMetadataBatch returns authors and categories for a page of
+	// articles, keyed by article id, for pattern filter rules on those axes.
+	GetArticleMetadataBatch(articleIDs []int64) (map[int64][]string, map[int64][]string, error)
 
 	// Feed metadata discovery
 	GetFeedAuthors(feedID int64) ([]string, error)

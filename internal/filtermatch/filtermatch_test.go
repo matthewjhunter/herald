@@ -175,9 +175,9 @@ func TestFeedScoping(t *testing.T) {
 	}
 }
 
-// Exact rules on the metadata axes are matched in SQL. Handing them to the
-// evaluator as well would count them twice.
-func TestSQLEvaluatedRulesAreIgnored(t *testing.T) {
+// A user whose rules are all exact metadata matches keeps the SQL path
+// untouched, which is the common case and must stay free.
+func TestNoMatcherWhenSQLCanHandleEverything(t *testing.T) {
 	m, err := New([]Rule{
 		rule(1, AxisAuthor, MatchExact, "Sundance", -5),
 		rule(2, AxisCategory, MatchExact, "Uncategorized", -5),
@@ -186,13 +186,44 @@ func TestSQLEvaluatedRulesAreIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if !m.Empty() {
-		t.Error("matcher should hold no rules: all three belong to the SQL path")
+	if m != nil {
+		t.Fatal("expected a nil matcher: SQL can match all three rules")
+	}
+	// A nil matcher is usable without a nil check.
+	if !m.Empty() || m.NeedsMetadata() || m.NeedsContent() {
+		t.Error("a nil matcher should report empty and need nothing")
+	}
+	if score, fired := m.Score(1, Subject{Author: "Sundance"}); score != 0 || fired != nil {
+		t.Errorf("nil matcher scored %d %v, want 0 and nil", score, fired)
+	}
+}
+
+// Once ANY rule needs Go, the matcher takes over all of them -- including the
+// exact metadata rules SQL could have matched. Splitting the rule set would
+// leave neither evaluator holding the whole sum the visibility gate compares
+// against. The caller's side of that bargain is disabling the SQL rule join;
+// if it does not, these rules are counted twice.
+func TestOnePatternRuleTakesOverTheWholeSet(t *testing.T) {
+	m, err := New([]Rule{
+		rule(1, AxisAuthor, MatchExact, "Sundance", -5),
+		rule(2, AxisTitle, MatchRegex, `(?i)open thread`, -3),
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if m.Empty() {
+		t.Fatal("expected a matcher")
+	}
+	if !m.NeedsMetadata() {
+		t.Error("the exact author rule came along, so authors must be loaded for it")
 	}
 
-	score, fired := m.Score(1, Subject{Author: "Sundance", Categories: []string{"Uncategorized"}})
-	if score != 0 || len(fired) != 0 {
-		t.Errorf("score = %d fired = %v, want 0 and none", score, fired)
+	score, fired := m.Score(1, Subject{Author: "Sundance", Title: "Sunday - Open Thread"})
+	if score != -8 {
+		t.Errorf("score = %d, want -8 (both rules)", score)
+	}
+	if !slices.Equal(fired, []int64{1, 2}) {
+		t.Errorf("fired = %v, want [1 2]", fired)
 	}
 }
 
