@@ -18,9 +18,10 @@
 // new costume. Materialization is available later as a pure cache if profiling
 // asks for it; it must never become the semantics.
 //
-// The split is enforced from both sides: filterRuleMatch in internal/storage
-// qualifies on match_mode = 'exact', and New drops any rule that belongs to
-// SQL. A rule counted by both would have its score applied twice.
+// The choice is all-or-nothing per user, and New makes it: a nil Matcher means
+// SQL can handle every rule, and a non-nil one takes over the whole set. See
+// New for why splitting them is not an option. A rule counted by both
+// evaluators would have its score applied twice.
 package filtermatch
 
 import (
@@ -228,12 +229,6 @@ func (m *Matcher) Empty() bool { return m == nil || m.count == 0 }
 // tag axes, which live in their own tables and cost an extra query to load. A
 // user whose rules are all on title or summary should not pay for it.
 func (m *Matcher) NeedsMetadata() bool { return m != nil && m.needsMetadata }
-
-// NeedsContent reports whether any rule matches on the article body. Callers
-// that can avoid selecting it should ask first.
-func (m *Matcher) NeedsContent() bool {
-	return m != nil && slices.ContainsFunc(m.axes, func(ax *axisRules) bool { return ax.axis == AxisContent })
-}
 
 // Score returns the summed score of every rule matching this article, and the
 // ids of the rules that fired, in rule order.

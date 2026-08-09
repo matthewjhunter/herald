@@ -190,7 +190,7 @@ func TestNoMatcherWhenSQLCanHandleEverything(t *testing.T) {
 		t.Fatal("expected a nil matcher: SQL can match all three rules")
 	}
 	// A nil matcher is usable without a nil check.
-	if !m.Empty() || m.NeedsMetadata() || m.NeedsContent() {
+	if !m.Empty() || m.NeedsMetadata() {
 		t.Error("a nil matcher should report empty and need nothing")
 	}
 	if score, fired := m.Score(1, Subject{Author: "Sundance"}); score != 0 || fired != nil {
