@@ -128,3 +128,35 @@ func TestPatternFilterRuleQuotaIsSeparate(t *testing.T) {
 		t.Errorf("exact rule refused by the pattern quota: %v", err)
 	}
 }
+
+// Content rules scan full article bodies, measured at roughly 2ms per rule per
+// 50-article page against about 30us for a title rule. They get a ceiling of
+// their own, well under the general pattern quota.
+func TestContentFilterRuleQuotaIsTighter(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	engine.config.Limits.MaxPatternFilterRulesPerUser = 50
+	engine.config.Limits.MaxContentFilterRulesPerUser = 2
+
+	for i, value := range []string{"one", "two"} {
+		if _, err := engine.AddFilterRule(1, FilterRule{
+			Axis: AxisContent, MatchMode: MatchSubstring, Value: value, Score: -1,
+		}); err != nil {
+			t.Fatalf("content rule %d: %v", i, err)
+		}
+	}
+
+	if _, err := engine.AddFilterRule(1, FilterRule{
+		Axis: AxisContent, MatchMode: MatchSubstring, Value: "three", Score: -1,
+	}); err == nil {
+		t.Error("expected the third content rule to be refused")
+	}
+
+	// Title rules are cheap and keep the general pattern quota.
+	if _, err := engine.AddFilterRule(1, FilterRule{
+		Axis: AxisTitle, MatchMode: MatchSubstring, Value: "three", Score: -1,
+	}); err != nil {
+		t.Errorf("title rule refused by the content quota: %v", err)
+	}
+}

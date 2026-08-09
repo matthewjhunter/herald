@@ -1986,14 +1986,26 @@ func (e *Engine) AddFilterRule(userID int64, rule FilterRule) (int64, error) {
 	// in Go against every candidate row of every listing query, where an exact
 	// rule costs an indexed equality in SQL.
 	if patternFilterRule(rule) {
-		patterns := 0
+		patterns, content := 0, 0
 		for _, r := range existingRules {
-			if patternFilterRule(r) {
-				patterns++
+			if !patternFilterRule(r) {
+				continue
+			}
+			patterns++
+			if r.Axis == AxisContent {
+				content++
 			}
 		}
 		if err := overQuota("pattern filter rule", patterns, e.config.Limits.MaxPatternFilterRulesPerUser); err != nil {
 			return 0, err
+		}
+		// Content rules scan full article bodies rather than titles, which
+		// costs roughly an order of magnitude more per rule, so they have a
+		// ceiling of their own well below the general pattern quota.
+		if rule.Axis == AxisContent {
+			if err := overQuota("content filter rule", content, e.config.Limits.MaxContentFilterRulesPerUser); err != nil {
+				return 0, err
+			}
 		}
 	}
 

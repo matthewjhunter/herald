@@ -66,6 +66,11 @@ type Config struct {
 		// candidate row on every listing query, so they are metered far more
 		// tightly than exact rules, which are an indexed equality in SQL.
 		MaxPatternFilterRulesPerUser int `toml:"max_pattern_filter_rules_per_user"`
+		// Pattern rules on the content axis are metered tighter still: they
+		// scan full article bodies rather than titles. Measured at roughly 2ms
+		// per rule per 50-article page (internal/filtermatch benchmarks), so
+		// the default of 5 buys about 10ms and 50 would buy 90ms.
+		MaxContentFilterRulesPerUser int `toml:"max_content_filter_rules_per_user"`
 		MaxNewslettersPerUser        int `toml:"max_newsletters_per_user"`
 	} `toml:"limits"`
 
@@ -201,6 +206,7 @@ func DefaultConfig() *Config {
 	cfg.Limits.MaxFeedsPerUser = 1000
 	cfg.Limits.MaxFilterRulesPerUser = 1000
 	cfg.Limits.MaxPatternFilterRulesPerUser = 50
+	cfg.Limits.MaxContentFilterRulesPerUser = 5
 	cfg.Limits.MaxNewslettersPerUser = 50
 	// Default temperatures (can be overridden in config)
 	cfg.Temperatures.Security = 0.3
