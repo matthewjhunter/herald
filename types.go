@@ -286,6 +286,10 @@ type ReaderGauge struct {
 	Pending int
 	Ready   int
 	Read    int
+	// Hidden is how many of Ready the user's filter rules are suppressing.
+	// It is a subset of Ready, not a fourth state, and is approximate: see
+	// ruleFilter.hiddenUnreadCount.
+	Hidden int
 }
 
 // CycleStats is one completed run of the fetch+process daemon cycle, persisted so

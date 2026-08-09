@@ -12,6 +12,9 @@
         <span class="rg-dot rg-grey">{{.Pending}} <span class="rg-label">pending</span></span>
         <span class="rg-dot rg-yellow">{{.Ready}} <span class="rg-label">unread</span></span>
         <span class="rg-dot rg-green">{{.Read}} <span class="rg-label">read</span></span>
+        {{if .Hidden}}
+        <span class="rg-dot rg-hidden" title="Unread articles your filter rules are suppressing. Counted over a bounded window, so it can undercount a large backlog.">{{.Hidden}} <span class="rg-label">hidden</span></span>
+        {{end}}
     </div>
 </div>
 {{end}}

@@ -272,3 +272,46 @@ func HighInterestArticles(store storage.Store, cfg *storage.Config, userID int64
 	// The visibility gate stays off here, as it always has been on this path.
 	return ruleFilter{store: store, cfg: cfg}.highInterest(userID, threshold, limit, offset, false)
 }
+
+// hiddenUnreadCount reports how many unread articles this user's filter rules
+// are currently suppressing, for the whole reader or one feed.
+//
+// The reader's unread counts have never applied the visibility gate, so a
+// filtered list has always been able to show fewer articles than the badge
+// promises. Rather than make the counts exact -- which would mean evaluating
+// every unread article on every page load -- the discrepancy is surfaced.
+// "12 unread, 7 hidden" tells the reader something true and useful, and gives
+// them a reason to go and look at what their rules are eating.
+//
+// Counted over the same bounded window everything else here uses, so it is an
+// indicator rather than an audited figure: with more unread articles than the
+// window covers, it undercounts.
+func (rf ruleFilter) hiddenUnreadCount(userID, feedID int64) int {
+	p := rf.plan(userID)
+	if !p.hides() {
+		return 0
+	}
+	window := rf.window(rf.cfg.Limits.FilterMaxScan, 0)
+
+	var (
+		articles []storage.Article
+		err      error
+	)
+	if feedID > 0 {
+		articles, err = rf.store.GetUnreadArticlesByFeed(userID, feedID, window, 0, nil, false)
+	} else {
+		articles, err = rf.store.GetUnreadArticlesForUser(userID, window, 0, nil, false)
+	}
+	if err != nil {
+		return 0
+	}
+
+	subjects := rf.subjects(articles, p.matcher)
+	hidden := 0
+	for i, a := range articles {
+		if score, _ := p.matcher.Score(a.FeedID, subjects[i]); score < *p.goThreshold {
+			hidden++
+		}
+	}
+	return hidden
+}

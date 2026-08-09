@@ -497,6 +497,9 @@
     --rg-grey: var(--pico-muted-color, #9ca3af);
     --rg-yellow: #d9a400;
     --rg-green: #2e9e5b;
+    /* Muted violet: distinct from the three pipeline states, and clearly not
+       one of them. */
+    --rg-hidden: #8b7bb8;
     display: flex;
     align-items: center;
     gap: 0.6rem;
@@ -558,6 +561,10 @@
 .rg-grey::before { color: var(--rg-grey); }
 .rg-yellow::before { color: var(--rg-yellow); }
 .rg-green::before { color: var(--rg-green); }
+/* Hidden (#274) is a slice of "unread", not a fourth pipeline state, so it has
+   no arc on the ring -- only a legend entry, dimmed to read as a footnote. */
+.rg-hidden { color: var(--pico-muted-color); }
+.rg-hidden::before { color: var(--rg-hidden); }
 
 /* Unsubscribe reason menu (#252): inline, not a modal -- the reason is
    optional and must not cost more than the unsubscribe itself. */

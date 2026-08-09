@@ -1502,7 +1502,12 @@ func (e *Engine) GetReaderGauge(userID, feedID int64) (ReaderGauge, error) {
 	if err != nil {
 		return ReaderGauge{}, err
 	}
-	return ReaderGauge{Pending: c.Pending, Ready: c.Ready, Read: c.Read}, nil
+	return ReaderGauge{
+		Pending: c.Pending,
+		Ready:   c.Ready,
+		Read:    c.Read,
+		Hidden:  e.filters().hiddenUnreadCount(userID, feedID),
+	}, nil
 }
 
 // GetRecentCycleStats returns the most recent completed daemon cycles, newest

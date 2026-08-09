@@ -316,6 +316,7 @@ type readerGauge struct {
 	Pending   int
 	Ready     int
 	Read      int
+	Hidden    int // subset of Ready that filter rules are suppressing (#274)
 	Total     int
 	GreyEnd   int // cumulative percent: end of the pending (grey) arc
 	YellowEnd int // cumulative percent: end of the ready (yellow) arc
@@ -325,7 +326,9 @@ type readerGauge struct {
 // cumulative arc boundaries with integer round-half-up (no math import needed).
 func buildReaderGauge(g herald.ReaderGauge) readerGauge {
 	total := g.Pending + g.Ready + g.Read
-	rg := readerGauge{Pending: g.Pending, Ready: g.Ready, Read: g.Read, Total: total}
+	// Hidden is deliberately left out of the total: it is a slice of Ready,
+	// not a fourth state, so counting it again would distort the ring.
+	rg := readerGauge{Pending: g.Pending, Ready: g.Ready, Read: g.Read, Hidden: g.Hidden, Total: total}
 	if total > 0 {
 		rg.GreyEnd = (g.Pending*100 + total/2) / total
 		rg.YellowEnd = ((g.Pending+g.Ready)*100 + total/2) / total
@@ -459,6 +462,7 @@ type filtersData struct {
 type filterRuleRow struct {
 	ID        int64
 	Axis      string
+	MatchMode string
 	Value     string
 	Score     int
 	FeedTitle string
@@ -2238,10 +2242,11 @@ func (h *handlers) handleFilters(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, r := range rules {
 		row := filterRuleRow{
-			ID:    r.ID,
-			Axis:  r.Axis,
-			Value: r.Value,
-			Score: r.Score,
+			ID:        r.ID,
+			Axis:      r.Axis,
+			MatchMode: r.MatchMode,
+			Value:     r.Value,
+			Score:     r.Score,
 		}
 		if r.FeedID != nil {
 			row.FeedTitle = feedTitles[*r.FeedID]
@@ -2256,6 +2261,7 @@ func (h *handlers) handleFilterAdd(w http.ResponseWriter, r *http.Request) {
 	uid := userFromContext(r.Context()).ID
 
 	axis := strings.TrimSpace(r.FormValue("axis"))
+	matchMode := strings.TrimSpace(r.FormValue("match_mode"))
 	value := strings.TrimSpace(r.FormValue("value"))
 	scoreStr := r.FormValue("score")
 	feedIDStr := r.FormValue("feed_id")
@@ -2272,9 +2278,10 @@ func (h *handlers) handleFilterAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rule := herald.FilterRule{
-		Axis:  axis,
-		Value: value,
-		Score: score,
+		Axis:      axis,
+		MatchMode: matchMode,
+		Value:     value,
+		Score:     score,
 	}
 	if feedIDStr != "" {
 		fid, err := strconv.ParseInt(feedIDStr, 10, 64)
@@ -2285,7 +2292,11 @@ func (h *handlers) handleFilterAdd(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := h.engine.AddFilterRule(uid, rule); err != nil {
 		log.Printf("herald-web: add filter rule failed for user %d: %v", uid, err)
-		h.renderError(w, http.StatusBadRequest, "Could not add filter rule. Check the values and try again.")
+		// The engine's message names the problem -- an uncompilable pattern, a
+		// quota, a bad axis -- and a user staring at a rejected regex needs it.
+		// These errors are generated from the submitted rule, not from feed
+		// content, and renderError escapes them.
+		h.renderError(w, http.StatusBadRequest, "Could not add filter rule: "+err.Error())
 		return
 	}
 
@@ -2369,10 +2380,29 @@ func (h *handlers) handleFeedMetadataByQuery(w http.ResponseWriter, r *http.Requ
 func (h *handlers) handleFilterValues(w http.ResponseWriter, r *http.Request) {
 	feedIDStr := r.URL.Query().Get("feed_id")
 	axis := r.URL.Query().Get("axis")
+	matchMode := r.URL.Query().Get("match_mode")
 
 	// No axis selected yet — return placeholder select
 	if axis == "" {
 		fmt.Fprint(w, `<select name="value" id="value-select" required><option value="">— select axis first —</option></select>`)
+		return
+	}
+
+	// A pattern is typed, never picked: the point of one is to match values
+	// that are not in the list yet (#274). Same for the text axes, which have
+	// no enumerable values at all.
+	if matchMode == herald.MatchSubstring || matchMode == herald.MatchRegex {
+		placeholder := "text to look for"
+		if matchMode == herald.MatchRegex {
+			placeholder = `RE2 pattern, e.g. (?i)\bopen thread\b`
+		}
+		fmt.Fprintf(w, `<input type="text" name="value" id="value-select" placeholder="%s" required>`,
+			template.HTMLEscapeString(placeholder))
+		return
+	}
+	switch axis {
+	case herald.AxisTitle, herald.AxisSummary, herald.AxisContent:
+		fmt.Fprint(w, `<input type="text" name="value" id="value-select" placeholder="the exact text, in full" required>`)
 		return
 	}
 
@@ -2428,10 +2458,11 @@ func (h *handlers) renderFilterRulesFragment(w http.ResponseWriter, userID int64
 	data := filtersData{}
 	for _, r := range rules {
 		row := filterRuleRow{
-			ID:    r.ID,
-			Axis:  r.Axis,
-			Value: r.Value,
-			Score: r.Score,
+			ID:        r.ID,
+			Axis:      r.Axis,
+			MatchMode: r.MatchMode,
+			Value:     r.Value,
+			Score:     r.Score,
 		}
 		if r.FeedID != nil {
 			row.FeedTitle = feedTitles[*r.FeedID]
