@@ -776,7 +776,7 @@ func buildInterestScoreQuery(applyRules bool, filterSQL string) string {
 	return `
 		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
 		       a.author, a.published_date, a.fetched_date,
-		       ` + effectiveScoreExpr(applyRules) + ` * (1.0 / (1.0 + GREATEST(0, EXTRACT(epoch FROM (NOW() - COALESCE(a.published_date, a.fetched_date))) / 86400.0) * 0.1)) AS decayed_score
+		       ` + effectiveScoreExpr(applyRules) + ` * ` + recencyDecaySQL + ` AS decayed_score
 		FROM articles a
 		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?` +
 		ruleScoreJoin(applyRules, "?") + `
@@ -784,6 +784,57 @@ func buildInterestScoreQuery(applyRules bool, filterSQL string) string {
 		` + filterSQL + `
 		ORDER BY decayed_score DESC
 		LIMIT ? OFFSET ?`
+}
+
+// GetScoredUnreadArticles returns unread articles curation has scored, with
+// their RAW interest scores -- no rule adjustment, no clamping, no decay.
+//
+// It exists for the read-time evaluator (#274). A caller that computes a
+// user's rule scores in Go needs the unadjusted number to add them to: the
+// decayed, clamped score the ranking query returns cannot be unwound, because
+// clamping is not invertible.
+//
+// Rows come back ordered by decayed raw score, which is the ranking the reader
+// would see with no rules at all. That makes the window the caller takes a
+// reasonable candidate set, though not a perfect one: a low-scoring article
+// that some rule boosts hard could sit past the end of it.
+func (s *PostgresStore) GetScoredUnreadArticles(userID int64, limit int) ([]Article, []float64, error) {
+	const query = `
+		SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+		       a.author, a.published_date, a.fetched_date, rs.interest_score
+		FROM articles a
+		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = $1
+		WHERE rs.interest_score IS NOT NULL AND rs.read = FALSE
+		ORDER BY rs.interest_score * ` + recencyDecaySQL + ` DESC
+		LIMIT $2`
+
+	rows, err := s.pool.Query(context.Background(), query, userID, limit)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get scored unread articles: %w", err)
+	}
+	defer rows.Close()
+
+	var (
+		articles []Article
+		scores   []float64
+	)
+	for rows.Next() {
+		var (
+			id, feedID               int64
+			guid, title, url         string
+			content, summary, author *string
+			published                *time.Time
+			fetched                  time.Time
+			score                    float64
+		)
+		if err := rows.Scan(&id, &feedID, &guid, &title, &url,
+			&content, &summary, &author, &published, &fetched, &score); err != nil {
+			return nil, nil, fmt.Errorf("scan scored article: %w", err)
+		}
+		articles = append(articles, coreArticle(id, feedID, guid, title, url, content, summary, author, published, fetched))
+		scores = append(scores, score)
+	}
+	return articles, scores, rows.Err()
 }
 
 func (s *PostgresStore) GetArticlesByInterestScore(userID int64, threshold float64, limit, offset int, filterThreshold *int, applyRules bool) ([]Article, []float64, error) {

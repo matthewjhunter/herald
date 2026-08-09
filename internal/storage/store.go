@@ -191,6 +191,9 @@ type Store interface {
 	// independent of filterThreshold: the threshold gates VISIBILITY, while
 	// rules adjust the SCORE whenever the user has any.
 	GetArticlesByInterestScore(userID int64, threshold float64, limit, offset int, filterThreshold *int, applyRules bool) ([]Article, []float64, error)
+	// GetScoredUnreadArticles returns scored unread articles with RAW interest
+	// scores, for callers that apply filter rules in Go and rank afterwards.
+	GetScoredUnreadArticles(userID int64, limit int) ([]Article, []float64, error)
 	GetUnreadArticlesForUser(userID int64, limit, offset int, filterThreshold *int, includeRead bool) ([]Article, error)
 	GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int, filterThreshold *int, includeRead bool) ([]Article, error)
 	GetUnscoredArticleCount(userID int64) (int, error)

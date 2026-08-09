@@ -248,7 +248,7 @@ func TestExactOnlyRulesKeepTheSQLPath(t *testing.T) {
 	}
 	setFilterThreshold(t, engine, 1, 1)
 
-	if p := engine.planFilters(1); p.matcher != nil || p.sqlThreshold == nil {
+	if p := engine.filters().plan(1); p.matcher != nil || p.sqlThreshold == nil {
 		t.Errorf("exact-only rules should plan the SQL path: matcher=%v sqlThreshold=%v", p.matcher, p.sqlThreshold)
 	}
 

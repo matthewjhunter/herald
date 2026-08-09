@@ -20,7 +20,6 @@ import (
 	"github.com/matthewjhunter/herald/internal/ai"
 	emailpkg "github.com/matthewjhunter/herald/internal/email"
 	"github.com/matthewjhunter/herald/internal/feeds"
-	"github.com/matthewjhunter/herald/internal/filtermatch"
 	"github.com/matthewjhunter/herald/internal/storage"
 	"github.com/matthewjhunter/herald/internal/urlnorm"
 )
@@ -205,7 +204,8 @@ func (e *Engine) FetchAllFeeds(ctx context.Context) (*FetchResult, error) {
 // When includeRead is true, already-read articles are returned alongside unread
 // ones (each carrying its Read/Starred state); otherwise only unread are returned.
 func (e *Engine) GetUnreadArticles(userID int64, limit, offset int, includeRead bool) ([]Article, error) {
-	p := e.planFilters(userID)
+	rf := e.filters()
+	p := rf.plan(userID)
 	if !p.hides() {
 		articles, err := e.store.GetUnreadArticlesForUser(userID, limit, offset, p.sqlThreshold, includeRead)
 		if err != nil {
@@ -213,7 +213,7 @@ func (e *Engine) GetUnreadArticles(userID int64, limit, offset int, includeRead 
 		}
 		return articlesFromInternal(articles), nil
 	}
-	articles, err := e.listFiltered(p, limit, offset, func(window int) ([]storage.Article, error) {
+	articles, err := rf.listFiltered(p, limit, offset, func(window int) ([]storage.Article, error) {
 		return e.store.GetUnreadArticlesForUser(userID, window, 0, nil, includeRead)
 	})
 	if err != nil {
@@ -224,7 +224,8 @@ func (e *Engine) GetUnreadArticles(userID int64, limit, offset int, includeRead 
 
 // GetStarredArticles returns starred articles for a user.
 func (e *Engine) GetStarredArticles(userID int64, limit, offset int) ([]Article, error) {
-	p := e.planFilters(userID)
+	rf := e.filters()
+	p := rf.plan(userID)
 	if !p.hides() {
 		articles, err := e.store.GetStarredArticles(userID, limit, offset, p.sqlThreshold)
 		if err != nil {
@@ -232,7 +233,7 @@ func (e *Engine) GetStarredArticles(userID int64, limit, offset int) ([]Article,
 		}
 		return articlesFromInternal(articles), nil
 	}
-	articles, err := e.listFiltered(p, limit, offset, func(window int) ([]storage.Article, error) {
+	articles, err := rf.listFiltered(p, limit, offset, func(window int) ([]storage.Article, error) {
 		return e.store.GetStarredArticles(userID, window, 0, nil)
 	})
 	if err != nil {
@@ -244,7 +245,8 @@ func (e *Engine) GetStarredArticles(userID int64, limit, offset int) ([]Article,
 // GetUnreadArticlesByFeed returns articles for a user filtered to a specific feed.
 // When includeRead is true, read articles are included alongside unread ones.
 func (e *Engine) GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int, includeRead bool) ([]Article, error) {
-	p := e.planFilters(userID)
+	rf := e.filters()
+	p := rf.plan(userID)
 	if !p.hides() {
 		articles, err := e.store.GetUnreadArticlesByFeed(userID, feedID, limit, offset, p.sqlThreshold, includeRead)
 		if err != nil {
@@ -252,7 +254,7 @@ func (e *Engine) GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int
 		}
 		return articlesFromInternal(articles), nil
 	}
-	articles, err := e.listFiltered(p, limit, offset, func(window int) ([]storage.Article, error) {
+	articles, err := rf.listFiltered(p, limit, offset, func(window int) ([]storage.Article, error) {
 		return e.store.GetUnreadArticlesByFeed(userID, feedID, window, 0, nil, includeRead)
 	})
 	if err != nil {
@@ -332,7 +334,7 @@ func (e *Engine) GetArticleSummaries(articleIDs []int64) (map[int64]string, erro
 
 // GetHighInterestArticles returns unread articles scored above the threshold.
 func (e *Engine) GetHighInterestArticles(userID int64, threshold float64, limit, offset int) ([]Article, []float64, error) {
-	articles, scores, err := e.store.GetArticlesByInterestScore(userID, threshold, limit, offset, e.resolveFilterThreshold(userID), e.applyFilterRules(userID))
+	articles, scores, err := e.filters().highInterest(userID, threshold, limit, offset, true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1043,7 +1045,8 @@ func (e *Engine) GetGroupArticles(userID, groupID int64) (*ArticleGroup, error) 
 // GetUnreadGroupArticles returns articles belonging to a group. When includeRead
 // is true, read articles are included alongside unread ones.
 func (e *Engine) GetUnreadGroupArticles(userID, groupID int64, limit, offset int, includeRead bool) ([]Article, error) {
-	p := e.planFilters(userID)
+	rf := e.filters()
+	p := rf.plan(userID)
 	if !p.hides() {
 		articles, err := e.store.GetUnreadGroupArticles(userID, groupID, limit, offset, p.sqlThreshold, includeRead)
 		if err != nil {
@@ -1051,7 +1054,7 @@ func (e *Engine) GetUnreadGroupArticles(userID, groupID int64, limit, offset int
 		}
 		return articlesFromInternal(articles), nil
 	}
-	articles, err := e.listFiltered(p, limit, offset, func(window int) ([]storage.Article, error) {
+	articles, err := rf.listFiltered(p, limit, offset, func(window int) ([]storage.Article, error) {
 		return e.store.GetUnreadGroupArticles(userID, groupID, window, 0, nil, includeRead)
 	})
 	if err != nil {
@@ -1366,10 +1369,10 @@ func (e *Engine) GenerateBriefing(userID int64) (string, error) {
 	if e.ai == nil {
 		return "", nil
 	}
-	// Gate stays nil here, matching the pre-existing behaviour of this path;
-	// the rule-adjusted score applies regardless (#259).
-	articles, scores, err := e.store.GetArticlesByInterestScore(
-		userID, e.config.Thresholds.InterestScore, 20, 0, nil, e.applyFilterRules(userID))
+	// The gate stays off here, matching the pre-existing behaviour of this
+	// path; the rule-adjusted score applies regardless (#259).
+	articles, scores, err := e.filters().highInterest(
+		userID, e.config.Thresholds.InterestScore, 20, 0, false)
 	if err != nil {
 		return "", fmt.Errorf("get high-interest articles: %w", err)
 	}
@@ -2115,139 +2118,6 @@ func (e *Engine) GetFeedMetadata(feedID int64) (*FeedMetadata, error) {
 		Authors:    authors,
 		Categories: categories,
 	}, nil
-}
-
-// --- Pattern filter rules, evaluated at read time (#274) ---
-
-// filterPlan is how one listing request will apply a user's filter rules.
-//
-// The two fields are mutually exclusive by construction. Either SQL does the
-// whole job -- sqlThreshold set, matcher nil, exactly as before #274 -- or Go
-// does, with the SQL gate switched off. Never both: the gate compares the SUM
-// of a user's matching rules against a threshold, so a rule set split across
-// two evaluators leaves neither holding the number being compared.
-type filterPlan struct {
-	matcher      *filtermatch.Matcher // non-nil when Go owns this user's rules
-	sqlThreshold *int                 // the gate for the SQL path; nil when Go owns it or the gate is off
-	goThreshold  *int                 // the gate for the Go path; nil when the gate is off
-}
-
-// planFilters decides how a listing request applies this user's rules.
-//
-// A user with no pattern rules -- the common case -- gets a plan indis-
-// tinguishable from the pre-#274 behaviour, with no extra queries and no Go
-// evaluation. Errors are not fatal: a filter that cannot be resolved falls
-// back to showing everything, because failing to hide an article is a far
-// better outcome than failing to render the page.
-func (e *Engine) planFilters(userID int64) filterPlan {
-	threshold := e.resolveFilterThreshold(userID)
-
-	rules, err := e.GetFilterRules(userID, nil)
-	if err != nil {
-		log.Printf("herald: filter rules unavailable for user %d, showing everything: %v", userID, err)
-		return filterPlan{}
-	}
-	fmRules := make([]filtermatch.Rule, len(rules))
-	for i, r := range rules {
-		fmRules[i] = filtermatch.Rule{
-			ID: r.ID, FeedID: r.FeedID, Axis: r.Axis,
-			MatchMode: r.MatchMode, Value: r.Value, Score: r.Score,
-		}
-	}
-	matcher, err := filtermatch.New(fmRules)
-	if err != nil {
-		// Patterns are compiled at save time, so this is a bug or a
-		// hand-edited row. Log it and fall back to the SQL half.
-		log.Printf("herald: filter rules for user %d will not compile, using exact rules only: %v", userID, err)
-		return filterPlan{sqlThreshold: threshold}
-	}
-	if matcher.Empty() {
-		return filterPlan{sqlThreshold: threshold}
-	}
-	return filterPlan{matcher: matcher, goThreshold: threshold}
-}
-
-// hides reports whether the Go evaluator is doing visibility work for this
-// request. When it is not -- no pattern rules, or the gate is off -- the
-// listing paths can return the store's rows untouched.
-func (p filterPlan) hides() bool { return p.matcher != nil && p.goThreshold != nil }
-
-// subjects assembles the text each article will be matched against, loading
-// normalized authors and categories only if some rule actually needs them.
-func (e *Engine) subjects(articles []storage.Article, m *filtermatch.Matcher) []filtermatch.Subject {
-	var authors, categories map[int64][]string
-	if m.NeedsMetadata() {
-		ids := make([]int64, len(articles))
-		for i, a := range articles {
-			ids[i] = a.ID
-		}
-		var err error
-		authors, categories, err = e.store.GetArticleMetadataBatch(ids)
-		if err != nil {
-			// Rules on the metadata axes will not fire. Say so rather than
-			// silently under-filtering.
-			log.Printf("herald: article metadata unavailable for filtering: %v", err)
-		}
-	}
-
-	subjects := make([]filtermatch.Subject, len(articles))
-	for i, a := range articles {
-		subjects[i] = filtermatch.Subject{
-			Title:      a.Title,
-			Summary:    a.Summary,
-			Content:    a.Content,
-			Author:     a.Author,
-			Authors:    authors[a.ID],
-			Categories: categories[a.ID],
-		}
-	}
-	return subjects
-}
-
-// listFiltered runs a listing query through the Go evaluator.
-//
-// fetch takes a window size and returns rows from the top of the list; the
-// offset is applied here, AFTER filtering, because an offset counted in
-// unfiltered rows would skip or repeat articles as hidden rows shift the
-// boundary. That is why the window starts at zero and covers offset+limit
-// rather than paging in the store.
-//
-// The window is a small multiple of what the page needs and is capped: a page
-// may come back short of limit under an aggressive filter, which is the
-// deliberate trade against an unbounded fetch on every page load. See #277 --
-// batch reading is where page composition gets designed properly.
-func (e *Engine) listFiltered(p filterPlan, limit, offset int, fetch func(window int) ([]storage.Article, error)) ([]storage.Article, error) {
-	window := (offset + limit) * e.config.Limits.FilterOverfetchFactor
-	if maxScan := e.config.Limits.FilterMaxScan; maxScan > 0 && window > maxScan {
-		window = maxScan
-	}
-
-	articles, err := fetch(window)
-	if err != nil {
-		return nil, err
-	}
-	if len(articles) == window {
-		// The window filled, so there may be matching articles past it. Silent
-		// truncation would read as "that is all there is".
-		log.Printf("herald: filter scan window of %d rows filled; later pages may be incomplete", window)
-	}
-
-	subjects := e.subjects(articles, p.matcher)
-	kept := make([]storage.Article, 0, min(limit, len(articles)))
-	for i, a := range articles {
-		score, _ := p.matcher.Score(a.FeedID, subjects[i])
-		if score < *p.goThreshold {
-			continue
-		}
-		kept = append(kept, a)
-		if len(kept) >= offset+limit {
-			break
-		}
-	}
-	if offset >= len(kept) {
-		return nil, nil
-	}
-	return kept[offset:], nil
 }
 
 // resolveFilterThreshold returns the user's filter threshold as a pointer
