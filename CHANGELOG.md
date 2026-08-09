@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Filter rules now adjust the interest score, not just visibility.** A rule's
+  score is added to the model's interest score (clamped to 0-10) and drives the
+  ranked list, digest and newsletter selection, and high-interest
+  notifications. Previously rules only fed an opt-in visibility gate, so a rule
+  could hide an article but never change where it ranked -- and did nothing at
+  all unless `filter_threshold` was also set, which is what made a newly added
+  rule appear to be ignored. The adjustment is computed at query time, so it
+  applies immediately to already-scored articles with no rescore. The gate is
+  unchanged and still off by default; note it compares the rule total alone
+  while the score adjustment compares model score plus rules. `feedback_events.rules_fired`
+  is now populated with the rules that moved a score. (#259)
+
 - **TOML parser switched to `pelletier/go-toml/v2`; unknown config keys now
   rejected.** Replaces `BurntSushi/toml` (the project standard for new code).
   Config loading runs in strict mode: a key present in the file but absent from

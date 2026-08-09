@@ -15,7 +15,7 @@ and the explicit controls have shipped; nothing yet consumes the corpus.
   (PR #261). Not originally part of this plan; see "Prediction provenance".
 - **#253** -- exploration slot. Deprioritized on this instance, for a reason
   worth reading before consuming the corpus -- see "Exploration".
-- **#254** -- mining events into proposed filter rules. Blocked on #259.
+- **#254** -- mining events into proposed filter rules. Unblocked by #259 (rules now affect scores); still needs the axis translation above.
 - **#255** -- per-user kNN scorer over pgvector
 - **#256** -- feedback for the summary, grouping, security, and link-extraction
   models
@@ -114,9 +114,9 @@ reasons a reader actually gives do not fit inside that vocabulary:
 Three of the five have no representation. So the shipped vocabulary is its own
 closed set, stored verbatim in `axis`, and **#254 is a translation step rather
 than a copy** -- it has to decide what a `source` rejection even means in a rules
-engine that cannot express one. That is on top of #259: nothing in the scoring
-path reads `filter_rules` today, so there is currently no engine to translate
-into.
+engine that cannot express one. Since #259 the rules do at least have an effect
+to translate *into*: they adjust the interest score, so a mined rule changes
+ranking rather than being stored and ignored.
 
 Axes are validated against the closed set at the handler. They arrive from a
 form field, and an unvalidated value would let a crafted request write arbitrary
@@ -299,10 +299,10 @@ Every event snapshots, at the moment of the interaction:
 - `score_model` -- which model produced it
 - `prompt_hash` -- which prompt produced it. See "Provenance is recorded at
   scoring time" below; this is the part the first implementation got wrong.
-- `rules_fired` -- the `filter_rules` rows that contributed, as JSONB. **Always
-  NULL today**: filter rules turn out to be CRUD-only, with no consumer anywhere
-  in the scoring path (#259). The column ships unpopulated and stays that way
-  until rules actually do something.
+- `rules_fired` -- the `filter_rules` rows that contributed, as JSONB.
+  Populated since #259, as a JSON array of the rules that adjusted this
+  article's score. NULL means no rule matched, not that the feature is
+  unimplemented.
 - `list_position` -- where in the rendered list the article appeared
 - `surface` -- `web-list`, `web-article`, `web-search`, `web-group`,
   `web-summary`, `web-feeds`, `fever`
@@ -572,7 +572,10 @@ deliberate:
   needs `RETURNING` on those queries. Bulk dismissal carries no interest signal
   anyway; the cost is that a consumer counting "articles passed over"
   undercounts for readers who live in a Fever client.
-- **`rules_fired` is always NULL**, per #259 above.
+- **`rules_fired` is populated** since #259; NULL means no rule matched. Note
+  that migration `0010`'s inline comment still says the column is always NULL.
+  That was true when 0010 shipped; applied migrations are not edited, so this
+  document is the correction.
 - **Scores written before #258 have no provenance**, and it cannot be
   reconstructed. NULL there means unknown.
 - **Search-result clicks record `article_opened` with `surface = web-search`**,

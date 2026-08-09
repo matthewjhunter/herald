@@ -295,7 +295,7 @@ func TestGetArticlesByInterestScore(t *testing.T) {
 	}
 
 	// Get articles with score >= 8.0
-	articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil)
+	articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil, false)
 	if err != nil {
 		t.Fatalf("GetArticlesByInterestScore failed: %v", err)
 	}
@@ -334,7 +334,7 @@ func TestGetArticlesByInterestScore_TimeDecay(t *testing.T) {
 	store.UpdateReadState(1, art1, false, &rawScore)
 	store.UpdateReadState(1, art2, false, &rawScore)
 
-	articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil)
+	articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil, false)
 	if err != nil {
 		t.Fatalf("GetArticlesByInterestScore failed: %v", err)
 	}
@@ -788,7 +788,7 @@ func TestReadStatePerUserIsolation(t *testing.T) {
 	store.UpdateReadState(2, articleID, false, &score2)
 
 	// User 1 should see their score
-	articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil)
+	articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil, false)
 	if err != nil {
 		t.Fatalf("GetArticlesByInterestScore user 1: %v", err)
 	}
@@ -800,7 +800,7 @@ func TestReadStatePerUserIsolation(t *testing.T) {
 	}
 
 	// User 2 should not see it at threshold 8.0 (their score is 3.0)
-	articles, _, err = store.GetArticlesByInterestScore(2, 8.0, 10, 0, nil)
+	articles, _, err = store.GetArticlesByInterestScore(2, 8.0, 10, 0, nil, false)
 	if err != nil {
 		t.Fatalf("GetArticlesByInterestScore user 2: %v", err)
 	}
@@ -810,7 +810,7 @@ func TestReadStatePerUserIsolation(t *testing.T) {
 
 	// User 1 marks read (AI already scored it above), user 2 still unread
 	store.UpdateReadState(1, articleID, true, nil)
-	articles, _, _ = store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil)
+	articles, _, _ = store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil, false)
 	if len(articles) != 0 {
 		t.Errorf("user 1 after mark-read: expected 0 articles, got %d", len(articles))
 	}
@@ -1299,7 +1299,7 @@ func TestPostgresBackend(t *testing.T) {
 		store.UpdateReadState(1, art1, false, &raw)
 		store.UpdateReadState(1, art2, false, &raw)
 
-		articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil)
+		articles, scores, err := store.GetArticlesByInterestScore(1, 8.0, 10, 0, nil, false)
 		if err != nil {
 			t.Fatalf("GetArticlesByInterestScore: %v", err)
 		}

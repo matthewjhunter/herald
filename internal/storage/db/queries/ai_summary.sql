@@ -49,15 +49,7 @@ WHERE user_id = @user_id AND newsletter_id = @newsletter_id
 ORDER BY created_at DESC, id DESC
 LIMIT @lim;
 
--- name: GetUnreadArticlesForSummary :many
-SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-       a.author, a.published_date, a.fetched_date
-FROM articles a
-JOIN user_feeds uf ON a.feed_id = uf.feed_id
-JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
-WHERE uf.user_id = @user_id
-  AND rs.read = FALSE
-  AND a.security_threat <= @max_security_threat::double precision
-  AND rs.interest_score >= @min_interest::double precision
-ORDER BY COALESCE(a.published_date, a.fetched_date) DESC
-LIMIT @lim;
+-- GetUnreadArticlesForSummary moved to a hand-written pool query in
+-- internal/storage/ai_summary.go (#259): sqlc cannot conditionally include the
+-- filter-rule LATERAL join, so keeping it here would put a correlated subquery
+-- on the digest path for every user, rules or not.

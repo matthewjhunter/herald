@@ -99,11 +99,11 @@ func (e *Engine) selectDigestArticles(userID int64, newsletterID *int64) ([]stor
 		// generation time. The storage query stays purely feed-ID based.
 		cfg := nl.Config
 		cfg.IncludeFeeds = e.effectiveIncludeFeeds(userID, cfg)
-		articles, _, err := e.store.GetNewsletterArticles(userID, &cfg, nl.LastGeneratedAt, limit)
+		articles, _, err := e.store.GetNewsletterArticles(userID, &cfg, nl.LastGeneratedAt, limit, e.applyFilterRules(userID))
 		return articles, err
 	}
 	sum := e.config.Summary
-	return e.store.GetUnreadArticlesForSummary(userID, sum.MaxSecurityThreat, sum.MinInterestScore, 1000)
+	return e.store.GetUnreadArticlesForSummary(userID, sum.MaxSecurityThreat, sum.MinInterestScore, 1000, e.applyFilterRules(userID))
 }
 
 // BeginAISummary guards one in-flight summary per user and creates the

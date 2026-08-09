@@ -350,8 +350,13 @@ func processCmd() *cobra.Command {
 
 			result := &output.FetchResult{}
 
-			// Get and output high-interest articles
-			highInterestArticles, scores, err := store.GetArticlesByInterestScore(userID, cfg.Thresholds.InterestScore, 10, 0, nil)
+			// Get and output high-interest articles. These paths bypass the
+			// Engine, so the filter-rule check is done here explicitly --
+			// otherwise rules would shift the web ranking but not what gets
+			// notified, which is the surface that actually reaches the reader
+			// (#259). The visibility gate stays off here, as it always has.
+			hasRules, _ := store.HasFilterRules(userID)
+			highInterestArticles, scores, err := store.GetArticlesByInterestScore(userID, cfg.Thresholds.InterestScore, 10, 0, nil, hasRules)
 			if err != nil {
 				return fmt.Errorf("failed to get high-interest articles: %w", err)
 			}
@@ -541,7 +546,8 @@ func runCycle(ctx context.Context, stages stageSet) error {
 	// Fetch-cycle summary + high-interest notification: only when this loop
 	// fetched (a screen/curate-only loop has no fetch tally to report).
 	if fetchResult != nil {
-		highInterestArticles, scores, err := store.GetArticlesByInterestScore(cfg.DefaultUserID, cfg.Thresholds.InterestScore, 10, 0, nil)
+		hasRules, _ := store.HasFilterRules(cfg.DefaultUserID)
+		highInterestArticles, scores, err := store.GetArticlesByInterestScore(cfg.DefaultUserID, cfg.Thresholds.InterestScore, 10, 0, nil, hasRules)
 		if err != nil {
 			return fmt.Errorf("failed to get high-interest articles: %w", err)
 		}

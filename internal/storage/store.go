@@ -187,7 +187,10 @@ type Store interface {
 	FindDuplicateArticle(title string, publishedDate *time.Time) (int64, error)
 	GetUnreadArticles(limit int) ([]Article, error)
 	GetArticle(articleID int64) (*Article, error)
-	GetArticlesByInterestScore(userID int64, threshold float64, limit, offset int, filterThreshold *int) ([]Article, []float64, error)
+	// applyRules turns on the filter-rule score adjustment (#259). It is
+	// independent of filterThreshold: the threshold gates VISIBILITY, while
+	// rules adjust the SCORE whenever the user has any.
+	GetArticlesByInterestScore(userID int64, threshold float64, limit, offset int, filterThreshold *int, applyRules bool) ([]Article, []float64, error)
 	GetUnreadArticlesForUser(userID int64, limit, offset int, filterThreshold *int, includeRead bool) ([]Article, error)
 	GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int, filterThreshold *int, includeRead bool) ([]Article, error)
 	GetUnscoredArticleCount(userID int64) (int, error)
@@ -327,7 +330,7 @@ type Store interface {
 	GetNewsletterStats(userID int64) ([]NewsletterStats, error)
 
 	// Newsletter article selection
-	GetNewsletterArticles(userID int64, config *NewsletterConfig, since *time.Time, limit int) ([]Article, []float64, error)
+	GetNewsletterArticles(userID int64, config *NewsletterConfig, since *time.Time, limit int, applyRules bool) ([]Article, []float64, error)
 
 	// AI summaries
 	CreateAISummary(s *AISummary) (int64, error)
@@ -338,7 +341,7 @@ type Store interface {
 	GetAISummary(userID, id int64) (*AISummary, error)
 	GetAISummaries(userID int64, limit int) ([]AISummary, error)
 	GetAISummariesForNewsletter(userID, newsletterID int64, limit int) ([]AISummary, error)
-	GetUnreadArticlesForSummary(userID int64, minSecurity, minInterest float64, limit int) ([]Article, error)
+	GetUnreadArticlesForSummary(userID int64, minSecurity, minInterest float64, limit int, applyRules bool) ([]Article, error)
 
 	// Embedding-based grouping (pgvector ANN, #186). MatchArticlesToGroups is
 	// the JOIN phase (article -> nearest group centroid within a distance);

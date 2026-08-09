@@ -300,7 +300,7 @@ func (e *Engine) GetArticleSummaries(articleIDs []int64) (map[int64]string, erro
 
 // GetHighInterestArticles returns unread articles scored above the threshold.
 func (e *Engine) GetHighInterestArticles(userID int64, threshold float64, limit, offset int) ([]Article, []float64, error) {
-	articles, scores, err := e.store.GetArticlesByInterestScore(userID, threshold, limit, offset, e.resolveFilterThreshold(userID))
+	articles, scores, err := e.store.GetArticlesByInterestScore(userID, threshold, limit, offset, e.resolveFilterThreshold(userID), e.applyFilterRules(userID))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1196,7 +1196,7 @@ func (e *Engine) GenerateNewsletterIssue(ctx context.Context, userID, newsletter
 		limit = 20
 	}
 
-	articles, scores, err := e.store.GetNewsletterArticles(userID, &nl.Config, nl.LastGeneratedAt, limit)
+	articles, scores, err := e.store.GetNewsletterArticles(userID, &nl.Config, nl.LastGeneratedAt, limit, e.applyFilterRules(userID))
 	if err != nil {
 		return nil, fmt.Errorf("get newsletter articles: %w", err)
 	}
@@ -1324,8 +1324,10 @@ func (e *Engine) GenerateBriefing(userID int64) (string, error) {
 	if e.ai == nil {
 		return "", nil
 	}
+	// Gate stays nil here, matching the pre-existing behaviour of this path;
+	// the rule-adjusted score applies regardless (#259).
 	articles, scores, err := e.store.GetArticlesByInterestScore(
-		userID, e.config.Thresholds.InterestScore, 20, 0, nil)
+		userID, e.config.Thresholds.InterestScore, 20, 0, nil, e.applyFilterRules(userID))
 	if err != nil {
 		return "", fmt.Errorf("get high-interest articles: %w", err)
 	}
@@ -2020,6 +2022,20 @@ func (e *Engine) resolveFilterThreshold(userID int64) *int {
 		return nil
 	}
 	return &prefs.FilterThreshold
+}
+
+// applyFilterRules reports whether this user has any filter rules, and so
+// whether the score-consuming queries should compute a rule-adjusted score
+// (#259).
+//
+// Deliberately independent of prefs.FilterThreshold. The threshold governs the
+// visibility gate and nothing else; a rule's score shifts ranking, digest
+// membership and notifications even with the gate off. Coupling them would
+// mean a new rule did nothing until the reader also opted into a hard cutoff,
+// which is most of what #259 was actually reporting.
+func (e *Engine) applyFilterRules(userID int64) bool {
+	has, err := e.store.HasFilterRules(userID)
+	return err == nil && has
 }
 
 // Close releases all resources held by the engine.
