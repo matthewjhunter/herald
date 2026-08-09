@@ -10,17 +10,18 @@ import (
 )
 
 const addFilterRule = `-- name: AddFilterRule :one
-INSERT INTO filter_rules (user_id, feed_id, axis, value, score)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO filter_rules (user_id, feed_id, axis, match_mode, value, score)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id
 `
 
 type AddFilterRuleParams struct {
-	UserID int64
-	FeedID *int64
-	Axis   string
-	Value  string
-	Score  int64
+	UserID    int64
+	FeedID    *int64
+	Axis      string
+	MatchMode string
+	Value     string
+	Score     int64
 }
 
 func (q *Queries) AddFilterRule(ctx context.Context, arg AddFilterRuleParams) (int64, error) {
@@ -28,6 +29,7 @@ func (q *Queries) AddFilterRule(ctx context.Context, arg AddFilterRuleParams) (i
 		arg.UserID,
 		arg.FeedID,
 		arg.Axis,
+		arg.MatchMode,
 		arg.Value,
 		arg.Score,
 	)
@@ -54,7 +56,7 @@ func (q *Queries) DeleteFilterRule(ctx context.Context, arg DeleteFilterRulePara
 }
 
 const getFilterRules = `-- name: GetFilterRules :many
-SELECT id, user_id, feed_id, axis, value, score, created_at FROM filter_rules
+SELECT id, user_id, feed_id, axis, value, score, created_at, match_mode FROM filter_rules
 WHERE user_id = $1
   AND ($2::bigint IS NULL OR feed_id IS NULL OR feed_id = $2)
 ORDER BY axis, value
@@ -84,6 +86,7 @@ func (q *Queries) GetFilterRules(ctx context.Context, arg GetFilterRulesParams) 
 			&i.Value,
 			&i.Score,
 			&i.CreatedAt,
+			&i.MatchMode,
 		); err != nil {
 			return nil, err
 		}

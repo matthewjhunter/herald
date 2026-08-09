@@ -1,6 +1,10 @@
 package herald
 
-import "time"
+import (
+	"time"
+
+	"github.com/matthewjhunter/herald/internal/storage"
+)
 
 // EngineConfig configures the Herald content engine.
 type EngineConfig struct {
@@ -309,12 +313,28 @@ type UserPreferences struct {
 	NotifyMinScore    float64  `json:"notify_min_score"`
 }
 
+// Filter rule match modes and axes, re-exported from the storage package so
+// callers of the public API do not have to reach into internal/.
+const (
+	MatchExact     = storage.MatchExact
+	MatchSubstring = storage.MatchSubstring
+	MatchRegex     = storage.MatchRegex
+
+	AxisAuthor   = storage.AxisAuthor
+	AxisCategory = storage.AxisCategory
+	AxisTag      = storage.AxisTag
+	AxisTitle    = storage.AxisTitle
+	AxisSummary  = storage.AxisSummary
+	AxisContent  = storage.AxisContent
+)
+
 // FilterRule represents a user-defined scoring rule for article filtering.
 type FilterRule struct {
 	ID        int64     `json:"id"`
 	UserID    int64     `json:"user_id"`
 	FeedID    *int64    `json:"feed_id,omitempty"`
 	Axis      string    `json:"axis"`
+	MatchMode string    `json:"match_mode"`
 	Value     string    `json:"value"`
 	Score     int       `json:"score"`
 	CreatedAt time.Time `json:"created_at"`

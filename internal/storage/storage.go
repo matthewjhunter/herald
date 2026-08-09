@@ -214,15 +214,55 @@ type ArticleAuthor struct {
 	Email string
 }
 
+// Match modes for a FilterRule (#274). MatchExact is the pre-#274 behaviour
+// and the column default, so a rule that predates pattern matching keeps its
+// meaning without being rewritten.
+const (
+	MatchExact     = "exact"
+	MatchSubstring = "substring"
+	MatchRegex     = "regex"
+)
+
+// Filter rule axes. The first three match normalized metadata; the last three
+// match the article's own text and are reachable only since #274.
+const (
+	AxisAuthor   = "author"
+	AxisCategory = "category"
+	AxisTag      = "tag"
+	AxisTitle    = "title"
+	AxisSummary  = "summary"
+	AxisContent  = "content"
+)
+
 // FilterRule represents a user-defined scoring rule for article filtering.
 type FilterRule struct {
 	ID        int64
 	UserID    int64
 	FeedID    *int64 // nil = global rule
-	Axis      string // "author", "category", "tag"
+	Axis      string // one of the Axis* constants
+	MatchMode string // one of the Match* constants; "" is treated as MatchExact
 	Value     string
 	Score     int
 	CreatedAt time.Time
+}
+
+// EvaluatedInGo reports whether this rule is matched by the Go evaluator at
+// read time rather than by the SQL matcher.
+//
+// The two are exhaustive and must not overlap: an exact match on a metadata
+// axis is an indexed CITEXT equality and belongs in SQL, everything else needs
+// a pattern engine that does not backtrack. A rule counted by both paths would
+// have its score applied twice.
+func (r FilterRule) EvaluatedInGo() bool {
+	if r.MatchMode != "" && r.MatchMode != MatchExact {
+		return true
+	}
+	switch r.Axis {
+	case AxisAuthor, AxisCategory, AxisTag:
+		return false
+	default:
+		return true
+	}
 }
 
 // applyErrorBackoff returns base doubled for each consecutive error, capped at 30 days.

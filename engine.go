@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1531,11 +1532,27 @@ var allowedPreferenceKeys = map[string]bool{
 	"notify_min_score":   true,
 }
 
-// allowedFilterAxes are the valid axis values for filter rules.
-var allowedFilterAxes = map[string]bool{
-	"author":   true,
-	"category": true,
-	"tag":      true,
+// filterAxisNames are the valid axis values for filter rules, in the order the
+// error message and the UI list them: metadata axes first, then the text axes
+// added by #274.
+var filterAxisNames = []string{
+	AxisAuthor, AxisCategory, AxisTag,
+	AxisTitle, AxisSummary, AxisContent,
+}
+
+var allowedFilterAxes = func() map[string]bool {
+	m := make(map[string]bool, len(filterAxisNames))
+	for _, a := range filterAxisNames {
+		m[a] = true
+	}
+	return m
+}()
+
+// allowedMatchModes are the valid comparison modes for a filter rule's value.
+var allowedMatchModes = map[string]bool{
+	MatchExact:     true,
+	MatchSubstring: true,
+	MatchRegex:     true,
 }
 
 // GetPreferences returns all user preferences, merging DB values over config defaults.
@@ -1939,11 +1956,25 @@ func userFromStorage(u storage.User) User {
 // AddFilterRule validates and stores a new filter rule. Returns the rule ID.
 func (e *Engine) AddFilterRule(userID int64, rule FilterRule) (int64, error) {
 	if !allowedFilterAxes[rule.Axis] {
-		return 0, fmt.Errorf("invalid filter axis: %q (must be author, category, or tag)", rule.Axis)
+		return 0, fmt.Errorf("invalid filter axis: %q (must be one of %s)", rule.Axis, strings.Join(filterAxisNames, ", "))
+	}
+	if rule.MatchMode == "" {
+		rule.MatchMode = MatchExact
+	}
+	if !allowedMatchModes[rule.MatchMode] {
+		return 0, fmt.Errorf("invalid match mode: %q (must be exact, substring, or regex)", rule.MatchMode)
 	}
 	if rule.Value == "" {
 		return 0, fmt.Errorf("filter rule value cannot be empty")
 	}
+	// Compile now so a bad pattern is reported to the person who wrote it. The
+	// evaluator runs deep in a listing query, where there is nobody to tell.
+	if rule.MatchMode == MatchRegex {
+		if _, err := regexp.Compile(rule.Value); err != nil {
+			return 0, fmt.Errorf("invalid regular expression: %w", err)
+		}
+	}
+
 	existingRules, err := e.GetFilterRules(userID, nil)
 	if err != nil {
 		return 0, fmt.Errorf("check filter rule quota: %w", err)
@@ -1951,14 +1982,37 @@ func (e *Engine) AddFilterRule(userID int64, rule FilterRule) (int64, error) {
 	if err := overQuota("filter rule", len(existingRules), e.config.Limits.MaxFilterRulesPerUser); err != nil {
 		return 0, err
 	}
+	// Pattern rules carry their own, much lower ceiling: each one is evaluated
+	// in Go against every candidate row of every listing query, where an exact
+	// rule costs an indexed equality in SQL.
+	if patternFilterRule(rule) {
+		patterns := 0
+		for _, r := range existingRules {
+			if patternFilterRule(r) {
+				patterns++
+			}
+		}
+		if err := overQuota("pattern filter rule", patterns, e.config.Limits.MaxPatternFilterRulesPerUser); err != nil {
+			return 0, err
+		}
+	}
+
 	sr := &storage.FilterRule{
-		UserID: userID,
-		FeedID: rule.FeedID,
-		Axis:   rule.Axis,
-		Value:  rule.Value,
-		Score:  rule.Score,
+		UserID:    userID,
+		FeedID:    rule.FeedID,
+		Axis:      rule.Axis,
+		MatchMode: rule.MatchMode,
+		Value:     rule.Value,
+		Score:     rule.Score,
 	}
 	return e.store.AddFilterRule(sr)
+}
+
+// patternFilterRule reports whether a rule is metered against the pattern
+// quota. Exact matching on a text axis is still a whole-string comparison in
+// Go, not a pattern scan, so it is not counted here.
+func patternFilterRule(r FilterRule) bool {
+	return r.MatchMode == MatchSubstring || r.MatchMode == MatchRegex
 }
 
 // GetFilterRules returns filter rules for a user, optionally scoped to a feed.
@@ -1974,6 +2028,7 @@ func (e *Engine) GetFilterRules(userID int64, feedID *int64) ([]FilterRule, erro
 			UserID:    r.UserID,
 			FeedID:    r.FeedID,
 			Axis:      r.Axis,
+			MatchMode: r.MatchMode,
 			Value:     r.Value,
 			Score:     r.Score,
 			CreatedAt: r.CreatedAt,

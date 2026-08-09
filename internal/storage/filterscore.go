@@ -28,8 +28,15 @@ package storage
 // "?" for the fragment-assembled queries that pass through rebindNumeric, "$1"
 // for the hand-numbered feedback insert. It is always a compile-time literal
 // chosen by this package; no caller data reaches it.
+// Since #274 it covers only half the rule set. A rule is matched here when it
+// is an exact comparison against a metadata axis; pattern rules and the text
+// axes are evaluated in Go at read time, above the storage layer. The
+// match_mode qualifier below is what keeps the two halves disjoint -- without
+// it this predicate would also match every pattern rule, comparing it as an
+// equality, and the effective score would count those rules twice.
 func filterRuleMatch(userIDParam string) string {
 	return `fr.user_id = ` + userIDParam + `
+		  AND fr.match_mode = 'exact'
 		  AND (fr.feed_id IS NULL OR fr.feed_id = a.feed_id)
 		  AND (
 			(fr.axis = 'author' AND EXISTS (

@@ -62,7 +62,11 @@ type Config struct {
 	Limits struct {
 		MaxFeedsPerUser       int `toml:"max_feeds_per_user"`
 		MaxFilterRulesPerUser int `toml:"max_filter_rules_per_user"`
-		MaxNewslettersPerUser int `toml:"max_newsletters_per_user"`
+		// Pattern rules (substring or regex) are evaluated in Go against every
+		// candidate row on every listing query, so they are metered far more
+		// tightly than exact rules, which are an indexed equality in SQL.
+		MaxPatternFilterRulesPerUser int `toml:"max_pattern_filter_rules_per_user"`
+		MaxNewslettersPerUser        int `toml:"max_newsletters_per_user"`
 	} `toml:"limits"`
 
 	Preferences struct {
@@ -196,6 +200,7 @@ func DefaultConfig() *Config {
 	cfg.Thresholds.SecurityBorderlineThreat = 6.0
 	cfg.Limits.MaxFeedsPerUser = 1000
 	cfg.Limits.MaxFilterRulesPerUser = 1000
+	cfg.Limits.MaxPatternFilterRulesPerUser = 50
 	cfg.Limits.MaxNewslettersPerUser = 50
 	// Default temperatures (can be overridden in config)
 	cfg.Temperatures.Security = 0.3

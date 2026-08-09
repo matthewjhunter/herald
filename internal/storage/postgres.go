@@ -1251,12 +1251,17 @@ func (s *PostgresStore) GetFeedCategories(feedID int64) ([]string, error) {
 // --- Filter rules ---
 
 func (s *PostgresStore) AddFilterRule(rule *FilterRule) (int64, error) {
+	mode := rule.MatchMode
+	if mode == "" {
+		mode = MatchExact
+	}
 	id, err := s.q.AddFilterRule(context.Background(), db.AddFilterRuleParams{
-		UserID: rule.UserID,
-		FeedID: rule.FeedID,
-		Axis:   rule.Axis,
-		Value:  rule.Value,
-		Score:  int64(rule.Score),
+		UserID:    rule.UserID,
+		FeedID:    rule.FeedID,
+		Axis:      rule.Axis,
+		MatchMode: mode,
+		Value:     rule.Value,
+		Score:     int64(rule.Score),
 	})
 	if err != nil {
 		return 0, fmt.Errorf("add filter rule: %w", err)
@@ -1279,6 +1284,7 @@ func (s *PostgresStore) GetFilterRules(userID int64, feedID *int64) ([]FilterRul
 			UserID:    r.UserID,
 			FeedID:    r.FeedID,
 			Axis:      r.Axis,
+			MatchMode: r.MatchMode,
 			Value:     r.Value,
 			Score:     int(r.Score),
 			CreatedAt: r.CreatedAt,
