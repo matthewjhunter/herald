@@ -1,5 +1,7 @@
 package storage
 
+import "time"
+
 // Filter rules applied to the interest score (#259).
 //
 // Filter rules have always had one consumer: a visibility gate that hides an
@@ -28,8 +30,16 @@ package storage
 // "?" for the fragment-assembled queries that pass through rebindNumeric, "$1"
 // for the hand-numbered feedback insert. It is always a compile-time literal
 // chosen by this package; no caller data reaches it.
+//
+// Since #274 it covers only half the rule set. A rule is matched here when it
+// is an exact comparison against a metadata axis; pattern rules and the text
+// axes are evaluated in Go at read time, above the storage layer. The
+// match_mode qualifier below is what keeps the two halves disjoint -- without
+// it this predicate would also match every pattern rule, comparing it as an
+// equality, and the effective score would count those rules twice.
 func filterRuleMatch(userIDParam string) string {
 	return `fr.user_id = ` + userIDParam + `
+		  AND fr.match_mode = 'exact'
 		  AND (fr.feed_id IS NULL OR fr.feed_id = a.feed_id)
 		  AND (
 			(fr.axis = 'author' AND EXISTS (
@@ -87,6 +97,28 @@ func effectiveScoreExpr(applyRules bool) string {
 		return `COALESCE(rs.interest_score, 0)`
 	}
 	return `LEAST(10.0, GREATEST(0.0, COALESCE(rs.interest_score, 0) + frs.rule_score))`
+}
+
+// recencyDecaySQL is the multiplier that ranks a fresh article above a stale
+// one of the same score. It expects articles aliased as `a`.
+//
+// RecencyDecay below is its Go twin, for the read-time evaluator that ranks in
+// Go instead. A test asserts the two agree; if this expression changes, that
+// function has to change with it.
+const recencyDecaySQL = `(1.0 / (1.0 + GREATEST(0, EXTRACT(epoch FROM (NOW() - COALESCE(a.published_date, a.fetched_date))) / 86400.0) * 0.1))`
+
+// RecencyDecay is recencyDecaySQL evaluated in Go, for callers that rank
+// rule-adjusted scores after the query rather than inside it (#274).
+func RecencyDecay(published *time.Time, fetched, now time.Time) float64 {
+	ts := fetched
+	if published != nil {
+		ts = *published
+	}
+	days := now.Sub(ts).Seconds() / 86400.0
+	if days < 0 {
+		days = 0
+	}
+	return 1.0 / (1.0 + days*0.1)
 }
 
 // effectiveMembershipPredicate is the "is this interesting enough" test, up to

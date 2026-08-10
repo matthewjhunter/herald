@@ -1,6 +1,6 @@
 -- name: AddFilterRule :one
-INSERT INTO filter_rules (user_id, feed_id, axis, value, score)
-VALUES (@user_id, @feed_id, @axis, @value, @score)
+INSERT INTO filter_rules (user_id, feed_id, axis, match_mode, value, score)
+VALUES (@user_id, @feed_id, @axis, @match_mode, @value, @score)
 RETURNING id;
 
 -- name: GetFilterRules :many

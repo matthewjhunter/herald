@@ -62,6 +62,23 @@ type Config struct {
 	Limits struct {
 		MaxFeedsPerUser       int `toml:"max_feeds_per_user"`
 		MaxFilterRulesPerUser int `toml:"max_filter_rules_per_user"`
+		// Pattern rules (substring or regex) are evaluated in Go against every
+		// candidate row on every listing query, so they are metered far more
+		// tightly than exact rules, which are an indexed equality in SQL.
+		MaxPatternFilterRulesPerUser int `toml:"max_pattern_filter_rules_per_user"`
+		// Pattern rules on the content axis are metered tighter still: they
+		// scan full article bodies rather than titles. Measured at roughly 2ms
+		// per rule per 50-article page (internal/filtermatch benchmarks), so
+		// the default of 5 buys about 10ms and 50 would buy 90ms.
+		MaxContentFilterRulesPerUser int `toml:"max_content_filter_rules_per_user"`
+		// Pattern rules hide rows after the query returns, so a page of N
+		// articles has to fetch more than N to stand a chance of filling.
+		// Bounded rather than looped until full: a short page is a small
+		// annoyance, an unbounded fetch on every page load is not.
+		FilterOverfetchFactor int `toml:"filter_overfetch_factor"`
+		// Hard ceiling on rows examined for one filtered page, whatever the
+		// over-fetch factor works out to.
+		FilterMaxScan         int `toml:"filter_max_scan"`
 		MaxNewslettersPerUser int `toml:"max_newsletters_per_user"`
 	} `toml:"limits"`
 
@@ -196,6 +213,10 @@ func DefaultConfig() *Config {
 	cfg.Thresholds.SecurityBorderlineThreat = 6.0
 	cfg.Limits.MaxFeedsPerUser = 1000
 	cfg.Limits.MaxFilterRulesPerUser = 1000
+	cfg.Limits.MaxPatternFilterRulesPerUser = 50
+	cfg.Limits.MaxContentFilterRulesPerUser = 5
+	cfg.Limits.FilterOverfetchFactor = 3
+	cfg.Limits.FilterMaxScan = 2000
 	cfg.Limits.MaxNewslettersPerUser = 50
 	// Default temperatures (can be overridden in config)
 	cfg.Temperatures.Security = 0.3

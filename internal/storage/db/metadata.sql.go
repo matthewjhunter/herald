@@ -38,6 +38,40 @@ func (q *Queries) GetArticleAuthors(ctx context.Context, articleID int64) ([]Get
 	return items, nil
 }
 
+const getArticleAuthorsBatch = `-- name: GetArticleAuthorsBatch :many
+SELECT article_id, name FROM article_authors
+WHERE article_id = ANY($1::bigint[])
+ORDER BY article_id, name
+`
+
+type GetArticleAuthorsBatchRow struct {
+	ArticleID int64
+	Name      string
+}
+
+// Authors for a page of articles in one round trip. The per-article query above
+// is an N+1 when a listing path needs metadata for every row it is about to
+// score (#274).
+func (q *Queries) GetArticleAuthorsBatch(ctx context.Context, articleIds []int64) ([]GetArticleAuthorsBatchRow, error) {
+	rows, err := q.db.Query(ctx, getArticleAuthorsBatch, articleIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetArticleAuthorsBatchRow{}
+	for rows.Next() {
+		var i GetArticleAuthorsBatchRow
+		if err := rows.Scan(&i.ArticleID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getArticleCategories = `-- name: GetArticleCategories :many
 SELECT category FROM article_categories WHERE article_id = $1 ORDER BY category
 `
@@ -55,6 +89,32 @@ func (q *Queries) GetArticleCategories(ctx context.Context, articleID int64) ([]
 			return nil, err
 		}
 		items = append(items, category)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getArticleCategoriesBatch = `-- name: GetArticleCategoriesBatch :many
+SELECT article_id, category FROM article_categories
+WHERE article_id = ANY($1::bigint[])
+ORDER BY article_id, category
+`
+
+func (q *Queries) GetArticleCategoriesBatch(ctx context.Context, articleIds []int64) ([]ArticleCategory, error) {
+	rows, err := q.db.Query(ctx, getArticleCategoriesBatch, articleIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ArticleCategory{}
+	for rows.Next() {
+		var i ArticleCategory
+		if err := rows.Scan(&i.ArticleID, &i.Category); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

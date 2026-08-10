@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -203,7 +204,18 @@ func (e *Engine) FetchAllFeeds(ctx context.Context) (*FetchResult, error) {
 // When includeRead is true, already-read articles are returned alongside unread
 // ones (each carrying its Read/Starred state); otherwise only unread are returned.
 func (e *Engine) GetUnreadArticles(userID int64, limit, offset int, includeRead bool) ([]Article, error) {
-	articles, err := e.store.GetUnreadArticlesForUser(userID, limit, offset, e.resolveFilterThreshold(userID), includeRead)
+	rf := e.filters()
+	p := rf.plan(userID)
+	if !p.hides() {
+		articles, err := e.store.GetUnreadArticlesForUser(userID, limit, offset, p.sqlThreshold, includeRead)
+		if err != nil {
+			return nil, err
+		}
+		return articlesFromInternal(articles), nil
+	}
+	articles, err := rf.listFiltered(p, limit, offset, func(window int) ([]storage.Article, error) {
+		return e.store.GetUnreadArticlesForUser(userID, window, 0, nil, includeRead)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +224,18 @@ func (e *Engine) GetUnreadArticles(userID int64, limit, offset int, includeRead 
 
 // GetStarredArticles returns starred articles for a user.
 func (e *Engine) GetStarredArticles(userID int64, limit, offset int) ([]Article, error) {
-	articles, err := e.store.GetStarredArticles(userID, limit, offset, e.resolveFilterThreshold(userID))
+	rf := e.filters()
+	p := rf.plan(userID)
+	if !p.hides() {
+		articles, err := e.store.GetStarredArticles(userID, limit, offset, p.sqlThreshold)
+		if err != nil {
+			return nil, err
+		}
+		return articlesFromInternal(articles), nil
+	}
+	articles, err := rf.listFiltered(p, limit, offset, func(window int) ([]storage.Article, error) {
+		return e.store.GetStarredArticles(userID, window, 0, nil)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +245,18 @@ func (e *Engine) GetStarredArticles(userID int64, limit, offset int) ([]Article,
 // GetUnreadArticlesByFeed returns articles for a user filtered to a specific feed.
 // When includeRead is true, read articles are included alongside unread ones.
 func (e *Engine) GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int, includeRead bool) ([]Article, error) {
-	articles, err := e.store.GetUnreadArticlesByFeed(userID, feedID, limit, offset, e.resolveFilterThreshold(userID), includeRead)
+	rf := e.filters()
+	p := rf.plan(userID)
+	if !p.hides() {
+		articles, err := e.store.GetUnreadArticlesByFeed(userID, feedID, limit, offset, p.sqlThreshold, includeRead)
+		if err != nil {
+			return nil, err
+		}
+		return articlesFromInternal(articles), nil
+	}
+	articles, err := rf.listFiltered(p, limit, offset, func(window int) ([]storage.Article, error) {
+		return e.store.GetUnreadArticlesByFeed(userID, feedID, window, 0, nil, includeRead)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -300,7 +334,7 @@ func (e *Engine) GetArticleSummaries(articleIDs []int64) (map[int64]string, erro
 
 // GetHighInterestArticles returns unread articles scored above the threshold.
 func (e *Engine) GetHighInterestArticles(userID int64, threshold float64, limit, offset int) ([]Article, []float64, error) {
-	articles, scores, err := e.store.GetArticlesByInterestScore(userID, threshold, limit, offset, e.resolveFilterThreshold(userID), e.applyFilterRules(userID))
+	articles, scores, err := e.filters().highInterest(userID, threshold, limit, offset, true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1011,7 +1045,18 @@ func (e *Engine) GetGroupArticles(userID, groupID int64) (*ArticleGroup, error) 
 // GetUnreadGroupArticles returns articles belonging to a group. When includeRead
 // is true, read articles are included alongside unread ones.
 func (e *Engine) GetUnreadGroupArticles(userID, groupID int64, limit, offset int, includeRead bool) ([]Article, error) {
-	articles, err := e.store.GetUnreadGroupArticles(userID, groupID, limit, offset, e.resolveFilterThreshold(userID), includeRead)
+	rf := e.filters()
+	p := rf.plan(userID)
+	if !p.hides() {
+		articles, err := e.store.GetUnreadGroupArticles(userID, groupID, limit, offset, p.sqlThreshold, includeRead)
+		if err != nil {
+			return nil, err
+		}
+		return articlesFromInternal(articles), nil
+	}
+	articles, err := rf.listFiltered(p, limit, offset, func(window int) ([]storage.Article, error) {
+		return e.store.GetUnreadGroupArticles(userID, groupID, window, 0, nil, includeRead)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -1324,10 +1369,10 @@ func (e *Engine) GenerateBriefing(userID int64) (string, error) {
 	if e.ai == nil {
 		return "", nil
 	}
-	// Gate stays nil here, matching the pre-existing behaviour of this path;
-	// the rule-adjusted score applies regardless (#259).
-	articles, scores, err := e.store.GetArticlesByInterestScore(
-		userID, e.config.Thresholds.InterestScore, 20, 0, nil, e.applyFilterRules(userID))
+	// The gate stays off here, matching the pre-existing behaviour of this
+	// path; the rule-adjusted score applies regardless (#259).
+	articles, scores, err := e.filters().highInterest(
+		userID, e.config.Thresholds.InterestScore, 20, 0, false)
 	if err != nil {
 		return "", fmt.Errorf("get high-interest articles: %w", err)
 	}
@@ -1457,7 +1502,12 @@ func (e *Engine) GetReaderGauge(userID, feedID int64) (ReaderGauge, error) {
 	if err != nil {
 		return ReaderGauge{}, err
 	}
-	return ReaderGauge{Pending: c.Pending, Ready: c.Ready, Read: c.Read}, nil
+	return ReaderGauge{
+		Pending: c.Pending,
+		Ready:   c.Ready,
+		Read:    c.Read,
+		Hidden:  e.filters().hiddenUnreadCount(userID, feedID),
+	}, nil
 }
 
 // GetRecentCycleStats returns the most recent completed daemon cycles, newest
@@ -1531,11 +1581,27 @@ var allowedPreferenceKeys = map[string]bool{
 	"notify_min_score":   true,
 }
 
-// allowedFilterAxes are the valid axis values for filter rules.
-var allowedFilterAxes = map[string]bool{
-	"author":   true,
-	"category": true,
-	"tag":      true,
+// filterAxisNames are the valid axis values for filter rules, in the order the
+// error message and the UI list them: metadata axes first, then the text axes
+// added by #274.
+var filterAxisNames = []string{
+	AxisAuthor, AxisCategory, AxisTag,
+	AxisTitle, AxisSummary, AxisContent,
+}
+
+var allowedFilterAxes = func() map[string]bool {
+	m := make(map[string]bool, len(filterAxisNames))
+	for _, a := range filterAxisNames {
+		m[a] = true
+	}
+	return m
+}()
+
+// allowedMatchModes are the valid comparison modes for a filter rule's value.
+var allowedMatchModes = map[string]bool{
+	MatchExact:     true,
+	MatchSubstring: true,
+	MatchRegex:     true,
 }
 
 // GetPreferences returns all user preferences, merging DB values over config defaults.
@@ -1939,11 +2005,25 @@ func userFromStorage(u storage.User) User {
 // AddFilterRule validates and stores a new filter rule. Returns the rule ID.
 func (e *Engine) AddFilterRule(userID int64, rule FilterRule) (int64, error) {
 	if !allowedFilterAxes[rule.Axis] {
-		return 0, fmt.Errorf("invalid filter axis: %q (must be author, category, or tag)", rule.Axis)
+		return 0, fmt.Errorf("invalid filter axis: %q (must be one of %s)", rule.Axis, strings.Join(filterAxisNames, ", "))
+	}
+	if rule.MatchMode == "" {
+		rule.MatchMode = MatchExact
+	}
+	if !allowedMatchModes[rule.MatchMode] {
+		return 0, fmt.Errorf("invalid match mode: %q (must be exact, substring, or regex)", rule.MatchMode)
 	}
 	if rule.Value == "" {
 		return 0, fmt.Errorf("filter rule value cannot be empty")
 	}
+	// Compile now so a bad pattern is reported to the person who wrote it. The
+	// evaluator runs deep in a listing query, where there is nobody to tell.
+	if rule.MatchMode == MatchRegex {
+		if _, err := regexp.Compile(rule.Value); err != nil {
+			return 0, fmt.Errorf("invalid regular expression: %w", err)
+		}
+	}
+
 	existingRules, err := e.GetFilterRules(userID, nil)
 	if err != nil {
 		return 0, fmt.Errorf("check filter rule quota: %w", err)
@@ -1951,14 +2031,49 @@ func (e *Engine) AddFilterRule(userID int64, rule FilterRule) (int64, error) {
 	if err := overQuota("filter rule", len(existingRules), e.config.Limits.MaxFilterRulesPerUser); err != nil {
 		return 0, err
 	}
+	// Pattern rules carry their own, much lower ceiling: each one is evaluated
+	// in Go against every candidate row of every listing query, where an exact
+	// rule costs an indexed equality in SQL.
+	if patternFilterRule(rule) {
+		patterns, content := 0, 0
+		for _, r := range existingRules {
+			if !patternFilterRule(r) {
+				continue
+			}
+			patterns++
+			if r.Axis == AxisContent {
+				content++
+			}
+		}
+		if err := overQuota("pattern filter rule", patterns, e.config.Limits.MaxPatternFilterRulesPerUser); err != nil {
+			return 0, err
+		}
+		// Content rules scan full article bodies rather than titles, which
+		// costs roughly an order of magnitude more per rule, so they have a
+		// ceiling of their own well below the general pattern quota.
+		if rule.Axis == AxisContent {
+			if err := overQuota("content filter rule", content, e.config.Limits.MaxContentFilterRulesPerUser); err != nil {
+				return 0, err
+			}
+		}
+	}
+
 	sr := &storage.FilterRule{
-		UserID: userID,
-		FeedID: rule.FeedID,
-		Axis:   rule.Axis,
-		Value:  rule.Value,
-		Score:  rule.Score,
+		UserID:    userID,
+		FeedID:    rule.FeedID,
+		Axis:      rule.Axis,
+		MatchMode: rule.MatchMode,
+		Value:     rule.Value,
+		Score:     rule.Score,
 	}
 	return e.store.AddFilterRule(sr)
+}
+
+// patternFilterRule reports whether a rule is metered against the pattern
+// quota. Exact matching on a text axis is still a whole-string comparison in
+// Go, not a pattern scan, so it is not counted here.
+func patternFilterRule(r FilterRule) bool {
+	return r.MatchMode == MatchSubstring || r.MatchMode == MatchRegex
 }
 
 // GetFilterRules returns filter rules for a user, optionally scoped to a feed.
@@ -1974,6 +2089,7 @@ func (e *Engine) GetFilterRules(userID int64, feedID *int64) ([]FilterRule, erro
 			UserID:    r.UserID,
 			FeedID:    r.FeedID,
 			Axis:      r.Axis,
+			MatchMode: r.MatchMode,
 			Value:     r.Value,
 			Score:     r.Score,
 			CreatedAt: r.CreatedAt,

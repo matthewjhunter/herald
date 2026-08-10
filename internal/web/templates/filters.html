@@ -7,11 +7,29 @@
     {{template "settings-subnav" (dict "Active" "filters" "IsAdmin" .IsAdmin)}}
 
     <p class="secondary">
-        Rules adjust an article's interest score by author, category, or tag, and
-        scores are additive. A positive rule ranks matching articles higher and
-        makes them likelier to reach your digest and notifications; a negative
-        rule pushes them down. This takes effect immediately, including on
-        articles already scored -- nothing is re-run.
+        Rules adjust an article's interest score, and scores are additive. A
+        positive rule ranks matching articles higher and makes them likelier to
+        reach your digest and notifications; a negative rule pushes them down.
+        This takes effect immediately, including on articles already scored --
+        nothing is re-run.
+    </p>
+    <p class="secondary">
+        <strong>Author</strong>, <strong>category</strong> and
+        <strong>tag</strong> match the labels a feed publishes.
+        <strong>Title</strong>, <strong>summary</strong> and
+        <strong>content</strong> match the article's own text -- use these for
+        recurring posts whose title changes slightly each time, like a daily
+        open thread. Content rules read whole article bodies, so they are the
+        slow ones and are limited to a handful; prefer title where it will do.
+    </p>
+    <p class="secondary">
+        <strong>Exact</strong> matches the whole value, ignoring case.
+        <strong>Contains</strong> matches anywhere in it, also ignoring case.
+        <strong>Pattern</strong> is a
+        <a href="https://github.com/google/re2/wiki/Syntax">RE2 regular
+        expression</a>, matched as written -- start it with <code>(?i)</code> to
+        ignore case. RE2 has no backreferences or lookahead; an expression that
+        does not compile is refused when you add it.
     </p>
     <p class="secondary">
         The <strong>filter threshold</strong> below is separate: it hides
@@ -43,7 +61,7 @@
                     <label for="rule-feed">Feed (optional)</label>
                     <select id="rule-feed" name="feed_id"
                             hx-get="/filters/values"
-                            hx-include="[name='axis']"
+                            hx-include="[name='axis'],[name='match_mode']"
                             hx-target="#value-field"
                             hx-swap="innerHTML"
                             hx-trigger="change">
@@ -57,14 +75,34 @@
                     <label for="rule-axis">Axis</label>
                     <select id="rule-axis" name="axis" required
                             hx-get="/filters/values"
-                            hx-include="[name='feed_id']"
+                            hx-include="[name='feed_id'],[name='match_mode']"
                             hx-target="#value-field"
                             hx-swap="innerHTML"
                             hx-trigger="change">
                         <option value="">— select —</option>
-                        <option value="author">Author</option>
-                        <option value="category">Category</option>
-                        <option value="tag">Tag</option>
+                        <optgroup label="Feed metadata">
+                            <option value="author">Author</option>
+                            <option value="category">Category</option>
+                            <option value="tag">Tag</option>
+                        </optgroup>
+                        <optgroup label="Article text">
+                            <option value="title">Title</option>
+                            <option value="summary">Summary</option>
+                            <option value="content">Content (slow)</option>
+                        </optgroup>
+                    </select>
+                </div>
+                <div>
+                    <label for="rule-match-mode">Match</label>
+                    <select id="rule-match-mode" name="match_mode" required
+                            hx-get="/filters/values"
+                            hx-include="[name='feed_id'],[name='axis']"
+                            hx-target="#value-field"
+                            hx-swap="innerHTML"
+                            hx-trigger="change">
+                        <option value="exact">Exact</option>
+                        <option value="substring">Contains</option>
+                        <option value="regex">Pattern (regex)</option>
                     </select>
                 </div>
                 <div>
@@ -117,6 +155,7 @@
         <tr>
             <th>Feed</th>
             <th>Axis</th>
+            <th>Match</th>
             <th>Value</th>
             <th>Score</th>
             <th></th>
@@ -127,7 +166,8 @@
         <tr>
             <td>{{if .FeedTitle}}{{.FeedTitle}}{{else}}Global{{end}}</td>
             <td>{{.Axis}}</td>
-            <td>{{.Value}}</td>
+            <td>{{.MatchMode}}</td>
+            <td>{{if eq .MatchMode "regex"}}<code>{{.Value}}</code>{{else}}{{.Value}}{{end}}</td>
             <td>{{.Score}}</td>
             <td>
                 <button class="outline secondary" style="padding:0.25rem 0.5rem;font-size:0.8rem;"

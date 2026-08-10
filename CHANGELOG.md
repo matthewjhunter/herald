@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Filter rules can match article text, with substring and regex patterns.**
+  Three new axes -- `title`, `summary`, `content` -- match the article's own
+  text, which no rule could reach before, and a new match mode (`exact`,
+  `substring`, `regex`) says how the value is compared. This makes recurring
+  boilerplate filterable: a feed that publishes the same auto-generated post
+  every day under a title whose date changes has no distinguishing author or
+  category, so the title was the only usable signal and no rule could see it.
+  Patterns are RE2, compiled when the rule is saved so a bad one is refused
+  where you can fix it. Existing rules are untouched -- the mode defaults to
+  `exact` -- and take effect immediately as before, with nothing to reprocess.
+
+  Pattern rules are evaluated in Go at read time rather than in SQL, because
+  article text is attacker-supplied and Postgres regex backtracks. They carry
+  their own quotas (`max_pattern_filter_rules_per_user`, default 50;
+  `max_content_filter_rules_per_user`, default 5) since each is evaluated
+  against every candidate row, and content rules read whole article bodies.
+  Under an active filter a page can come back slightly short; the window is
+  bounded by `filter_overfetch_factor` and `filter_max_scan`. (#274)
+
+- **The reader gauge reports articles your filters are hiding.** Unread counts
+  have never applied the visibility gate, so a filtered list could show fewer
+  articles than the badge promised. The gap is now surfaced as its own count
+  rather than silently absorbed. (#274)
+
+### Fixed
+
+- **The Fever sync API now applies filter rules.** An article hidden in the web
+  reader still synced to every connected client. (#274)
+
 ### Changed
 
 - **Filter rules now adjust the interest score, not just visibility.** A rule's

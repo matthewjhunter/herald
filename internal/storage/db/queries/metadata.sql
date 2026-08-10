@@ -25,3 +25,16 @@ SELECT DISTINCT ac.category FROM article_categories ac
 JOIN articles a ON a.id = ac.article_id
 WHERE a.feed_id = @feed_id
 ORDER BY ac.category;
+
+-- name: GetArticleAuthorsBatch :many
+-- Authors for a page of articles in one round trip. The per-article query above
+-- is an N+1 when a listing path needs metadata for every row it is about to
+-- score (#274).
+SELECT article_id, name FROM article_authors
+WHERE article_id = ANY(@article_ids::bigint[])
+ORDER BY article_id, name;
+
+-- name: GetArticleCategoriesBatch :many
+SELECT article_id, category FROM article_categories
+WHERE article_id = ANY(@article_ids::bigint[])
+ORDER BY article_id, category;

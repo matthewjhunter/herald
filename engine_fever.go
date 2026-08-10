@@ -41,8 +41,39 @@ func (e *Engine) GetFeverFeeds(userID int64) ([]storage.Feed, error) {
 }
 
 // GetFeverItems returns articles for the Fever items endpoint.
+//
+// Filter rules apply here for the same reason they apply to the web reader: a
+// Fever client is the reader's reader. Before #274 this path ignored them
+// entirely, so an article hidden in the web UI still synced to every phone.
+//
+// A batch can come back shorter than limit when rules hide part of it. Fever
+// clients page by since_id rather than by offset, so a short batch costs
+// nothing -- the next request picks up after the last id returned.
 func (e *Engine) GetFeverItems(userID int64, sinceID, maxID int64, withIDs []int64, limit int) ([]storage.FeverItemRow, error) {
-	return e.store.GetFeverItems(userID, sinceID, maxID, withIDs, limit)
+	rows, err := e.store.GetFeverItems(userID, sinceID, maxID, withIDs, limit)
+	if err != nil {
+		return nil, err
+	}
+	rf := e.filters()
+	p := rf.plan(userID)
+	if !p.hides() || len(rows) == 0 {
+		return rows, nil
+	}
+
+	articles := make([]storage.Article, len(rows))
+	for i, r := range rows {
+		articles[i] = r.Article
+	}
+	subjects := rf.subjects(articles, p.matcher)
+
+	kept := make([]storage.FeverItemRow, 0, len(rows))
+	for i, r := range rows {
+		if score, _ := p.matcher.Score(r.FeedID, subjects[i]); score < *p.goThreshold {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	return kept, nil
 }
 
 // GetFeverItemCount returns the total article count visible to a user.

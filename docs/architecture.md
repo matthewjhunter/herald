@@ -103,13 +103,38 @@ Keywords are incorporated into the prompt as preferences, not as hard filters. A
 
 ### Filter rules
 
-Filter rules (`filter_rules`, by author/category/tag) apply *after* the model, at query time. An article's effective interest score is the model's score plus the sum of the user's matching rules, clamped to 0-10. It drives the ranked list, digest and newsletter selection, and notifications.
+Filter rules (`filter_rules`) apply *after* the model, at read time. An article's effective interest score is the model's score plus the sum of the user's matching rules, clamped to 0-10. It drives the ranked list, digest and newsletter selection, notifications, and the Fever sync API.
 
-Query time, not scoring time. A rule therefore takes effect on articles that were scored long before it existed, with nothing re-run -- which is what a reader expects when they add one. The cost is that the stored `read_state.interest_score` stays the model's raw opinion, and the adjustment is recomputed per query. That split is deliberate: it keeps "what the model said" separately answerable from "what the reader saw", which is what makes the feedback corpus usable for evaluating the model.
+A rule names an **axis** and a **match mode**. Three axes match the labels a feed publishes -- `author`, `category`, `tag` -- and three match the article's own text: `title`, `summary`, `content`. The mode is `exact`, `substring` or `regex`, defaulting to `exact`, which is what every rule written before #274 was.
+
+Read time, not scoring time. A rule therefore takes effect on articles that were scored long before it existed, with nothing re-run -- which is what a reader expects when they add one. The cost is that the stored `read_state.interest_score` stays the model's raw opinion, and the adjustment is recomputed per request. That split is deliberate: it keeps "what the model said" separately answerable from "what the reader saw", which is what makes the feedback corpus usable for evaluating the model.
+
+#### Two evaluators, never at once
+
+Where a rule is evaluated follows from its (axis, mode) pair:
+
+| | `exact` | `substring` / `regex` |
+|---|---|---|
+| `author` / `category` / `tag` | SQL | Go |
+| `title` / `summary` / `content` | Go | Go |
+
+The SQL half is `filterRuleMatch` in `internal/storage/filterscore.go`: an indexed CITEXT equality inside a LATERAL join, which costs essentially nothing. The Go half is `internal/filtermatch`, evaluated in the engine against rows the query has already returned.
+
+Go rather than Postgres for patterns because article text is attacker-supplied and Postgres regex backtracks: a pattern that is merely careless, run over content a feed controls, is a wedged page load. Go's `regexp` is RE2, linear in the input with no catastrophic backtracking.
+
+**A user's rules are evaluated entirely in one place or entirely in the other.** A user with no pattern rules -- the common case -- takes the SQL path unchanged, with no extra queries. The moment one rule needs Go, Go takes all of them, including the exact ones SQL could have matched, and the SQL rule join and gate are switched off. The visibility gate forces this: it compares the *sum* of a user's matching rules against a threshold, and a rule set split between two evaluators leaves neither holding the number being compared. `filtermatch.New` encodes the choice by returning a nil matcher when SQL suffices.
+
+Two consequences worth knowing. On the Go path the score arithmetic leaves SQL as well: the store returns raw interest scores (`GetScoredUnreadArticles`) because the ranking query's number is clamped and clamping is not invertible, and the engine adds, clamps, decays and sorts. And the candidate window is bounded (`filter_overfetch_factor`, `filter_max_scan`), so a page can come back short and an article that a rule *boosts* hard can fall outside the window -- demotion, which is what nearly every rule does, is unaffected. Batch reading (#277) is where page composition gets designed properly.
+
+Pattern rules carry their own quotas, well below the general one, because each is evaluated against every candidate row: `max_pattern_filter_rules_per_user` (50) and `max_content_filter_rules_per_user` (5). Content rules scan whole article bodies and measure at roughly 2ms per rule per 50-article page, against about 30us for a title rule.
 
 Rules also feed a separate, opt-in **visibility gate**: when `filter_threshold` is non-zero, an article whose rule total falls below it is hidden entirely. The gate compares the rule total alone; the score adjustment compares model score plus rules. Two different numbers, and the settings page names both.
 
-Two known inconsistencies, both deliberate. A group's `max_interest_score` is computed at cluster time from raw scores and cached, so a group header can disagree with the articles inside it. The score-distribution stats stay raw as well, because they measure model calibration -- folding reader policy in would make a badly-calibrated prompt indistinguishable from an aggressive rule.
+Unread counts do not apply the gate and never have, so a filtered list can show fewer articles than the badge promises. Rather than make the counts exact -- which would mean evaluating every unread article on every page load -- the reader gauge reports the gap as its own figure: "12 unread, 7 hidden". Approximate, bounded by the same scan window, and honest about it.
+
+Three known inconsistencies, all deliberate. A group's `max_interest_score` is computed at cluster time from raw scores and cached, so a group header can disagree with the articles inside it. The score-distribution stats stay raw as well, because they measure model calibration -- folding reader policy in would make a badly-calibrated prompt indistinguishable from an aggressive rule. And a pattern rule on the `author` axis matches both the normalized `article_authors` names and the item's free-text `articles.author`, because feeds disagree about where the byline goes, while an exact rule -- matched in SQL -- sees only the normalized table.
+
+None of this is the **security screen**, which is sitewide: its regex layer comes from `airlock/detect`, applies to every user identically, and is stored on the article because the verdict is a property of the article. Filter rules are per-user taste, owned by their creator, and no filter rule can move an article's threat score or change what another user sees.
 
 ### Summarization
 
@@ -159,7 +184,7 @@ PostgreSQL schema managed by [goose](https://github.com/pressly/goose) migration
 | `article_group_members` | Many-to-many membership between groups and articles |
 | `group_summaries` | Cached group narrative summaries with max interest score |
 | `user_prompts` | Per-user custom prompt templates and temperatures |
-| `filter_rules` | Scoring rules by author, category, or tag (positive or negative) |
+| `filter_rules` | Per-user scoring rules: an axis (author/category/tag/title/summary/content), a match mode (exact/substring/regex), and a positive or negative score |
 | `users` | Registered users for multi-user deployments |
 
 Feeds are shared across users; `user_feeds` tracks subscriptions. Articles are stored once; `read_state` tracks per-user scores and read status. Summaries are per-article and shared by every subscriber, like the security verdict: each article is summarized once with the global summarization prompt.

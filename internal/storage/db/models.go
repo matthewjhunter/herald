@@ -211,6 +211,7 @@ type FilterRule struct {
 	Value     string
 	Score     int64
 	CreatedAt time.Time
+	MatchMode string
 }
 
 type GroupSummary struct {
