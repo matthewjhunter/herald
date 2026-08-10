@@ -2,6 +2,7 @@ package herald
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -297,5 +298,79 @@ func TestExactAndPatternRulesAreNotCountedTwice(t *testing.T) {
 	}
 	if len(articles) != 1 || articles[0].Title != "Real News" {
 		t.Errorf("got %v, want only [Real News] -- rules are being double counted", titlesOf(articles))
+	}
+}
+
+// A backlog of matching articles ahead of the ones the reader wants must not
+// strand them. The web handler asks for limit+1 and reads a short page as "no
+// more", so a single scan window that keeps nothing would end pagination with
+// every remaining article unreachable.
+func TestFilteredPageReachesPastAWindowOfHiddenArticles(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	feedID := subscribeDirect(t, engine, 1, "https://example.com/feed.xml", "Feed")
+
+	// Comfortably more hidden articles than one window covers: the default
+	// over-fetch of 3 against a page of 30 is 93 rows.
+	var titles []string
+	for i := range 150 {
+		titles = append(titles, fmt.Sprintf("Open Thread %d", i))
+	}
+	for i := range 10 {
+		titles = append(titles, fmt.Sprintf("Keeper %d", i))
+	}
+	addFilterTestArticles(t, engine, 1, feedID, titles...)
+
+	if _, err := engine.AddFilterRule(1, FilterRule{
+		Axis: AxisTitle, MatchMode: MatchSubstring, Value: "open thread", Score: -5,
+	}); err != nil {
+		t.Fatalf("AddFilterRule: %v", err)
+	}
+	setFilterThreshold(t, engine, 1, -1)
+
+	const limit = 30
+	articles, err := engine.GetUnreadArticles(1, limit+1, 0, false)
+	if err != nil {
+		t.Fatalf("GetUnreadArticles: %v", err)
+	}
+	if len(articles) != 10 {
+		t.Fatalf("got %d articles, want all 10 keepers: %v", len(articles), titlesOf(articles))
+	}
+	for _, a := range articles {
+		if !strings.HasPrefix(a.Title, "Keeper ") {
+			t.Errorf("unexpected article %q", a.Title)
+		}
+	}
+}
+
+// The scan is bounded even when nothing survives, so a pathological filter
+// cannot walk an entire archive on every page load.
+func TestFilteredScanIsBounded(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	engine.config.Limits.FilterMaxScan = 40
+
+	feedID := subscribeDirect(t, engine, 1, "https://example.com/feed.xml", "Feed")
+	var titles []string
+	for i := range 120 {
+		titles = append(titles, fmt.Sprintf("Open Thread %d", i))
+	}
+	addFilterTestArticles(t, engine, 1, feedID, titles...)
+
+	if _, err := engine.AddFilterRule(1, FilterRule{
+		Axis: AxisTitle, MatchMode: MatchSubstring, Value: "open thread", Score: -5,
+	}); err != nil {
+		t.Fatalf("AddFilterRule: %v", err)
+	}
+	setFilterThreshold(t, engine, 1, -1)
+
+	articles, err := engine.GetUnreadArticles(1, 30, 0, false)
+	if err != nil {
+		t.Fatalf("GetUnreadArticles: %v", err)
+	}
+	if len(articles) != 0 {
+		t.Errorf("got %d articles, want none: everything matches the rule", len(articles))
 	}
 }

@@ -213,8 +213,8 @@ func (e *Engine) GetUnreadArticles(userID int64, limit, offset int, includeRead 
 		}
 		return articlesFromInternal(articles), nil
 	}
-	articles, err := rf.listFiltered(p, limit, offset, func(window int) ([]storage.Article, error) {
-		return e.store.GetUnreadArticlesForUser(userID, window, 0, nil, includeRead)
+	articles, err := rf.listFiltered(p, limit, offset, func(window, storeOffset int) ([]storage.Article, error) {
+		return e.store.GetUnreadArticlesForUser(userID, window, storeOffset, nil, includeRead)
 	})
 	if err != nil {
 		return nil, err
@@ -233,8 +233,8 @@ func (e *Engine) GetStarredArticles(userID int64, limit, offset int) ([]Article,
 		}
 		return articlesFromInternal(articles), nil
 	}
-	articles, err := rf.listFiltered(p, limit, offset, func(window int) ([]storage.Article, error) {
-		return e.store.GetStarredArticles(userID, window, 0, nil)
+	articles, err := rf.listFiltered(p, limit, offset, func(window, storeOffset int) ([]storage.Article, error) {
+		return e.store.GetStarredArticles(userID, window, storeOffset, nil)
 	})
 	if err != nil {
 		return nil, err
@@ -254,8 +254,8 @@ func (e *Engine) GetUnreadArticlesByFeed(userID, feedID int64, limit, offset int
 		}
 		return articlesFromInternal(articles), nil
 	}
-	articles, err := rf.listFiltered(p, limit, offset, func(window int) ([]storage.Article, error) {
-		return e.store.GetUnreadArticlesByFeed(userID, feedID, window, 0, nil, includeRead)
+	articles, err := rf.listFiltered(p, limit, offset, func(window, storeOffset int) ([]storage.Article, error) {
+		return e.store.GetUnreadArticlesByFeed(userID, feedID, window, storeOffset, nil, includeRead)
 	})
 	if err != nil {
 		return nil, err
@@ -1054,8 +1054,8 @@ func (e *Engine) GetUnreadGroupArticles(userID, groupID int64, limit, offset int
 		}
 		return articlesFromInternal(articles), nil
 	}
-	articles, err := rf.listFiltered(p, limit, offset, func(window int) ([]storage.Article, error) {
-		return e.store.GetUnreadGroupArticles(userID, groupID, window, 0, nil, includeRead)
+	articles, err := rf.listFiltered(p, limit, offset, func(window, storeOffset int) ([]storage.Article, error) {
+		return e.store.GetUnreadGroupArticles(userID, groupID, window, storeOffset, nil, includeRead)
 	})
 	if err != nil {
 		return nil, err
