@@ -40,6 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Downvoting an article also dismisses it.** "Less like this" now marks the
+  article read so it stops coming back, since a reader who rejects an article
+  does not want to see it again whether or not they read it. It is only the
+  read state: no read event is logged, so the training corpus never records a
+  rejected article as engaged with. The row stays on screen until the list is
+  refreshed and retracting the downvote puts the article back, so the same
+  button undoes the hiding as well as the label.
+
 - **Filter rules now adjust the interest score, not just visibility.** A rule's
   score is added to the model's interest score (clamped to 0-10) and drives the
   ranked list, digest and newsletter selection, and high-interest

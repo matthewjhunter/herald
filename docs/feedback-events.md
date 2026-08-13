@@ -86,8 +86,8 @@ Every event therefore records **which code path produced it**.
 
 | kind | Source | Meaning |
 |---|---|---|
-| `vote_up` / `vote_down` | vote control, article view and list row | Direct label: wanted / did not want to see this |
-| `vote_cleared` | same control, voting the same way twice | Retraction. Like `unstar`, a withdrawal and not an opposite -- clearing a downvote does not mean the reader liked the article |
+| `vote_up` / `vote_down` | vote control, article view and list row | Direct label: wanted / did not want to see this. A downvote also marks the article read so it stops resurfacing; that dismissal emits no read event, so the article never appears here as engaged with |
+| `vote_cleared` | same control, voting the same way twice | Retraction. Like `unstar`, a withdrawal and not an opposite -- clearing a downvote does not mean the reader liked the article. Clearing a downvote also restores the article to the unread lists |
 | `star` / `unstar` | `StarArticle` | Strong positive; unstar is a retraction, not a negative |
 | `group_mute` | `MuteGroup` (`handleGroupMute`) | Strong negative on a whole story cluster |
 | `group_disband` | `DisbandGroup` | Grouping was wrong -- a label on similarity, not on interest |
