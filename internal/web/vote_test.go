@@ -231,3 +231,72 @@ func TestUnsubscribeDropsVoteAxis(t *testing.T) {
 		t.Errorf("axis = %v, want the cross-vocabulary reason dropped", ev.Axis)
 	}
 }
+
+// A downvote is a dismissal as well as a label: the reader is saying they do
+// not want to read this, so it drops out of the unread lists the way an actual
+// read does. The row itself stays on screen until the list is refreshed, which
+// is what makes the undo below reachable.
+func TestDownvoteHidesArticle(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	rr := authedRequestForm(t, tf, "POST", votePath(tf.articleID), url.Values{"vote": {"down"}})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("vote: status %d", rr.Code)
+	}
+
+	unread, err := tf.engine.GetUnreadArticles(tf.userID, 10, 0, false)
+	if err != nil {
+		t.Fatalf("GetUnreadArticles: %v", err)
+	}
+	if len(unread) != 0 {
+		t.Errorf("downvoted article still unread: got %d articles", len(unread))
+	}
+
+	// Hidden, but not *engaged with*. Emitting a read event here would teach the
+	// model that a rejected article was consumed.
+	kinds := feedbackKinds(t, tf)
+	if len(kinds) != 1 || kinds[0] != string(storage.FeedbackVoteDown) {
+		t.Errorf("kinds = %v, want just [vote_down]", kinds)
+	}
+}
+
+// Retracting the downvote is the undo: the article comes back to the list.
+func TestRetractedDownvoteUnhidesArticle(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	for i := range 2 {
+		if rr := authedRequestForm(t, tf, "POST", votePath(tf.articleID), url.Values{"vote": {"down"}}); rr.Code != http.StatusOK {
+			t.Fatalf("vote %d: status %d", i, rr.Code)
+		}
+	}
+
+	unread, err := tf.engine.GetUnreadArticles(tf.userID, 10, 0, false)
+	if err != nil {
+		t.Fatalf("GetUnreadArticles: %v", err)
+	}
+	if len(unread) != 1 || unread[0].ID != tf.articleID {
+		t.Errorf("retracted downvote did not restore the article: got %d articles", len(unread))
+	}
+}
+
+// Flipping an upvote to a downvote hides it too -- what matters is the vote now
+// in force, not how the reader got there.
+func TestVoteFlipToDownHidesArticle(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	if rr := authedRequestForm(t, tf, "POST", votePath(tf.articleID), url.Values{"vote": {"up"}}); rr.Code != http.StatusOK {
+		t.Fatalf("up: status %d", rr.Code)
+	}
+	unread, _ := tf.engine.GetUnreadArticles(tf.userID, 10, 0, false)
+	if len(unread) != 1 {
+		t.Fatalf("upvote hid the article: got %d unread, want 1", len(unread))
+	}
+
+	if rr := authedRequestForm(t, tf, "POST", votePath(tf.articleID), url.Values{"vote": {"down"}}); rr.Code != http.StatusOK {
+		t.Fatalf("down: status %d", rr.Code)
+	}
+	unread, _ = tf.engine.GetUnreadArticles(tf.userID, 10, 0, false)
+	if len(unread) != 0 {
+		t.Errorf("flip to downvote left the article unread: got %d", len(unread))
+	}
+}

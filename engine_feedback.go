@@ -92,6 +92,9 @@ func (e *Engine) VoteArticle(userID, articleID int64, vote int, reason string, s
 				Kind: storage.FeedbackVoteCleared, Surface: surface,
 				ListPosition: position,
 			})
+			if vote == storage.VoteDown {
+				e.setVoteReadState(userID, articleID, false)
+			}
 		}
 		return 0, nil
 	}
@@ -117,7 +120,38 @@ func (e *Engine) VoteArticle(userID, articleID int64, vote int, reason string, s
 		Axis:         reason,
 		ListPosition: position,
 	})
+	if vote == storage.VoteDown {
+		e.setVoteReadState(userID, articleID, true)
+	}
 	return vote, nil
+}
+
+// setVoteReadState hides or restores an article as a side effect of a downvote.
+//
+// A downvote says "I do not want to read this", which is a dismissal as much as
+// a label, so the article leaves the unread lists exactly the way a read one
+// does. It is deliberately only the read *state*: no read event is emitted, so
+// the corpus never learns that a rejected article was engaged with. Retracting
+// the downvote puts the article back, so the control is its own undo for the
+// hiding as well as for the label.
+//
+// Only a downvote and its retraction touch read state. Flipping a downvote to
+// an upvote leaves the article read, because the other direction cannot be told
+// apart from the ordinary case of upvoting an article you just finished
+// reading -- and unhiding that one would be plainly wrong.
+//
+// The undo is state, not history: an article that was already read before the
+// downvote comes back unread when the vote is retracted. Recording where the
+// read came from to avoid that would cost a column to fix a case the reader can
+// undo with one click.
+//
+// Best-effort. The vote is already stored and the reader is watching the
+// control; failing the whole interaction because the row did not hide would be
+// the worse outcome.
+func (e *Engine) setVoteReadState(userID, articleID int64, read bool) {
+	if err := e.store.UpdateReadState(userID, articleID, read, nil); err != nil {
+		log.Printf("vote: set read=%v for user %d article %d: %v", read, userID, articleID, err)
+	}
 }
 
 // GetArticleVote returns the reader's current vote, or 0 if they have none.
