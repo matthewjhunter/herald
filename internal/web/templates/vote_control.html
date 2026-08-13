@@ -2,6 +2,10 @@
 {{/* Explicit feedback controls (#252). Voting the same way twice retracts, so
      each button is its own undo and there is no separate clear control.
 
+     A downvote also dismisses: the article is marked read so it stops coming
+     back, without recording that the reader engaged with it. The row stays on
+     screen until the list is refreshed, so the retraction is still in reach.
+
      In a list row (Compact) the buttons carry hx-trigger="click consume" so the
      click does not also fire the row's own hx-get and open the article -- a
      vote must never cost the reader an accidental navigation.
@@ -24,7 +28,7 @@
     <button type="button"
             class="outline {{if eq .Vote -1}}contrast{{end}}"
             aria-label="{{if eq .Vote -1}}Retract downvote{{else}}Less like this{{end}}"
-            title="Less like this"
+            title="{{if eq .Vote -1}}Retract downvote -- puts it back in the list{{else}}Less like this -- hides it from the list{{end}}"
             hx-post="/articles/{{.ID}}/vote"
             hx-vals='{"vote":"down","from":"{{.Surface}}"{{if .Position}},"pos":"{{.Position}}"{{end}}{{if .Compact}},"compact":"1"{{end}}}'
             hx-target="#vote-{{.ID}}"
