@@ -25,8 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their own quotas (`max_pattern_filter_rules_per_user`, default 50;
   `max_content_filter_rules_per_user`, default 5) since each is evaluated
   against every candidate row, and content rules read whole article bodies.
-  Under an active filter a page can come back slightly short; the window is
-  bounded by `filter_overfetch_factor` and `filter_max_scan`. (#274)
+  Under an active filter a page can come back slightly short; the scan is
+  bounded by `filter_overfetch_factor` (window size) and `filter_max_scan`
+  (total rows examined). (#274)
 
 - **The reader gauge reports articles your filters are hiding.** Unread counts
   have never applied the visibility gate, so a filtered list could show fewer

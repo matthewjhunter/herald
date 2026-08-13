@@ -148,42 +148,61 @@ func (rf ruleFilter) window(limit, offset int) int {
 
 // listFiltered runs a date-ordered listing query through the Go evaluator.
 //
-// fetch takes a window size and returns rows from the top of the list; the
-// offset is applied here, AFTER filtering, because an offset counted in
-// unfiltered rows would skip or repeat articles as hidden rows shift the page
-// boundary. That is why the window starts at zero and covers offset+limit
-// rather than paging in the store.
+// fetch takes a window size and a store-level offset and returns rows in list
+// order. The caller's offset is applied HERE, after filtering, because an
+// offset counted in unfiltered rows would skip or repeat articles as hidden
+// rows shift the page boundary.
 //
-// A page may come back short of limit under an aggressive filter, which is the
-// deliberate trade against an unbounded fetch on every page load. See #277 --
-// batch reading is where page composition gets designed properly.
-func (rf ruleFilter) listFiltered(p filterPlan, limit, offset int, fetch func(window int) ([]storage.Article, error)) ([]storage.Article, error) {
-	window := rf.window(limit, offset)
-	articles, err := fetch(window)
-	if err != nil {
-		return nil, err
-	}
-	if len(articles) == window {
-		// Silent truncation would read as "that is all there is".
-		log.Printf("herald: filter scan window of %d rows filled; later pages may be incomplete", window)
-	}
+// The scan walks forward a window at a time until it has enough survivors,
+// runs out of rows, or spends its budget. A single window is not enough: with
+// a backlog of matching articles ahead of the ones the reader wants, one
+// window can come back with nothing kept, and a caller that reads a short page
+// as "no more" -- which the web handler does, from len(articles) > limit --
+// would strand every article behind it. Short pages are acceptable; a page
+// that lies about being the last one is not.
+//
+// FilterMaxScan is the hard bound on rows examined, and exhausting it is
+// logged: silent truncation would read as "that is all there is".
+func (rf ruleFilter) listFiltered(p filterPlan, limit, offset int, fetch func(window, storeOffset int) ([]storage.Article, error)) ([]storage.Article, error) {
+	var (
+		chunk   = rf.window(limit, offset)
+		budget  = rf.cfg.Limits.FilterMaxScan
+		want    = offset + limit
+		kept    []storage.Article
+		scanned int
+	)
 
-	subjects := rf.subjects(articles, p.matcher)
-	kept := make([]storage.Article, 0, min(limit, len(articles)))
-	for i, a := range articles {
-		score, _ := p.matcher.Score(a.FeedID, subjects[i])
-		if score < *p.goThreshold {
-			continue
-		}
-		kept = append(kept, a)
-		if len(kept) >= offset+limit {
+	for storeOffset := 0; ; storeOffset += chunk {
+		if budget > 0 && scanned >= budget {
+			log.Printf("herald: filter scan gave up after %d rows with %d of %d articles kept; later pages may be incomplete",
+				scanned, len(kept), want)
 			break
 		}
+		batch, err := fetch(chunk, storeOffset)
+		if err != nil {
+			return nil, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		scanned += len(batch)
+
+		subjects := rf.subjects(batch, p.matcher)
+		for i, a := range batch {
+			if score, _ := p.matcher.Score(a.FeedID, subjects[i]); score < *p.goThreshold {
+				continue
+			}
+			kept = append(kept, a)
+		}
+		if len(kept) >= want || len(batch) < chunk {
+			break // enough survivors, or the source is exhausted
+		}
 	}
+
 	if offset >= len(kept) {
 		return nil, nil
 	}
-	return kept[offset:], nil
+	return kept[offset:min(want, len(kept))], nil
 }
 
 // highInterest returns unread articles whose rule-adjusted score reaches the
