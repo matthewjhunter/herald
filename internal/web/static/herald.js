@@ -495,8 +495,25 @@
 
         // Make the toggle authoritative for every article-list request,
         // regardless of the URL htmx started from.
+        //
+        // htmx reports the whole request URL as detail.path -- query string
+        // included -- so this has to compare the path alone. Matching the raw
+        // detail.path against '/articles' silently skipped every feed, group
+        // and infinite-scroll request, which is how "Show read" on a fully-read
+        // feed came back empty. For the same reason show_read is rewritten in
+        // the URL as well as in the parameters: dropping it from parameters
+        // alone leaves a show_read=1 the URL already carried in place.
         document.body.addEventListener('htmx:configRequest', function(e) {
-            if (e.detail.path !== '/articles') return;
+            var path = e.detail.path || '';
+            var qIdx = path.indexOf('?');
+            var base = qIdx >= 0 ? path.substring(0, qIdx) : path;
+            if (base !== '/articles') return;
+
+            var params = new URLSearchParams(qIdx >= 0 ? path.substring(qIdx + 1) : '');
+            params.delete('show_read');
+            var query = params.toString();
+            e.detail.path = query ? base + '?' + query : base;
+
             if (isHiding()) {
                 delete e.detail.parameters['show_read'];
             } else {

@@ -39,6 +39,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The Fever sync API now applies filter rules.** An article hidden in the web
   reader still synced to every connected client. (#274)
 
+- **"Show read" works outside the All Articles view.** In a feed, group or
+  starred list the toggle did nothing, so a reader looking for an older article
+  in a feed they had finished got an empty list instead of their history. htmx
+  reports the whole request URL as the configured path, and the listener that
+  attaches `show_read` compared that against `/articles`, matching only the one
+  view with no query string. It now compares the path alone, and rewrites
+  `show_read` in the URL as well as the parameters so switching back to "Hide
+  read" drops a `show_read=1` an infinite-scroll URL already carried.
+
 ### Changed
 
 - **Downvoting an article also dismisses it.** "Less like this" now marks the
