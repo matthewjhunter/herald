@@ -36,6 +36,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Article lists order on arrival, not just on the publisher's timestamp.** A
+  feed that stamps its posts with no timezone -- Ace of Spades writes
+  `August 5, 2026 11:00 AM`, and it parses as UTC while the site posts on
+  Eastern -- had every article filed four hours into the past. Fetched six
+  minutes after publication, such an article lands below entries the reader has
+  already been through, appears at the top of nothing, and is found days late or
+  never. Lists now order on a new `sort_date`: an article that is fresh when we
+  fetch it sorts by when it reached us, whatever the publisher claims, while one
+  genuinely older than a day keeps its publication date so a backfill files into
+  history instead of burying today's news. A future-dated post can no longer pin
+  itself above everything either. Every article already stored is reordered by
+  the migration; nothing needs refetching. (#282)
+
 - **The Fever sync API now applies filter rules.** An article hidden in the web
   reader still synced to every connected client. (#274)
 

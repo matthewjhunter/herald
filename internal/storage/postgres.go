@@ -720,6 +720,17 @@ func (s *PostgresStore) FindDuplicateArticle(title string, publishedDate *time.T
 	return id, err
 }
 
+// fetchedOrNow passes a caller-supplied fetch time through, and leaves the
+// choice to the database when the caller has none. A zero time would otherwise
+// be stored as year 1, which sort_date would read as an article thirty
+// centuries old.
+func fetchedOrNow(fetched time.Time) *time.Time {
+	if fetched.IsZero() {
+		return nil
+	}
+	return &fetched
+}
+
 func (s *PostgresStore) AddArticle(article *Article) (int64, error) {
 	id, err := s.q.AddArticle(context.Background(), db.AddArticleParams{
 		FeedID:        article.FeedID,
@@ -730,6 +741,7 @@ func (s *PostgresStore) AddArticle(article *Article) (int64, error) {
 		Summary:       article.Summary,
 		Author:        article.Author,
 		PublishedDate: article.PublishedDate,
+		FetchedDate:   fetchedOrNow(article.FetchedDate),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil // duplicate
@@ -878,6 +890,18 @@ func (s *PostgresStore) GetArticlesByInterestScore(userID int64, threshold float
 	return articles, scores, rows.Err()
 }
 
+// articleListOrder is the order every reader-facing list is served in (#282).
+//
+// sort_date leads, so an article whose publisher stamped it hours stale still
+// reaches the top of the list when it reaches us. Publication breaks the tie
+// within a poll batch, whose rows share one fetch time. The id makes the order
+// total, so no two rows can trade places between one page and the next -- which
+// is what a resumable cursor rests on.
+//
+// It matches idx_articles_sort and idx_articles_feed_sort column for column,
+// including the COALESCE; changing either without the other costs a sort.
+const articleListOrder = `ORDER BY a.sort_date DESC, COALESCE(a.published_date, a.fetched_date) DESC, a.id DESC`
+
 func (s *PostgresStore) GetUnreadArticlesForUser(userID int64, limit, offset int, filterThreshold *int, includeRead bool) ([]Article, error) {
 	filterSQL, filterArgs := filterScoreClausePG(userID, filterThreshold)
 	query := `
@@ -895,7 +919,7 @@ func (s *PostgresStore) GetUnreadArticlesForUser(userID int64, limit, offset int
 			WHERE agm.article_id = a.id AND ag.user_id = ?
 		)
 		` + filterSQL + `
-		ORDER BY a.published_date DESC
+		` + articleListOrder + `
 		LIMIT ? OFFSET ?`
 	args := []any{userID, userID, userID}
 	args = append(args, filterArgs...)
@@ -924,7 +948,7 @@ func (s *PostgresStore) GetUnreadArticlesByFeed(userID, feedID int64, limit, off
 			WHERE agm.article_id = a.id AND ag.user_id = ?
 		)
 		` + filterSQL + `
-		ORDER BY a.published_date DESC
+		` + articleListOrder + `
 		LIMIT ? OFFSET ?`
 	args := []any{userID, userID, feedID, userID}
 	args = append(args, filterArgs...)
@@ -1148,7 +1172,7 @@ func (s *PostgresStore) GetStarredArticles(userID int64, limit, offset int, filt
 		JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
 		WHERE uf.user_id = ? AND rs.starred = TRUE
 		` + filterSQL + `
-		ORDER BY a.published_date DESC
+		` + articleListOrder + `
 		LIMIT ? OFFSET ?`
 	args := []any{userID, userID}
 	args = append(args, filterArgs...)
@@ -1885,7 +1909,7 @@ func (s *PostgresStore) GetUnreadGroupArticles(userID, groupID int64, limit, off
 		LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = ?
 		WHERE agm.group_id = ? AND ag.user_id = ?` + readFilterClausePG(includeRead) + `
 		` + filterSQL + `
-		ORDER BY a.published_date DESC
+		` + articleListOrder + `
 		LIMIT ? OFFSET ?`
 	args := []any{userID, groupID, userID}
 	args = append(args, filterArgs...)

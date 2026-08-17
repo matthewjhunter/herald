@@ -52,6 +52,7 @@ type Article struct {
 	SecurityCategory   *string
 	SecurityVerified   *bool
 	ScreeningClaimedAt *time.Time
+	SortDate           *time.Time
 }
 
 type ArticleAuthor struct {

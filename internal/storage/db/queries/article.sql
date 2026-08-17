@@ -4,8 +4,13 @@ WHERE title = @title AND published_date = @published_date
 LIMIT 1;
 
 -- name: AddArticle :one
-INSERT INTO articles (feed_id, guid, title, url, content, summary, author, published_date)
-VALUES (@feed_id, @guid, @title, @url, @content::text, @summary::text, @author::text, @published_date)
+-- fetched_date is passed in rather than defaulted to NOW() so every article in
+-- one poll shares a fetch time. Per-statement NOW() spread a batch across
+-- microseconds in insertion order, and since a feed lists newest first, ordering
+-- on it stood the batch on its head (#282).
+INSERT INTO articles (feed_id, guid, title, url, content, summary, author, published_date, fetched_date)
+VALUES (@feed_id, @guid, @title, @url, @content::text, @summary::text, @author::text, @published_date,
+        COALESCE(sqlc.narg(fetched_date)::timestamptz, NOW()))
 ON CONFLICT (feed_id, guid) DO NOTHING
 RETURNING id;
 

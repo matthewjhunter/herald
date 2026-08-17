@@ -244,18 +244,23 @@ func (f *Fetcher) importOPMLBytes(data []byte, userID int64, maxFeeds int) error
 // stored this call.
 func (f *Fetcher) StoreArticles(feedID int64, feed *gofeed.Feed) ([]storage.Article, error) {
 	var stored []storage.Article
+	// One fetch time for the whole poll. Every article here arrived in the same
+	// response, so they sort as one arrival and fall through to publication
+	// date among themselves (#282).
+	fetchedAt := time.Now().UTC()
 	for _, item := range feed.Items {
 		var author string
 		if item.Author != nil {
 			author = item.Author.Name
 		}
 		article := &storage.Article{
-			FeedID:  feedID,
-			GUID:    item.GUID,
-			Title:   sanitizeText(item.Title),
-			URL:     item.Link,
-			Summary: sanitizeText(item.Description),
-			Author:  sanitizeText(author),
+			FeedID:      feedID,
+			GUID:        item.GUID,
+			Title:       sanitizeText(item.Title),
+			URL:         item.Link,
+			Summary:     sanitizeText(item.Description),
+			Author:      sanitizeText(author),
+			FetchedDate: fetchedAt,
 		}
 
 		// Use content if available, otherwise use description
