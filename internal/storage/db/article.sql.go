@@ -11,8 +11,9 @@ import (
 )
 
 const addArticle = `-- name: AddArticle :one
-INSERT INTO articles (feed_id, guid, title, url, content, summary, author, published_date)
-VALUES ($1, $2, $3, $4, $5::text, $6::text, $7::text, $8)
+INSERT INTO articles (feed_id, guid, title, url, content, summary, author, published_date, fetched_date)
+VALUES ($1, $2, $3, $4, $5::text, $6::text, $7::text, $8,
+        COALESCE($9::timestamptz, NOW()))
 ON CONFLICT (feed_id, guid) DO NOTHING
 RETURNING id
 `
@@ -26,8 +27,13 @@ type AddArticleParams struct {
 	Summary       string
 	Author        string
 	PublishedDate *time.Time
+	FetchedDate   *time.Time
 }
 
+// fetched_date is passed in rather than defaulted to NOW() so every article in
+// one poll shares a fetch time. Per-statement NOW() spread a batch across
+// microseconds in insertion order, and since a feed lists newest first, ordering
+// on it stood the batch on its head (#282).
 func (q *Queries) AddArticle(ctx context.Context, arg AddArticleParams) (int64, error) {
 	row := q.db.QueryRow(ctx, addArticle,
 		arg.FeedID,
@@ -38,6 +44,7 @@ func (q *Queries) AddArticle(ctx context.Context, arg AddArticleParams) (int64, 
 		arg.Summary,
 		arg.Author,
 		arg.PublishedDate,
+		arg.FetchedDate,
 	)
 	var id int64
 	err := row.Scan(&id)
