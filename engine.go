@@ -135,7 +135,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		}
 		log.Printf("herald: embedder unavailable, semantic search disabled: %v", err)
 	} else {
-		groupMatcher = ai.NewGroupMatcher(embedder, embCfg.Model)
+		groupMatcher = ai.NewGroupMatcher(embedder, embCfg.Model, embCfg.Limits())
 	}
 
 	// Optional search reranker (Jina/Cohere /v1/rerank). Built when RERANK_* /

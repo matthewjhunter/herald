@@ -38,7 +38,7 @@ func newGroupMatcher() (*ai.GroupMatcher, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create embedder: %w", err)
 	}
-	return ai.NewGroupMatcher(embedder, embCfg.Model), nil
+	return ai.NewGroupMatcher(embedder, embCfg.Model, embCfg.Limits()), nil
 }
 
 // newPipelineStage builds the staged AI pipeline for one user, wiring the AI
