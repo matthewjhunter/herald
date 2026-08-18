@@ -274,7 +274,28 @@ func (m *GroupMatcher) chunkRecord(r EmbedRequest) []recordChunk {
 	return out
 }
 
-// EmbedText generates an embedding for the given text.
+// EmbedQuery embeds a search query so it is comparable with the stored document
+// vectors, which means applying the same task the documents were embedded under.
+//
+// Getting this wrong is quiet. Documents go through FormatRecordForTask under
+// TaskClustering; the query path used to apply no prefix at all, so on a model
+// trained with task prefixes -- EmbeddingGemma renders TaskClustering as
+// "task: clustering | query:" -- every search compared across a boundary the
+// model was trained to distinguish. Nothing errors; results are just worse.
+//
+// The task is deliberately the same constant the document path uses. herald
+// embeds for article-to-article clustering rather than asymmetric retrieval, and
+// whether that is the right choice for search is a separate question worth
+// measuring (see plans/013): one vector cannot carry both conventions. What must
+// not happen again is the two sides being set independently.
+func (m *GroupMatcher) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
+	return m.EmbedText(ctx, embedding.FormatForTask(m.model, embedding.TaskClustering, query))
+}
+
+// EmbedText generates an embedding for the given text, exactly as given. Callers
+// that have already formatted their text (EmbedRecord, EmbedQuery) use this;
+// anything embedding raw text for comparison with stored vectors wants
+// EmbedQuery instead.
 func (m *GroupMatcher) EmbedText(ctx context.Context, text string) ([]float32, error) {
 	return embedding.Single(ctx, m.embedder, text)
 }
