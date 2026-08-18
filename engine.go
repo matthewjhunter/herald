@@ -599,6 +599,11 @@ func (e *Engine) ResetStuckEmbeddings(errorPattern string) (int64, error) {
 
 // BackfillEmbeddings generates embeddings for articles that don't have them yet.
 // Processes up to batchSize articles per call. Returns the count processed.
+//
+// batchSize is how many articles are claimed from the queue, not how many go in
+// one request: the records are embedded in embed_batch_size-sized requests, for
+// the same reason the embed stage batches (#285). This is the path a full
+// re-embed of the corpus runs through, so the batching matters most here.
 func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, error) {
 	if e.groupMatcher == nil {
 		return 0, fmt.Errorf("embedding not configured (no Ollama URL)")
@@ -609,27 +614,39 @@ func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, er
 		return 0, err
 	}
 
-	count := 0
-	for _, a := range articles {
+	reqs := make([]ai.EmbedRequest, len(articles))
+	for i, a := range articles {
 		fields, body := BuildArticleEmbedInput(e.store, a)
-		emb, err := e.groupMatcher.EmbedRecord(ctx, fields, body)
-		if err != nil {
-			log.Printf("backfill embed article %d: %v", a.ID, err)
-			e.store.MarkArticleEmbeddingFailed(a.ID, model, err.Error()) //nolint:errcheck
-			continue
-		}
-		if emb == nil {
+		reqs[i] = ai.EmbedRequest{Fields: fields, Body: body}
+	}
+
+	count := 0
+	for i, r := range e.groupMatcher.EmbedRecords(ctx, reqs, e.embedBatchSize()) {
+		a := articles[i]
+		switch {
+		case r.Err != nil:
+			log.Printf("backfill embed article %d: %v", a.ID, r.Err)
+			e.store.MarkArticleEmbeddingFailed(a.ID, model, r.Err.Error()) //nolint:errcheck
+		case len(r.Vectors) == 0:
 			// Body too short to embed meaningfully — deterministic skip.
 			e.store.MarkArticleEmbeddingSkipped(a.ID, model) //nolint:errcheck
-			continue
+		default:
+			if err := e.store.StoreArticleEmbedding(a.ID, r.Vectors[0], model); err != nil {
+				log.Printf("backfill store embedding %d: %v", a.ID, err)
+				continue
+			}
+			count++
 		}
-		if err := e.store.StoreArticleEmbedding(a.ID, emb, model); err != nil {
-			log.Printf("backfill store embedding %d: %v", a.ID, err)
-			continue
-		}
-		count++
 	}
 	return count, nil
+}
+
+// embedBatchSize is how many texts go out in one embed request, from config.
+func (e *Engine) embedBatchSize() int {
+	if e.config != nil && e.config.Ollama.EmbedBatchSize > 0 {
+		return e.config.Ollama.EmbedBatchSize
+	}
+	return storage.DefaultEmbedBatchSize
 }
 
 // MarkArticleRead marks an article as read.
