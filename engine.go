@@ -122,7 +122,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	// needs embeddings to cluster) but only disables semantic search in the
 	// read-only web — there it degrades to FTS rather than failing to start.
 	var groupMatcher *ai.GroupMatcher
-	if embCfg, err := embedding.ConfigFromEnvPrefix("HERALD_EMBED"); err != nil {
+	if embCfg, err := EmbedConfigFromEnv(); err != nil {
 		if !cfg.ReadOnly {
 			store.Close()
 			return nil, fmt.Errorf("embedder config: %w", err)
@@ -135,6 +135,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		}
 		log.Printf("herald: embedder unavailable, semantic search disabled: %v", err)
 	} else {
+		LogEmbedModel(embCfg)
 		groupMatcher = ai.NewGroupMatcher(embedder, embCfg.Model, embCfg.Limits())
 	}
 

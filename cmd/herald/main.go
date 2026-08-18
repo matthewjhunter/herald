@@ -30,7 +30,7 @@ var (
 // newGroupMatcher constructs a GroupMatcher from HERALD_EMBED env vars and
 // the Grouping config. Used by both the daemon cycle and the `process` CLI.
 func newGroupMatcher() (*ai.GroupMatcher, error) {
-	embCfg, err := embedding.ConfigFromEnvPrefix("HERALD_EMBED")
+	embCfg, err := herald.EmbedConfigFromEnv()
 	if err != nil {
 		return nil, fmt.Errorf("embedder config: %w", err)
 	}
@@ -38,6 +38,7 @@ func newGroupMatcher() (*ai.GroupMatcher, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create embedder: %w", err)
 	}
+	herald.LogEmbedModel(embCfg)
 	return ai.NewGroupMatcher(embedder, embCfg.Model, embCfg.Limits()), nil
 }
 
