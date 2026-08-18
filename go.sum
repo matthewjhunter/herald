@@ -31,8 +31,8 @@ github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/infodancer/oidclient v0.8.0 h1:hUohDEtTiPyMOxH3S/skG3rGYSWYNBEd5ppCWiEPb5I=
 github.com/infodancer/oidclient v0.8.0/go.mod h1:7DLnBILP9BEIuXCRQ2oYTc8oYhkHZBmhZKPwFfn9rMU=
-github.com/infodancer/smoke v0.1.0 h1:meBKkJHVtkFwV0NZ2YzOHTn9Fc+JG4flkRfrNd/30yU=
-github.com/infodancer/smoke v0.1.0/go.mod h1:zh5UdP94gj1koedPhrzaaXJbysCyv1x7NiJpWQiSloc=
+github.com/infodancer/smoke v0.1.1 h1:fktN4OXtibli7irpSjgzjzxYxnNnHZJDsXXs4RSGnC8=
+github.com/infodancer/smoke v0.1.1/go.mod h1:GS5zF/W2bErRud5bV/CWUhyDMtGOyWMxDHxIyNroYbk=
 github.com/itlightning/dateparse v0.2.1 h1:AB0NJTyI0HYcerEUMovKZOiQVBg1mBPxgAnWQwzLP6g=
 github.com/itlightning/dateparse v0.2.1/go.mod h1:xHlmL8lT0L9JIBlaKotRwsoDYpKJskXpiU9ZwbbSkNA=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
