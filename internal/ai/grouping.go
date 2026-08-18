@@ -13,13 +13,22 @@ import (
 type GroupMatcher struct {
 	embedder embedding.Embedder
 	model    string // embedding model name, stored alongside vectors
+	limits   embedding.Limits
 }
 
 // NewGroupMatcher creates a GroupMatcher for the given embedder and model. The
 // model name is recorded with each embedding so vectors from a different model
 // are not mixed.
-func NewGroupMatcher(embedder embedding.Embedder, model string) *GroupMatcher {
-	return &GroupMatcher{embedder: embedder, model: model}
+//
+// limits is the embedder's *effective* input budget -- Config.Limits(), which
+// merges the model's registered limits with any configured override. It has to
+// be passed in because the Embedder interface does not expose it, and the
+// splitter needs the same number the request clipping uses: sizing chunks from
+// the registered budget while requests are clipped to a lower configured one
+// truncates every chunk's tail silently. Pass a zero Limits to size from the
+// model's registered budget alone.
+func NewGroupMatcher(embedder embedding.Embedder, model string, limits embedding.Limits) *GroupMatcher {
+	return &GroupMatcher{embedder: embedder, model: model, limits: limits}
 }
 
 // Model returns the embedding model name used by this matcher.
@@ -225,7 +234,16 @@ func (m *GroupMatcher) chunkRecord(r EmbedRequest) []recordChunk {
 		return embedding.FormatRecordForTask(m.model, embedding.TaskClustering, fields, body)
 	}
 
-	budget := embedding.LookupLimits(m.model).MaxBytes
+	// The configured budget first: a deployment lowers it when the backend
+	// serving the model is stricter than the model itself. EmbeddingGemma is
+	// registered at 6000 bytes, but the lemonade backends reject any single
+	// input over 512 tokens with a hard 500 rather than truncating, so the
+	// budget that matters is the one the operator set, not the one the model
+	// advertises.
+	budget := m.limits.MaxBytes
+	if budget <= 0 {
+		budget = embedding.LookupLimits(m.model).MaxBytes
+	}
 	if budget <= 0 {
 		budget = fallbackChunkBytes
 	}

@@ -56,7 +56,7 @@ func body(n int) string { return strings.Repeat("a", n) }
 
 func TestEmbedRecords_OneRequestPerBatch(t *testing.T) {
 	rec := &recordingEmbedder{}
-	m := NewGroupMatcher(rec, "m")
+	m := NewGroupMatcher(rec, "m", embedding.Limits{})
 
 	reqs := make([]EmbedRequest, 5)
 	for i := range reqs {
@@ -82,7 +82,7 @@ func TestEmbedRecords_OneRequestPerBatch(t *testing.T) {
 
 func TestEmbedRecords_SplitsAtBatchSize(t *testing.T) {
 	rec := &recordingEmbedder{}
-	m := NewGroupMatcher(rec, "m")
+	m := NewGroupMatcher(rec, "m", embedding.Limits{})
 
 	reqs := make([]EmbedRequest, 7)
 	for i := range reqs {
@@ -99,7 +99,7 @@ func TestEmbedRecords_SplitsAtBatchSize(t *testing.T) {
 // deterministic skip: no vectors, no error.
 func TestEmbedRecords_TooShortIsSkippedNotSent(t *testing.T) {
 	rec := &recordingEmbedder{}
-	m := NewGroupMatcher(rec, "m")
+	m := NewGroupMatcher(rec, "m", embedding.Limits{})
 
 	reqs := []EmbedRequest{
 		{Body: body(minEmbedContentLen)},
@@ -123,7 +123,7 @@ func TestEmbedRecords_TooShortIsSkippedNotSent(t *testing.T) {
 
 func TestEmbedRecords_Empty(t *testing.T) {
 	rec := &recordingEmbedder{}
-	m := NewGroupMatcher(rec, "m")
+	m := NewGroupMatcher(rec, "m", embedding.Limits{})
 	if got := m.EmbedRecords(context.Background(), nil, 25); len(got) != 0 {
 		t.Errorf("got %d results for no requests", len(got))
 	}
@@ -141,7 +141,7 @@ func TestEmbedRecords_OneBadInputDoesNotPoisonTheBatch(t *testing.T) {
 		}
 		return nil
 	}}
-	m := NewGroupMatcher(rec, "m")
+	m := NewGroupMatcher(rec, "m", embedding.Limits{})
 
 	reqs := []EmbedRequest{
 		{Body: body(minEmbedContentLen)},
@@ -164,7 +164,7 @@ func TestEmbedRecords_OneBadInputDoesNotPoisonTheBatch(t *testing.T) {
 // cause the caller can record.
 func TestEmbedRecords_BackendDownFailsEveryRecord(t *testing.T) {
 	rec := &recordingEmbedder{failOn: func(string) error { return errors.New("connection refused") }}
-	m := NewGroupMatcher(rec, "m")
+	m := NewGroupMatcher(rec, "m", embedding.Limits{})
 
 	reqs := []EmbedRequest{{Body: body(minEmbedContentLen)}, {Body: body(minEmbedContentLen)}}
 	for i, r := range m.EmbedRecords(context.Background(), reqs, 25) {
@@ -192,7 +192,7 @@ func init() {
 // requests, each within budget.
 func TestEmbedRecords_LongBodyIsSplitIntoChunks(t *testing.T) {
 	rec := &recordingEmbedder{}
-	m := NewGroupMatcher(rec, chunkTestModel)
+	m := NewGroupMatcher(rec, chunkTestModel, embedding.Limits{})
 
 	long := strings.Repeat("Sentence about a topic. ", 500) // ~12 KB, 6x the budget
 	got := m.EmbedRecords(context.Background(), []EmbedRequest{{Body: long}}, 25)
@@ -221,7 +221,7 @@ func TestEmbedRecords_LongBodyIsSplitIntoChunks(t *testing.T) {
 // Spans must address the body that was passed in, so a chunk hit resolves back
 // to a passage of the article.
 func TestEmbedRecords_SpansAddressTheBody(t *testing.T) {
-	m := NewGroupMatcher(&recordingEmbedder{}, chunkTestModel)
+	m := NewGroupMatcher(&recordingEmbedder{}, chunkTestModel, embedding.Limits{})
 
 	// No trailing whitespace: Split trims chunk edges, so a body ending in a
 	// space would legitimately leave the last span a byte short of the end.
@@ -247,7 +247,7 @@ func TestEmbedRecords_SpansAddressTheBody(t *testing.T) {
 // leaves chunks 1..N as anonymous prose. Every chunk must carry the fields.
 func TestEmbedRecords_EveryChunkCarriesTheFields(t *testing.T) {
 	rec := &recordingEmbedder{}
-	m := NewGroupMatcher(rec, chunkTestModel)
+	m := NewGroupMatcher(rec, chunkTestModel, embedding.Limits{})
 
 	fields := []embedding.Field{{Key: "title", Value: "A Distinctive Headline"}}
 	long := strings.Repeat("Sentence about a topic. ", 500)
@@ -273,7 +273,7 @@ func TestEmbedRecords_EveryChunkCarriesTheFields(t *testing.T) {
 // not just the first.
 func TestEmbedRecords_SummaryContextOnEveryChunk(t *testing.T) {
 	rec := &recordingEmbedder{}
-	m := NewGroupMatcher(rec, chunkTestModel)
+	m := NewGroupMatcher(rec, chunkTestModel, embedding.Limits{})
 
 	long := strings.Repeat("Sentence about a topic. ", 500)
 	m.EmbedRecords(context.Background(), []EmbedRequest{{
@@ -296,7 +296,7 @@ func TestEmbedRecords_SummaryContextOnEveryChunk(t *testing.T) {
 // shrink the chunks rather than push them over the model's limit.
 func TestEmbedRecords_SummaryIsChargedToTheChunkBudget(t *testing.T) {
 	rec := &recordingEmbedder{}
-	m := NewGroupMatcher(rec, chunkTestModel)
+	m := NewGroupMatcher(rec, chunkTestModel, embedding.Limits{})
 
 	long := strings.Repeat("Sentence about a topic. ", 500)
 	m.EmbedRecords(context.Background(), []EmbedRequest{{
@@ -320,7 +320,7 @@ func TestEmbedRecords_SummaryIsChargedToTheChunkBudget(t *testing.T) {
 // was, so short articles are unaffected by chunking.
 func TestEmbedRecords_ShortBodyIsOneChunk(t *testing.T) {
 	rec := &recordingEmbedder{}
-	m := NewGroupMatcher(rec, chunkTestModel)
+	m := NewGroupMatcher(rec, chunkTestModel, embedding.Limits{})
 
 	text := body(minEmbedContentLen + 50)
 	got := m.EmbedRecords(context.Background(), []EmbedRequest{{Body: text}}, 25)
@@ -347,7 +347,7 @@ func TestEmbedRecords_OneFailedChunkFailsTheArticle(t *testing.T) {
 		}
 		return nil
 	}}
-	m := NewGroupMatcher(rec, chunkTestModel)
+	m := NewGroupMatcher(rec, chunkTestModel, embedding.Limits{})
 
 	got := m.EmbedRecords(context.Background(), []EmbedRequest{{Body: poisoned}}, 25)
 	if got[0].Err == nil {
@@ -363,7 +363,7 @@ func TestEmbedRecords_OneFailedChunkFailsTheArticle(t *testing.T) {
 // the request -- otherwise chunking would undo the batching it depends on.
 func TestEmbedRecords_ChunksBatchAcrossArticles(t *testing.T) {
 	rec := &recordingEmbedder{}
-	m := NewGroupMatcher(rec, chunkTestModel)
+	m := NewGroupMatcher(rec, chunkTestModel, embedding.Limits{})
 
 	long := strings.Repeat("Sentence about a topic. ", 500)
 	reqs := []EmbedRequest{{Body: long}, {Body: long}, {Body: long}}
@@ -379,11 +379,90 @@ func TestEmbedRecords_ChunksBatchAcrossArticles(t *testing.T) {
 	}
 }
 
+// A configured budget must size the chunks, not just clip the request.
+//
+// This is the EmbeddingGemma case: the model is registered at 6000 bytes, but
+// the lemonade backends serving it reject any single input over 512 tokens with
+// a hard 500, so the deployment lowers the budget. Sizing chunks from the
+// registered limit while the request is clipped to the configured one would cut
+// every chunk's tail off silently -- the exact failure chunking exists to
+// prevent, arriving through the override path.
+func TestEmbedRecords_ConfiguredBudgetSizesTheChunks(t *testing.T) {
+	rec := &recordingEmbedder{}
+	const budget = 1200
+	m := NewGroupMatcher(rec, chunkTestModel, embedding.Limits{MaxBytes: budget})
+
+	long := strings.Repeat("Sentence about a topic. ", 500)
+	got := m.EmbedRecords(context.Background(), []EmbedRequest{{Body: long}}, 25)
+	if got[0].Err != nil {
+		t.Fatal(got[0].Err)
+	}
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	sent := 0
+	for _, call := range rec.calls {
+		for _, text := range call {
+			sent++
+			if len(text) > budget {
+				t.Errorf("chunk of %d bytes exceeds the configured %d budget", len(text), budget)
+			}
+		}
+	}
+	// And it must actually be doing more, smaller chunks than the registered
+	// 6000-byte budget would produce -- not merely passing because nothing split.
+	if sent < len(long)/budget {
+		t.Errorf("produced %d chunks for %d bytes at a %d budget; the configured budget was ignored",
+			sent, len(long), budget)
+	}
+}
+
+// With no configured budget the registered one still applies, so nothing about
+// the existing nomic deployment changes.
+func TestEmbedRecords_ZeroLimitsFallsBackToRegistered(t *testing.T) {
+	rec := &recordingEmbedder{}
+	m := NewGroupMatcher(rec, chunkTestModel, embedding.Limits{})
+
+	long := strings.Repeat("Sentence about a topic. ", 500)
+	m.EmbedRecords(context.Background(), []EmbedRequest{{Body: long}}, 25)
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	for _, call := range rec.calls {
+		for _, text := range call {
+			if len(text) > chunkTestBudget {
+				t.Errorf("chunk of %d bytes exceeds the registered %d budget", len(text), chunkTestBudget)
+			}
+		}
+	}
+}
+
+// An unregistered model with a configured budget uses the configured one rather
+// than the conservative fallback.
+func TestEmbedRecords_ConfiguredBudgetBeatsFallbackForUnknownModel(t *testing.T) {
+	rec := &recordingEmbedder{}
+	const budget = 900
+	m := NewGroupMatcher(rec, "no-such-model-anywhere", embedding.Limits{MaxBytes: budget})
+
+	long := strings.Repeat("Sentence about a topic. ", 500)
+	m.EmbedRecords(context.Background(), []EmbedRequest{{Body: long}}, 25)
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	for _, call := range rec.calls {
+		for _, text := range call {
+			if len(text) > budget {
+				t.Errorf("chunk of %d bytes exceeds the configured %d budget", len(text), budget)
+			}
+		}
+	}
+}
+
 // EmbedRecords must format each record exactly as the single-record path does,
 // or batched vectors would not be comparable with ones already stored.
 func TestEmbedRecords_FormatsIdenticallyToEmbedRecord(t *testing.T) {
 	rec := &recordingEmbedder{}
-	m := NewGroupMatcher(rec, "m")
+	m := NewGroupMatcher(rec, "m", embedding.Limits{})
 
 	fields := []embedding.Field{{Key: "title", Value: "A Title"}}
 	text := body(minEmbedContentLen)
