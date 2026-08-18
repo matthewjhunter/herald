@@ -17,7 +17,7 @@ require (
 	github.com/pgvector/pgvector-go/pgx v0.4.1
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/net v0.57.0
+	golang.org/x/net v0.58.0
 )
 
 require (
@@ -42,7 +42,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 )
 
 tool github.com/infodancer/smoke/cmd/smolder
