@@ -23,9 +23,15 @@ func clusterHarness(t *testing.T, fake *fakeAI) (*Stage, storage.Store, int64) {
 // column; trailing zeros do not change cosine similarity.
 func embedArt(t *testing.T, store storage.Store, a storage.Article, vec []float32) {
 	t.Helper()
-	if err := store.StoreArticleEmbedding(a.ID, pad768(vec), "m"); err != nil {
-		t.Fatalf("StoreArticleEmbedding: %v", err)
+	if err := storeEmbedding(store, a.ID, pad768(vec), "m"); err != nil {
+		t.Fatalf("StoreArticleEmbeddings: %v", err)
 	}
+}
+
+// storeEmbedding stores a single-chunk embedding for an article; these tests are
+// about clustering, not chunking, so the byte span is nominal.
+func storeEmbedding(s storage.Store, articleID int64, vec []float32, model string) error {
+	return s.StoreArticleEmbeddings(articleID, []storage.EmbeddingChunk{{Vector: vec, StartByte: 0, EndByte: 1}}, model)
 }
 
 // pad768 right-pads a vector with zeros to storage.EmbedDim components.

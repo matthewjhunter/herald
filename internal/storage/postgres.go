@@ -2540,23 +2540,33 @@ func (s *PostgresStore) SearchArticlesFTS(userID int64, query string, limit, off
 	return articles, nil
 }
 
-// StoreArticleEmbedding and GetArticleEmbeddings (which bind/scan the vector
+// StoreArticleEmbeddings and GetArticleEmbeddings (which bind/scan the vector
 // value) live in vector.go on the pgx pool.
 
-// MarkArticleEmbeddingSkipped — see embedding.sql. The embedding column is left
-// NULL (a non-ok row carries no vector).
+// MarkArticleEmbeddingSkipped — see embedding.sql. A non-ok row carries no
+// vectors, so any chunks from an earlier successful pass are dropped: a body
+// that has become too short must not keep answering searches from the text it
+// used to have.
 func (s *PostgresStore) MarkArticleEmbeddingSkipped(articleID int64, model string) error {
-	return s.q.MarkArticleEmbeddingSkipped(context.Background(), db.MarkArticleEmbeddingSkippedParams{
+	ctx := context.Background()
+	if err := s.q.DropArticleEmbeddingChunks(ctx, articleID); err != nil {
+		return fmt.Errorf("mark embedding skipped: drop chunks: %w", err)
+	}
+	return s.q.MarkArticleEmbeddingSkipped(ctx, db.MarkArticleEmbeddingSkippedParams{
 		ArticleID:      articleID,
 		EmbeddingModel: model,
 		Status:         int16(EmbedStatusTooShort),
 	})
 }
 
-// MarkArticleEmbeddingFailed — see embedding.sql. The embedding column is left
-// NULL (a non-ok row carries no vector).
+// MarkArticleEmbeddingFailed — see embedding.sql. As with the skip case, any
+// chunks from an earlier pass are dropped.
 func (s *PostgresStore) MarkArticleEmbeddingFailed(articleID int64, model, errMsg string) error {
-	return s.q.MarkArticleEmbeddingFailed(context.Background(), db.MarkArticleEmbeddingFailedParams{
+	ctx := context.Background()
+	if err := s.q.DropArticleEmbeddingChunks(ctx, articleID); err != nil {
+		return fmt.Errorf("mark embedding failed: drop chunks: %w", err)
+	}
+	return s.q.MarkArticleEmbeddingFailed(ctx, db.MarkArticleEmbeddingFailedParams{
 		ArticleID:      articleID,
 		EmbeddingModel: model,
 		Status:         int16(EmbedStatusError),
@@ -2564,10 +2574,16 @@ func (s *PostgresStore) MarkArticleEmbeddingFailed(articleID int64, model, errMs
 	})
 }
 
-// ResetAllArticleEmbeddings deletes every row in article_embeddings.
-// See SQLiteStore.ResetAllArticleEmbeddings for usage notes.
+// ResetAllArticleEmbeddings deletes every row in article_embeddings and every
+// chunk vector with it, so the corpus looks entirely unembedded. Returns the
+// number of article rows cleared. See SQLiteStore.ResetAllArticleEmbeddings for
+// usage notes.
 func (s *PostgresStore) ResetAllArticleEmbeddings() (int64, error) {
-	n, err := s.q.ResetAllArticleEmbeddings(context.Background())
+	ctx := context.Background()
+	if _, err := s.q.ResetAllArticleEmbeddingChunks(ctx); err != nil {
+		return 0, fmt.Errorf("reset article embedding chunks: %w", err)
+	}
+	n, err := s.q.ResetAllArticleEmbeddings(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("reset article embeddings: %w", err)
 	}
@@ -2628,6 +2644,8 @@ func (s *PostgresStore) GetArticlesWithoutEmbeddings(model string, limit int) ([
 	articles := make([]Article, len(rows))
 	for i, r := range rows {
 		articles[i] = coreArticle(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate)
+		// Carried so the embed stage can prefix it to every chunk (#286).
+		articles[i].AISummary = r.AiSummary
 	}
 	return articles, nil
 }

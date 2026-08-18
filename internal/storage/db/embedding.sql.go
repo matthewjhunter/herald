@@ -10,10 +10,32 @@ import (
 	"time"
 )
 
+const dropArticleEmbeddingChunks = `-- name: DropArticleEmbeddingChunks :exec
+
+
+DELETE FROM article_embedding_chunks WHERE article_id = $1
+`
+
+// Queries that read or write the embedding vector itself live in the
+// hand-written pgvector layer (internal/storage/vector.go), not here: sqlc does
+// not model the vector type or its distance operators (#186). This file holds
+// the embedding bookkeeping queries -- status, retries, resets -- that never
+// touch the vector value.
+// The two Mark* queries are paired with a DropArticleEmbeddingChunks call: an
+// article that is now too short, or that failed to embed, must not keep the
+// chunk vectors of an earlier successful pass, or a stale vector would go on
+// answering searches for content the article no longer has.
+func (q *Queries) DropArticleEmbeddingChunks(ctx context.Context, articleID int64) error {
+	_, err := q.db.Exec(ctx, dropArticleEmbeddingChunks, articleID)
+	return err
+}
+
 const getArticlesWithoutEmbeddings = `-- name: GetArticlesWithoutEmbeddings :many
 SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-       a.author, a.published_date, a.fetched_date
+       a.author, a.published_date, a.fetched_date,
+       COALESCE(s.ai_summary, '') AS ai_summary
 FROM articles a
+LEFT JOIN article_summaries s ON s.article_id = a.id
 LEFT JOIN article_embeddings ae ON a.id = ae.article_id AND ae.embedding_model = $1
 WHERE ae.article_id IS NULL
    OR (ae.status = $2 AND ae.attempts < $3::int
@@ -41,8 +63,14 @@ type GetArticlesWithoutEmbeddingsRow struct {
 	Author        *string
 	PublishedDate *time.Time
 	FetchedDate   time.Time
+	AiSummary     string
 }
 
+// ai_summary comes along because it is prefixed to every chunk as contextual
+// retrieval (#286): a chunk from the middle of an article carries no clue what
+// the article is about, and herald has already paid for a summary that says so.
+// COALESCE because summarization is a separate stage that may not have run yet
+// (or may have skipped the article); an empty summary just means no context.
 func (q *Queries) GetArticlesWithoutEmbeddings(ctx context.Context, arg GetArticlesWithoutEmbeddingsParams) ([]GetArticlesWithoutEmbeddingsRow, error) {
 	rows, err := q.db.Query(ctx, getArticlesWithoutEmbeddings,
 		arg.EmbeddingModel,
@@ -69,6 +97,7 @@ func (q *Queries) GetArticlesWithoutEmbeddings(ctx context.Context, arg GetArtic
 			&i.Author,
 			&i.PublishedDate,
 			&i.FetchedDate,
+			&i.AiSummary,
 		); err != nil {
 			return nil, err
 		}
@@ -126,8 +155,7 @@ const markArticleEmbeddingFailed = `-- name: MarkArticleEmbeddingFailed :exec
 INSERT INTO article_embeddings (article_id, embedding_model, status, attempts, error_message, last_attempted_at)
 VALUES ($1, $2, $3, 1, $4::text, NOW())
 ON CONFLICT (article_id) DO UPDATE
-SET embedding = NULL,
-    embedding_model = EXCLUDED.embedding_model,
+SET embedding_model = EXCLUDED.embedding_model,
     status = $3,
     attempts = article_embeddings.attempts + 1,
     error_message = EXCLUDED.error_message,
@@ -153,12 +181,10 @@ func (q *Queries) MarkArticleEmbeddingFailed(ctx context.Context, arg MarkArticl
 }
 
 const markArticleEmbeddingSkipped = `-- name: MarkArticleEmbeddingSkipped :exec
-
 INSERT INTO article_embeddings (article_id, embedding_model, status, attempts, error_message, last_attempted_at)
 VALUES ($1, $2, $3, 0, NULL, NULL)
 ON CONFLICT (article_id) DO UPDATE
-SET embedding = NULL,
-    embedding_model = EXCLUDED.embedding_model,
+SET embedding_model = EXCLUDED.embedding_model,
     status = $3,
     attempts = 0,
     error_message = NULL,
@@ -172,14 +198,21 @@ type MarkArticleEmbeddingSkippedParams struct {
 	Status         int16
 }
 
-// Queries that read or write the embedding vector itself live in the
-// hand-written pgvector layer (internal/storage/vector.go), not here: sqlc does
-// not model the vector type or its distance operators (#186). This file holds
-// the embedding bookkeeping queries -- status, retries, resets -- that never
-// touch the vector value.
 func (q *Queries) MarkArticleEmbeddingSkipped(ctx context.Context, arg MarkArticleEmbeddingSkippedParams) error {
 	_, err := q.db.Exec(ctx, markArticleEmbeddingSkipped, arg.ArticleID, arg.EmbeddingModel, arg.Status)
 	return err
+}
+
+const resetAllArticleEmbeddingChunks = `-- name: ResetAllArticleEmbeddingChunks :execrows
+DELETE FROM article_embedding_chunks
+`
+
+func (q *Queries) ResetAllArticleEmbeddingChunks(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, resetAllArticleEmbeddingChunks)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const resetAllArticleEmbeddings = `-- name: ResetAllArticleEmbeddings :execrows

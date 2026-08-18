@@ -45,8 +45,7 @@ func (s *Stage) Embed(ctx context.Context, in []storage.Article) []storage.Artic
 
 			reqs := make([]ai.EmbedRequest, len(batch))
 			for i, a := range batch {
-				fields, body := s.BuildEmbedInput(a)
-				reqs[i] = ai.EmbedRequest{Fields: fields, Body: body}
+				reqs[i] = s.BuildEmbedInput(a)
 			}
 			for i, r := range s.Embedder.EmbedRecords(ctx, reqs, size) {
 				results[start+i] = s.storeEmbedResult(batch[i], model, r)
@@ -77,9 +76,19 @@ func (s *Stage) storeEmbedResult(a storage.Article, model string, r ai.EmbedResu
 		s.Store.MarkArticleEmbeddingSkipped(a.ID, model) //nolint:errcheck
 		return nil
 	}
-	if err := s.Store.StoreArticleEmbedding(a.ID, r.Vectors[0], model); err != nil {
-		s.Formatter.Warning("store embedding for article %d: %v", a.ID, err)
+	if err := s.Store.StoreArticleEmbeddings(a.ID, embedChunks(r), model); err != nil {
+		s.Formatter.Warning("store embeddings for article %d: %v", a.ID, err)
 		return nil
 	}
 	return &a
+}
+
+// embedChunks pairs an embed result's vectors with the body spans they came
+// from, in ordinal order.
+func embedChunks(r ai.EmbedResult) []storage.EmbeddingChunk {
+	chunks := make([]storage.EmbeddingChunk, len(r.Vectors))
+	for i, v := range r.Vectors {
+		chunks[i] = storage.EmbeddingChunk{Vector: v, StartByte: r.Spans[i].Start, EndByte: r.Spans[i].End}
+	}
+	return chunks
 }

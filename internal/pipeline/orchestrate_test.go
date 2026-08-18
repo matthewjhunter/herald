@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	embedding "github.com/matthewjhunter/go-embedding"
 	"github.com/matthewjhunter/herald/internal/ai"
 	"github.com/matthewjhunter/herald/internal/storage"
 )
@@ -24,7 +23,7 @@ func happyAI() *fakeAI {
 }
 
 func withRealEmbed(st *Stage) {
-	st.BuildEmbedInput = func(a storage.Article) ([]embedding.Field, string) { return nil, a.Content }
+	st.BuildEmbedInput = func(a storage.Article) ai.EmbedRequest { return ai.EmbedRequest{Body: a.Content} }
 }
 
 func TestRunEndToEnd(t *testing.T) {

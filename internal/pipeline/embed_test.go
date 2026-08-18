@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	embedding "github.com/matthewjhunter/go-embedding"
 	"github.com/matthewjhunter/herald/internal/ai"
 	"github.com/matthewjhunter/herald/internal/storage"
 )
@@ -45,10 +44,14 @@ func (f *fakeEmbedder) EmbedRecords(_ context.Context, reqs []ai.EmbedRequest, _
 				continue // the too-short skip: no vectors, no error
 			}
 		}
-		// Pad to the stored dimension so StoreArticleEmbedding accepts the
+		// Pad to the stored dimension so StoreArticleEmbeddings accepts the
 		// vector; the leading components carry the test's intent, trailing
-		// zeros are inert.
-		out[i] = ai.EmbedResult{Vectors: [][]float32{pad768(v)}}
+		// zeros are inert. One chunk covering the whole body, since these tests
+		// are about the stage rather than about chunking.
+		out[i] = ai.EmbedResult{
+			Vectors: [][]float32{pad768(v)},
+			Spans:   []ai.EmbedSpan{{Start: 0, End: len(r.Body)}},
+		}
 	}
 	return out
 }
@@ -67,8 +70,8 @@ func (f *fakeEmbedder) callSizes() []int {
 
 func withEmbedder(st *Stage, emb *fakeEmbedder) {
 	st.Embedder = emb
-	st.BuildEmbedInput = func(a storage.Article) ([]embedding.Field, string) {
-		return nil, a.Content
+	st.BuildEmbedInput = func(a storage.Article) ai.EmbedRequest {
+		return ai.EmbedRequest{Body: a.Content}
 	}
 }
 
@@ -178,9 +181,22 @@ func TestEmbedStage(t *testing.T) {
 		if want := []int64{good1.ID, good2.ID}; len(out) != 2 || out[0].ID != want[0] || out[1].ID != want[1] {
 			t.Fatalf("advanced %v, want %v", ids(out), want)
 		}
-		pending, _ := store.GetArticlesWithoutEmbeddings("m", 10)
-		if len(pending) != 1 || pending[0].ID != bad.ID {
-			t.Errorf("retry queue holds %v, want just the failed article %d", ids(pending), bad.ID)
+		// Only the two good articles have vectors; the failed one stored none.
+		// (It is not checked via the retry queue: a just-failed row is inside
+		// its retry cooldown and so is deliberately absent from it.)
+		rows, err := store.GetArticleEmbeddings(1, "m")
+		if err != nil {
+			t.Fatal(err)
+		}
+		embedded := map[int64]bool{}
+		for _, r := range rows {
+			embedded[r.ArticleID] = true
+		}
+		if !embedded[good1.ID] || !embedded[good2.ID] {
+			t.Errorf("a good article stored no vector: %v", embedded)
+		}
+		if embedded[bad.ID] {
+			t.Errorf("the failed article %d stored a vector", bad.ID)
 		}
 	})
 

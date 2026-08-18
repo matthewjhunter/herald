@@ -42,12 +42,14 @@ func TestMigrationsBuildAndAreIdempotent(t *testing.T) {
 	if err := db.QueryRow("SELECT max(version_id) FROM goose_db_version").Scan(&maxVersion); err != nil {
 		t.Fatalf("read goose version: %v", err)
 	}
-	if maxVersion != 15 {
-		t.Errorf("goose max version = %d, want 15", maxVersion)
+	if maxVersion != 16 {
+		t.Errorf("goose max version = %d, want 16", maxVersion)
 	}
 
 	// 0003 must leave the embedding columns as pgvector vectors, not BYTEA.
-	for _, tbl := range []string{"article_embeddings", "article_groups"} {
+	// article_embeddings lost its vector column to 0016 (chunks moved out to
+	// article_embedding_chunks), so it is that table that carries the vector now.
+	for _, tbl := range []string{"article_embedding_chunks", "article_groups"} {
 		var udt string
 		if err := db.QueryRow(
 			`SELECT udt_name FROM information_schema.columns

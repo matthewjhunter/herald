@@ -24,13 +24,17 @@ type Feed struct {
 }
 
 type Article struct {
-	ID              int64
-	FeedID          int64
-	GUID            string
-	Title           string
-	URL             string
-	Content         string
-	Summary         string
+	ID      int64
+	FeedID  int64
+	GUID    string
+	Title   string
+	URL     string
+	Content string
+	Summary string
+	// AISummary is the generated per-article summary. It is only populated by
+	// queries that select it -- today, the embed queue, which prefixes it to
+	// every chunk as retrieval context (#286).
+	AISummary       string
 	Author          string
 	PublishedDate   *time.Time
 	FetchedDate     time.Time
@@ -88,9 +92,20 @@ type ArticleGroup struct {
 	UpdatedAt   time.Time
 }
 
-// ArticleEmbeddingRow holds a single article's embedding vector.
+// EmbeddingChunk is one embedded piece of an article: the vector, and the byte
+// span of the embed body it was produced from. The span is what lets a chunk hit
+// be resolved back to a passage rather than only to the article (#286).
+type EmbeddingChunk struct {
+	Vector    []float32
+	StartByte int
+	EndByte   int
+}
+
+// ArticleEmbeddingRow holds one of an article's chunk vectors, identified by its
+// ordinal within the article.
 type ArticleEmbeddingRow struct {
 	ArticleID int64
+	Ordinal   int
 	Embedding []float32
 }
 

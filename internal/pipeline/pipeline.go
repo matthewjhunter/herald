@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 
-	embedding "github.com/matthewjhunter/go-embedding"
 	"github.com/matthewjhunter/herald/internal/ai"
 	"github.com/matthewjhunter/herald/internal/output"
 	"github.com/matthewjhunter/herald/internal/sanitize"
@@ -45,10 +44,10 @@ type Stage struct {
 	Formatter *output.Formatter
 	UserID    int64
 
-	// BuildEmbedInput builds the (fields, body) record embedded for an article.
-	// Injected so the pipeline package does not import the root herald package
-	// (which imports pipeline) — set to herald.BuildArticleEmbedInput at wiring.
-	BuildEmbedInput func(storage.Article) ([]embedding.Field, string)
+	// BuildEmbedInput builds the record embedded for an article. Injected so the
+	// pipeline package does not import the root herald package (which imports
+	// pipeline) — set to herald.BuildArticleEmbedInput at wiring.
+	BuildEmbedInput func(storage.Article) ai.EmbedRequest
 }
 
 // maxParallel is the per-stage concurrency bound (Ollama.MaxParallel, floored

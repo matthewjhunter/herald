@@ -264,7 +264,18 @@ SELECT
     COALESCE(a.linked_content, '') <> ''
 FROM articles a
 JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = $1
-LEFT JOIN article_embeddings ae ON ae.article_id = a.id
+LEFT JOIN LATERAL (
+    -- The article's first chunk (#286). An article is a set of chunk vectors
+    -- now, and a feedback event wants one vector per event, so it snapshots the
+    -- opening chunk -- for a short article that is the whole thing, and for a
+    -- long one it is the most stable choice as the body grows. LIMIT 1 rather
+    -- than a plain join because two embedding models can coexist during a
+    -- switchover, and a second matching row would duplicate the event.
+    SELECT c.embedding
+    FROM article_embedding_chunks c
+    WHERE c.article_id = a.id AND c.ordinal = 0
+    LIMIT 1
+) ae ON TRUE
 LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = $1
 LEFT JOIN feeds f ON f.id = a.feed_id
 LEFT JOIN LATERAL (

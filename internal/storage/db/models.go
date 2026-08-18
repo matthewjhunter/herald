@@ -74,7 +74,16 @@ type ArticleEmbedding struct {
 	ErrorMessage    *string
 	LastAttemptedAt *time.Time
 	CreatedAt       time.Time
-	Embedding       *pgvector.Vector
+}
+
+type ArticleEmbeddingChunk struct {
+	ArticleID      int64
+	EmbeddingModel string
+	Ordinal        int
+	Embedding      *pgvector.Vector
+	StartByte      int
+	EndByte        int
+	CreatedAt      time.Time
 }
 
 type ArticleGroup struct {
