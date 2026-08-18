@@ -481,3 +481,63 @@ func TestEmbedRecords_FormatsIdenticallyToEmbedRecord(t *testing.T) {
 		t.Errorf("batched text differs from single text:\n single: %q\nbatched: %q", rec.calls[0][0], rec.calls[1][0])
 	}
 }
+
+// Search compares a query vector against stored document vectors, so the two
+// must be embedded under the same task convention. They were not: documents went
+// through FormatRecordForTask under TaskClustering while the query path applied
+// no prefix at all, which on a model trained with task prefixes (EmbeddingGemma
+// renders TaskClustering as "task: clustering | query:") compares across a
+// boundary the model was trained to distinguish.
+func TestEmbedQuery_UsesTheSameTaskAsDocuments(t *testing.T) {
+	rec := &recordingEmbedder{}
+	// A model with a registered task prompter -- against an unknown model
+	// FormatForTask is the identity and every assertion below passes vacuously.
+	const model = "embeddinggemma"
+	if embedding.FormatForTask(model, embedding.TaskClustering, "x") == "x" {
+		t.Fatalf("%s has no task prompter registered; this test would prove nothing", model)
+	}
+	m := NewGroupMatcher(rec, model, embedding.Limits{})
+
+	if _, err := m.EmbedQuery(context.Background(), "a search query"); err != nil {
+		t.Fatal(err)
+	}
+	m.EmbedRecords(context.Background(), []EmbedRequest{{Body: body(minEmbedContentLen)}}, 25)
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.calls) != 2 {
+		t.Fatalf("got %d calls, want 2", len(rec.calls))
+	}
+	queryText, docText := rec.calls[0][0], rec.calls[1][0]
+
+	want := embedding.FormatForTask(model, embedding.TaskClustering, "a search query")
+	if queryText != want {
+		t.Errorf("query text = %q, want %q", queryText, want)
+	}
+	// The prefix the documents carry must appear on the query too. Derive it
+	// from the formatter rather than hardcoding it, so this keeps holding if the
+	// model's prompter changes.
+	prefix := embedding.FormatForTask(model, embedding.TaskClustering, "")
+	if !strings.HasPrefix(docText, prefix) {
+		t.Fatalf("documents do not carry the expected task prefix %q: %.60q", prefix, docText)
+	}
+	if !strings.HasPrefix(queryText, prefix) {
+		t.Errorf("query lacks the task prefix the documents carry: %.60q", queryText)
+	}
+}
+
+// EmbedText stays raw: EmbedRecord formats its own text before calling it, so
+// prefixing there would double up.
+func TestEmbedText_StaysUnprefixed(t *testing.T) {
+	rec := &recordingEmbedder{}
+	m := NewGroupMatcher(rec, chunkTestModel, embedding.Limits{})
+
+	if _, err := m.EmbedText(context.Background(), "already formatted"); err != nil {
+		t.Fatal(err)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if rec.calls[0][0] != "already formatted" {
+		t.Errorf("EmbedText altered its input: %q", rec.calls[0][0])
+	}
+}

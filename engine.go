@@ -377,7 +377,7 @@ func (e *Engine) Search(ctx context.Context, userID int64, query string, limit, 
 
 	// --- Semantic search ---
 	if e.groupMatcher != nil {
-		queryEmb, embErr := e.groupMatcher.EmbedText(ctx, query)
+		queryEmb, embErr := e.groupMatcher.EmbedQuery(ctx, query)
 		if embErr == nil && queryEmb != nil {
 			// The store orders the user's subscribed-feed article embeddings by
 			// cosine distance to the query vector and returns the nearest within
