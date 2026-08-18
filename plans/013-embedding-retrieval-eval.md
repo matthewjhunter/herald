@@ -43,19 +43,38 @@ measured here.
 It also has a cost beyond budget: repeated identical text makes chunks of the same
 article resemble each other, which is the opposite of what chunking is for.
 
+The question is therefore not on/off but **how much**. A sentence saying what the
+document is about is the thing the technique calls for; a 500-character paragraph
+is heavier than the published method, which used a short blurb. Test the summary
+truncated to roughly a sentence as well as full and absent -- a short summary may
+keep most of the benefit for a fraction of the budget, which would be the best
+outcome available.
+
 ## Variants
 
-Two independent binary choices, so four runs at roughly ten minutes each:
+Two axes: the task-prefix pairing, and how much summary each chunk carries. At
+roughly ten minutes per run the full grid is affordable in an evening.
 
 | run | document prefix | query prefix | summary in chunk |
 |---|---|---|---|
-| A | clustering | none | yes (current production) |
-| B | retrieval | retrieval-query | yes |
-| C | clustering | none | no |
-| D | retrieval | retrieval-query | no |
+| A | clustering | **none** | full (~500 chars) |
+| A' | clustering | clustering | full |
+| B | retrieval | retrieval-query | full |
+| C | clustering | clustering | short (~150 chars) |
+| D | retrieval | retrieval-query | short |
+| E | clustering | clustering | none |
+| F | retrieval | retrieval-query | none |
 
-A is the baseline. B isolates the prefix question, C the summary question, D
-tests whether they interact.
+A is production as shipped and exists only as the historical baseline.
+
+**A' is the one to run first, and it costs nothing.** Giving the query the same
+prefix the documents already carry requires no re-embed -- it is a query-side
+change measurable against the vectors already stored. If A' beats A, that is a
+free improvement independent of everything else here, and it also establishes
+that the harness can detect a difference at all before any re-embedding is spent.
+
+Treat A' as the real baseline for the remaining runs; comparing anything against
+a knowingly mismatched query path would overstate every result.
 
 ## Query set
 
@@ -101,11 +120,15 @@ being measured.
 Producing the variants does need herald changes -- two knobs:
 
 - an embed task selector (clustering vs retrieval) applied to both the document
-  and query paths, so they cannot drift apart again
-- a switch for including the summary as chunk context
+  and query paths **from one setting**, so they cannot drift apart again -- the
+  bare-query bug exists precisely because the two sides were set independently
+- a chunk-context summary length: full, truncated to N characters, or omitted.
+  A length rather than a boolean, so "shorter but still useful" is reachable
 
 Both should default to today's behaviour so the baseline is genuinely the shipped
-configuration. Flipping either **requires a full re-embed**: vectors built under
+configuration. Note the asymmetry: the query prefix takes effect immediately,
+while changing the document prefix or the summary length **requires a full
+re-embed**: vectors built under
 different prefixes are not comparable, and mixing them silently degrades results
 rather than failing. Consider keying stored vectors by the variant as well as the
 model if runs need to coexist.
