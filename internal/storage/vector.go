@@ -16,44 +16,84 @@ import (
 // centroid recompute -- live here. The vector type is registered per pooled
 // connection in pool.go, so pgvector.Vector binds and scans natively.
 
-// StoreArticleEmbedding upserts a successful embedding vector for an article,
-// resetting status to ok and clearing the retry bookkeeping. The vector must
-// have EmbedDim components; a different length means the configured model does
-// not match the vector(EmbedDim) column, which is rejected here so it fails
-// loudly rather than at the database with an opaque dimension error.
-func (s *PostgresStore) StoreArticleEmbedding(articleID int64, vec []float32, model string) error {
-	if len(vec) != EmbedDim {
-		return fmt.Errorf("store embedding for article %d: vector has %d dimensions, want %d (embedding model mismatch)", articleID, len(vec), EmbedDim)
+// StoreArticleEmbeddings replaces an article's chunk vectors under the given
+// model and marks the article embedded: the chunk rows and the status row are
+// written in one transaction, so "status is ok" and "chunk rows exist" are never
+// observed apart. Passing no chunks is an error -- a successful embed always
+// produces at least one vector, and the too-short and failed cases have their
+// own status calls.
+//
+// Every vector must have EmbedDim components; a different length means the
+// configured model does not match the vector(EmbedDim) column, which is rejected
+// here so it fails loudly rather than at the database with an opaque dimension
+// error.
+func (s *PostgresStore) StoreArticleEmbeddings(articleID int64, chunks []EmbeddingChunk, model string) error {
+	if len(chunks) == 0 {
+		return fmt.Errorf("store embeddings for article %d: no chunks", articleID)
 	}
-	const q = `
-		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status, attempts, error_message, last_attempted_at)
-		VALUES ($1, $2, $3, $4, 0, NULL, NULL)
+	for i, c := range chunks {
+		if len(c.Vector) != EmbedDim {
+			return fmt.Errorf("store embeddings for article %d: chunk %d has %d dimensions, want %d (embedding model mismatch)", articleID, i, len(c.Vector), EmbedDim)
+		}
+	}
+
+	ctx := context.Background()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("store article embeddings: begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+
+	// Delete rather than upsert: a re-embed can produce fewer chunks than last
+	// time (the article was edited, or the budget changed), and leftover
+	// high-ordinal rows would be vectors of text that is no longer there.
+	const del = `DELETE FROM article_embedding_chunks WHERE article_id = $1 AND embedding_model = $2`
+	if _, err := tx.Exec(ctx, del, articleID, model); err != nil {
+		return fmt.Errorf("store article embeddings: clear chunks: %w", err)
+	}
+
+	const ins = `
+		INSERT INTO article_embedding_chunks (article_id, embedding_model, ordinal, embedding, start_byte, end_byte)
+		VALUES ($1, $2, $3, $4, $5, $6)`
+	for i, c := range chunks {
+		if _, err := tx.Exec(ctx, ins, articleID, model, i, pgvector.NewVector(c.Vector), c.StartByte, c.EndByte); err != nil {
+			return fmt.Errorf("store article embeddings: insert chunk %d: %w", i, err)
+		}
+	}
+
+	const status = `
+		INSERT INTO article_embeddings (article_id, embedding_model, status, attempts, error_message, last_attempted_at)
+		VALUES ($1, $2, $3, 0, NULL, NULL)
 		ON CONFLICT (article_id) DO UPDATE
-		SET embedding = EXCLUDED.embedding,
-		    embedding_model = EXCLUDED.embedding_model,
-		    status = $4,
+		SET embedding_model = EXCLUDED.embedding_model,
+		    status = $3,
 		    attempts = 0,
 		    error_message = NULL,
 		    last_attempted_at = NULL,
 		    created_at = NOW()`
-	_, err := s.pool.Exec(context.Background(), q, articleID, pgvector.NewVector(vec), model, int16(EmbedStatusOK))
-	if err != nil {
-		return fmt.Errorf("store article embedding: %w", err)
+	if _, err := tx.Exec(ctx, status, articleID, model, int16(EmbedStatusOK)); err != nil {
+		return fmt.Errorf("store article embeddings: status: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("store article embeddings: commit: %w", err)
 	}
 	return nil
 }
 
-// GetArticleEmbeddings returns the usable (status ok) embedding vectors for a
-// user's subscribed feeds under the given model. Used by the embedding-drift
-// diagnostic; the grouping pipeline never pulls raw vectors into Go.
+// GetArticleEmbeddings returns the stored chunk vectors for a user's subscribed
+// feeds under the given model, one row per chunk, ordered by article then
+// ordinal. Used by the embedding-drift diagnostic; the grouping pipeline never
+// pulls raw vectors into Go.
 func (s *PostgresStore) GetArticleEmbeddings(userID int64, model string) ([]ArticleEmbeddingRow, error) {
 	const q = `
-		SELECT ae.article_id, ae.embedding
-		FROM article_embeddings ae
-		JOIN articles a ON a.id = ae.article_id
+		SELECT c.article_id, c.ordinal, c.embedding
+		FROM article_embedding_chunks c
+		JOIN articles a ON a.id = c.article_id
 		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		WHERE uf.user_id = $1 AND ae.embedding_model = $2 AND ae.status = $3`
-	rows, err := s.pool.Query(context.Background(), q, userID, model, int16(EmbedStatusOK))
+		WHERE uf.user_id = $1 AND c.embedding_model = $2
+		ORDER BY c.article_id, c.ordinal`
+	rows, err := s.pool.Query(context.Background(), q, userID, model)
 	if err != nil {
 		return nil, fmt.Errorf("get article embeddings: %w", err)
 	}
@@ -61,12 +101,13 @@ func (s *PostgresStore) GetArticleEmbeddings(userID int64, model string) ([]Arti
 
 	var out []ArticleEmbeddingRow
 	for rows.Next() {
-		var id int64
+		var r ArticleEmbeddingRow
 		var vec pgvector.Vector
-		if err := rows.Scan(&id, &vec); err != nil {
+		if err := rows.Scan(&r.ArticleID, &r.Ordinal, &vec); err != nil {
 			return nil, fmt.Errorf("scan article embedding: %w", err)
 		}
-		out = append(out, ArticleEmbeddingRow{ArticleID: id, Embedding: vec.Slice()})
+		r.Embedding = vec.Slice()
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }
@@ -95,16 +136,24 @@ func (s *PostgresStore) SemanticSearch(userID int64, model string, queryVec []fl
 	if limit <= 0 {
 		return nil, nil
 	}
+	// An article is several chunks, so a query can hit the same article more
+	// than once. DISTINCT ON keeps each article's nearest chunk and drops the
+	// rest, which is both the right ranking (an article is as relevant as its
+	// most relevant passage) and the right result count -- a caller asking for
+	// 20 results wants 20 articles, not 20 chunks from three of them.
 	const q = `
-		SELECT ae.article_id, ae.embedding <=> $1 AS distance
-		FROM article_embeddings ae
-		JOIN articles a ON a.id = ae.article_id
-		JOIN user_feeds uf ON a.feed_id = uf.feed_id
-		WHERE uf.user_id = $2 AND ae.embedding_model = $3 AND ae.status = $4
-		  AND (ae.embedding <=> $1) < $5
-		ORDER BY ae.embedding <=> $1
-		LIMIT $6`
-	rows, err := s.pool.Query(context.Background(), q, pgvector.NewVector(queryVec), userID, model, int16(EmbedStatusOK), maxDist, limit)
+		SELECT article_id, distance FROM (
+			SELECT DISTINCT ON (c.article_id) c.article_id, c.embedding <=> $1 AS distance
+			FROM article_embedding_chunks c
+			JOIN articles a ON a.id = c.article_id
+			JOIN user_feeds uf ON a.feed_id = uf.feed_id
+			WHERE uf.user_id = $2 AND c.embedding_model = $3
+			  AND (c.embedding <=> $1) < $4
+			ORDER BY c.article_id, c.embedding <=> $1
+		) hits
+		ORDER BY distance
+		LIMIT $5`
+	rows, err := s.pool.Query(context.Background(), q, pgvector.NewVector(queryVec), userID, model, maxDist, limit)
 	if err != nil {
 		return nil, fmt.Errorf("semantic search: %w", err)
 	}
@@ -134,19 +183,26 @@ func (s *PostgresStore) MatchArticlesToGroups(userID int64, model string, articl
 	if len(articleIDs) == 0 {
 		return nil, nil
 	}
+	// Each chunk finds its own nearest centroid; the article takes the best of
+	// them. DISTINCT ON with NULLS LAST picks the closest matching chunk, and
+	// falls through to a no-match row only when no chunk matched anything -- so
+	// every article with chunks still produces exactly one row, as before.
 	const q = `
-		SELECT ae.article_id, COALESCE(g.group_id, 0)
-		FROM article_embeddings ae
-		LEFT JOIN LATERAL (
-			SELECT ag.id AS group_id
-			FROM article_groups ag
-			WHERE ag.user_id = $1 AND ag.embedding IS NOT NULL AND ag.embedding_model = $2
-			  AND (ag.embedding <=> ae.embedding) <= $4
-			ORDER BY ag.embedding <=> ae.embedding
-			LIMIT 1
-		) g ON TRUE
-		WHERE ae.article_id = ANY($3::bigint[]) AND ae.embedding_model = $2 AND ae.status = $5`
-	rows, err := s.pool.Query(context.Background(), q, userID, model, articleIDs, maxDist, int16(EmbedStatusOK))
+		SELECT article_id, COALESCE(group_id, 0) FROM (
+			SELECT DISTINCT ON (c.article_id) c.article_id, g.group_id, g.dist
+			FROM article_embedding_chunks c
+			LEFT JOIN LATERAL (
+				SELECT ag.id AS group_id, ag.embedding <=> c.embedding AS dist
+				FROM article_groups ag
+				WHERE ag.user_id = $1 AND ag.embedding IS NOT NULL AND ag.embedding_model = $2
+				  AND (ag.embedding <=> c.embedding) <= $4
+				ORDER BY ag.embedding <=> c.embedding
+				LIMIT 1
+			) g ON TRUE
+			WHERE c.article_id = ANY($3::bigint[]) AND c.embedding_model = $2
+			ORDER BY c.article_id, g.dist NULLS LAST
+		) best`
+	rows, err := s.pool.Query(context.Background(), q, userID, model, articleIDs, maxDist)
 	if err != nil {
 		return nil, fmt.Errorf("match articles to groups: %w", err)
 	}
@@ -173,15 +229,24 @@ func (s *PostgresStore) LeftoverSimilarPairs(model string, articleIDs []int64, m
 	if len(articleIDs) < 2 {
 		return nil, nil
 	}
+	// Two articles are linked when any chunk of one is within maxDist of any
+	// chunk of the other -- the article-level distance is the minimum over
+	// chunk pairs. For a single-chunk article this is exactly what it was
+	// before. For a long one it means a passage-level match is enough, which is
+	// the point of chunking; it also makes linking more permissive, so a
+	// too-loose threshold now chains groups through one shared paragraph.
+	//
+	// DISTINCT collapses the several chunk pairs a linked article pair
+	// produces, so the caller's union-find still sees one edge.
 	const q = `
-		SELECT a.article_id, b.article_id
-		FROM article_embeddings a
-		JOIN article_embeddings b
-		  ON b.article_id > a.article_id AND b.embedding_model = $1 AND b.status = $3
+		SELECT DISTINCT a.article_id, b.article_id
+		FROM article_embedding_chunks a
+		JOIN article_embedding_chunks b
+		  ON b.article_id > a.article_id AND b.embedding_model = $1
 		WHERE a.article_id = ANY($2::bigint[]) AND b.article_id = ANY($2::bigint[])
-		  AND a.embedding_model = $1 AND a.status = $3
-		  AND (a.embedding <=> b.embedding) <= $4`
-	rows, err := s.pool.Query(context.Background(), q, model, articleIDs, int16(EmbedStatusOK), maxDist)
+		  AND a.embedding_model = $1
+		  AND (a.embedding <=> b.embedding) <= $3`
+	rows, err := s.pool.Query(context.Background(), q, model, articleIDs, maxDist)
 	if err != nil {
 		return nil, fmt.Errorf("leftover similar pairs: %w", err)
 	}
@@ -205,17 +270,26 @@ func (s *PostgresStore) LeftoverSimilarPairs(model string, articleIDs []int64, m
 // unchanged, so an as-yet-unembedded group keeps whatever centroid it had (none)
 // until its members embed -- the basis of the self-healing repair pass.
 func (s *PostgresStore) RecomputeGroupCentroid(groupID int64, model string) error {
+	// Averaged per article first, then across articles: a 12-chunk feature and a
+	// 1-chunk newswire item are one member each, and a straight average over
+	// every chunk row would let the long one pull the centroid twelve times as
+	// hard.
 	const q = `
 		UPDATE article_groups ag
 		SET embedding = sub.centroid, embedding_model = $2
 		FROM (
-			SELECT AVG(ae.embedding)::vector AS centroid
-			FROM article_group_members m
-			JOIN article_embeddings ae ON ae.article_id = m.article_id
-			WHERE m.group_id = $1 AND ae.embedding_model = $2 AND ae.status = $3
+			SELECT AVG(per_article.v)::vector AS centroid
+			FROM (
+				SELECT AVG(c.embedding)::vector AS v
+				FROM article_group_members m
+				JOIN article_embedding_chunks c
+				  ON c.article_id = m.article_id AND c.embedding_model = $2
+				WHERE m.group_id = $1
+				GROUP BY m.article_id
+			) per_article
 		) sub
 		WHERE ag.id = $1 AND sub.centroid IS NOT NULL`
-	_, err := s.pool.Exec(context.Background(), q, groupID, model, int16(EmbedStatusOK))
+	_, err := s.pool.Exec(context.Background(), q, groupID, model)
 	if err != nil {
 		return fmt.Errorf("recompute group centroid: %w", err)
 	}

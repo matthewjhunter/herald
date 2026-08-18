@@ -142,7 +142,7 @@ func TestFeedbackEventSurvivesArticleDeletion(t *testing.T) {
 	eachStore(t, func(t *testing.T, store Store) {
 		userID, feedID, articleID := feedbackFixture(t, store)
 
-		if err := store.StoreArticleEmbedding(articleID, testVector(1.0), "nomic-embed-text"); err != nil {
+		if err := storeEmbedding(store, articleID, testVector(1.0), "nomic-embed-text"); err != nil {
 			t.Fatalf("StoreArticleEmbedding: %v", err)
 		}
 		if err := store.RecordFeedbackEvent(FeedbackEvent{

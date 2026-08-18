@@ -4,12 +4,19 @@
 -- the embedding bookkeeping queries -- status, retries, resets -- that never
 -- touch the vector value.
 
+-- The two Mark* queries are paired with a DropArticleEmbeddingChunks call: an
+-- article that is now too short, or that failed to embed, must not keep the
+-- chunk vectors of an earlier successful pass, or a stale vector would go on
+-- answering searches for content the article no longer has.
+
+-- name: DropArticleEmbeddingChunks :exec
+DELETE FROM article_embedding_chunks WHERE article_id = @article_id;
+
 -- name: MarkArticleEmbeddingSkipped :exec
 INSERT INTO article_embeddings (article_id, embedding_model, status, attempts, error_message, last_attempted_at)
 VALUES (@article_id, @embedding_model, @status, 0, NULL, NULL)
 ON CONFLICT (article_id) DO UPDATE
-SET embedding = NULL,
-    embedding_model = EXCLUDED.embedding_model,
+SET embedding_model = EXCLUDED.embedding_model,
     status = @status,
     attempts = 0,
     error_message = NULL,
@@ -20,8 +27,7 @@ SET embedding = NULL,
 INSERT INTO article_embeddings (article_id, embedding_model, status, attempts, error_message, last_attempted_at)
 VALUES (@article_id, @embedding_model, @status, 1, @error_message::text, NOW())
 ON CONFLICT (article_id) DO UPDATE
-SET embedding = NULL,
-    embedding_model = EXCLUDED.embedding_model,
+SET embedding_model = EXCLUDED.embedding_model,
     status = @status,
     attempts = article_embeddings.attempts + 1,
     error_message = EXCLUDED.error_message,
@@ -30,6 +36,9 @@ SET embedding = NULL,
 
 -- name: ResetAllArticleEmbeddings :execrows
 DELETE FROM article_embeddings;
+
+-- name: ResetAllArticleEmbeddingChunks :execrows
+DELETE FROM article_embedding_chunks;
 
 -- name: ResetAllGroupEmbeddings :execrows
 UPDATE article_groups SET embedding = NULL, embedding_model = '';
@@ -46,9 +55,16 @@ WHERE embedding_model = @embedding_model AND status = @status AND attempts >= @m
   AND error_message LIKE @error_pattern::text;
 
 -- name: GetArticlesWithoutEmbeddings :many
+-- ai_summary comes along because it is prefixed to every chunk as contextual
+-- retrieval (#286): a chunk from the middle of an article carries no clue what
+-- the article is about, and herald has already paid for a summary that says so.
+-- COALESCE because summarization is a separate stage that may not have run yet
+-- (or may have skipped the article); an empty summary just means no context.
 SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-       a.author, a.published_date, a.fetched_date
+       a.author, a.published_date, a.fetched_date,
+       COALESCE(s.ai_summary, '') AS ai_summary
 FROM articles a
+LEFT JOIN article_summaries s ON s.article_id = a.id
 LEFT JOIN article_embeddings ae ON a.id = ae.article_id AND ae.embedding_model = @embedding_model
 WHERE ae.article_id IS NULL
    OR (ae.status = @status AND ae.attempts < @max_attempts::int

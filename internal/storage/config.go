@@ -44,6 +44,19 @@ type Config struct {
 		CurationModel string   `toml:"curation_model"`
 		Timeout       Duration `toml:"timeout"`
 		MaxParallel   int      `toml:"max_parallel"`
+		// EmbedBatchSize is how many texts the embed stage sends in a single
+		// request. The backends serialize per model, so concurrency buys
+		// nothing there and batch size is the only throughput lever (#285).
+		// <= 0 uses DefaultEmbedBatchSize.
+		EmbedBatchSize int `toml:"embed_batch_size"`
+		// EmbedMaxParallel bounds how many embed requests are in flight at
+		// once. It is deliberately separate from MaxParallel: the security
+		// screen fans out across several LLM GPUs and wants 8, while the
+		// embedding backends serialize per model and the A380s flap above
+		// about 2, so one knob for both means the screen's setting decides
+		// whether the embed backfill survives. <= 0 uses
+		// DefaultEmbedMaxParallel.
+		EmbedMaxParallel int `toml:"embed_max_parallel"`
 		// MaxConcurrent bounds the number of in-flight generate() calls in this
 		// process. <= 0 means unbounded (no gate).
 		MaxConcurrent int `toml:"max_concurrent"`
@@ -191,6 +204,18 @@ type Config struct {
 	} `toml:"web"`
 }
 
+// DefaultEmbedBatchSize is the number of texts sent in one embed request when
+// embed_batch_size is unset. Measured on the A380 backends against real article
+// lengths, 25 is about 1.9x the single-item rate; the gain flattens above that
+// while the cost of one lost request grows (#285).
+const DefaultEmbedBatchSize = 25
+
+// DefaultEmbedMaxParallel is how many embed requests are in flight at once when
+// embed_max_parallel is unset. One, because the backends serialize per model:
+// extra concurrency only queues at the far end, and on the A380s it is actively
+// harmful (the GPU flaps and sentinels articles under bulk embed load).
+const DefaultEmbedMaxParallel = 1
+
 // DefaultConfig returns a config with sensible defaults
 func DefaultConfig() *Config {
 	cfg := &Config{}
@@ -201,6 +226,8 @@ func DefaultConfig() *Config {
 	cfg.Ollama.CurationModel = "llama3.1:8b"
 	cfg.Ollama.Timeout = Duration(2 * time.Minute)
 	cfg.Ollama.MaxConcurrent = 8
+	cfg.Ollama.EmbedBatchSize = DefaultEmbedBatchSize
+	cfg.Ollama.EmbedMaxParallel = DefaultEmbedMaxParallel
 	cfg.Summarization.MinArticleLength = 200
 	cfg.Summarization.MaxSummaryLength = 500
 	cfg.Grouping.Enabled = true

@@ -1804,7 +1804,7 @@ func TestStoreAndGetArticleEmbeddings(t *testing.T) {
 
 	// Store embedding for article 1
 	fakeEmb := embVec(1, 2, 3, 4)
-	if err := store.StoreArticleEmbedding(artID1, fakeEmb, "nomic-embed-text"); err != nil {
+	if err := storeEmbedding(store, artID1, fakeEmb, "nomic-embed-text"); err != nil {
 		t.Fatalf("StoreArticleEmbedding: %v", err)
 	}
 
@@ -1843,7 +1843,7 @@ func TestStoreAndGetArticleEmbeddings(t *testing.T) {
 
 	// Upsert: update article 1's embedding
 	newEmb := embVec(5, 6, 7, 8)
-	if err := store.StoreArticleEmbedding(artID1, newEmb, "nomic-embed-text"); err != nil {
+	if err := storeEmbedding(store, artID1, newEmb, "nomic-embed-text"); err != nil {
 		t.Fatalf("StoreArticleEmbedding upsert: %v", err)
 	}
 	embs, err = store.GetArticleEmbeddings(userID, "nomic-embed-text")
@@ -1894,7 +1894,7 @@ func TestEmbeddingStatusLifecycle(t *testing.T) {
 	const model = "nomic-embed-text"
 
 	// 1. Real embedding for a1 — status=ok, attempts=0, no error_message.
-	if err := store.StoreArticleEmbedding(a1, embVec(1, 2, 3, 4), model); err != nil {
+	if err := storeEmbedding(store, a1, embVec(1, 2, 3, 4), model); err != nil {
 		t.Fatalf("StoreArticleEmbedding a1: %v", err)
 	}
 
@@ -1945,7 +1945,7 @@ func TestEmbeddingStatusLifecycle(t *testing.T) {
 	}
 
 	// 5. Success after failures resets the row — attempts=0, status=ok.
-	if err := store.StoreArticleEmbedding(a3, embVec(5, 6, 7, 8), model); err != nil {
+	if err := storeEmbedding(store, a3, embVec(5, 6, 7, 8), model); err != nil {
 		t.Fatalf("StoreArticleEmbedding a3 (recovery): %v", err)
 	}
 	missing, _ = store.GetArticlesWithoutEmbeddings(model, 100)
@@ -2035,7 +2035,7 @@ func TestResetStuckEmbeddings(t *testing.T) {
 		}
 	}
 	// ok: real embedding.
-	if err := store.StoreArticleEmbedding(ok, embVec(1, 2, 3, 4), model); err != nil {
+	if err := storeEmbedding(store, ok, embVec(1, 2, 3, 4), model); err != nil {
 		t.Fatalf("StoreArticleEmbedding ok: %v", err)
 	}
 	// tooShort: deterministic skip.
@@ -2159,10 +2159,10 @@ func TestResetAllArticleEmbeddings(t *testing.T) {
 	a1, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "g1", Title: "T1", URL: "u1", PublishedDate: &now})
 	a2, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "g2", Title: "T2", URL: "u2", PublishedDate: &now})
 
-	if err := store.StoreArticleEmbedding(a1, embVec(1, 2, 3, 4), "nomic-embed-text"); err != nil {
+	if err := storeEmbedding(store, a1, embVec(1, 2, 3, 4), "nomic-embed-text"); err != nil {
 		t.Fatalf("StoreArticleEmbedding a1: %v", err)
 	}
-	if err := store.StoreArticleEmbedding(a2, embVec(5, 6, 7, 8), "nomic-embed-text"); err != nil {
+	if err := storeEmbedding(store, a2, embVec(5, 6, 7, 8), "nomic-embed-text"); err != nil {
 		t.Fatalf("StoreArticleEmbedding a2: %v", err)
 	}
 
@@ -2207,7 +2207,7 @@ func TestResetAllGroupEmbeddings(t *testing.T) {
 	for i, gid := range []int64{g1, g2} {
 		guid := fmt.Sprintf("a%d", i)
 		aid, _ := store.AddArticle(&Article{FeedID: feedID, GUID: guid, Title: guid, URL: "u/" + guid, Content: "x", PublishedDate: &now})
-		if err := store.StoreArticleEmbedding(aid, embVec(float32(i+1)), model); err != nil {
+		if err := storeEmbedding(store, aid, embVec(float32(i+1)), model); err != nil {
 			t.Fatalf("StoreArticleEmbedding: %v", err)
 		}
 		if err := store.AddArticleToGroup(gid, aid); err != nil {
@@ -2664,11 +2664,11 @@ func TestGetUngroupedEmbeddedArticles(t *testing.T) {
 
 		// Eligible: embedded (status OK), ungrouped, recent.
 		good := mk("good", now)
-		store.StoreArticleEmbedding(good, vec, model) //nolint:errcheck
+		storeEmbedding(store, good, vec, model) //nolint:errcheck
 
 		// Excluded: embedded + recent but already in a group.
 		grouped := mk("grouped", now)
-		store.StoreArticleEmbedding(grouped, vec, model) //nolint:errcheck
+		storeEmbedding(store, grouped, vec, model) //nolint:errcheck
 		gid, _ := store.CreateArticleGroup(1, "topic")
 		store.AddArticleToGroup(gid, grouped) //nolint:errcheck
 
@@ -2677,7 +2677,7 @@ func TestGetUngroupedEmbeddedArticles(t *testing.T) {
 
 		// Excluded: embedded but published before the window.
 		stale := mk("stale", old)
-		store.StoreArticleEmbedding(stale, vec, model) //nolint:errcheck
+		storeEmbedding(store, stale, vec, model) //nolint:errcheck
 
 		// Excluded: embedding attempt failed (status != OK).
 		errored := mk("errored", now)
@@ -2685,7 +2685,7 @@ func TestGetUngroupedEmbeddedArticles(t *testing.T) {
 
 		// Excluded: embedded + recent + ungrouped but NOT security-passed.
 		blocked := mk("blocked", now)
-		store.StoreArticleEmbedding(blocked, vec, model) //nolint:errcheck
+		storeEmbedding(store, blocked, vec, model) //nolint:errcheck
 		// Overwrite the passing verdict with a failing one.
 		store.ScreenArticleSecurity(blocked, 8, "none", false, false) //nolint:errcheck
 

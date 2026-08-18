@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 
-	embedding "github.com/matthewjhunter/go-embedding"
 	"github.com/matthewjhunter/herald/internal/ai"
 	"github.com/matthewjhunter/herald/internal/output"
 	"github.com/matthewjhunter/herald/internal/sanitize"
@@ -25,12 +24,13 @@ type AI interface {
 	BackendAvailable() bool
 }
 
-// Embedder is the subset of *ai.GroupMatcher the embed stage calls. EmbedRecord
-// returns (nil, nil) — not an error — when the body is too short to embed
-// meaningfully; the embed stage treats that as a deterministic skip.
+// Embedder is the subset of *ai.GroupMatcher the embed stage calls. EmbedRecords
+// returns one result per request, in order; a result with no vectors and no
+// error means the body was too short to embed meaningfully, which the embed
+// stage treats as a deterministic skip.
 type Embedder interface {
 	Model() string
-	EmbedRecord(ctx context.Context, fields []embedding.Field, body string) ([]float32, error)
+	EmbedRecords(ctx context.Context, reqs []ai.EmbedRequest, batchSize int) []ai.EmbedResult
 }
 
 // Stage runs the staged AI pipeline for a single user. Construct one per user
@@ -44,16 +44,36 @@ type Stage struct {
 	Formatter *output.Formatter
 	UserID    int64
 
-	// BuildEmbedInput builds the (fields, body) record embedded for an article.
-	// Injected so the pipeline package does not import the root herald package
-	// (which imports pipeline) — set to herald.BuildArticleEmbedInput at wiring.
-	BuildEmbedInput func(storage.Article) ([]embedding.Field, string)
+	// BuildEmbedInput builds the record embedded for an article. Injected so the
+	// pipeline package does not import the root herald package (which imports
+	// pipeline) — set to herald.BuildArticleEmbedInput at wiring.
+	BuildEmbedInput func(storage.Article) ai.EmbedRequest
 }
 
 // maxParallel is the per-stage concurrency bound (Ollama.MaxParallel, floored
 // at 1) — the same limit the old per-article pipeline used.
 func (s *Stage) maxParallel() int {
 	return max(s.Cfg.Ollama.MaxParallel, 1)
+}
+
+// embedBatchSize is how many texts go out in one embed request
+// (Ollama.EmbedBatchSize, defaulted and floored at 1).
+func (s *Stage) embedBatchSize() int {
+	if n := s.Cfg.Ollama.EmbedBatchSize; n > 0 {
+		return n
+	}
+	return storage.DefaultEmbedBatchSize
+}
+
+// embedMaxParallel is how many embed requests the stage keeps in flight
+// (Ollama.EmbedMaxParallel, defaulted and floored at 1). Separate from
+// maxParallel -- see the field comment for why the screen and the embedder
+// cannot share a concurrency knob.
+func (s *Stage) embedMaxParallel() int {
+	if n := s.Cfg.Ollama.EmbedMaxParallel; n > 0 {
+		return n
+	}
+	return storage.DefaultEmbedMaxParallel
 }
 
 // mapArticles runs fn over each input article with bounded concurrency and

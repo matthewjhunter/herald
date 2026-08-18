@@ -43,12 +43,12 @@ func resetEmbeddingsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "embeddings",
 		Short: "Delete all article embeddings and clear group centroids",
-		Long: `Deletes every row in article_embeddings and sets
-article_groups.embedding to NULL on every group.
+		Long: `Deletes every row in article_embeddings and article_embedding_chunks,
+and sets article_groups.embedding to NULL on every group.
 
 The daemon's per-cycle embedding backfill repopulates article embeddings
-on subsequent cycles (~16 minutes wall time at MaxParallel=8 for ~19,000
-articles, depending on backend speed).
+on subsequent cycles. Throughput is set by embed_batch_size rather than
+max_parallel: the backends serialize per model, so batch size is the lever.
 
 Group centroids stay NULL until articles rejoin groups via the scoring
 pipeline. Existing memberships are preserved — only the centroid vector
@@ -64,7 +64,7 @@ topic/display-name.`,
 
 			if !assumeYes {
 				fmt.Fprintln(os.Stderr, "This will:")
-				fmt.Fprintln(os.Stderr, "  • DELETE every row from article_embeddings")
+				fmt.Fprintln(os.Stderr, "  • DELETE every row from article_embeddings and article_embedding_chunks")
 				fmt.Fprintln(os.Stderr, "  • SET article_groups.embedding = NULL on every group")
 				fmt.Fprintln(os.Stderr, "")
 				fmt.Fprintln(os.Stderr, "The daemon will refill article embeddings on subsequent cycles.")

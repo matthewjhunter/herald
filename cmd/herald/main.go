@@ -53,7 +53,7 @@ func newPipelineStage(store storage.Store, processor *ai.AIProcessor, groupMatch
 		Cfg:       cfg,
 		Formatter: formatter,
 		UserID:    userID,
-		BuildEmbedInput: func(a storage.Article) ([]embedding.Field, string) {
+		BuildEmbedInput: func(a storage.Article) ai.EmbedRequest {
 			return herald.BuildArticleEmbedInput(store, a)
 		},
 	}

@@ -75,11 +75,20 @@ shares. Default sample size is intentionally small (30) to keep the cost down.`,
 				return fmt.Errorf("load stored embeddings: %w", err)
 			}
 
-			// GetArticleEmbeddings returns only status-ok rows, so every row
-			// carries a real vector (no sentinel placeholders to filter).
+			// An article is a set of chunk vectors (#286), and GetArticleEmbeddings
+			// returns one row per chunk, ordered by article then ordinal. Gather
+			// them back into per-article sets so the unit of comparison is an
+			// article, as it was before chunking.
 			var realRows []driftRow
+			byArticle := make(map[int64]int)
 			for _, r := range rows {
-				realRows = append(realRows, driftRow{ID: r.ArticleID, Stored: r.Embedding})
+				i, seen := byArticle[r.ArticleID]
+				if !seen {
+					i = len(realRows)
+					byArticle[r.ArticleID] = i
+					realRows = append(realRows, driftRow{ID: r.ArticleID})
+				}
+				realRows[i].Stored = append(realRows[i].Stored, r.Embedding)
 			}
 			if len(realRows) == 0 {
 				return fmt.Errorf("no real embeddings found for user %d, model %q", userID, model)
@@ -103,28 +112,51 @@ shares. Default sample size is intentionally small (30) to keep the cost down.`,
 					fmt.Printf("[%d/%d] article %d: skip (not found)\n", i+1, len(realRows), row.ID)
 					continue
 				}
-				fields, body := herald.BuildArticleEmbedInput(engine.Store(), *article)
-				newVec, err := engine.EmbedRecord(ctx, fields, body)
+				// GetArticle does not select the generated summary, but the
+				// pipeline prefixes it to every chunk, so it has to be loaded
+				// here or every comparison would measure its absence rather than
+				// the drift being looked for.
+				if s, err := engine.Store().GetArticleSummary(row.ID); err == nil && s != nil {
+					article.AISummary = s.AISummary
+				}
+				newVecs, err := engine.EmbedRecordChunks(ctx, herald.BuildArticleEmbedInput(engine.Store(), *article))
 				if err != nil {
 					fmt.Printf("[%d/%d] article %d: embed error: %v\n", i+1, len(realRows), row.ID, err)
 					continue
 				}
-				if newVec == nil {
+				if len(newVecs) == 0 {
 					// Body fell below minEmbedContentLen — would now be a
-					// deterministic skip. Stored vector exists from when
+					// deterministic skip. Stored vectors exist from when
 					// the row was longer (or pre-strip).
 					fmt.Printf("[%d/%d] article %d: body now too short to embed (was previously embedded)\n",
 						i+1, len(realRows), row.ID)
 					continue
 				}
-				sim := embedding.CosineSimilarity(row.Stored, newVec)
+				if len(newVecs) != len(row.Stored) {
+					// The article now splits into a different number of pieces,
+					// so there is no chunk-to-chunk comparison to make. That is
+					// itself drift, and total: report it as such rather than
+					// silently dropping the row from the sample.
+					fmt.Printf("[%d/%d] article %d: chunk count changed (%d stored, %d now)  %s\n",
+						i+1, len(realRows), row.ID, len(row.Stored), len(newVecs), truncate(article.Title, 50))
+					results = append(results, driftResult{ArticleID: row.ID, Title: article.Title, Cosine: 0})
+					continue
+				}
+				// Per-chunk cosine, averaged: an article's drift is the average
+				// drift of its pieces, which for a single-chunk article is
+				// exactly the number this tool always reported.
+				sim := 0.0
+				for j := range newVecs {
+					sim += embedding.CosineSimilarity(row.Stored[j], newVecs[j])
+				}
+				sim /= float64(len(newVecs))
 				results = append(results, driftResult{
 					ArticleID: row.ID,
 					Title:     article.Title,
 					Cosine:    sim,
 				})
-				fmt.Printf("[%d/%d] article %d cos=%.4f  %s\n",
-					i+1, len(realRows), row.ID, sim, truncate(article.Title, 70))
+				fmt.Printf("[%d/%d] article %d cos=%.4f (%d chunks)  %s\n",
+					i+1, len(realRows), row.ID, sim, len(newVecs), truncate(article.Title, 60))
 			}
 
 			if len(results) == 0 {
@@ -140,9 +172,11 @@ shares. Default sample size is intentionally small (30) to keep the cost down.`,
 	return cmd
 }
 
+// driftRow is one sampled article and every chunk vector stored for it, in
+// ordinal order.
 type driftRow struct {
 	ID     int64
-	Stored []float32
+	Stored [][]float32
 }
 
 type driftResult struct {

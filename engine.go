@@ -493,7 +493,7 @@ func rerankDoc(r SearchResult) string {
 // the embedder's MaxBytes budget — the 2026-05-09 incident showed
 // ~773 articles erroring on nomic-embed-text's 2K-token context after
 // the byte-budget truncation, with URL-dense feeds the hot spot.
-func BuildArticleEmbedInput(store storage.Store, a storage.Article) ([]embedding.Field, string) {
+func BuildArticleEmbedInput(store storage.Store, a storage.Article) ai.EmbedRequest {
 	var feedTitle string
 	if f, err := store.GetFeed(a.FeedID); err == nil {
 		feedTitle = f.Title
@@ -521,7 +521,16 @@ func BuildArticleEmbedInput(store storage.Store, a storage.Article) ([]embedding
 			body = a.LinkedContent
 		}
 	}
-	return fields, embedding.StripNonsemantic(body)
+	// AISummary is passed through rather than fetched: it becomes the retrieval
+	// context on every chunk (#286), and the embed queue already selects it, so
+	// looking it up here would be a wasted query per article. Callers that build
+	// a record from an Article loaded some other way must populate it first, or
+	// the record they build will not match the one the pipeline builds.
+	return ai.EmbedRequest{
+		Fields:  fields,
+		Summary: a.AISummary,
+		Body:    embedding.StripNonsemantic(body),
+	}
 }
 
 // EmbedRecord embeds a structured (fields, body) record using the
@@ -534,6 +543,23 @@ func (e *Engine) EmbedRecord(ctx context.Context, fields []embedding.Field, body
 		return nil, fmt.Errorf("embedding not configured (no Ollama URL)")
 	}
 	return e.groupMatcher.EmbedRecord(ctx, fields, body)
+}
+
+// EmbedRecordChunks embeds a record the way the pipeline does: split into
+// chunks that fit the model, each carrying the fields and the summary. Returns
+// one vector per chunk, or no vectors when the body is too short to embed.
+//
+// This is what a diagnostic needs in order to compare against stored vectors,
+// since a stored article is now a set of chunk vectors rather than a point.
+func (e *Engine) EmbedRecordChunks(ctx context.Context, req ai.EmbedRequest) ([][]float32, error) {
+	if e.groupMatcher == nil {
+		return nil, fmt.Errorf("embedding not configured (no Ollama URL)")
+	}
+	res := e.groupMatcher.EmbedRecords(ctx, []ai.EmbedRequest{req}, e.embedBatchSize())
+	if res[0].Err != nil {
+		return nil, res[0].Err
+	}
+	return res[0].Vectors, nil
 }
 
 // EmbeddingModel returns the active embedding model name, or "" when
@@ -599,6 +625,11 @@ func (e *Engine) ResetStuckEmbeddings(errorPattern string) (int64, error) {
 
 // BackfillEmbeddings generates embeddings for articles that don't have them yet.
 // Processes up to batchSize articles per call. Returns the count processed.
+//
+// batchSize is how many articles are claimed from the queue, not how many go in
+// one request: the records are embedded in embed_batch_size-sized requests, for
+// the same reason the embed stage batches (#285). This is the path a full
+// re-embed of the corpus runs through, so the batching matters most here.
 func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, error) {
 	if e.groupMatcher == nil {
 		return 0, fmt.Errorf("embedding not configured (no Ollama URL)")
@@ -609,27 +640,42 @@ func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, er
 		return 0, err
 	}
 
+	reqs := make([]ai.EmbedRequest, len(articles))
+	for i, a := range articles {
+		reqs[i] = BuildArticleEmbedInput(e.store, a)
+	}
+
 	count := 0
-	for _, a := range articles {
-		fields, body := BuildArticleEmbedInput(e.store, a)
-		emb, err := e.groupMatcher.EmbedRecord(ctx, fields, body)
-		if err != nil {
-			log.Printf("backfill embed article %d: %v", a.ID, err)
-			e.store.MarkArticleEmbeddingFailed(a.ID, model, err.Error()) //nolint:errcheck
-			continue
-		}
-		if emb == nil {
+	for i, r := range e.groupMatcher.EmbedRecords(ctx, reqs, e.embedBatchSize()) {
+		a := articles[i]
+		switch {
+		case r.Err != nil:
+			log.Printf("backfill embed article %d: %v", a.ID, r.Err)
+			e.store.MarkArticleEmbeddingFailed(a.ID, model, r.Err.Error()) //nolint:errcheck
+		case len(r.Vectors) == 0:
 			// Body too short to embed meaningfully — deterministic skip.
 			e.store.MarkArticleEmbeddingSkipped(a.ID, model) //nolint:errcheck
-			continue
+		default:
+			chunks := make([]storage.EmbeddingChunk, len(r.Vectors))
+			for j, v := range r.Vectors {
+				chunks[j] = storage.EmbeddingChunk{Vector: v, StartByte: r.Spans[j].Start, EndByte: r.Spans[j].End}
+			}
+			if err := e.store.StoreArticleEmbeddings(a.ID, chunks, model); err != nil {
+				log.Printf("backfill store embeddings %d: %v", a.ID, err)
+				continue
+			}
+			count++
 		}
-		if err := e.store.StoreArticleEmbedding(a.ID, emb, model); err != nil {
-			log.Printf("backfill store embedding %d: %v", a.ID, err)
-			continue
-		}
-		count++
 	}
 	return count, nil
+}
+
+// embedBatchSize is how many texts go out in one embed request, from config.
+func (e *Engine) embedBatchSize() int {
+	if e.config != nil && e.config.Ollama.EmbedBatchSize > 0 {
+		return e.config.Ollama.EmbedBatchSize
+	}
+	return storage.DefaultEmbedBatchSize
 }
 
 // MarkArticleRead marks an article as read.

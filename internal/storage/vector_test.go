@@ -11,6 +11,13 @@ import (
 	embedding "github.com/matthewjhunter/go-embedding"
 )
 
+// storeEmbedding stores a single-chunk embedding for an article, which is what
+// most tests want: they are about the distance queries, not about chunking. The
+// byte span is nominal -- nothing reads it back.
+func storeEmbedding(s Store, articleID int64, vec []float32, model string) error {
+	return s.StoreArticleEmbeddings(articleID, []EmbeddingChunk{{Vector: vec, StartByte: 0, EndByte: 1}}, model)
+}
+
 // TestSemanticSearch checks the hybrid-search ANN path (#192): it must return a
 // user's subscribed-feed articles within the distance threshold in nearest-first
 // order, exclude other users' articles even when those are globally nearer to
@@ -52,7 +59,7 @@ func TestSemanticSearch(t *testing.T) {
 			t.Fatalf("add article %s: %v", m.guid, err)
 		}
 		mineID[m.guid] = id
-		if err := store.StoreArticleEmbedding(id, m.vec, model); err != nil {
+		if err := storeEmbedding(store, id, m.vec, model); err != nil {
 			t.Fatalf("store embedding %s: %v", m.guid, err)
 		}
 	}
@@ -65,7 +72,7 @@ func TestSemanticSearch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("add other article: %v", err)
 		}
-		if err := store.StoreArticleEmbedding(id, embVec(1, 0), model); err != nil {
+		if err := storeEmbedding(store, id, embVec(1, 0), model); err != nil {
 			t.Fatalf("store other embedding: %v", err)
 		}
 	}
@@ -167,7 +174,7 @@ func TestSemanticSearchScopedAtScale(t *testing.T) {
 		if err != nil {
 			t.Fatalf("add article %s: %v", m.guid, err)
 		}
-		if err := store.StoreArticleEmbedding(id, m.vec, model); err != nil {
+		if err := storeEmbedding(store, id, m.vec, model); err != nil {
 			t.Fatalf("store embedding %s: %v", m.guid, err)
 		}
 		wantIDs = append(wantIDs, id)
@@ -185,10 +192,10 @@ func TestSemanticSearchScopedAtScale(t *testing.T) {
 		t.Fatalf("seed decoy articles: %v", err)
 	}
 	if _, err := ps.pool.Exec(ctx, `
-		INSERT INTO article_embeddings (article_id, embedding, embedding_model, status)
-		SELECT a.id, $1, $2, $3 FROM articles a
-		WHERE a.feed_id = $4 AND a.guid LIKE 'decoy-%'`,
-		pgvector.NewVector(query), model, int16(EmbedStatusOK), feedOther); err != nil {
+		INSERT INTO article_embedding_chunks (article_id, embedding_model, ordinal, embedding, start_byte, end_byte)
+		SELECT a.id, $1, 0, $2, 0, 1 FROM articles a
+		WHERE a.feed_id = $3 AND a.guid LIKE 'decoy-%'`,
+		model, pgvector.NewVector(query), feedOther); err != nil {
 		t.Fatalf("seed decoy embeddings: %v", err)
 	}
 

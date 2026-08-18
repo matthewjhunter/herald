@@ -636,7 +636,8 @@ func TestBuildArticleEmbedInput_FullRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetArticle: %v", err)
 	}
-	fields, body := BuildArticleEmbedInput(engine.store, *a)
+	req := BuildArticleEmbedInput(engine.store, *a)
+	fields, body := req.Fields, req.Body
 
 	wantFields := map[string]string{
 		"feed":       "Schneier on Security",
@@ -679,7 +680,7 @@ func TestBuildArticleEmbedInput_LinkedContentAppended(t *testing.T) {
 		t.Fatalf("UpdateArticleLinkedContent: %v", err)
 	}
 	a, _ := engine.store.GetArticle(articleID)
-	_, body := BuildArticleEmbedInput(engine.store, *a)
+	body := BuildArticleEmbedInput(engine.store, *a).Body
 	if !strings.Contains(body, "Short post commentary.") {
 		t.Errorf("body missing original content: %q", body)
 	}
@@ -701,7 +702,7 @@ func TestBuildArticleEmbedInput_SummaryFallbackWhenContentEmpty(t *testing.T) {
 		Summary: "Summary text only.",
 	})
 	a, _ := engine.store.GetArticle(articleID)
-	_, body := BuildArticleEmbedInput(engine.store, *a)
+	body := BuildArticleEmbedInput(engine.store, *a).Body
 	if body != "Summary text only." {
 		t.Errorf("got body=%q, want summary fallback", body)
 	}
@@ -725,7 +726,8 @@ func TestBuildArticleEmbedInput_StripsNonsemantic(t *testing.T) {
 			`<strong>Tags:</strong> ![icon](https://cdn.example.com/tag.svg) policy.</p>`,
 	})
 	a, _ := engine.store.GetArticle(articleID)
-	fields, body := BuildArticleEmbedInput(engine.store, *a)
+	req := BuildArticleEmbedInput(engine.store, *a)
+	fields, body := req.Fields, req.Body
 
 	// Body: visible text preserved, URLs/HTML/markdown markup stripped.
 	wantSubstrings := []string{
@@ -779,7 +781,7 @@ func TestBuildArticleEmbedInput_MissingMetadataOmitsFields(t *testing.T) {
 		Summary: "Body.",
 	})
 	a, _ := engine.store.GetArticle(articleID)
-	fields, _ := BuildArticleEmbedInput(engine.store, *a)
+	fields := BuildArticleEmbedInput(engine.store, *a).Fields
 	for _, f := range fields {
 		if f.Key == "author" && f.Value != "" {
 			t.Errorf("expected empty author value, got %q", f.Value)
