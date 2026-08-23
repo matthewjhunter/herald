@@ -95,6 +95,35 @@ competitor article outranking the source may be correct rather than a miss.
 Prefer recall@10 over recall@1, and spot-check the top miss cases by hand rather
 than trusting the aggregate.
 
+## The coverage confound
+
+Removing or shortening the summary frees header bytes, so **the body gets more of
+the budget and chunks get bigger** -- which pushes more of them over the
+backend's hard 512-token limit. The low-summary variants will therefore fail to
+embed more articles than the baseline, and those articles are absent from the
+index entirely rather than merely ranked worse.
+
+That is not a retrieval-quality effect, and left uncorrected it biases the
+comparison against exactly the variant expected to win. It also biases it in a
+way that is easy to miss: a variant indexing fewer articles can post a *better*
+recall rate over the queries it can still answer.
+
+Observed on the production run at `EMBEDDING_MAX_BYTES=1500` with the full
+summary: 57 articles (0.13%) exceeded 512 tokens and failed hard. With the header
+shrunk by 350 bytes, expect materially more.
+
+Two ways to keep it honest, and the runs should do both:
+
+- **Equalise coverage.** Lower `EMBEDDING_MAX_BYTES` for the low-summary variants
+  until their `HTTP 500` count matches the baseline's, so every variant indexes
+  the same articles. This trades some of the freed budget back, which is the
+  honest accounting -- the summary was never competing against nothing, it was
+  competing against more body.
+- **Report coverage as a metric, not a footnote.** Record embedded-article count
+  and 500 count per run, and evaluate recall only over articles every variant
+  managed to index. A query whose source article is missing from one index is not
+  a fair test of ranking.
+
 ## Metrics
 
 Per query, the rank of the source article in `SemanticSearch` results:
@@ -103,8 +132,10 @@ Per query, the rank of the source article in `SemanticSearch` results:
 - **MRR** -- rank-sensitive, catches "still found but demoted"
 - **chunks per article** and **total chunk rows** -- the cost side; a variant that
   wins slightly while doubling the vector count may not be worth it
-- **HTTP 500 count** -- the summary-free variants leave more budget for body, so
-  the 512-token overruns should fall
+- **HTTP 500 count and embedded-article count** -- the coverage confound above.
+  The summary-free variants leave more budget for body, so overruns *rise*
+  rather than fall, and a variant that indexes fewer articles can post better
+  rates over the ones it kept
 
 Report all four runs together. A difference smaller than the spread between
 repeated runs of the same variant is not a result.
