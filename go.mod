@@ -6,18 +6,18 @@ require (
 	codeberg.org/readeck/go-readability/v2 v2.1.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/infodancer/oidclient v0.8.0
-	github.com/infodancer/smoke v0.1.0
+	github.com/infodancer/smoke v0.1.1
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/matthewjhunter/airlock v0.1.1
-	github.com/matthewjhunter/go-embedding v0.5.2
+	github.com/matthewjhunter/go-embedding v0.5.3
 	github.com/microcosm-cc/bluemonday v1.0.27
-	github.com/mmcdole/gofeed v1.4.0
+	github.com/mmcdole/gofeed v1.4.1
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/pgvector/pgvector-go v0.4.1
 	github.com/pgvector/pgvector-go/pgx v0.4.1
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/net v0.57.0
+	golang.org/x/net v0.58.0
 )
 
 require (
@@ -42,7 +42,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 )
 
 tool github.com/infodancer/smoke/cmd/smolder
