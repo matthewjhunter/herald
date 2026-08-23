@@ -541,3 +541,101 @@ func TestEmbedText_StaysUnprefixed(t *testing.T) {
 		t.Errorf("EmbedText altered its input: %q", rec.calls[0][0])
 	}
 }
+
+// --- Chunk target vs backend ceiling (#297) ---
+//
+// The two answer different questions. The ceiling exists so a strict backend
+// does not reject the request; the target is a retrieval choice. Deriving one
+// from the other means raising the ceiling silently widens every chunk.
+
+func chunkSizes(t *testing.T, m *GroupMatcher, body string) []int {
+	t.Helper()
+	rec := m.embedder.(*recordingEmbedder)
+	got := m.EmbedRecords(context.Background(), []EmbedRequest{{Body: body}}, 25)
+	if got[0].Err != nil {
+		t.Fatal(got[0].Err)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	var sizes []int
+	for _, call := range rec.calls {
+		for _, text := range call {
+			sizes = append(sizes, len(text))
+		}
+	}
+	return sizes
+}
+
+// A ceiling far above the retrieval target must not be used to size chunks.
+func TestChunkRecord_SizesToTheTargetNotTheCeiling(t *testing.T) {
+	m := NewGroupMatcher(&recordingEmbedder{}, chunkTestModel, embedding.Limits{MaxBytes: 6000})
+
+	long := strings.Repeat("Sentence about a topic. ", 500)
+	target := m.chunkTargetBytes()
+	if target >= 6000 {
+		t.Fatalf("test assumes a target below the 6000 ceiling, got %d", target)
+	}
+
+	for _, n := range chunkSizes(t, m, long) {
+		if n > target {
+			t.Errorf("chunk of %d bytes exceeds the %d-byte retrieval target; "+
+				"the ceiling is sizing chunks", n, target)
+		}
+	}
+}
+
+// The regression the issue is about: a config change that raises the backend
+// limit must not widen chunks and quietly degrade retrieval.
+func TestChunkRecord_RaisingTheCeilingDoesNotWidenChunks(t *testing.T) {
+	long := strings.Repeat("Sentence about a topic. ", 500)
+
+	tight := chunkSizes(t, NewGroupMatcher(&recordingEmbedder{}, chunkTestModel,
+		embedding.Limits{MaxBytes: 4000}), long)
+	loose := chunkSizes(t, NewGroupMatcher(&recordingEmbedder{}, chunkTestModel,
+		embedding.Limits{MaxBytes: 60000}), long)
+
+	if len(tight) != len(loose) {
+		t.Errorf("a 4000-byte ceiling produced %d chunks and a 60000-byte ceiling %d; "+
+			"the ceiling is driving chunk size", len(tight), len(loose))
+	}
+}
+
+// A backend stricter than the target still wins: the request has to be one the
+// backend will accept.
+func TestChunkRecord_CeilingBelowTheTargetClamps(t *testing.T) {
+	const ceiling = 300
+	m := NewGroupMatcher(&recordingEmbedder{}, chunkTestModel, embedding.Limits{MaxBytes: ceiling})
+	if m.chunkTargetBytes() <= ceiling {
+		t.Fatalf("test assumes a target above the %d ceiling, got %d", ceiling, m.chunkTargetBytes())
+	}
+
+	for _, n := range chunkSizes(t, m, strings.Repeat("Sentence about a topic. ", 500)) {
+		if n > ceiling {
+			t.Errorf("chunk of %d bytes exceeds the %d-byte ceiling", n, ceiling)
+		}
+	}
+}
+
+// The target is a token figure converted through an observed bytes-per-token
+// ratio, because tokens are the unit chunk size is reasoned about in and the
+// ratio varies by model and corpus.
+func TestTargetBytesFor_ConvertsTokensThroughTheRatio(t *testing.T) {
+	if got := targetBytesFor(512, 2.75); got != 1408 {
+		t.Errorf("targetBytesFor(512, 2.75) = %d, want 1408", got)
+	}
+	// A denser corpus (fewer bytes per token) must yield a smaller byte budget,
+	// or the token target is silently exceeded.
+	dense, sparse := targetBytesFor(512, 2), targetBytesFor(512, 4)
+	if dense >= sparse {
+		t.Errorf("dense corpus gave %d bytes and sparse %d; the ratio is not applied", dense, sparse)
+	}
+}
+
+func TestSetChunkTargetTokens_Overrides(t *testing.T) {
+	m := NewGroupMatcher(&recordingEmbedder{}, chunkTestModel, embedding.Limits{MaxBytes: 60000})
+	before := m.chunkTargetBytes()
+	m.SetChunkTargetTokens(DefaultChunkTargetTokens * 2)
+	if after := m.chunkTargetBytes(); after <= before {
+		t.Errorf("doubling the token target moved the byte target from %d to %d", before, after)
+	}
+}

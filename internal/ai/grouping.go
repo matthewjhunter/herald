@@ -14,6 +14,8 @@ type GroupMatcher struct {
 	embedder embedding.Embedder
 	model    string // embedding model name, stored alongside vectors
 	limits   embedding.Limits
+	// targetTokens is the retrieval chunk target; see DefaultChunkTargetTokens.
+	targetTokens int
 }
 
 // NewGroupMatcher creates a GroupMatcher for the given embedder and model. The
@@ -28,7 +30,72 @@ type GroupMatcher struct {
 // truncates every chunk's tail silently. Pass a zero Limits to size from the
 // model's registered budget alone.
 func NewGroupMatcher(embedder embedding.Embedder, model string, limits embedding.Limits) *GroupMatcher {
-	return &GroupMatcher{embedder: embedder, model: model, limits: limits}
+	return &GroupMatcher{
+		embedder:     embedder,
+		model:        model,
+		limits:       limits,
+		targetTokens: DefaultChunkTargetTokens,
+	}
+}
+
+// DefaultChunkTargetTokens is the size chunks aim for, in tokens.
+//
+// It is deliberately far below the models' registered budgets. A vector has
+// fixed capacity, so filling the whole context window averages away the
+// specificity retrieval depends on; 256-512 tokens is the usual working range,
+// and go-embedding's Split documents that its own default -- the model budget --
+// is the wrong target for retrieval and that callers should pass their own.
+//
+// Expressed in tokens rather than bytes because tokens are the unit chunk size
+// is actually reasoned about in, and the bytes-per-token ratio varies by model
+// and by corpus: herald's stripped article text runs far denser than prose.
+const DefaultChunkTargetTokens = 512
+
+// SetChunkTargetTokens overrides the retrieval chunk target. Zero or negative
+// restores the default. It is a knob for evaluation (see plans/013), not
+// something a deployment should normally need.
+func (m *GroupMatcher) SetChunkTargetTokens(n int) {
+	if n <= 0 {
+		n = DefaultChunkTargetTokens
+	}
+	m.targetTokens = n
+}
+
+// fallbackBytesPerToken converts the token target before anything has been
+// observed. Deliberately conservative: guessing high would size chunks past the
+// token target on dense text, which on a backend that rejects oversize input
+// rather than truncating fails the request outright.
+//
+// No tokenizer is vendored to make this exact. The obvious candidate ships
+// under the Gemma Terms of Use, which are not OSI terms and carry distribution
+// obligations, so a caller who wants exactness supplies their own tokenizer
+// (see SplitOptions.Tokenizer) rather than herald shipping one.
+const fallbackBytesPerToken = 2.0
+
+// calibrationMinSamples is how many observations to require before trusting the
+// measured ratio over the fallback. A handful of atypical documents early in a
+// run would otherwise set the budget for everything after them.
+const calibrationMinSamples = 20
+
+// targetBytesFor converts a token target into a byte budget at a given ratio.
+func targetBytesFor(tokens int, bytesPerToken float64) int {
+	return int(float64(tokens) * bytesPerToken)
+}
+
+// chunkTargetBytes is the retrieval target in bytes: the token target converted
+// through the bytes-per-token ratio observed for this model, or a conservative
+// fallback before enough has been seen.
+//
+// P10 rather than the mean: a low ratio means more tokens per byte, so the
+// tenth percentile is the conservative end. Sizing from the mean would push the
+// densest documents past the token target, and those are exactly the ones a
+// strict backend rejects.
+func (m *GroupMatcher) chunkTargetBytes() int {
+	ratio := fallbackBytesPerToken
+	if cal, ok := embedding.CalibrationFor(m.model); ok && cal.Samples >= calibrationMinSamples && cal.P10 > 0 {
+		ratio = cal.P10
+	}
+	return targetBytesFor(m.targetTokens, ratio)
 }
 
 // Model returns the embedding model name used by this matcher.
@@ -234,19 +301,27 @@ func (m *GroupMatcher) chunkRecord(r EmbedRequest) []recordChunk {
 		return embedding.FormatRecordForTask(m.model, embedding.TaskClustering, fields, body)
 	}
 
-	// The configured budget first: a deployment lowers it when the backend
-	// serving the model is stricter than the model itself. EmbeddingGemma is
-	// registered at 6000 bytes, but the lemonade backends reject any single
-	// input over 512 tokens with a hard 500 rather than truncating, so the
-	// budget that matters is the one the operator set, not the one the model
-	// advertises.
-	budget := m.limits.MaxBytes
-	if budget <= 0 {
-		budget = embedding.LookupLimits(m.model).MaxBytes
+	// Two numbers, not one.
+	//
+	// The ceiling is what the backend will accept. A deployment lowers it when
+	// the backend serving the model is stricter than the model itself:
+	// EmbeddingGemma is registered at 6000 bytes, but the lemonade backends
+	// reject any single input over 512 tokens with a hard 500 rather than
+	// truncating, so the figure that matters is the one the operator set.
+	ceiling := m.limits.MaxBytes
+	if ceiling <= 0 {
+		ceiling = embedding.LookupLimits(m.model).MaxBytes
 	}
-	if budget <= 0 {
-		budget = fallbackChunkBytes
+	if ceiling <= 0 {
+		ceiling = fallbackChunkBytes
 	}
+
+	// The target is a retrieval choice, and it is the one that normally binds.
+	// Sizing from the ceiling instead means raising the backend limit silently
+	// widens every chunk and degrades retrieval with nothing reporting it -- the
+	// config change would read as a capacity increase (#297). The ceiling can
+	// only ever make chunks smaller.
+	budget := min(m.chunkTargetBytes(), ceiling)
 	// Everything the formatter adds -- task prefix, field labels, the summary --
 	// is charged to every chunk, so the body only gets what is left.
 	overhead := len(format(""))

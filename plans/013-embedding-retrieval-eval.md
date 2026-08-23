@@ -95,6 +95,24 @@ competitor article outranking the source may be correct rather than a miss.
 Prefer recall@10 over recall@1, and spot-check the top miss cases by hand rather
 than trusting the aggregate.
 
+## Chunk target is now an independent axis (#297)
+
+Chunk size used to be whatever `EMBEDDING_MAX_BYTES` was -- the backend ceiling
+doing double duty as the retrieval target. It is now a separate token figure
+(`DefaultChunkTargetTokens`, 512), converted to bytes through the observed
+bytes-per-token ratio, with the ceiling only able to make chunks smaller.
+
+Two consequences for this eval. Chunk size can be varied without touching the
+backend limit, so it is a dimension the eval can hold constant or sweep rather
+than one that moves whenever the deployment config does. And the confound below
+is smaller than when it was written: the summary and the body no longer compete
+for the *whole* backend budget, only for the chunk target -- so shrinking the
+summary still frees body bytes, but the swing is bounded by the target rather
+than by whatever the ceiling happens to be set to.
+
+The confound is not eliminated, because summary and body still share one chunk.
+Measure coverage regardless.
+
 ## The coverage confound
 
 Removing or shortening the summary frees header bytes, so **the body gets more of
