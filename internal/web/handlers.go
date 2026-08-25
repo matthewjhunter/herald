@@ -58,10 +58,10 @@ type adminResolver interface {
 // resolved live, so a revoked grant takes effect at once rather than lingering
 // until a token expires.
 //
-// Two fallbacks. The role claim is honoured TEMPORARILY while webauth still
-// stamps roles into the access token; that path is removed once webauth stops
-// (see docs and the roles-in-token migration). The configured email list is a
-// break-glass that does not depend on the store being populated.
+// A role claim in the token grants nothing: webauth no longer emits one, and
+// trusting token-carried roles was the confused-deputy hazard this store
+// replaced. The only fallback is the configured email list, a break-glass that
+// does not depend on the store being populated.
 func (h *handlers) isAdminCtx(ctx context.Context) bool {
 	role := h.adminRole
 	if role == "" {
@@ -82,12 +82,6 @@ func (h *handlers) isAdminCtx(ctx context.Context) bool {
 		if err == nil && p.HasRole(role) {
 			return true
 		}
-	}
-
-	// TEMPORARY: trust a role claim while webauth still emits one. Removed in
-	// phase 3 of the roles-in-token migration.
-	if claims != nil && slices.Contains(claims.Roles, role) {
-		return true
 	}
 
 	// Break-glass: the configured email list.
