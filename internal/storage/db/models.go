@@ -136,6 +136,15 @@ type ArticleVote struct {
 	UpdatedAt time.Time
 }
 
+type AuthzUserRole struct {
+	Issuer    string
+	Subject   string
+	Module    string
+	Role      string
+	GrantedAt time.Time
+	GrantedBy string
+}
+
 type CycleStat struct {
 	ID                 int64
 	CompletedAt        time.Time
