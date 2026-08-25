@@ -74,16 +74,16 @@ func TestIsAdmin_EmailFallback(t *testing.T) {
 	}
 }
 
-// TEMPORARY, removed in phase 3: while webauth still stamps roles into the
-// access token, a role claim is honoured so the migration has no gap. Once
-// webauth stops emitting the claim (phase 2) this path goes dead, and the test
-// with it.
-func TestIsAdmin_LegacyRoleClaimFallback(t *testing.T) {
+// The legacy role-claim path is gone (phase 3): webauth no longer stamps roles
+// into the access token, so a role claim is now just untrusted token content
+// and must NOT grant admin on its own. Only an authz grant or the break-glass
+// email list may. This is the guard that the fallback was actually removed.
+func TestIsAdmin_RoleClaimIgnored(t *testing.T) {
 	h := adminHandlers(fakeResolver{roles: map[string][]string{}})
 
 	ctx := withClaims(context.Background(), &oidclient.Claims{Sub: "sub-legacy", Roles: []string{"admin"}})
-	if !h.isAdminCtx(ctx) {
-		t.Error("a legacy admin role claim was not honoured during the transition")
+	if h.isAdminCtx(ctx) {
+		t.Error("an admin role claim was honoured; the legacy fallback should be gone")
 	}
 }
 
@@ -108,11 +108,19 @@ func TestIsAdmin_NoClaimsDenies(t *testing.T) {
 }
 
 // A nil resolver (a router built without authz wiring, e.g. the smoke-manifest
-// path) must not panic; the other checks still work.
+// path) must not panic. With no store to consult, a role claim grants nothing
+// (the legacy fallback is gone), but the break-glass email list still works.
 func TestIsAdmin_NilResolverDoesNotPanic(t *testing.T) {
 	h := &handlers{adminRole: "admin", adminUsers: []string{"breakglass@example.test"}, issuer: testIssuer}
-	ctx := withClaims(context.Background(), &oidclient.Claims{Sub: "s", Roles: []string{"admin"}})
-	if !h.isAdminCtx(ctx) {
-		t.Error("legacy role claim should still work with no resolver wired")
+
+	claimCtx := withClaims(context.Background(), &oidclient.Claims{Sub: "s", Roles: []string{"admin"}})
+	if h.isAdminCtx(claimCtx) {
+		t.Error("a role claim granted admin with no resolver; the legacy fallback should be gone")
+	}
+
+	breakGlass := withClaims(context.Background(), &oidclient.Claims{Sub: "s", Email: "breakglass@example.test"})
+	breakGlass = withUser(breakGlass, &herald.User{Email: "breakglass@example.test"})
+	if !h.isAdminCtx(breakGlass) {
+		t.Error("break-glass email should still grant admin with no resolver wired")
 	}
 }
