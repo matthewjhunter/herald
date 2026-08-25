@@ -5,6 +5,7 @@ go 1.26.6
 require (
 	codeberg.org/readeck/go-readability/v2 v2.1.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/infodancer/authz v0.1.0
 	github.com/infodancer/oidclient v0.8.0
 	github.com/infodancer/smoke v0.1.1
 	github.com/jackc/pgx/v5 v5.10.0

@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/infodancer/authz"
 	"github.com/infodancer/oidclient"
 	"github.com/infodancer/oidclient/session"
 	herald "github.com/matthewjhunter/herald"
@@ -35,24 +36,61 @@ type handlers struct {
 	pages       map[string]*template.Template // per-page (authenticated) template sets
 	publicPages map[string]*template.Template // unauthenticated pages (landing); base_public.html layout
 	pagesOnce   sync.Once                     // guards lazy template parsing
-	adminRole   string                        // JWT role value that grants admin access (default: "admin")
-	adminUsers  []string                      // fallback email list when the IdP does not issue role claims
+	adminRole   string                        // role name that grants admin access (default: "admin")
+	adminUsers  []string                      // break-glass email list, honoured even with no authz grant
+	issuer      string                        // configured OIDC issuer; the authz key, never read from a token
+	authz       adminResolver                 // role store; nil in the smoke-manifest path
 	analytics   analyticsView                 // optional landing-page analytics (disabled zero value = no tracking)
 }
 
+// adminResolver loads an identity's roles from the host's own grant store. It
+// is the narrow slice of authz.Resolver that admin authorization needs, named
+// so tests can inject a fake.
+type adminResolver interface {
+	Resolve(ctx context.Context, id authz.Identity) (*authz.Principal, error)
+}
+
 // isAdminCtx reports whether the request context carries admin privileges.
-// Checks JWT roles first; falls back to the config email list.
+//
+// Authorization comes from the authz grant store, keyed on (issuer, subject):
+// the issuer is the one herald configured and validated tokens against, never a
+// value read from a token, and the subject is the token's stable sub. Roles are
+// resolved live, so a revoked grant takes effect at once rather than lingering
+// until a token expires.
+//
+// Two fallbacks. The role claim is honoured TEMPORARILY while webauth still
+// stamps roles into the access token; that path is removed once webauth stops
+// (see docs and the roles-in-token migration). The configured email list is a
+// break-glass that does not depend on the store being populated.
 func (h *handlers) isAdminCtx(ctx context.Context) bool {
 	role := h.adminRole
 	if role == "" {
 		role = "admin"
 	}
-	if claims := claimsFromContext(ctx); claims != nil {
-		if slices.Contains(claims.Roles, role) {
+	claims := claimsFromContext(ctx)
+
+	// Authoritative: the grant store. A lookup error denies rather than
+	// granting, and falls through to the fallbacks.
+	if claims != nil && h.authz != nil {
+		p, err := h.authz.Resolve(ctx, authz.Identity{
+			Issuer:        h.issuer,
+			Subject:       claims.Sub,
+			DisplayName:   claims.Name,
+			Email:         claims.Email,
+			EmailVerified: claims.EmailVerified,
+		})
+		if err == nil && p.HasRole(role) {
 			return true
 		}
 	}
-	// Fallback: check the config email list.
+
+	// TEMPORARY: trust a role claim while webauth still emits one. Removed in
+	// phase 3 of the roles-in-token migration.
+	if claims != nil && slices.Contains(claims.Roles, role) {
+		return true
+	}
+
+	// Break-glass: the configured email list.
 	if user := userFromContext(ctx); user != nil {
 		if slices.Contains(h.adminUsers, user.Email) {
 			return true

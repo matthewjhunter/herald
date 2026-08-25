@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -10,7 +11,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/infodancer/authz"
 	"github.com/infodancer/oidclient"
+	_ "github.com/jackc/pgx/v5/stdlib" // database/sql driver for the authz handle
 	"github.com/matthewjhunter/herald"
 	web "github.com/matthewjhunter/herald/internal/web"
 	"github.com/spf13/cobra"
@@ -97,7 +100,19 @@ user sessions, article browsing, admin, Fever API, etc.`,
 			}
 			defer engine.Close()
 
-			mux := web.NewRouter(engine, validator, cfg.Web.Admin.Role, cfg.Web.Admin.Users, web.AnalyticsConfig{
+			// Admin authorization resolves against herald's own authz grant
+			// store, keyed on the configured issuer -- not on a role claim in the
+			// token. goose (in engine startup) has already created the table; a
+			// small dedicated database/sql handle backs the lookups, since the
+			// query layer uses a pgx pool authz cannot consume directly.
+			authzDB, err := sql.Open("pgx", db)
+			if err != nil {
+				return fmt.Errorf("open authz db: %w", err)
+			}
+			defer authzDB.Close()
+			resolver := &authz.Resolver{Store: authz.NewPostgresStore(authzDB), Module: ""}
+
+			mux := web.NewRouter(engine, validator, issuerURL, resolver, cfg.Web.Admin.Role, cfg.Web.Admin.Users, web.AnalyticsConfig{
 				UmamiSrc:  cfg.Web.Analytics.UmamiSrc,
 				WebsiteID: cfg.Web.Analytics.WebsiteID,
 			})

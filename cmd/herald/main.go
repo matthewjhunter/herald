@@ -85,6 +85,7 @@ func main() {
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "format", "f", "json", "output format: json, text, human (default: json)")
 
 	rootCmd.AddCommand(createUserCmd())
+	rootCmd.AddCommand(adminCmd())
 	rootCmd.AddCommand(importCmd())
 	rootCmd.AddCommand(fetchFeedsCmd())
 	rootCmd.AddCommand(processCmd())
