@@ -63,7 +63,7 @@ func TestNewAnalyticsView(t *testing.T) {
 // which serves the public landing page (sessions is nil with a nil validator).
 func getLanding(t *testing.T, analytics AnalyticsConfig) *httptest.ResponseRecorder {
 	t.Helper()
-	router := NewRouter(nil, nil, "", nil, analytics)
+	router := NewRouter(nil, nil, "", nil, "", nil, analytics)
 	wrapped := SecurityHeaders(router)
 	rr := httptest.NewRecorder()
 	wrapped.ServeHTTP(rr, httptest.NewRequest("GET", "/", nil))

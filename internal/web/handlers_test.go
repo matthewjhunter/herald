@@ -331,7 +331,7 @@ func newTestFixturesWith(t *testing.T, mutate func(*herald.EngineConfig)) *testF
 
 	validator, issueToken := newTestValidatorIssuer(t)
 	jwtToken := issueToken("test-sub-1", "tester@example.com", "Tester")
-	router := NewRouter(engine, validator, "", nil, AnalyticsConfig{})
+	router := NewRouter(engine, validator, "", nil, "", nil, AnalyticsConfig{})
 
 	t.Cleanup(func() {
 		engine.Close()
@@ -1061,7 +1061,7 @@ func TestHandleCallback_SetsSessionCookie(t *testing.T) {
 	tf := newTestFixtures(t)
 
 	validator := newTestValidatorWithOIDC(t, nil)
-	router := NewRouter(tf.engine, validator, "", nil, AnalyticsConfig{})
+	router := NewRouter(tf.engine, validator, "", nil, "", nil, AnalyticsConfig{})
 
 	state := "test-state-nonce"
 	verifier := "test-pkce-verifier"
@@ -1098,7 +1098,7 @@ func TestHandleCallback_DefaultRedirect(t *testing.T) {
 	tf := newTestFixtures(t)
 
 	validator := newTestValidatorWithOIDC(t, nil)
-	router := NewRouter(tf.engine, validator, "", nil, AnalyticsConfig{})
+	router := NewRouter(tf.engine, validator, "", nil, "", nil, AnalyticsConfig{})
 
 	state := "test-state"
 	req := httptest.NewRequest("GET", "/auth/callback?code=test-code&state="+state, nil)
@@ -1121,7 +1121,7 @@ func TestHandleCallback_InvalidState(t *testing.T) {
 	tf := newTestFixtures(t)
 
 	validator := newTestValidatorWithOIDC(t, nil)
-	router := NewRouter(tf.engine, validator, "", nil, AnalyticsConfig{})
+	router := NewRouter(tf.engine, validator, "", nil, "", nil, AnalyticsConfig{})
 
 	req := httptest.NewRequest("GET", "/auth/callback?code=test-code&state=WRONG", nil)
 	req.AddCookie(&http.Cookie{Name: oidclient.CookieState, Value: "correct-state"})
@@ -1139,7 +1139,7 @@ func TestHandleCallback_MissingVerifier(t *testing.T) {
 	tf := newTestFixtures(t)
 
 	validator := newTestValidatorWithOIDC(t, nil)
-	router := NewRouter(tf.engine, validator, "", nil, AnalyticsConfig{})
+	router := NewRouter(tf.engine, validator, "", nil, "", nil, AnalyticsConfig{})
 
 	state := "test-state"
 	req := httptest.NewRequest("GET", "/auth/callback?code=test-code&state="+state, nil)
@@ -1161,7 +1161,7 @@ func TestHandleCallback_TokenExchangeError(t *testing.T) {
 	validator := newTestValidatorWithOIDC(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid_grant", http.StatusUnauthorized)
 	})
-	router := NewRouter(tf.engine, validator, "", nil, AnalyticsConfig{})
+	router := NewRouter(tf.engine, validator, "", nil, "", nil, AnalyticsConfig{})
 
 	state := "test-state"
 	req := httptest.NewRequest("GET", "/auth/callback?code=bad-code&state="+state, nil)
@@ -1180,7 +1180,7 @@ func TestHandleCallback_UpstreamAuthError(t *testing.T) {
 	tf := newTestFixtures(t)
 
 	validator := newTestValidatorWithOIDC(t, nil)
-	router := NewRouter(tf.engine, validator, "", nil, AnalyticsConfig{})
+	router := NewRouter(tf.engine, validator, "", nil, "", nil, AnalyticsConfig{})
 
 	// Webauth redirects with ?error=access_denied when the user denies.
 	req := httptest.NewRequest("GET", "/auth/callback?error=access_denied&error_description=User+denied+access", nil)
@@ -1619,7 +1619,7 @@ func newAdminFixtures(t *testing.T) *testFixtures {
 	validator, issueToken := newTestValidatorIssuer(t)
 	jwtToken := issueToken("test-sub-1", "tester@example.com", "Tester")
 	// Grant admin by listing the test user's email in adminUsers.
-	router := NewRouter(engine, validator, "", []string{"tester@example.com"}, AnalyticsConfig{})
+	router := NewRouter(engine, validator, "", nil, "", []string{"tester@example.com"}, AnalyticsConfig{})
 
 	t.Cleanup(func() {
 		engine.Close()

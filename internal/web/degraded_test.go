@@ -33,7 +33,7 @@ func TestRouterDegradesWhileIdPUnreachable(t *testing.T) {
 		t.Fatalf("NewLazy with the IdP down must not fail: %v", err)
 	}
 
-	router := NewRouter(tf.engine, validator, "", nil, AnalyticsConfig{})
+	router := NewRouter(tf.engine, validator, "", nil, "", nil, AnalyticsConfig{})
 
 	cases := []struct {
 		method, path string
