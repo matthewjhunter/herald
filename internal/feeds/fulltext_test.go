@@ -81,6 +81,52 @@ func TestIsTruncated_HTMLFull(t *testing.T) {
 	}
 }
 
+// --- syndication-footer tests ---
+
+// Excerpt-only WordPress feeds append a "The post X appeared first on Y."
+// footer, which ends in a period and so used to be credited as an intentional
+// short post -- leaving the reader with nothing but the footer and the AI
+// stages summarizing a syndication notice (an editorial-cartoon post whose
+// whole body is an image is the worst case). Content carrying that footer with
+// little else is an excerpt, and must be fetched in full.
+func TestIsTruncated_SyndicationFooterOnly(t *testing.T) {
+	cases := map[string]string{
+		"yoast the post": `<p>"Everywhere you go, Big Brother government is watching."</p>` +
+			`<p>The post <a href="https://texasscorecard.com/opinion/youre-not-paranoid/">You're Not Paranoid ...</a>` +
+			` appeared first on <a href="https://texasscorecard.com">Texas Scorecard</a>.</p>`,
+		"the article":      `<p>A single line of setup.</p><p>The article <a href="https://example.com/a">Some Title</a> appeared first on <a href="https://example.com">Example</a>.</p>`,
+		"first appeared":   `<p>A single line of setup.</p><p>This post first appeared on Example News.</p>`,
+		"continue reading": `<p>A single line of setup.</p><p><a href="https://example.com/a">Continue reading &rarr;</a></p>`,
+		"read more":        `<p>A single line of setup.</p><p><a href="https://example.com/a">Read more...</a></p>`,
+	}
+	for name, content := range cases {
+		t.Run(name, func(t *testing.T) {
+			if !isTruncated(content) {
+				t.Errorf("expected excerpt with syndication footer to be truncated: %q", content)
+			}
+		})
+	}
+}
+
+// A full-content feed also carries the Yoast footer. It must not be dragged
+// into a pointless full-text fetch just because the footer is present.
+func TestIsTruncated_SyndicationFooterOnFullPost(t *testing.T) {
+	content := "<p>" + repeatStr("Full paragraph text here. ", 25) + "</p>" +
+		`<p>The post <a href="https://example.com/a">Some Title</a> appeared first on <a href="https://example.com">Example</a>.</p>`
+	if isTruncated(content) {
+		t.Error("expected full article with syndication footer not to be truncated")
+	}
+}
+
+// Ordinary prose must not be mistaken for a footer: the stripper keys on the
+// full "appeared first on" construction, not on the words alone.
+func TestStripSyndicationFooter_LeavesProse(t *testing.T) {
+	prose := "The post office appeared first on the left, then the courthouse."
+	if got := stripSyndicationFooter(prose); got != prose {
+		t.Errorf("stripSyndicationFooter rewrote ordinary prose:\n got %q\nwant %q", got, prose)
+	}
+}
+
 // --- isLinkPost tests ---
 
 func TestIsLinkPost_ExternalLink(t *testing.T) {

@@ -160,8 +160,8 @@ func TestRunSummariesOncePerArticleAcrossUsers(t *testing.T) {
 		t.Fatalf("subscribe user 2: %v", err)
 	}
 
-	a := seed(t, store, feedID, "a", "body a")
-	b := seed(t, store, feedID, "b", "body b")
+	a := seed(t, store, feedID, "a", summarizableBody)
+	b := seed(t, store, feedID, "b", summarizableBody)
 	for _, art := range []storage.Article{a, b} {
 		if err := store.ScreenArticleSecurity(art.ID, 1, "none", false, false); err != nil {
 			t.Fatal(err)
