@@ -393,6 +393,12 @@ func TestSecurityStageScansSanitizedContent(t *testing.T) {
 	}
 }
 
+// summarizableBody is prose long enough to clear the summarize stage's
+// no-prose floor, so tests exercise the behavior they name.
+const summarizableBody = "The council voted seven to two on Tuesday to approve the new " +
+	"drainage district, ending a dispute that had run since the spring floods " +
+	"washed out two county roads and a rail crossing."
+
 func TestSummarizeStage(t *testing.T) {
 	st, store, feedID := newHarness(t, &fakeAI{available: true})
 	mustPass := func(a storage.Article) {
@@ -404,7 +410,7 @@ func TestSummarizeStage(t *testing.T) {
 
 	t.Run("caches a good summary", func(t *testing.T) {
 		st.AI.(*fakeAI).summarizeFn = func(string, string) (string, error) { return "good summary", nil }
-		a := seed(t, store, feedID, "good", "the full article body is here")
+		a := seed(t, store, feedID, "good", summarizableBody)
 		mustPass(a)
 		out := st.Summarize(context.Background(), []storage.Article{a})
 		if len(out) != 1 {
@@ -418,7 +424,7 @@ func TestSummarizeStage(t *testing.T) {
 
 	t.Run("garbled summary is a transient skip", func(t *testing.T) {
 		st.AI.(*fakeAI).summarizeFn = func(string, string) (string, error) { return "### Assistant: junk", nil }
-		a := seed(t, store, feedID, "garbled", "the full article body is here")
+		a := seed(t, store, feedID, "garbled", summarizableBody)
 		mustPass(a)
 		out := st.Summarize(context.Background(), []storage.Article{a})
 		if len(out) != 0 {
@@ -433,7 +439,7 @@ func TestSummarizeStage(t *testing.T) {
 		st.AI.(*fakeAI).summarizeFn = func(_, content string) (string, error) {
 			return content + " and then a great deal more text than the source", nil
 		}
-		a := seed(t, store, feedID, "toolong", "short body")
+		a := seed(t, store, feedID, "toolong", summarizableBody)
 		mustPass(a)
 		out := st.Summarize(context.Background(), []storage.Article{a})
 		if len(out) != 1 {
@@ -443,6 +449,39 @@ func TestSummarizeStage(t *testing.T) {
 		got, _ := store.GetArticleSummary(a.ID)
 		if got == nil {
 			t.Fatal("expected a skip row recorded for the over-length summary")
+		}
+	})
+
+	// A body with no prose in it — an editorial cartoon whose whole content is
+	// an image, or an excerpt that is nothing but the feed plugin's "appeared
+	// first on" footer — gives the model nothing to compress, and a model given
+	// nothing describes the boilerplate instead. Skip it rather than caching an
+	// invented summary.
+	t.Run("body with no summarizable prose is skipped without a model call", func(t *testing.T) {
+		cases := map[string]string{
+			"image only":       `<p><img src="https://example.com/cartoon.jpg" alt="a cartoon"></p>`,
+			"boilerplate only": `<p>The post <a href="https://example.com/a">A Title</a> appeared first on <a href="https://example.com">Example</a>.</p>`,
+		}
+		for name, body := range cases {
+			t.Run(name, func(t *testing.T) {
+				a := seed(t, store, feedID, "noprose-"+name, body)
+				mustPass(a)
+				before := st.AI.(*fakeAI).sumCalls
+				out := st.Summarize(context.Background(), []storage.Article{a})
+				if len(out) != 1 {
+					t.Fatalf("skipped article should still advance, got %v", ids(out))
+				}
+				if st.AI.(*fakeAI).sumCalls != before {
+					t.Error("a body with no prose should not reach the model")
+				}
+				got, _ := store.GetArticleSummary(a.ID)
+				if got == nil {
+					t.Fatal("expected a skip row so the article is not retried forever")
+				}
+				if got.AISummary != "" {
+					t.Errorf("expected no summary text, got %q", got.AISummary)
+				}
+			})
 		}
 	})
 

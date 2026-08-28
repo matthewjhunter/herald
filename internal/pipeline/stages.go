@@ -148,6 +148,13 @@ func (s *Stage) summarizeOne(ctx context.Context, article storage.Article) *stor
 	}
 
 	content := articleContent(article)
+	if n := proseLength(content); n < minProseChars {
+		reason := fmt.Sprintf("no summarizable prose (%d < %d chars)", n, minProseChars)
+		s.Formatter.Debug("marking article %d summarization skipped: %s", article.ID, reason)
+		s.Store.MarkSummarizationSkipped(article.ID, reason) //nolint:errcheck
+		return &article
+	}
+
 	maxLen := s.Cfg.Summarization.MaxSummaryLength
 	summary, err := s.AI.SummarizeArticle(ctx, article.Title, content, maxLen)
 	if err != nil {

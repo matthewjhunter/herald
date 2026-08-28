@@ -2,7 +2,10 @@ package pipeline
 
 import (
 	"context"
+	"html"
+	"regexp"
 	"sync"
+	"unicode"
 
 	"github.com/matthewjhunter/herald/internal/ai"
 	"github.com/matthewjhunter/herald/internal/output"
@@ -134,4 +137,32 @@ func articleContent(a storage.Article) string {
 	// May return "" when the body was nothing but markup, which the caller
 	// treats as a skip.
 	return sanitize.HTML(content)
+}
+
+// minProseChars is the least visible prose a body must carry before summarizing
+// it is worth a model call. Below this there is nothing to compress — an
+// editorial cartoon whose whole body is the image, or an excerpt that is
+// nothing but the feed plugin's "appeared first on" footer — and a model handed
+// a body with no article in it describes the boilerplate instead, which is how
+// a cartoon ends up with an "AI Summary" explaining that the text is a metadata
+// notice. Summarizing such an article is a deterministic no-op, so the stage
+// records a skip rather than retrying it every cycle.
+const minProseChars = 100
+
+// imagePlaceholderRe matches the "[image]" / "[image: alt text]" markers
+// sanitize.Text leaves where an <img> was. They are prose to the model but not
+// to this measurement: an image is exactly what cannot be summarized from text.
+var imagePlaceholderRe = regexp.MustCompile(`\[image(?::[^\]]*)?\]`)
+
+// proseLength counts the visible, non-whitespace characters of sanitized HTML,
+// ignoring markup and image placeholders.
+func proseLength(sanitizedHTML string) int {
+	text := imagePlaceholderRe.ReplaceAllString(sanitize.Text(sanitizedHTML), "")
+	n := 0
+	for _, r := range html.UnescapeString(text) {
+		if !unicode.IsSpace(r) {
+			n++
+		}
+	}
+	return n
 }
