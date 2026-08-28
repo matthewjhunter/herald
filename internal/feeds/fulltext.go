@@ -42,6 +42,36 @@ var emailRe = regexp.MustCompile(
 // treated as a truncated excerpt.
 const minTextChars = 500
 
+// syndicationFooterRes match the trailing boilerplate that feed plugins append
+// to each item: WordPress/Yoast's "The post X appeared first on Y." and the
+// "continue reading" links that stand in for the body of an excerpt. Each is
+// anchored to the end of the text, and the run after "on" may not contain a
+// comma or sentence-ending punctuation, so ordinary prose that happens to use
+// the same words ("The post office appeared first on the left, then the
+// courthouse.") is left alone.
+var syndicationFooterRes = []*regexp.Regexp{
+	regexp.MustCompile(`(?is)\s*the\s+(?:post|article|story)\b[^!?]{0,200}?\bappeared\s+first\s+on\b[^.,!?]{1,80}[.!?]?\s*$`),
+	regexp.MustCompile(`(?is)\s*(?:this|the)\s+(?:post|article|story)\b[^!?]{0,200}?\bfirst\s+appeared\s+on\b[^.,!?]{1,80}[.!?]?\s*$`),
+	regexp.MustCompile(`(?is)\s*(?:continue\s+reading|read\s+(?:more|the\s+(?:full|rest)))[^.!?]{0,60}\s*$`),
+}
+
+// stripSyndicationFooter removes trailing feed boilerplate from plain text,
+// returning what is left. Footers stack (a "continue reading" link above the
+// "appeared first on" line), so it strips until nothing more matches.
+func stripSyndicationFooter(plain string) string {
+	for range len(syndicationFooterRes) + 1 {
+		stripped := plain
+		for _, re := range syndicationFooterRes {
+			stripped = re.ReplaceAllString(stripped, "")
+		}
+		if stripped == plain {
+			return plain
+		}
+		plain = stripped
+	}
+	return plain
+}
+
 // fullTextFetchDelay controls the random delay range before each full-text
 // fetch. Set to 0 in tests to avoid unnecessary waits.
 var fullTextFetchDelay = 4000 // max additional milliseconds (base is 1s)
@@ -156,6 +186,16 @@ func isTruncated(content string) bool {
 		if strings.HasSuffix(strings.ToLower(plain), suffix) {
 			return true
 		}
+	}
+
+	// A syndication footer settles the question of whether short content is a
+	// deliberate short post: the plugin that appends it is serving an excerpt,
+	// and the footer's own terminal period is what used to make a body of pure
+	// boilerplate look like a finished sentence. Judge the remainder instead.
+	// Full-content feeds carry the same footer, so the length test still
+	// decides -- only the "ends with punctuation" credit is withdrawn.
+	if core := strings.TrimSpace(stripSyndicationFooter(plain)); len(core) < len(plain) {
+		return textLength(core) < minTextChars
 	}
 
 	if textLength(content) < minTextChars {
