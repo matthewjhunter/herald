@@ -211,14 +211,38 @@ func isTruncated(content string) bool {
 	return false
 }
 
+// contactEmailsPerKChar is the address density, in emails per 1000 text
+// characters, at which an extraction reads as a contact or staff page rather
+// than an article. A directory packs one address every few words; an article
+// that merely carries a contact block in its header is thousands of characters
+// of prose around a handful of addresses, two orders of magnitude below this.
+const contactEmailsPerKChar = 5
+
+// contactMinEmails is the floor below which density is not consulted at all:
+// one or two addresses is ordinary in article prose (a correction address, a
+// tip line) regardless of how short the piece is.
+const contactMinEmails = 3
+
 // looksLikeContactPage returns true when readability-extracted content appears
 // to be a sidebar or contact page rather than article prose. The signal is
-// email address density: real articles rarely contain three or more email
-// addresses, but contact/staff sidebars (like Ace of Spades HQ) typically do.
-// Also catches obfuscated addresses like "user at domain.com".
+// email address *density*, not a raw count: a count alone cannot tell a staff
+// directory from an article that readability prefixed with the site's contact
+// block, and rejecting the latter costs the article its entire body -- the
+// feed's teaser is all it will ever have, because full_text_fetched is set
+// once whatever the outcome. Obfuscated addresses ("user at domain dot com")
+// count the same as plain ones.
 func looksLikeContactPage(content string) bool {
 	plain := stripTags(content)
-	return len(emailRe.FindAllString(plain, 3)) >= 3
+	const maxCount = 100 // enough to establish density; bounds the scan
+	emails := len(emailRe.FindAllString(plain, maxCount))
+	if emails < contactMinEmails {
+		return false
+	}
+	chars := textLength(plain)
+	if chars == 0 {
+		return true
+	}
+	return emails*1000 >= contactEmailsPerKChar*chars
 }
 
 // endsWithCompleteSentence reports whether s ends with terminal punctuation

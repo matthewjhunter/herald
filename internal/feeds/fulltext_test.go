@@ -694,3 +694,53 @@ func repeatStr(s string, n int) string {
 	}
 	return b
 }
+
+// loremParagraphs returns n paragraphs of filler prose, enough to stand in for
+// a real article body without checking a third party's copy into the repo.
+func loremParagraphs(n int) string {
+	const para = `<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do
+	eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim
+	veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo
+	consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum
+	dolore eu fugiat nulla pariatur, excepteur sint occaecat cupidatat non proident.</p>
+`
+	return strings.Repeat(para, n)
+}
+
+// TestLooksLikeContactPage_ArticleWithContactHeader is the Ace of Spades shape:
+// readability prepends the site's contact block to an otherwise complete
+// article, so the extraction opens with a run of obfuscated addresses and then
+// carries thousands of characters of prose. Counting addresses alone cannot
+// tell that apart from a page that is nothing but a staff list, and rejecting
+// it costs the article its whole body -- full_text_fetched is one-shot, so the
+// feed's teaser is all it will ever have.
+func TestLooksLikeContactPage_ArticleWithContactHeader(t *testing.T) {
+	header := `Support Contact
+Editor: editor at example dot com
+Deputy: deputy at example.net
+Tips: tips at exampletips.org
+Legal: legal at example.net
+Weekend: weekend at example.org
+Overnight: overnight at example.net
+`
+	extraction := header + loremParagraphs(20)
+	if textLength(extraction) < 3000 {
+		t.Fatalf("fixture too small to represent a full article: %d chars", textLength(extraction))
+	}
+	if looksLikeContactPage(extraction) {
+		t.Error("expected an article carrying a prepended contact header to be accepted")
+	}
+}
+
+// TestLooksLikeContactPage_StaffDirectory holds the true positive: a page whose
+// text is mostly addresses stays rejected no matter how many rows it has.
+func TestLooksLikeContactPage_StaffDirectory(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("<h1>Contact Us</h1><p>Reach the desk you need.</p>")
+	for i := range 30 {
+		fmt.Fprintf(&b, "<p>Desk %d: desk%d at example.org</p>\n", i, i)
+	}
+	if !looksLikeContactPage(b.String()) {
+		t.Error("expected a staff directory to be rejected as boilerplate")
+	}
+}
