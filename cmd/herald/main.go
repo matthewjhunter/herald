@@ -98,6 +98,7 @@ func main() {
 	rootCmd.AddCommand(resetScoresCmd())
 	rootCmd.AddCommand(screenCompareCmd())
 	rootCmd.AddCommand(resetCmd())
+	rootCmd.AddCommand(repairCmd())
 	rootCmd.AddCommand(backfillEmbeddingsCmd())
 	rootCmd.AddCommand(embeddingDriftCmd())
 

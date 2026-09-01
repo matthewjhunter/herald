@@ -23,6 +23,16 @@ type Feed struct {
 	Status            string // "active" or "dead"
 }
 
+// ExtractedArticle is the subset of an article a full-text repair pass reads
+// and rewrites: the id and the two columns that hold extraction output. A
+// repair scans the whole corpus, so it carries only these rather than every
+// article field.
+type ExtractedArticle struct {
+	ID            int64
+	Content       string
+	LinkedContent string
+}
+
 type Article struct {
 	ID      int64
 	FeedID  int64

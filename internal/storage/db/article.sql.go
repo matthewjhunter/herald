@@ -238,6 +238,47 @@ func (q *Queries) GetArticlesNeedingFullText(ctx context.Context, lim int32) ([]
 	return items, nil
 }
 
+const getFetchedFullTextArticles = `-- name: GetFetchedFullTextArticles :many
+SELECT id, content, linked_content
+FROM articles
+WHERE full_text_fetched = TRUE AND id > $1
+ORDER BY id
+LIMIT $2
+`
+
+type GetFetchedFullTextArticlesParams struct {
+	AfterID int64
+	Lim     int32
+}
+
+type GetFetchedFullTextArticlesRow struct {
+	ID            int64
+	Content       *string
+	LinkedContent string
+}
+
+// Pages through articles whose body came from a full-text extraction, oldest
+// id first, for repair passes that rewrite stored extractions in place.
+func (q *Queries) GetFetchedFullTextArticles(ctx context.Context, arg GetFetchedFullTextArticlesParams) ([]GetFetchedFullTextArticlesRow, error) {
+	rows, err := q.db.Query(ctx, getFetchedFullTextArticles, arg.AfterID, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetFetchedFullTextArticlesRow{}
+	for rows.Next() {
+		var i GetFetchedFullTextArticlesRow
+		if err := rows.Scan(&i.ID, &i.Content, &i.LinkedContent); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getLowSafetyArticleSample = `-- name: GetLowSafetyArticleSample :many
 SELECT id, title, content, security_threat
 FROM articles
@@ -856,6 +897,23 @@ type UpdateArticleContentParams struct {
 
 func (q *Queries) UpdateArticleContent(ctx context.Context, arg UpdateArticleContentParams) error {
 	_, err := q.db.Exec(ctx, updateArticleContent, arg.Content, arg.ID)
+	return err
+}
+
+const updateArticleExtractedContent = `-- name: UpdateArticleExtractedContent :exec
+UPDATE articles
+SET content = $1::text, linked_content = $2::text
+WHERE id = $3
+`
+
+type UpdateArticleExtractedContentParams struct {
+	Content       string
+	LinkedContent string
+	ID            int64
+}
+
+func (q *Queries) UpdateArticleExtractedContent(ctx context.Context, arg UpdateArticleExtractedContentParams) error {
+	_, err := q.db.Exec(ctx, updateArticleExtractedContent, arg.Content, arg.LinkedContent, arg.ID)
 	return err
 }
 

@@ -232,3 +232,17 @@ JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = @user_id
 LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = @user_id
 WHERE a.fetched_date >= @since
   AND (@feed_id::bigint = 0 OR a.feed_id = @feed_id::bigint);
+
+-- name: GetFetchedFullTextArticles :many
+-- Pages through articles whose body came from a full-text extraction, oldest
+-- id first, for repair passes that rewrite stored extractions in place.
+SELECT id, content, linked_content
+FROM articles
+WHERE full_text_fetched = TRUE AND id > @after_id
+ORDER BY id
+LIMIT @lim;
+
+-- name: UpdateArticleExtractedContent :exec
+UPDATE articles
+SET content = @content::text, linked_content = @linked_content::text
+WHERE id = @id;
