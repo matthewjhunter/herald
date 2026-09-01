@@ -89,8 +89,8 @@ github.com/magiconair/properties v1.8.10 h1:s31yESBquKXCV9a/ScB3ESkOjUYYv+X0rg8S
 github.com/magiconair/properties v1.8.10/go.mod h1:Dhd985XPs7jluiymwWYZ0G4Z61jb3vdS329zhj2hYo0=
 github.com/matthewjhunter/airlock v0.1.1 h1:l4Oh5vGf0t2gHxUvcdejbDweh47gxQE+rlPF0po1jC0=
 github.com/matthewjhunter/airlock v0.1.1/go.mod h1:moFr55RDN0yuPfKlZbN1K9qQDNA4/SCZuMSGkQuUR9M=
-github.com/matthewjhunter/go-embedding v0.5.3 h1:nsM4IxX7QuXECU34mqvJ/ikYbjOq897Ij70STOUM4gg=
-github.com/matthewjhunter/go-embedding v0.5.3/go.mod h1:V1zB3ZIUOE9zL2WvnZqtgj5kP1IXPgbAFUROT1+a2+w=
+github.com/matthewjhunter/go-embedding v0.6.2 h1:sa3ST9r97B/WyZzimRa3kI61R1oirCMtmaXRfeeJkvM=
+github.com/matthewjhunter/go-embedding v0.6.2/go.mod h1:JC7e8n+h2p9O6EZkpJUDc9dRRAYPM4mHhDRzWvAxnIQ=
 github.com/mattn/go-isatty v0.0.23 h1:cYwCQTQf3HB6xUC+BtyCLZNr7IzbOmoZbmssVNzSyiQ=
 github.com/mattn/go-isatty v0.0.23/go.mod h1:nMCL3Zebbrt45jsMDgnfIwz6ydEQApk5oEI3HqDio6A=
 github.com/mfridman/interpolate v0.0.2 h1:pnuTK7MQIxxFz1Gr+rjSIx9u7qVjf5VOoM/u6BbAxPY=
