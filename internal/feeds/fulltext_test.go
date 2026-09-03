@@ -744,3 +744,112 @@ func TestLooksLikeContactPage_StaffDirectory(t *testing.T) {
 		t.Error("expected a staff directory to be rejected as boilerplate")
 	}
 }
+
+// --- trimSurroundingBoilerplate ---
+
+// aceOfSpadesExtraction reproduces the shape readability returns for
+// acecomments.mu.nu: the whole table row, so the article body arrives with the
+// site's contact sidebar in front of it and its navigation menu behind it.
+const aceOfSpadesExtraction = `<div id="readability-page-1" class="page"><div>` +
+	`<td><div id="sidecontent"><center>` +
+	`<p>Support</p><p>Contact</p>` +
+	`<p><span>Ace:</span><br/>aceofspadeshq at gee mail.com<br/>` +
+	`<span>CBD:</span> cbd at cutjibnewsletter.com<br/>` +
+	`<span>Buck:</span> buck.throckmorton at protonmail.com<br/>` +
+	`<span>joe mannix:</span> mannix2024 at proton.me<br/>` +
+	`<span>MisHum:</span> petmorons at gee mail.com<br/>` +
+	`<span>J.J. Sefton:</span> sefton at cutjibnewsletter.com</p>` +
+	`</center></div></td>` +
+	`<td><div><h3>Mark Ruffalo Accused of Antisemitism</h3>` +
+	`<p>He opposes the purchase of Warner Bros/Discovery by Paramount/Skydance, and specifies that his opposition is based on the Jewish executives at Paramount supporting Israel's right to defend itself against decades of terror attacks.</p>` +
+	`<p>An entertainment industry group that includes several Hollywood producers has released a statement condemning the alleged antisemitic tropes underpinning the actor's opposition to the proposed merger.</p>` +
+	`</div></td>` +
+	`<td><div id="sidecontent-right"><p>MuNuvians</p><p>MeeNuvians</p>` +
+	`<p>Frequently Asked Questions</p><p>Top Top Tens</p><p>Greatest Hitjobs</p>` +
+	`<p>News/Chat</p></div></td>` +
+	`</div></div>`
+
+func TestTrimSurroundingBoilerplate_ContactSidebar(t *testing.T) {
+	trimmed := trimSurroundingBoilerplate(aceOfSpadesExtraction)
+
+	for _, addr := range []string{"aceofspadeshq", "cutjibnewsletter", "protonmail", "proton.me"} {
+		if strings.Contains(trimmed, addr) {
+			t.Errorf("contact address %q survived trimming:\n%s", addr, trimmed)
+		}
+	}
+	if strings.Contains(trimmed, "MuNuvians") || strings.Contains(trimmed, "Greatest Hitjobs") {
+		t.Errorf("trailing navigation menu survived trimming:\n%s", trimmed)
+	}
+	if !strings.Contains(trimmed, "Mark Ruffalo Accused of Antisemitism") {
+		t.Errorf("article headline was trimmed away:\n%s", trimmed)
+	}
+	if !strings.Contains(trimmed, "Warner Bros/Discovery") {
+		t.Errorf("article body was trimmed away:\n%s", trimmed)
+	}
+}
+
+// A plain article -- readability's usual output, paragraphs directly under the
+// page wrapper -- must come back untouched. Short opening and closing
+// paragraphs are ordinary prose, not boilerplate, and dropping them would cost
+// the article real text.
+func TestTrimSurroundingBoilerplate_LeavesPlainArticleAlone(t *testing.T) {
+	article := `<div id="readability-page-1" class="page"><div>` +
+		`<p>Short lede.</p>` +
+		`<p>The conflict continues as the president stated that the bombing will stop if new leadership emerges, a position his advisers have spent the week trying to soften in public.</p>` +
+		`<p>More.</p>` +
+		`</div></div>`
+	if got := trimSurroundingBoilerplate(article); got != article {
+		t.Errorf("plain article was modified:\ngot:  %s\nwant: %s", got, article)
+	}
+}
+
+// When nothing in the extraction reads as prose there is no core to keep, so
+// the content is returned unchanged and the existing contact-page and
+// too-short checks decide its fate.
+func TestTrimSurroundingBoilerplate_AllBoilerplate(t *testing.T) {
+	only := `<div id="readability-page-1" class="page"><div>` +
+		`<td><div><p>Contact</p><p>ace at gee mail.com<br/>cbd at example.com<br/>buck at proton.me</p></div></td>` +
+		`</div></div>`
+	if got := trimSurroundingBoilerplate(only); got != only {
+		t.Errorf("all-boilerplate extraction was modified:\ngot: %s", got)
+	}
+}
+
+// Malformed or empty input must pass through rather than panic.
+func TestTrimSurroundingBoilerplate_Degenerate(t *testing.T) {
+	for _, in := range []string{"", "not html", "<p>unwrapped</p>", "<div><td>"} {
+		if got := trimSurroundingBoilerplate(in); got != in {
+			t.Errorf("input %q was modified to %q", in, got)
+		}
+	}
+}
+
+// The trim runs inside fetchReadableContent, so every caller gets the cleaned
+// body without repeating the step.
+func TestFetchReadableContent_TrimsContactSidebar(t *testing.T) {
+	page := `<html><head><title>Mark Ruffalo Accused of Antisemitism</title></head><body><table><tr>` +
+		`<td><div id="sidecontent"><p>Support</p><p>Contact</p>` +
+		`<p>Ace: aceofspadeshq at gee mail.com<br/>CBD: cbd at cutjibnewsletter.com<br/>` +
+		`Buck: buck.throckmorton at protonmail.com<br/>joe mannix: mannix2024 at proton.me<br/>` +
+		`MisHum: petmorons at gee mail.com<br/>J.J. Sefton: sefton at cutjibnewsletter.com</p></div></td>` +
+		`<td><div><h3>Mark Ruffalo Accused of Antisemitism</h3>` +
+		`<p>He opposes the purchase of Warner Bros/Discovery by Paramount/Skydance, and specifies that his opposition is based on the Jewish executives at Paramount supporting Israel's right to defend itself against decades of terror attacks.</p>` +
+		`<p>An entertainment industry group that includes several Hollywood producers has released a statement condemning the alleged antisemitic tropes underpinning the actor's opposition to the proposed merger with Warner Bros. Discovery.</p>` +
+		`</div></td></tr></table></body></html>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, page)
+	}))
+	defer srv.Close()
+
+	content, err := fetchReadableContent(context.Background(), srv.Client(), srv.URL)
+	if err != nil {
+		t.Fatalf("fetchReadableContent error: %v", err)
+	}
+	if strings.Contains(content, "aceofspadeshq") {
+		t.Errorf("contact sidebar survived extraction:\n%s", content)
+	}
+	if !strings.Contains(content, "Warner Bros/Discovery") {
+		t.Errorf("article body missing from extraction:\n%s", content)
+	}
+}

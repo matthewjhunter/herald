@@ -202,7 +202,11 @@ type Store interface {
 	GetUnscoredCurationArticles(userID int64, securityThreshold float64, limit int) ([]Article, error)
 	GetUngroupedEmbeddedArticles(userID int64, model string, securityThreshold float64, since time.Time, limit int) ([]Article, error)
 	GetArticlesNeedingFullText(limit int) ([]Article, error)
+	// GetFetchedFullTextArticles pages through articles whose body came from a
+	// full-text extraction, ids ascending after afterID, for repair passes.
+	GetFetchedFullTextArticles(afterID int64, limit int) ([]ExtractedArticle, error)
 	UpdateArticleContent(articleID int64, content string) error
+	UpdateArticleExtractedContent(articleID int64, content, linkedContent string) error
 	UpdateArticleLinkedContent(articleID int64, linkedURL, linkedContent string) error
 	MarkArticleFullTextFetched(articleID int64) error
 

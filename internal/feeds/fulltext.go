@@ -14,6 +14,7 @@ import (
 	"time"
 
 	readability "codeberg.org/readeck/go-readability/v2"
+	"golang.org/x/net/html"
 )
 
 // skipFullTextRe matches URLs that readability cannot usefully process.
@@ -416,5 +417,184 @@ func fetchReadableContent(ctx context.Context, client *http.Client, articleURL s
 	if buf.Len() == 0 {
 		return "", fmt.Errorf("readability rendered empty content for %s", articleURL)
 	}
-	return buf.String(), nil
+	return trimSurroundingBoilerplate(buf.String()), nil
+}
+
+// Tags that group other blocks. Only these are candidates for trimming: a
+// readability extraction of an ordinary article puts its paragraphs directly
+// under the page wrapper, and a short opening or closing paragraph is prose,
+// not boilerplate. Restricting the trim to containers means the common case
+// passes through untouched and only page furniture -- a sidebar cell, a
+// navigation div -- can be dropped.
+var boilerplateContainerTags = map[string]bool{
+	"div": true, "td": true, "tr": true, "table": true, "tbody": true,
+	"aside": true, "nav": true, "section": true, "header": true,
+	"footer": true, "ul": true, "ol": true, "center": true, "form": true,
+}
+
+// Tags that hold a single run of prose. The longest of these inside a
+// container is what separates an article from a menu: page furniture is many
+// short lines, an article is at least one long one.
+var proseTags = map[string]bool{
+	"p": true, "li": true, "blockquote": true, "pre": true, "dd": true,
+	"h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true,
+}
+
+const (
+	// boilerplateParagraphChars is the length a single paragraph must reach
+	// for its container to count as article prose.
+	boilerplateParagraphChars = 120
+	// boilerplateBlockChars is the total text above which a container is kept
+	// even without a long paragraph, so a body of genuinely clipped lines
+	// (verse, a transcript, a list post) is not mistaken for a menu.
+	boilerplateBlockChars = 600
+)
+
+// trimSurroundingBoilerplate drops page furniture that readability pulled in
+// on either side of the article body. Sites that still lay out with tables --
+// acecomments.mu.nu is the case that prompted this -- hand readability the
+// whole row, so the extraction is the contact sidebar, then the article, then
+// the navigation menu. The contact block passing the density test is correct
+// (the extraction *is* mostly article), which is exactly why the addresses
+// then rode into the stored body and out to the reader.
+//
+// Only leading and trailing sibling containers are removed, and only when
+// something between them reads as prose; the article's own paragraphs are
+// never candidates. Anything unparseable, unwrapped, or prose-free comes back
+// untouched, leaving the contact-page and too-short checks to decide.
+func trimSurroundingBoilerplate(content string) string {
+	doc, err := html.Parse(strings.NewReader(content))
+	if err != nil {
+		return content
+	}
+	body := findNode(doc, "body")
+	if body == nil {
+		return content
+	}
+
+	// Descend past wrappers that hold a single container -- readability's own
+	// page div, and whatever the site wrapped the layout in -- to the level
+	// where the siblings are the article and the furniture around it.
+	container := body
+	for {
+		kids := elementChildren(container)
+		if len(kids) != 1 || !boilerplateContainerTags[kids[0].Data] {
+			break
+		}
+		container = kids[0]
+	}
+
+	blocks := elementChildren(container)
+	if len(blocks) < 2 {
+		return content
+	}
+
+	first, last := -1, -1
+	for i, b := range blocks {
+		if !isBoilerplateBlock(b) {
+			if first < 0 {
+				first = i
+			}
+			last = i
+		}
+	}
+	if first < 0 || (first == 0 && last == len(blocks)-1) {
+		return content // nothing to keep, or nothing to drop
+	}
+
+	for i, b := range blocks {
+		if i < first || i > last {
+			container.RemoveChild(b)
+		}
+	}
+
+	var buf bytes.Buffer
+	for c := body.FirstChild; c != nil; c = c.NextSibling {
+		if err := html.Render(&buf, c); err != nil {
+			return content
+		}
+	}
+	return buf.String()
+}
+
+// isBoilerplateBlock reports whether a sibling container is page furniture
+// rather than part of the article: empty, address-dense, or a run of short
+// lines with no paragraph long enough to be prose.
+func isBoilerplateBlock(n *html.Node) bool {
+	if !boilerplateContainerTags[n.Data] {
+		return false
+	}
+	text := nodeText(n)
+	if textLength(text) == 0 {
+		return true
+	}
+	if looksLikeContactPage(text) {
+		return true
+	}
+	return longestProseRun(n) < boilerplateParagraphChars &&
+		textLength(text) < boilerplateBlockChars
+}
+
+// longestProseRun returns the text length of the longest paragraph-like
+// element inside n, or n's own text length when it contains none.
+func longestProseRun(n *html.Node) int {
+	longest := 0
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		for c := node.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == html.ElementNode && proseTags[c.Data] {
+				if l := textLength(nodeText(c)); l > longest {
+					longest = l
+				}
+			}
+			walk(c)
+		}
+	}
+	walk(n)
+	if longest == 0 {
+		return textLength(nodeText(n))
+	}
+	return longest
+}
+
+// nodeText joins every text node under n with spaces, so that words separated
+// only by markup (<br/>, a <span> around a name) do not run together.
+func nodeText(n *html.Node) string {
+	var b strings.Builder
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		for c := node.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == html.TextNode {
+				b.WriteString(c.Data)
+				b.WriteByte(' ')
+			}
+			walk(c)
+		}
+	}
+	walk(n)
+	return b.String()
+}
+
+// elementChildren returns n's direct children that are elements.
+func elementChildren(n *html.Node) []*html.Node {
+	var out []*html.Node
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.ElementNode {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// findNode returns the first element with the given tag name, or nil.
+func findNode(n *html.Node, tag string) *html.Node {
+	if n.Type == html.ElementNode && n.Data == tag {
+		return n
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if found := findNode(c, tag); found != nil {
+			return found
+		}
+	}
+	return nil
 }

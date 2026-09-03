@@ -1141,6 +1141,38 @@ func (s *PostgresStore) GetArticlesNeedingFullText(limit int) ([]Article, error)
 	return articles, nil
 }
 
+// GetFetchedFullTextArticles pages through the articles whose stored body came
+// from a full-text extraction. It returns only the text columns a repair pass
+// rewrites, so a whole-corpus scan does not carry every article field.
+func (s *PostgresStore) GetFetchedFullTextArticles(afterID int64, limit int) ([]ExtractedArticle, error) {
+	rows, err := s.q.GetFetchedFullTextArticles(context.Background(), db.GetFetchedFullTextArticlesParams{
+		AfterID: afterID,
+		Lim:     int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get fetched full-text articles: %w", err)
+	}
+	out := make([]ExtractedArticle, len(rows))
+	for i, r := range rows {
+		out[i] = ExtractedArticle{ID: r.ID, LinkedContent: r.LinkedContent}
+		if r.Content != nil {
+			out[i].Content = *r.Content
+		}
+	}
+	return out, nil
+}
+
+// UpdateArticleExtractedContent rewrites both extraction-derived text columns
+// at once. Writing them together keeps the search_vector trigger to a single
+// fire per article.
+func (s *PostgresStore) UpdateArticleExtractedContent(articleID int64, content, linkedContent string) error {
+	return s.q.UpdateArticleExtractedContent(context.Background(), db.UpdateArticleExtractedContentParams{
+		Content:       content,
+		LinkedContent: linkedContent,
+		ID:            articleID,
+	})
+}
+
 func (s *PostgresStore) UpdateArticleContent(articleID int64, content string) error {
 	return s.q.UpdateArticleContent(context.Background(), db.UpdateArticleContentParams{
 		Content: content,
