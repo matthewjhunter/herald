@@ -6,11 +6,11 @@ require (
 	codeberg.org/readeck/go-readability/v2 v2.1.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/infodancer/authz v0.1.0
-	github.com/infodancer/oidclient v0.8.0
+	github.com/infodancer/oidclient v0.9.1
 	github.com/infodancer/smoke v0.1.1
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/matthewjhunter/airlock v0.1.1
-	github.com/matthewjhunter/go-embedding v0.5.3
+	github.com/matthewjhunter/go-embedding v0.6.2
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/mmcdole/gofeed v1.4.2
 	github.com/pelletier/go-toml/v2 v2.4.3
@@ -24,7 +24,7 @@ require (
 require (
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
-	github.com/coreos/go-oidc/v3 v3.19.0 // indirect
+	github.com/coreos/go-oidc/v3 v3.20.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-shiori/dom v0.0.0-20230515143342-73569d674e1c // indirect
 	github.com/gogs/chardet v0.0.0-20211120154057-b7413eaefb8f // indirect
