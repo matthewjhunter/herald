@@ -35,6 +35,7 @@ database.`,
 // find the stored body complete and mark it done again.
 func repairFullTextCmd() *cobra.Command {
 	var dryRun bool
+	var samples int
 	cmd := &cobra.Command{
 		Use:   "fulltext-boilerplate",
 		Short: "Re-trim sidebar and navigation text out of stored full-text bodies",
@@ -43,7 +44,14 @@ came from a full-text extraction, rewriting the ones that change.
 
 The trim is a no-op on content it does not recognize, so this is safe to
 run over the whole corpus and safe to run more than once. Use --dry-run
-to count the affected articles without writing.`,
+to count the affected articles without writing.
+
+The run reports a per-feed breakdown, because the total alone cannot
+answer the question worth asking before rewriting bodies in place: is
+this concentrated in the few sites whose layout confuses readability,
+or is it touching everything? Add --samples N to print up to N of the
+blocks each feed would lose, which prints article text and so is off by
+default.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := storage.NewStore(cfg.Database.Path)
 			if err != nil {
@@ -51,18 +59,31 @@ to count the affected articles without writing.`,
 			}
 			defer store.Close()
 
-			scanned, changed, err := feeds.RetrimStoredExtractions(cmd.Context(), store, dryRun)
+			report, err := feeds.RetrimStoredExtractions(cmd.Context(), store, dryRun, samples)
 			if err != nil {
-				return fmt.Errorf("after %d scanned, %d rewritten: %w", scanned, changed, err)
+				return fmt.Errorf("after %d scanned, %d rewritten: %w", report.Scanned, report.Changed, err)
 			}
+
 			verb := "Rewrote"
 			if dryRun {
 				verb = "Would rewrite"
 			}
-			fmt.Printf("Scanned %d extracted articles. %s %d.\n", scanned, verb, changed)
+			fmt.Printf("Scanned %d extracted articles. %s %d, dropping %d characters.\n",
+				report.Scanned, verb, report.Changed, report.CharsRemoved)
+
+			if len(report.Feeds) > 0 {
+				fmt.Printf("\n%-40s %8s %8s %10s\n", "FEED", "CHANGED", "SCANNED", "CHARS")
+				for _, f := range report.Feeds {
+					fmt.Printf("%-40.40s %8d %8d %10d\n", f.FeedTitle, f.Changed, f.Scanned, f.CharsRemoved)
+					for _, s := range f.Samples {
+						fmt.Printf("    - %.160s\n", s)
+					}
+				}
+			}
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "report what would change without writing")
+	cmd.Flags().IntVar(&samples, "samples", 0, "print up to N removed blocks per feed (prints article text)")
 	return cmd
 }

@@ -239,10 +239,11 @@ func (q *Queries) GetArticlesNeedingFullText(ctx context.Context, lim int32) ([]
 }
 
 const getFetchedFullTextArticles = `-- name: GetFetchedFullTextArticles :many
-SELECT id, content, linked_content
-FROM articles
-WHERE full_text_fetched = TRUE AND id > $1
-ORDER BY id
+SELECT a.id, a.feed_id, f.title AS feed_title, a.content, a.linked_content
+FROM articles a
+JOIN feeds f ON f.id = a.feed_id
+WHERE a.full_text_fetched = TRUE AND a.id > $1
+ORDER BY a.id
 LIMIT $2
 `
 
@@ -253,6 +254,8 @@ type GetFetchedFullTextArticlesParams struct {
 
 type GetFetchedFullTextArticlesRow struct {
 	ID            int64
+	FeedID        int64
+	FeedTitle     string
 	Content       *string
 	LinkedContent string
 }
@@ -268,7 +271,13 @@ func (q *Queries) GetFetchedFullTextArticles(ctx context.Context, arg GetFetched
 	items := []GetFetchedFullTextArticlesRow{}
 	for rows.Next() {
 		var i GetFetchedFullTextArticlesRow
-		if err := rows.Scan(&i.ID, &i.Content, &i.LinkedContent); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.FeedTitle,
+			&i.Content,
+			&i.LinkedContent,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

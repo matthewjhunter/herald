@@ -511,13 +511,22 @@ const (
 // never candidates. Anything unparseable, unwrapped, or prose-free comes back
 // untouched, leaving the contact-page and too-short checks to decide.
 func trimSurroundingBoilerplate(content string) string {
+	trimmed, _ := trimSurroundingBoilerplateDetail(content)
+	return trimmed
+}
+
+// trimSurroundingBoilerplateDetail is trimSurroundingBoilerplate with a record
+// of what it dropped: the text of each removed block, in document order. A
+// repair pass rewrites bodies in place with no way back, so an operator has to
+// be able to see what a run would remove before running it.
+func trimSurroundingBoilerplateDetail(content string) (string, []string) {
 	doc, err := html.Parse(strings.NewReader(content))
 	if err != nil {
-		return content
+		return content, nil
 	}
 	body := findNode(doc, "body")
 	if body == nil {
-		return content
+		return content, nil
 	}
 
 	// Descend past wrappers that hold a single container -- readability's own
@@ -534,7 +543,7 @@ func trimSurroundingBoilerplate(content string) string {
 
 	blocks := elementChildren(container)
 	if len(blocks) < 2 {
-		return content
+		return content, nil
 	}
 
 	first, last := -1, -1
@@ -547,11 +556,13 @@ func trimSurroundingBoilerplate(content string) string {
 		}
 	}
 	if first < 0 || (first == 0 && last == len(blocks)-1) {
-		return content // nothing to keep, or nothing to drop
+		return content, nil // nothing to keep, or nothing to drop
 	}
 
+	var removed []string
 	for i, b := range blocks {
 		if i < first || i > last {
+			removed = append(removed, strings.Join(strings.Fields(nodeText(b)), " "))
 			container.RemoveChild(b)
 		}
 	}
@@ -559,10 +570,10 @@ func trimSurroundingBoilerplate(content string) string {
 	var buf bytes.Buffer
 	for c := body.FirstChild; c != nil; c = c.NextSibling {
 		if err := html.Render(&buf, c); err != nil {
-			return content
+			return content, nil
 		}
 	}
-	return buf.String()
+	return buf.String(), removed
 }
 
 // isBoilerplateBlock reports whether a sibling container is page furniture
