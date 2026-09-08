@@ -578,7 +578,7 @@ func trimSurroundingBoilerplateDetail(content string) (string, []string) {
 
 // isBoilerplateBlock reports whether a sibling container is page furniture
 // rather than part of the article: empty, address-dense, or a run of short
-// lines with no paragraph long enough to be prose.
+// lines that never finishes a sentence.
 func isBoilerplateBlock(n *html.Node) bool {
 	if !boilerplateContainerTags[n.Data] {
 		return false
@@ -591,7 +591,45 @@ func isBoilerplateBlock(n *html.Node) bool {
 		return true
 	}
 	return longestProseRun(n) < boilerplateParagraphChars &&
-		textLength(text) < boilerplateBlockChars
+		textLength(text) < boilerplateBlockChars &&
+		!closesASentence(n)
+}
+
+// closesASentence reports whether any line-level chunk of n ends in terminal
+// punctuation.
+//
+// Short lines alone do not make a menu, and the first production run of the
+// repair pass proved it: the rule as written proposed deleting numbered
+// footnotes, a list post whose every item was one line, a reading list, and
+// the embedded tweets that close a post. Those are short-lined because that is
+// how the form works. What none of them share with a real menu is the ending:
+// "Frequently Asked Questions" and "Top Top Tens" do not run to a full stop,
+// and a sentence does.
+//
+// A period inside a domain or an initial does not count, only one that ends a
+// line, which is why this looks at each chunk's tail rather than searching the
+// text for punctuation.
+func closesASentence(n *html.Node) bool {
+	sawProse, closed := false, false
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		for c := node.FirstChild; c != nil && !closed; c = c.NextSibling {
+			if c.Type == html.ElementNode && proseTags[c.Data] {
+				sawProse = true
+				if endsWithCompleteSentence(strings.TrimSpace(nodeText(c))) {
+					closed = true
+					return
+				}
+			}
+			walk(c)
+		}
+	}
+	walk(n)
+	if sawProse {
+		return closed
+	}
+	// No paragraph-like elements at all: judge the block's own text.
+	return endsWithCompleteSentence(strings.TrimSpace(nodeText(n)))
 }
 
 // longestProseRun returns the text length of the longest paragraph-like
