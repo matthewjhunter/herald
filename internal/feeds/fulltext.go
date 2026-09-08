@@ -77,6 +77,41 @@ func stripSyndicationFooter(plain string) string {
 // fetch. Set to 0 in tests to avoid unnecessary waits.
 var fullTextFetchDelay = 4000 // max additional milliseconds (base is 1s)
 
+// Full-text outcomes, recorded on the article alongside full_text_fetched.
+//
+// The flag is set before the fetch and whatever happens, so that one bad
+// article cannot stall the queue -- which means the flag alone cannot tell a
+// success from a rejection. These say which. A heuristic that turns an article
+// away is now a queryable decision rather than a log line in a container that
+// rotates, and "re-run everything the old contact-page rule rejected" is a
+// WHERE clause.
+const (
+	resultReplaced          = "replaced"            // full text stored
+	resultLinked            = "linked"              // linked-article text stored
+	resultNotTruncated      = "not_truncated"       // feed content was already complete
+	resultNoURL             = "no_url"              // nothing to fetch
+	resultSkipped           = "skipped"             // URL readability cannot use
+	resultCancelled         = "cancelled"           // context ended mid-pass
+	resultFetchFailed       = "fetch_failed"        // retrieval or parse error
+	resultLinkedFetchFailed = "linked_fetch_failed" // same, for the linked article
+	resultTooShort          = "too_short"           // gained too little over the feed
+	resultContactPage       = "contact_page"        // looked like a contact/sidebar page
+	resultNoOverlap         = "no_overlap"          // no phrase overlap with the feed body
+	resultStoreFailed       = "store_failed"        // extraction was good, the write was not
+)
+
+// fullTextResults is every outcome the pass can record. Migration 0018
+// documents this vocabulary in a column comment so anyone querying the column
+// can discover the values without reading Go, and
+// TestFullTextResultsMatchMigration keeps the two from drifting -- a
+// documented value the code never writes, or a written value the
+// documentation omits, are both ways for a later query to silently miss rows.
+var fullTextResults = []string{
+	resultReplaced, resultLinked, resultNotTruncated, resultNoURL,
+	resultSkipped, resultCancelled, resultFetchFailed, resultLinkedFetchFailed,
+	resultTooShort, resultContactPage, resultNoOverlap, resultStoreFailed,
+}
+
 // FetchFullTextForArticles fetches the full article body for any recently
 // ingested articles whose feed content appears truncated. Each article is
 // marked as processed (full_text_fetched = 1) exactly once regardless of
@@ -95,15 +130,16 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 			break
 		}
 
-		// Always mark processed so we never re-check this article.
-		markDone := func() { f.store.MarkArticleFullTextFetched(article.ID) } //nolint:errcheck
+		// Always mark processed so we never re-check this article -- with the
+		// reason, so "processed" and "rejected" stay distinguishable.
+		markDone := func(result string) { f.store.MarkArticleFullTextFetched(article.ID, result) } //nolint:errcheck
 
 		if !isTruncated(article.Content) {
-			markDone()
+			markDone(resultNotTruncated)
 			continue
 		}
 		if article.URL == "" {
-			markDone()
+			markDone(resultNoURL)
 			continue
 		}
 		// Random delay (1-5s) before each fetch to avoid hammering sites
@@ -113,7 +149,7 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 			select {
 			case <-time.After(delay):
 			case <-ctx.Done():
-				markDone()
+				markDone(resultCancelled)
 				continue
 			}
 		}
@@ -123,19 +159,26 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 		// blog post page (which yields only boilerplate like affiliate notices).
 		if linkedURL := extractLinkPostURL(article.Content, article.URL); linkedURL != "" {
 			if skipFullTextRe.MatchString(linkedURL) {
-				markDone()
+				markDone(resultSkipped)
 				continue
 			}
 			full, err := fetchReadableContent(ctx, f.client, linkedURL)
-			markDone()
 			if err != nil {
+				markDone(resultLinkedFetchFailed)
 				log.Printf("herald: linked-article fetch failed for article %d (%s): %v", article.ID, linkedURL, err)
 				continue
 			}
-			if textLength(full) >= 300 && !looksLikeContactPage(full) {
+			switch {
+			case textLength(full) < 300:
+				markDone(resultTooShort)
+			case looksLikeContactPage(full):
+				markDone(resultContactPage)
+			default:
 				if err := f.store.UpdateArticleLinkedContent(article.ID, linkedURL, sanitizeText(full)); err != nil {
 					log.Printf("herald: failed to store linked content for article %d: %v", article.ID, err)
+					markDone(resultStoreFailed)
 				} else {
+					markDone(resultLinked)
 					updated++
 				}
 			}
@@ -143,12 +186,12 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 		}
 
 		if skipFullTextRe.MatchString(article.URL) {
-			markDone()
+			markDone(resultSkipped)
 			continue
 		}
 		full, err := fetchReadableContent(ctx, f.client, article.URL)
-		markDone()
 		if err != nil {
+			markDone(resultFetchFailed)
 			log.Printf("herald: full-text fetch failed for article %d (%s): %v", article.ID, article.URL, err)
 			continue
 		}
@@ -157,19 +200,24 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 		// provided — at least 300 chars more — and it doesn't look like a
 		// contact/sidebar page that readability mistook for the article body.
 		if textLength(full) < textLength(article.Content)+300 {
+			markDone(resultTooShort)
 			continue
 		}
 		if looksLikeContactPage(full) {
+			markDone(resultContactPage)
 			log.Printf("herald: rejecting full text for article %d (%s): looks like contact page", article.ID, article.URL)
 			continue
 		}
 		if !feedContentOverlaps(article.Content, full) {
+			markDone(resultNoOverlap)
 			log.Printf("herald: rejecting full text for article %d (%s): no phrase overlap with feed content (likely sidebar)", article.ID, article.URL)
 			continue
 		}
 		if err := f.store.UpdateArticleContent(article.ID, sanitizeText(full)); err != nil {
+			markDone(resultStoreFailed)
 			log.Printf("herald: failed to store full text for article %d: %v", article.ID, err)
 		} else {
+			markDone(resultReplaced)
 			updated++
 		}
 	}

@@ -208,7 +208,7 @@ type Store interface {
 	UpdateArticleContent(articleID int64, content string) error
 	UpdateArticleExtractedContent(articleID int64, content, linkedContent string) error
 	UpdateArticleLinkedContent(articleID int64, linkedURL, linkedContent string) error
-	MarkArticleFullTextFetched(articleID int64) error
+	MarkArticleFullTextFetched(articleID int64, result string) error
 
 	// Article images
 	StoreArticleImage(articleID int64, originalURL string, data []byte, mimeType string, width, height int) (int64, error)

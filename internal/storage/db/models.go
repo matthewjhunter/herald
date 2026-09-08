@@ -53,6 +53,8 @@ type Article struct {
 	SecurityVerified   *bool
 	ScreeningClaimedAt *time.Time
 	SortDate           *time.Time
+	// Why the full-text pass ended. NULL for rows processed before this column existed. Values: replaced, linked, not_truncated, no_url, skipped, cancelled, fetch_failed, linked_fetch_failed, too_short, contact_page, no_overlap, store_failed.
+	FullTextResult *string
 }
 
 type ArticleAuthor struct {

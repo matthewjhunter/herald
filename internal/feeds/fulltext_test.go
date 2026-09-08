@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -851,5 +853,69 @@ func TestFetchReadableContent_TrimsContactSidebar(t *testing.T) {
 	}
 	if !strings.Contains(content, "Warner Bros/Discovery") {
 		t.Errorf("article body missing from extraction:\n%s", content)
+	}
+}
+
+// The full-text outcome vocabulary is defined twice by necessity: as constants
+// here, and as a column comment in migration 0018 so that anyone querying
+// articles.full_text_result can discover the values without reading Go. Two
+// definitions drift, and both directions are silent -- a documented value the
+// code never writes sends a query looking for rows that cannot exist, and a
+// written value the documentation omits makes a query miss rows that do.
+func TestFullTextResultsMatchMigration(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "storage", "migrations", "0018_article_full_text_result.sql"))
+	if err != nil {
+		t.Fatalf("reading migration: %v", err)
+	}
+	// The comment lists the values after "Values:" as a comma-separated run,
+	// possibly wrapped across the SQL string-literal continuation.
+	body := string(raw)
+	idx := strings.Index(body, "Values:")
+	if idx < 0 {
+		t.Fatal("migration 0018 no longer documents the value vocabulary; it must, or the column is undiscoverable from SQL")
+	}
+	end := strings.Index(body[idx:], "';")
+	if end < 0 {
+		t.Fatal("could not find the end of the column comment")
+	}
+	listed := map[string]bool{}
+	for _, tok := range strings.FieldsFunc(body[idx+len("Values:"):idx+end], func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\n' || r == '\t' || r == '\'' || r == '.'
+	}) {
+		if tok != "" {
+			listed[tok] = true
+		}
+	}
+
+	inCode := map[string]bool{}
+	for _, r := range fullTextResults {
+		inCode[r] = true
+		if !listed[r] {
+			t.Errorf("outcome %q is written by the code but not documented in migration 0018", r)
+		}
+	}
+	for v := range listed {
+		if !inCode[v] {
+			t.Errorf("migration 0018 documents outcome %q that the code never writes", v)
+		}
+	}
+}
+
+// Outcomes are stored, queried and compared as literal strings, so a duplicate
+// or an empty one collapses two decisions into one and cannot be told apart
+// afterwards.
+func TestFullTextResultsAreDistinctAndNonEmpty(t *testing.T) {
+	seen := map[string]bool{}
+	for _, r := range fullTextResults {
+		if r == "" {
+			t.Error("an outcome constant is empty")
+		}
+		if seen[r] {
+			t.Errorf("outcome %q is defined twice", r)
+		}
+		seen[r] = true
+	}
+	if len(fullTextResults) < 10 {
+		t.Errorf("only %d outcomes; every exit path from the full-text pass needs its own", len(fullTextResults))
 	}
 }

@@ -773,11 +773,18 @@ func (q *Queries) IncrementArticleSecurityAttempts(ctx context.Context, id int64
 }
 
 const markArticleFullTextFetched = `-- name: MarkArticleFullTextFetched :exec
-UPDATE articles SET full_text_fetched = TRUE WHERE id = $1
+UPDATE articles SET full_text_fetched = TRUE, full_text_result = $1::text WHERE id = $2
 `
 
-func (q *Queries) MarkArticleFullTextFetched(ctx context.Context, id int64) error {
-	_, err := q.db.Exec(ctx, markArticleFullTextFetched, id)
+type MarkArticleFullTextFetchedParams struct {
+	Result string
+	ID     int64
+}
+
+// The result is recorded with the flag rather than after it, so a row can
+// never say "considered" without saying why. See migration 0018.
+func (q *Queries) MarkArticleFullTextFetched(ctx context.Context, arg MarkArticleFullTextFetchedParams) error {
+	_, err := q.db.Exec(ctx, markArticleFullTextFetched, arg.Result, arg.ID)
 	return err
 }
 

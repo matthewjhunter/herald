@@ -25,7 +25,7 @@ func addFetchedArticle(t *testing.T, store storage.Store, feedID int64, guid, co
 	if err != nil {
 		t.Fatalf("AddArticle: %v", err)
 	}
-	if err := store.MarkArticleFullTextFetched(id); err != nil {
+	if err := store.MarkArticleFullTextFetched(id, resultReplaced); err != nil {
 		t.Fatalf("MarkArticleFullTextFetched: %v", err)
 	}
 	return id
