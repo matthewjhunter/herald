@@ -29,6 +29,8 @@ type Feed struct {
 // article field.
 type ExtractedArticle struct {
 	ID            int64
+	FeedID        int64
+	FeedTitle     string
 	Content       string
 	LinkedContent string
 }

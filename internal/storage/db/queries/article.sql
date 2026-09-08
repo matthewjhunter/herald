@@ -238,10 +238,11 @@ WHERE a.fetched_date >= @since
 -- name: GetFetchedFullTextArticles :many
 -- Pages through articles whose body came from a full-text extraction, oldest
 -- id first, for repair passes that rewrite stored extractions in place.
-SELECT id, content, linked_content
-FROM articles
-WHERE full_text_fetched = TRUE AND id > @after_id
-ORDER BY id
+SELECT a.id, a.feed_id, f.title AS feed_title, a.content, a.linked_content
+FROM articles a
+JOIN feeds f ON f.id = a.feed_id
+WHERE a.full_text_fetched = TRUE AND a.id > @after_id
+ORDER BY a.id
 LIMIT @lim;
 
 -- name: UpdateArticleExtractedContent :exec

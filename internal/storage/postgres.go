@@ -1154,7 +1154,12 @@ func (s *PostgresStore) GetFetchedFullTextArticles(afterID int64, limit int) ([]
 	}
 	out := make([]ExtractedArticle, len(rows))
 	for i, r := range rows {
-		out[i] = ExtractedArticle{ID: r.ID, LinkedContent: r.LinkedContent}
+		out[i] = ExtractedArticle{
+			ID:            r.ID,
+			FeedID:        r.FeedID,
+			FeedTitle:     r.FeedTitle,
+			LinkedContent: r.LinkedContent,
+		}
 		if r.Content != nil {
 			out[i].Content = *r.Content
 		}
