@@ -919,3 +919,102 @@ func TestFullTextResultsAreDistinctAndNonEmpty(t *testing.T) {
 		t.Errorf("only %d outcomes; every exit path from the full-text pass needs its own", len(fullTextResults))
 	}
 }
+
+// --- what the menu rule must not eat ---
+
+// wrapExtraction builds a readability-shaped page whose article body is
+// followed by one trailing block, which is the position the menu rule judges.
+func wrapExtraction(trailing string) string {
+	return `<div id="readability-page-1" class="page"><div>` +
+		`<div><h3>Headline</h3>` +
+		`<p>He opposes the purchase of Warner Bros/Discovery by Paramount/Skydance, and specifies that his opposition is based on the executives at Paramount supporting the right to defend against decades of attacks.</p>` +
+		`</div>` +
+		trailing +
+		`</div></div>`
+}
+
+// Each of these was found by running the repair pass against production with
+// --samples and reading what it proposed to delete. Every one is article
+// content that the "short lines, no long paragraph" rule called a menu:
+// footnotes, a numbered list post, a reading list, an embedded tweet. They are
+// short-lined because that is how the form works, not because they are
+// navigation.
+func TestTrimSurroundingBoilerplate_KeepsShortTrailingProse(t *testing.T) {
+	cases := []struct {
+		name     string
+		trailing string
+		keep     string
+	}{
+		{
+			name: "numbered footnotes",
+			trailing: `<div><p>3 The most thorough examination of diegesis in TTRPGs displays the concept from every angle.</p>` +
+				`<p>1 See the first thread, highlighting the process of creature creation.</p></div>`,
+			keep: "diegesis in TTRPGs",
+		},
+		{
+			name: "numbered list post",
+			trailing: `<div><p>7 "Baby, if you see the owner of this mugshot on the porch, call 911."</p>` +
+				`<p>2 And if you lose your house key during the interaction, the critter has your keys.</p></div>`,
+			keep: "mugshot",
+		},
+		{
+			name: "reading list",
+			trailing: `<div><p>Douglas M. Kelley: 22 Cells in Nuremberg (1947).</p>` +
+				`<p>Hannah Arendt: The Origins of Totalitarianism (1951).</p></div>`,
+			keep: "Nuremberg",
+		},
+		{
+			name:     "embedded tweet closing the post",
+			trailing: `<center><blockquote><p>Anne Hathaway thinks it can be merciful to end human life deemed inconvenient.</p></blockquote></center>`,
+			keep:     "Anne Hathaway",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := trimSurroundingBoilerplate(wrapExtraction(tc.trailing))
+			if !strings.Contains(got, tc.keep) {
+				t.Errorf("trailing content was removed as boilerplate:\n%s", got)
+			}
+		})
+	}
+}
+
+// The counterpart: the blocks the trim exists to remove have no sentence
+// running to a close in them, which is what separates a menu from a short
+// piece of prose.
+func TestTrimSurroundingBoilerplate_StillRemovesFurniture(t *testing.T) {
+	cases := []struct {
+		name     string
+		trailing string
+		drop     string
+	}{
+		{
+			name: "navigation menu",
+			trailing: `<div id="sidecontent-right"><p>MuNuvians</p><p>MeeNuvians</p>` +
+				`<p>Frequently Asked Questions</p><p>Top Top Tens</p><p>Greatest Hitjobs</p><p>News/Chat</p></div>`,
+			drop: "MuNuvians",
+		},
+		{
+			name:     "category list",
+			trailing: `<div><p>Politics</p><p>Culture</p><p>Science</p><p>Books</p><p>Uncategorized</p></div>`,
+			drop:     "Uncategorized",
+		},
+		{
+			name: "contact block",
+			trailing: `<div><p>Contact</p><p>ace at gee mail.com<br/>cbd at example.com<br/>` +
+				`buck at proton.me<br/>mannix at proton.me</p></div>`,
+			drop: "proton.me",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := trimSurroundingBoilerplate(wrapExtraction(tc.trailing))
+			if strings.Contains(got, tc.drop) {
+				t.Errorf("furniture survived the trim:\n%s", got)
+			}
+			if !strings.Contains(got, "Warner Bros/Discovery") {
+				t.Errorf("article body was trimmed away:\n%s", got)
+			}
+		})
+	}
+}
