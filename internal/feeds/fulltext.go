@@ -488,14 +488,22 @@ var proseTags = map[string]bool{
 	"h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true,
 }
 
+// What a menu looks like, and every bound here is drawn from what the repair
+// pass proposed to delete when the rule was looser. A menu is several short
+// labels; the content that kept getting caught was one long line, or two
+// lines, or lines that finish a sentence.
 const (
-	// boilerplateParagraphChars is the length a single paragraph must reach
-	// for its container to count as article prose.
-	boilerplateParagraphChars = 120
-	// boilerplateBlockChars is the total text above which a container is kept
-	// even without a long paragraph, so a body of genuinely clipped lines
-	// (verse, a transcript, a list post) is not mistaken for a menu.
-	boilerplateBlockChars = 600
+	// menuMaxLineChars is the length at which a line stops being a label and
+	// starts being a sentence. Clayton Cramer's entire post -- one 128
+	// character line ending in "blogger app" -- sat above this and was still
+	// being deleted by a rule that only looked at paragraph counts.
+	menuMaxLineChars = 60
+	// menuMinLines is how many labels it takes to be a list of them. Two short
+	// lines are as likely to be a pair of adventure hooks as a nav bar.
+	menuMinLines = 3
+	// menuMaxChars bounds the whole block: past this it is a body of clipped
+	// lines (verse, a transcript, a list post), not furniture.
+	menuMaxChars = 400
 )
 
 // trimSurroundingBoilerplate drops page furniture that readability pulled in
@@ -590,68 +598,56 @@ func isBoilerplateBlock(n *html.Node) bool {
 	if looksLikeContactPage(text) {
 		return true
 	}
-	return longestProseRun(n) < boilerplateParagraphChars &&
-		textLength(text) < boilerplateBlockChars &&
-		!closesASentence(n)
+	return looksLikeMenu(n)
 }
 
-// closesASentence reports whether any line-level chunk of n ends in terminal
-// punctuation.
+// looksLikeMenu reports whether a block is a list of navigation labels.
 //
-// Short lines alone do not make a menu, and the first production run of the
-// repair pass proved it: the rule as written proposed deleting numbered
-// footnotes, a list post whose every item was one line, a reading list, and
-// the embedded tweets that close a post. Those are short-lined because that is
-// how the form works. What none of them share with a real menu is the ending:
-// "Frequently Asked Questions" and "Top Top Tens" do not run to a full stop,
-// and a sentence does.
-//
-// A period inside a domain or an initial does not count, only one that ends a
-// line, which is why this looks at each chunk's tail rather than searching the
-// text for punctuation.
-func closesASentence(n *html.Node) bool {
-	sawProse, closed := false, false
-	var walk func(*html.Node)
-	walk = func(node *html.Node) {
-		for c := node.FirstChild; c != nil && !closed; c = c.NextSibling {
-			if c.Type == html.ElementNode && proseTags[c.Data] {
-				sawProse = true
-				if endsWithCompleteSentence(strings.TrimSpace(nodeText(c))) {
-					closed = true
-					return
-				}
-			}
-			walk(c)
+// The test is deliberately narrow, because the loose version of it was
+// expensive. Judged by "no long paragraph and not much text", it proposed
+// deleting numbered footnotes, a list post, a reading list, a pull quote with
+// its attribution, a one-line post, and the tweets that close an article --
+// all short-lined, because that is how those forms work. A menu is narrower
+// than that: several labels, each too short to be a sentence, none of which
+// finishes one.
+func looksLikeMenu(n *html.Node) bool {
+	lines := lineChunks(n)
+	if len(lines) < menuMinLines {
+		return false
+	}
+	total := 0
+	for _, line := range lines {
+		length := textLength(line)
+		if length >= menuMaxLineChars {
+			return false
 		}
+		if endsWithCompleteSentence(strings.TrimSpace(line)) {
+			return false
+		}
+		total += length
 	}
-	walk(n)
-	if sawProse {
-		return closed
-	}
-	// No paragraph-like elements at all: judge the block's own text.
-	return endsWithCompleteSentence(strings.TrimSpace(nodeText(n)))
+	return total < menuMaxChars
 }
 
-// longestProseRun returns the text length of the longest paragraph-like
-// element inside n, or n's own text length when it contains none.
-func longestProseRun(n *html.Node) int {
-	longest := 0
+// lineChunks returns the block's text one line-level element at a time, or the
+// whole text as a single chunk when it has no line-level elements to divide it.
+func lineChunks(n *html.Node) []string {
+	var lines []string
 	var walk func(*html.Node)
 	walk = func(node *html.Node) {
 		for c := node.FirstChild; c != nil; c = c.NextSibling {
 			if c.Type == html.ElementNode && proseTags[c.Data] {
-				if l := textLength(nodeText(c)); l > longest {
-					longest = l
-				}
+				lines = append(lines, nodeText(c))
+				continue // nested prose belongs to this line, not beside it
 			}
 			walk(c)
 		}
 	}
 	walk(n)
-	if longest == 0 {
-		return textLength(nodeText(n))
+	if len(lines) == 0 {
+		return []string{nodeText(n)}
 	}
-	return longest
+	return lines
 }
 
 // nodeText joins every text node under n with spaces, so that words separated

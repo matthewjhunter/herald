@@ -964,6 +964,21 @@ func TestTrimSurroundingBoilerplate_KeepsShortTrailingProse(t *testing.T) {
 			keep: "Nuremberg",
 		},
 		{
+			name:     "one-line post ending in a word",
+			trailing: `<div><p>I wish there was a way to rotate pictures on my phone. I can rotate and save them in Photos but they stay upside down from the blogger app</p></div>`,
+			keep:     "rotate pictures",
+		},
+		{
+			name:     "pull quote with an attribution",
+			trailing: `<center><p>"The question of whether machines can think is about as relevant as the question of whether submarines can swim." -- Edwin Dijkstra</p></center>`,
+			keep:     "Dijkstra",
+		},
+		{
+			name:     "two short hooks",
+			trailing: `<div><p>A necromancer is excavating Old Owl Well</p><p>The party has a map to Wave Echo Cave</p></div>`,
+			keep:     "Wave Echo Cave",
+		},
+		{
 			name:     "embedded tweet closing the post",
 			trailing: `<center><blockquote><p>Anne Hathaway thinks it can be merciful to end human life deemed inconvenient.</p></blockquote></center>`,
 			keep:     "Anne Hathaway",
