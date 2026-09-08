@@ -1188,8 +1188,11 @@ func (s *PostgresStore) UpdateArticleLinkedContent(articleID int64, linkedURL, l
 	})
 }
 
-func (s *PostgresStore) MarkArticleFullTextFetched(articleID int64) error {
-	return s.q.MarkArticleFullTextFetched(context.Background(), articleID)
+func (s *PostgresStore) MarkArticleFullTextFetched(articleID int64, result string) error {
+	return s.q.MarkArticleFullTextFetched(context.Background(), db.MarkArticleFullTextFetchedParams{
+		ID:     articleID,
+		Result: result,
+	})
 }
 
 func (s *PostgresStore) GetStarredArticles(userID int64, limit, offset int, filterThreshold *int) ([]Article, error) {

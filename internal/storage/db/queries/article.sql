@@ -146,7 +146,9 @@ UPDATE articles SET content = @content::text WHERE id = @id;
 UPDATE articles SET linked_url = @linked_url, linked_content = @linked_content WHERE id = @id;
 
 -- name: MarkArticleFullTextFetched :exec
-UPDATE articles SET full_text_fetched = TRUE WHERE id = @id;
+-- The result is recorded with the flag rather than after it, so a row can
+-- never say "considered" without saying why. See migration 0018.
+UPDATE articles SET full_text_fetched = TRUE, full_text_result = @result::text WHERE id = @id;
 
 -- name: SetInterestScore :exec
 -- score_model/prompt_hash are captured here, at scoring time, because this is
