@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Herald logs leveled logfmt, and serves a real access log.** Every line the
+  binary emitted went through the standard `log` package, so it reached Loki as
+  `detected_level=unknown` and the error alert matched none of them -- a failing
+  digest, a circuit breaker tripping and an ordinary startup line were equally
+  invisible. All 100 call sites now go through `log/slog` via
+  `github.com/infodancer/logging`: logfmt, one record per line, level lowercased
+  for Loki's parser. `--log-level` (or `HERALD_LOG_LEVEL`) sets the floor;
+  anything unrecognised is info, so a typo cannot silence the daemon.
+
+  The hand-written request logger in `internal/web` is replaced by
+  `httplog.Middleware`, the shared access log: the same field names as every
+  other service, and it wraps through `httpsnoop`, so a handler needing `Flush`
+  or `Hijack` still gets them -- the old wrapper captured only the status code
+  and silently dropped the rest. `http.Server.ErrorLog` goes to the same logger,
+  so TLS and protocol faults stop going to stderr unstructured. `/health` is
+  skipped: the preview pipeline polls it and it says nothing when it succeeds.
+
+  `X-Forwarded-For` is ignored unless `web.trusted_proxies` names the peer it may
+  be believed from (comma-separated CIDRs or addresses) -- the header is
+  client-supplied, so honouring it from an arbitrary peer lets anyone forge the
+  trail. Behind Traefik, set it to the proxy network.
+
+  Loggers are injected where there is a receiver: `Engine.SetLogger`,
+  `Fetcher.SetLogger`, and `web.WithLogger` on `NewRouter`. Each is tagged with
+  its component (`engine`, `web`, `http`, `oidc`), so a line says which
+  subsystem it came from instead of spelling it into the message. Anything
+  without a receiver -- the engine constructor, the slow-query tracer, the
+  filter-rule helpers -- uses `slog.Default()`, which the root command sets
+  before any subcommand runs.
+
 ### Added
 
 - **Filter rules can match article text, with substring and regex patterns.**

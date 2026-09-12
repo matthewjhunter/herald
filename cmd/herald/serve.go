@@ -4,10 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
+	"github.com/infodancer/logging"
+	"github.com/infodancer/logging/httplog"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -77,7 +80,7 @@ user sessions, article browsing, admin, Fever API, etc.`,
 				// without an interactive redirect (#173). The token is stored only in
 				// the herald DB and never reaches the browser.
 				OfflineAccess: true,
-				Logf:          log.Printf,
+				Logf:          logging.NewStdLogger(slog.Default().With("component", "oidc")).Printf,
 			})
 			if err != nil {
 				return fmt.Errorf("create OIDC validator: %w", err)
@@ -112,19 +115,33 @@ user sessions, article browsing, admin, Fever API, etc.`,
 			defer authzDB.Close()
 			resolver := &authz.Resolver{Store: authz.NewPostgresStore(authzDB), Module: ""}
 
+			logger := slog.Default()
+			engine.SetLogger(logger.With("component", "engine"))
+
 			mux := web.NewRouter(engine, validator, issuerURL, resolver, cfg.Web.Admin.Role, cfg.Web.Admin.Users, web.AnalyticsConfig{
 				UmamiSrc:  cfg.Web.Analytics.UmamiSrc,
 				WebsiteID: cfg.Web.Analytics.WebsiteID,
-			})
+			}, web.WithLogger(logger.With("component", "web")))
 
 			// Sweep expired sessions hourly for the lifetime of the server (#173).
 			sweepCtx, stopSweep := context.WithCancel(context.Background())
 			defer stopSweep()
 			go web.SweepExpiredSessions(sweepCtx, engine, time.Hour)
 
+			// The access log comes from the shared httplog middleware rather
+			// than the hand-written one this replaced: same field names as
+			// every other service, and it wraps through httpsnoop, so a
+			// handler that needs Flush or Hijack still gets them. /health is
+			// skipped -- the preview pipeline polls it until the container
+			// serves, and it says nothing when it succeeds.
+			accessLog := httplog.Middleware(logger,
+				httplog.WithSkipPaths("/health"),
+				httplog.WithTrustedProxies(splitList(cfg.Web.TrustedProxies)...),
+			)
 			srv := &http.Server{
 				Addr:         listenAddr,
-				Handler:      web.SecurityHeaders(web.Logging(web.Recovery(mux))),
+				Handler:      web.SecurityHeaders(accessLog(web.Recovery(logger, mux))),
+				ErrorLog:     httplog.ErrorLog(logger.With("component", "http")),
 				ReadTimeout:  15 * time.Second,
 				WriteTimeout: 30 * time.Second,
 				IdleTimeout:  60 * time.Second,
@@ -135,22 +152,24 @@ user sessions, article browsing, admin, Fever API, etc.`,
 			signal.Notify(done, os.Interrupt, syscall.SIGTERM)
 
 			go func() {
-				log.Printf("herald serve: listening on %s", listenAddr)
+				logger.Info("herald serve: listening", "addr", listenAddr)
 				if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-					log.Fatalf("herald serve: %v", err)
+					logger.Error("herald serve: server stopped", "err", err)
+					os.Exit(1)
 				}
 			}()
 
 			<-done
-			log.Println("herald serve: shutting down...")
+			logger.Info("herald serve: shutting down")
 
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
 			if err := srv.Shutdown(shutdownCtx); err != nil {
-				log.Fatalf("herald serve: shutdown error: %v", err)
+				logger.Error("herald serve: shutdown failed", "err", err)
+				os.Exit(1)
 			}
-			log.Println("herald serve: stopped")
+			logger.Info("herald serve: stopped")
 			return nil
 		},
 	}
@@ -171,4 +190,16 @@ func mergeString(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// splitList parses a comma-separated config value, dropping empty fields so an
+// unset value, a trailing comma and stray spaces all mean the same thing.
+func splitList(s string) []string {
+	var out []string
+	for _, f := range strings.Split(s, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
