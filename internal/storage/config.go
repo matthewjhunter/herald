@@ -182,6 +182,13 @@ type Config struct {
 			ClientID    string `toml:"client_id"`
 			CallbackURL string `toml:"callback_url"`
 		} `toml:"webauth"`
+		// TrustedProxies lists, comma-separated, the peers whose
+		// X-Forwarded-For the access log may believe, as CIDRs or bare
+		// addresses (e.g. "172.18.0.0/16" for the Traefik network). Empty --
+		// the default -- logs the peer address and ignores the header: it is
+		// client-supplied, so believing it from an arbitrary peer lets anyone
+		// forge the trail an investigation would read.
+		TrustedProxies string `toml:"trusted_proxies"`
 		// Admin configures who gets admin UI access.
 		Admin struct {
 			// Role is the JWT role claim that grants admin (default "admin").

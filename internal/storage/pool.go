@@ -3,7 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -38,9 +38,9 @@ func (slowQueryTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.
 		return
 	}
 	if data.Err != nil {
-		log.Printf("SLOW QUERY (%dms, err=%v): %.500s", d.Milliseconds(), data.Err, td.sql)
+		slog.Default().Warn("slow query", "ms", d.Milliseconds(), "err", data.Err, "sql", truncateSQL(td.sql))
 	} else {
-		log.Printf("SLOW QUERY (%dms): %.500s", d.Milliseconds(), td.sql)
+		slog.Default().Warn("slow query", "ms", d.Milliseconds(), "sql", truncateSQL(td.sql))
 	}
 }
 
@@ -67,4 +67,15 @@ func newPgxPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("create postgres pool: %w", err)
 	}
 	return pool, nil
+}
+
+// truncateSQL bounds a statement logged with a slow query. The old format verb
+// (%.500s) did this inline; an attribute carries the whole string unless it is
+// cut here.
+func truncateSQL(sql string) string {
+	const max = 500
+	if len(sql) <= max {
+		return sql
+	}
+	return sql[:max] + "..."
 }
