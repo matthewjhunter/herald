@@ -3,6 +3,7 @@ package web
 import (
 	"embed"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,6 +17,20 @@ import (
 
 //go:embed templates static
 var embedded embed.FS
+
+// An Option configures the router. Variadic so the existing call sites --
+// seven positional arguments already -- do not grow another one.
+type Option func(*options)
+
+type options struct {
+	logger *slog.Logger
+}
+
+// WithLogger routes the web layer's lines to logger. Without it they go to
+// slog.Default(), which the command sets.
+func WithLogger(logger *slog.Logger) Option {
+	return func(o *options) { o.logger = logger }
+}
 
 // NewRouter sets up all routes using Go 1.22+ enhanced routing.
 //
@@ -33,7 +48,12 @@ var embedded embed.FS
 // Fixture id convention: each seeded entity is the first row in a fresh DB, so
 // its id is 1; destructive writes target a dedicated second row (id 2) so they
 // don't delete what the read probes need. See TestSmokeRoutesAuthenticated.
-func NewRouter(engine *herald.Engine, validator *oidclient.Client, issuer string, resolver adminResolver, adminRole string, adminUsers []string, analytics AnalyticsConfig) *smoke.Mux {
+func NewRouter(engine *herald.Engine, validator *oidclient.Client, issuer string, resolver adminResolver, adminRole string, adminUsers []string, analytics AnalyticsConfig, opts ...Option) *smoke.Mux {
+	cfg := options{logger: slog.Default()}
+	for _, o := range opts {
+		o(&cfg)
+	}
+
 	mux := smoke.NewMux()
 
 	// Liveness probe — no auth, no DB. Used by the PR-preview pipeline to wait
@@ -69,6 +89,7 @@ func NewRouter(engine *herald.Engine, validator *oidclient.Client, issuer string
 	}
 
 	h := &handlers{
+		logger:     cfg.logger,
 		engine:     engine,
 		validator:  validator,
 		sessions:   sessions,

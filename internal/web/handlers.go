@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -30,6 +30,7 @@ import (
 
 // handlers holds dependencies for all HTTP handler methods.
 type handlers struct {
+	logger      *slog.Logger // never nil; NewRouter defaults it to slog.Default()
 	engine      *herald.Engine
 	validator   *oidclient.Client
 	sessions    *session.Manager              // server-side OIDC session lifecycle (#173)
@@ -299,7 +300,7 @@ func (h *handlers) renderPublicPage(w http.ResponseWriter, name string, data any
 	h.init()
 	t, ok := h.publicPages[name]
 	if !ok {
-		log.Printf("herald-web: unknown public page template: %s", name)
+		h.logger.Error("unknown public page template", "template", name)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -313,7 +314,7 @@ func (h *handlers) renderPublicPage(w http.ResponseWriter, name string, data any
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	pd := publicPageData{Analytics: h.analytics, Data: data}
 	if err := t.ExecuteTemplate(w, "base_public.html", pd); err != nil {
-		log.Printf("herald-web: template error: %v", err)
+		h.logger.Error("rendering a template failed", "err", err)
 	}
 }
 
@@ -519,7 +520,7 @@ func (h *handlers) renderPage(w http.ResponseWriter, r *http.Request, name strin
 	// Look up the per-page template tree
 	t, ok := h.pages[name]
 	if !ok {
-		log.Printf("herald-web: unknown page template: %s", name)
+		h.logger.Error("unknown page template", "template", name)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -527,7 +528,7 @@ func (h *handlers) renderPage(w http.ResponseWriter, r *http.Request, name strin
 	// Render full page with base layout
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := t.ExecuteTemplate(w, "base.html", data); err != nil {
-		log.Printf("herald-web: template error: %v", err)
+		h.logger.Error("rendering a template failed", "err", err)
 	}
 }
 
@@ -539,12 +540,12 @@ func (h *handlers) renderFragment(w http.ResponseWriter, name string, data any) 
 	for _, t := range h.pages {
 		if tmpl := t.Lookup(name); tmpl != nil {
 			if err := tmpl.Execute(w, data); err != nil {
-				log.Printf("herald-web: template error: %v", err)
+				h.logger.Error("rendering a template failed", "err", err)
 			}
 			return
 		}
 	}
-	log.Printf("herald-web: unknown fragment template: %s", name)
+	h.logger.Error("unknown fragment template", "template", name)
 	http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 }
 
@@ -670,14 +671,14 @@ func (h *handlers) handleRoot(w http.ResponseWriter, r *http.Request) {
 		// fault is diagnosable, but serve the public page either way -- we never
 		// render app content without a valid session.
 		if !errors.Is(err, session.ErrNoSession) {
-			log.Printf("herald-web: root authenticate: %v", err)
+			h.logger.Error("authenticating the root request failed", "err", err)
 		}
 		h.renderPublicPage(w, "landing.html", nil)
 		return
 	}
 	user, err := h.engine.GetOrProvisionOIDCUser(claims.Sub, claims.Name, claims.Email)
 	if err != nil {
-		log.Printf("herald-web: provision user: %v", err)
+		h.logger.Error("provisioning the user failed", "err", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -862,7 +863,7 @@ func (h *handlers) articleSummaries(ids []int64) map[int64]string {
 	}
 	summaries, err := h.engine.GetArticleSummaries(ids)
 	if err != nil {
-		log.Printf("herald-web: batch article summaries: %v", err)
+		h.logger.Error("batch article summaries failed", "err", err)
 		return nil
 	}
 	return summaries
@@ -1164,7 +1165,7 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 	// Exact (not substring) match so sites that carry their article id in the
 	// query (e.g. WordPress ?p= permalinks) don't match every link to the host.
 	if links, err := h.engine.GetArticleBacklinksExact(uid, article.ID, article.URL); err != nil {
-		log.Printf("herald-web: backlinks for article %d: %v", article.ID, err)
+		h.logger.Error("reading backlinks failed", "article", article.ID, "err", err)
 	} else {
 		for _, b := range links {
 			data.LinkedBy = append(data.LinkedBy, backlinkRow{
@@ -1449,7 +1450,7 @@ func (h *handlers) handleNewsletterGenerate(w http.ResponseWriter, r *http.Reque
 		nlID := id
 		go func() {
 			if ferr := h.engine.FinishAISummary(context.Background(), uid, sid, &nlID, prompt); ferr != nil {
-				log.Printf("herald-web: digest %d (config %d): %v", sid, nlID, ferr)
+				h.logger.Error("digest failed", "digest", sid, "config", nlID, "err", ferr)
 			}
 		}()
 	}
@@ -1590,7 +1591,7 @@ func (h *handlers) handleFeedDiscover(w http.ResponseWriter, r *http.Request) {
 
 	discovered, err := h.engine.DiscoverFeeds(ctx, rawURL)
 	if err != nil {
-		log.Printf("herald-web: feed discover failed for %q: %v", rawURL, err)
+		h.logger.Error("feed discovery failed", "url", rawURL, "err", err)
 		h.renderDiscoverResult(w, rawURL, nil,
 			"Could not reach that URL. Check the address and try again.")
 		return
@@ -1654,7 +1655,7 @@ func (h *handlers) handleFeedSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.engine.SubscribeFeed(uid, url, title); err != nil {
-		log.Printf("herald-web: subscribe failed for user %d: %v", uid, err)
+		h.logger.Error("subscribe failed", "user", uid, "err", err)
 		h.renderError(w, http.StatusBadRequest, "Could not subscribe to that feed. Check the URL and try again.")
 		return
 	}
@@ -1850,7 +1851,7 @@ func (h *handlers) handleOPMLImport(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 
 	if err := h.engine.ImportOPMLReader(f, uid); err != nil {
-		log.Printf("herald-web: OPML import failed for user %d: %v", uid, err)
+		h.logger.Error("OPML import failed", "user", uid, "err", err)
 		h.renderError(w, http.StatusBadRequest, "Failed to import OPML. Check that the file is valid.")
 		return
 	}
@@ -1946,7 +1947,7 @@ func (h *handlers) handleUserPromptRevert(w http.ResponseWriter, r *http.Request
 	// Ownership is enforced in the engine: a version id is a bare integer and
 	// must not be usable to read back another account's prompt text.
 	if err := h.engine.RevertPrompt(uid, promptType, versionID); err != nil {
-		log.Printf("herald-web: revert prompt failed for user %d type %q version %d: %v", uid, promptType, versionID, err)
+		h.logger.Error("reverting a prompt failed", "user", uid, "prompt_type", promptType, "version", versionID, "err", err)
 		h.renderError(w, http.StatusBadRequest, "Could not revert to that version")
 		return
 	}
@@ -1979,7 +1980,7 @@ func (h *handlers) handleUserPromptSave(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.engine.SetPrompt(uid, promptType, tmpl, nil, modelPtr); err != nil {
-		log.Printf("herald-web: save prompt failed for user %d type %q: %v", uid, promptType, err)
+		h.logger.Error("saving a prompt failed", "user", uid, "prompt_type", promptType, "err", err)
 		h.renderError(w, http.StatusBadRequest, "Failed to save prompt.")
 		return
 	}
@@ -2003,7 +2004,7 @@ func (h *handlers) handleUserPromptReset(w http.ResponseWriter, r *http.Request)
 	promptType := r.PathValue("promptType")
 
 	if err := h.engine.ResetPrompt(uid, promptType); err != nil {
-		log.Printf("herald-web: reset prompt failed for user %d type %q: %v", uid, promptType, err)
+		h.logger.Error("resetting a prompt failed", "user", uid, "prompt_type", promptType, "err", err)
 		h.renderError(w, http.StatusBadRequest, "Failed to reset prompt.")
 		return
 	}
@@ -2216,7 +2217,7 @@ func (h *handlers) handleAdminPromptSave(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := h.engine.SetPrompt(0, promptType, tmpl, nil, modelPtr); err != nil {
-		log.Printf("herald-web: save global prompt failed for type %q: %v", promptType, err)
+		h.logger.Error("saving a global prompt failed", "prompt_type", promptType, "err", err)
 		h.renderError(w, http.StatusBadRequest, "Failed to save global prompt.")
 		return
 	}
@@ -2230,7 +2231,7 @@ func (h *handlers) handleAdminPromptReset(w http.ResponseWriter, r *http.Request
 	promptType := r.PathValue("promptType")
 
 	if err := h.engine.ResetPrompt(0, promptType); err != nil {
-		log.Printf("herald-web: reset global prompt failed for type %q: %v", promptType, err)
+		h.logger.Error("resetting a global prompt failed", "prompt_type", promptType, "err", err)
 		h.renderError(w, http.StatusBadRequest, "Failed to reset global prompt.")
 		return
 	}
@@ -2323,7 +2324,7 @@ func (h *handlers) handleFilterAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := h.engine.AddFilterRule(uid, rule); err != nil {
-		log.Printf("herald-web: add filter rule failed for user %d: %v", uid, err)
+		h.logger.Error("adding a filter rule failed", "user", uid, "err", err)
 		// The engine's message names the problem -- an uncompilable pattern, a
 		// quota, a bad axis -- and a user staring at a rejected regex needs it.
 		// These errors are generated from the submitted rule, not from feed
@@ -2365,7 +2366,7 @@ func (h *handlers) handleFilterThreshold(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := h.engine.SetPreference(uid, "filter_threshold", v); err != nil {
-		log.Printf("herald-web: save filter_threshold failed for user %d: %v", uid, err)
+		h.logger.Error("saving filter_threshold failed", "user", uid, "err", err)
 		h.renderError(w, http.StatusInternalServerError, "Failed to save threshold.")
 		return
 	}
@@ -2573,7 +2574,7 @@ type adminUsersData struct {
 func (h *handlers) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	users, err := h.engine.ListUsers()
 	if err != nil {
-		log.Printf("herald-web: list users failed: %v", err)
+		h.logger.Error("listing users failed", "err", err)
 		h.renderError(w, http.StatusInternalServerError, "Failed to load users")
 		return
 	}
@@ -2589,7 +2590,7 @@ func (h *handlers) handleAdminUserDelete(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := h.engine.DeleteUser(userID); err != nil {
-		log.Printf("herald-web: delete user %d failed: %v", userID, err)
+		h.logger.Error("deleting a user failed", "user", userID, "err", err)
 		if strings.HasPrefix(err.Error(), "refusing to delete reserved user") {
 			h.renderError(w, http.StatusBadRequest, err.Error())
 		} else {

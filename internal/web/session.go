@@ -3,7 +3,8 @@ package web
 import (
 	"context"
 	"errors"
-	"log"
+	"github.com/infodancer/logging"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -74,7 +75,7 @@ func (s heraldSessionStore) DeleteExpired(_ context.Context, cutoff time.Time) (
 // the old key no longer decrypt, so those users re-login). It never falls
 // back to storing tokens in the clear.
 func newSessionKeyring(encKeyB64 string) (*session.Keyring, error) {
-	return session.NewKeyringFromBase64(encKeyB64, "HERALD_SESSION_ENC_KEY", log.Printf)
+	return session.NewKeyringFromBase64(encKeyB64, "HERALD_SESSION_ENC_KEY", logging.NewStdLogger(slog.Default()).Printf)
 }
 
 // newSessionManager constructs the shared server-side session manager over the
@@ -104,9 +105,9 @@ func SweepExpiredSessions(ctx context.Context, engine *herald.Engine, interval t
 			return
 		case <-ticker.C:
 			if n, err := engine.DeleteExpiredSessions(time.Now()); err != nil {
-				log.Printf("herald-web: session sweep: %v", err)
+				slog.Default().Error("session sweep failed", "err", err)
 			} else if n > 0 {
-				log.Printf("herald-web: swept %d expired session(s)", n)
+				slog.Default().Info("swept expired sessions", "sessions", n)
 			}
 		}
 	}
@@ -123,12 +124,12 @@ func (h *handlers) handleCallback(w http.ResponseWriter, r *http.Request) {
 	// A lazy client still discovering cannot exchange the code; degrade this
 	// endpoint rather than the whole app (mirrors CallbackHandler and #165).
 	if !v.Ready() {
-		log.Printf("herald-web: callback received before provider discovery completed")
+		h.logger.Error("callback received before provider discovery completed")
 		http.Error(w, "authentication temporarily unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	if errParam := r.URL.Query().Get("error"); errParam != "" {
-		log.Printf("herald-web: callback error from provider: %s", errParam)
+		h.logger.Error("callback error from the provider", "error", errParam)
 		http.Error(w, "authentication error", http.StatusUnauthorized)
 		return
 	}
@@ -152,12 +153,12 @@ func (h *handlers) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	tokens, claims, err := v.Exchange(r.Context(), code, verifier)
 	if err != nil {
-		log.Printf("herald-web: callback token exchange: %v", err)
+		h.logger.Error("callback token exchange failed", "err", err)
 		http.Error(w, "authentication failed", http.StatusBadGateway)
 		return
 	}
 	if err := h.sessions.Start(w, r, tokens, claims); err != nil {
-		log.Printf("herald-web: callback session start: %v", err)
+		h.logger.Error("callback session start failed", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

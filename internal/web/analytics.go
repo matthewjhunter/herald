@@ -1,7 +1,7 @@
 package web
 
 import (
-	"log"
+	"log/slog"
 	"net/url"
 )
 
@@ -44,7 +44,7 @@ func newAnalyticsView(c AnalyticsConfig) analyticsView {
 	}
 	u, err := url.Parse(c.UmamiSrc)
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
-		log.Printf("herald-web: ignoring invalid analytics umami_src %q (need an http(s) URL): %v", c.UmamiSrc, err)
+		slog.Default().Warn("ignoring an invalid analytics umami_src (need an http(s) URL)", "umami_src", c.UmamiSrc, "err", err)
 		return analyticsView{}
 	}
 	return analyticsView{
