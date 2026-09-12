@@ -2,7 +2,6 @@ package herald
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/matthewjhunter/herald/internal/storage"
 )
@@ -28,7 +27,7 @@ func (e *Engine) RecordFeedback(ev storage.FeedbackEvent) {
 		return
 	}
 	if err := e.store.RecordFeedbackEvent(ev); err != nil {
-		log.Printf("feedback: record %s for user %d article %d: %v", ev.Kind, ev.UserID, ev.ArticleID, err)
+		e.log().Error("recording feedback failed", "kind", ev.Kind, "user", ev.UserID, "article", ev.ArticleID, "err", err)
 	}
 }
 
@@ -41,7 +40,7 @@ func (e *Engine) RecordFeedbackBatch(ev storage.FeedbackEvent, articleIDs []int6
 		return
 	}
 	if err := e.store.RecordFeedbackEventsBatch(ev, articleIDs); err != nil {
-		log.Printf("feedback: record %s batch of %d for user %d: %v", ev.Kind, len(articleIDs), ev.UserID, err)
+		e.log().Error("recording a feedback batch failed", "kind", ev.Kind, "articles", len(articleIDs), "user", ev.UserID, "err", err)
 	}
 }
 
@@ -52,7 +51,7 @@ func (e *Engine) RecordFeedFeedback(ev storage.FeedbackEvent) {
 		return
 	}
 	if err := e.store.RecordFeedFeedbackEvent(ev); err != nil {
-		log.Printf("feedback: record %s for user %d feed %d: %v", ev.Kind, ev.UserID, ev.FeedID, err)
+		e.log().Error("recording feed feedback failed", "kind", ev.Kind, "user", ev.UserID, "feed", ev.FeedID, "err", err)
 	}
 }
 
@@ -150,7 +149,7 @@ func (e *Engine) VoteArticle(userID, articleID int64, vote int, reason string, s
 // the worse outcome.
 func (e *Engine) setVoteReadState(userID, articleID int64, read bool) {
 	if err := e.store.UpdateReadState(userID, articleID, read, nil); err != nil {
-		log.Printf("vote: set read=%v for user %d article %d: %v", read, userID, articleID, err)
+		e.log().Error("setting read state failed", "read", read, "user", userID, "article", articleID, "err", err)
 	}
 }
 

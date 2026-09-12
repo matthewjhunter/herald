@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"html"
-	"log"
 	"strings"
 
 	"github.com/matthewjhunter/herald/internal/ai"
@@ -148,7 +147,7 @@ func (e *Engine) FinishAISummary(ctx context.Context, userID, id int64, newslett
 	}
 	headline, body, ids, inTok, outTok, genErr := e.runAISummary(ctx, userID, articles, prompt)
 	if genErr != nil {
-		log.Printf("herald: AI summary %d (user %d) failed: %v", id, userID, genErr)
+		e.log().Error("AI summary failed", "summary", id, "user", userID, "err", genErr)
 		return e.store.UpdateAISummaryFailed(id, genErr.Error())
 	}
 	if err := e.store.UpdateAISummaryDone(id, headline, body, ids, inTok, outTok); err != nil {
@@ -158,7 +157,7 @@ func (e *Engine) FinishAISummary(ctx context.Context, userID, id int64, newslett
 		e.store.UpdateNewsletterLastGenerated(*newsletterID) //nolint:errcheck
 		if nl, err := e.store.GetNewsletter(*newsletterID); err == nil && nl.EmailRecipient != "" && e.config.Email.SMTPHost != "" {
 			if mailErr := e.emailDigest(nl, headline, body); mailErr != nil {
-				log.Printf("herald: digest %d email to %s failed: %v", id, nl.EmailRecipient, mailErr)
+				e.log().Error("digest email failed", "digest", id, "recipient", nl.EmailRecipient, "err", mailErr)
 			}
 		}
 	}
@@ -265,8 +264,9 @@ func (e *Engine) runAISummary(ctx context.Context, userID int64, articles []stor
 		used += est
 	}
 	if dropped := len(articles) - len(inputs); dropped > 0 {
-		log.Printf("herald: AI summary for user %d covers %d/%d articles (%d dropped: ~%dk-token budget)",
-			userID, len(inputs), len(articles), dropped, sum.MaxInputTokens/1000)
+		e.log().Info("AI summary covers a subset of the articles (input token budget)",
+			"user", userID, "covered", len(inputs), "articles", len(articles),
+			"dropped", dropped, "budget_ktokens", sum.MaxInputTokens/1000)
 	}
 
 	loader := ai.NewPromptLoader(e.store, e.config)
