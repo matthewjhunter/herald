@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -109,8 +109,9 @@ func (c *openAIClient) tripBreaker(statusCode int) {
 	if c.consecutive4xx >= clientBreakerThreshold && !c.circuitOpen {
 		c.circuitOpen = true
 		c.openedAt = time.Now()
-		log.Printf("herald: circuit breaker OPEN — %d consecutive HTTP %d responses from %s; will retry after %v",
-			c.consecutive4xx, statusCode, c.baseURL, c.breakerCooldown)
+		slog.Default().Error("circuit breaker OPEN; will retry after the cooldown",
+			"consecutive_failures", c.consecutive4xx, "status", statusCode,
+			"base_url", c.baseURL, "cooldown", c.breakerCooldown)
 	}
 }
 
@@ -135,8 +136,8 @@ func (c *openAIClient) isOpen() bool {
 		return false
 	}
 	if time.Since(c.openedAt) >= c.breakerCooldown {
-		log.Printf("herald: circuit breaker half-open after %v cooldown; allowing probe requests to %s",
-			c.breakerCooldown, c.baseURL)
+		slog.Default().Warn("circuit breaker half-open; allowing probe requests",
+			"cooldown", c.breakerCooldown, "base_url", c.baseURL)
 		c.circuitOpen = false
 		c.consecutive4xx = 0
 		return false
@@ -280,8 +281,9 @@ func (c *openAIClient) generate(ctx context.Context, model, prompt string, tempe
 		if len(resultPreview) > 500 {
 			resultPreview = resultPreview[:500] + "...[truncated]"
 		}
-		log.Printf("[DEBUG-AI] model=%s temp=%.1f prompt_len=%d\n--- PROMPT ---\n%s\n--- RESPONSE ---\n%s\n--- END ---",
-			model, temperature, len(prompt), promptPreview, resultPreview)
+		slog.Default().Debug("AI exchange",
+			"model", model, "temperature", temperature, "prompt_len", len(prompt),
+			"prompt", promptPreview, "response", resultPreview)
 	}
 
 	return result, nil

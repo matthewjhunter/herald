@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -45,25 +45,25 @@ concurrency-safe across multiple screen loops via a per-article claim/lease.`,
 			// the current cycle to complete.
 			go func() {
 				<-sig
-				log.Println("herald daemon: received shutdown signal, cancelling current cycle")
+				slog.Info("herald daemon: shutdown signal received, cancelling the current cycle")
 				cancel()
 			}()
 
-			log.Printf("herald daemon: starting with interval %s, stages %s", interval, stagesCSV)
+			slog.Info("herald daemon: starting", "interval", interval, "stages", stagesCSV)
 
 			cycle := 1
 			for {
 				start := time.Now()
-				log.Printf("herald daemon: cycle %d starting", cycle)
+				slog.Info("herald daemon: cycle starting", "cycle", cycle)
 
 				if err := runCycle(ctx, stages); err != nil {
 					if ctx.Err() != nil {
-						log.Println("herald daemon: cycle cancelled, exiting")
+						slog.Info("herald daemon: cycle cancelled, exiting")
 						return nil
 					}
-					log.Printf("herald daemon: cycle %d error: %v", cycle, err)
+					slog.Error("herald daemon: cycle failed", "cycle", cycle, "err", err)
 				} else {
-					log.Printf("herald daemon: cycle %d completed in %s", cycle, time.Since(start).Round(time.Millisecond))
+					slog.Info("herald daemon: cycle complete", "cycle", cycle, "duration", time.Since(start).Round(time.Millisecond))
 				}
 
 				// Due newsletters belong to the curate stage (per-user output); a
@@ -73,7 +73,7 @@ concurrency-safe across multiple screen loops via a per-article claim/lease.`,
 						if ctx.Err() != nil {
 							return nil
 						}
-						log.Printf("herald daemon: newsletter processing error: %v", err)
+						slog.Error("herald daemon: newsletter processing failed", "err", err)
 					}
 				}
 

@@ -3,7 +3,6 @@ package feeds
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/matthewjhunter/herald/internal/urlnorm"
@@ -38,11 +37,11 @@ func (f *Fetcher) ExtractLinksForArticles(ctx context.Context) (int, error) {
 		}
 		links := extractExternalLinks(urlnorm.Host(a.URL), a.Content, a.Summary)
 		if err := f.store.StoreArticleLinks(a.ID, links); err != nil {
-			log.Printf("herald: store links for article %d: %v", a.ID, err)
+			f.log().Error("storing links failed", "article", a.ID, "err", err)
 			continue
 		}
 		if err := f.store.MarkArticleLinksExtracted(a.ID); err != nil {
-			log.Printf("herald: mark links extracted for article %d: %v", a.ID, err)
+			f.log().Error("marking links extracted failed", "article", a.ID, "err", err)
 			continue
 		}
 		processed++

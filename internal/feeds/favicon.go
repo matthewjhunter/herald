@@ -11,7 +11,6 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -49,19 +48,19 @@ func (f *Fetcher) FetchFaviconsForFeeds(ctx context.Context) (int, error) {
 			// on the backoff window, so this log line now fires at most once per
 			// window per feed instead of every 5 minutes.
 			kind := classifyFaviconFailure(err)
-			log.Printf("herald: favicon fetch failed for feed %d (%s) [%s]: %v", feed.ID, feed.URL, kind, err)
+			f.log().Warn("favicon fetch failed", "feed", feed.ID, "url", feed.URL, "kind", kind, "err", err)
 			if rerr := f.store.RecordFaviconFailure(feed.ID, kind); rerr != nil {
-				log.Printf("herald: failed to record favicon failure for feed %d: %v", feed.ID, rerr)
+				f.log().Error("recording the favicon failure failed", "feed", feed.ID, "err", rerr)
 			}
 			continue
 		}
 		if err := f.store.StoreFeedFavicon(feed.ID, data, mimeType); err != nil {
-			log.Printf("herald: failed to store favicon for feed %d: %v", feed.ID, err)
+			f.log().Error("storing the favicon failed", "feed", feed.ID, "err", err)
 			continue
 		}
 		// Clear any prior failure marker now that the favicon is cached.
 		if err := f.store.ClearFaviconFailure(feed.ID); err != nil {
-			log.Printf("herald: failed to clear favicon failure for feed %d: %v", feed.ID, err)
+			f.log().Error("clearing the favicon failure failed", "feed", feed.ID, "err", err)
 		}
 		stored++
 	}

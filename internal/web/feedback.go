@@ -1,7 +1,6 @@
 package web
 
 import (
-	"log"
 	"net/http"
 	"strconv"
 
@@ -208,7 +207,7 @@ func (h *handlers) handleArticleVote(w http.ResponseWriter, r *http.Request) {
 
 	current, err := h.engine.VoteArticle(uid, articleID, vote, reason, surface, position)
 	if err != nil {
-		log.Printf("herald-web: vote failed for user %d article %d: %v", uid, articleID, err)
+		h.logger.Error("vote failed", "user", uid, "article", articleID, "err", err)
 		http.Error(w, "could not record vote", http.StatusBadRequest)
 		return
 	}

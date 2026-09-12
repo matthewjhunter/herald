@@ -7,7 +7,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/url"
 	"regexp"
 	"sort"
@@ -34,8 +34,23 @@ type Engine struct {
 	summarizer   *ai.CloudSummarizer // AI Summary cloud backend; nil when unconfigured
 	reranker     embedding.Reranker  // search reranker (Jina/Cohere /v1/rerank); nil when unconfigured
 	config       *storage.Config
+	logger       *slog.Logger // nil means slog.Default(); see SetLogger
 	maxParallel  int          // max concurrent AI pipeline workers (1 = serial)
 	mu           sync.RWMutex // protects config fields modified at runtime
+}
+
+// SetLogger routes the engine's own lines to logger. An engine that was never
+// given one logs through slog.Default(), which the command sets: a library
+// caller should not have to configure logging to hear that semantic search was
+// disabled or a digest failed.
+func (e *Engine) SetLogger(logger *slog.Logger) { e.logger = logger }
+
+// log returns the engine's logger, or the process default.
+func (e *Engine) log() *slog.Logger {
+	if e.logger != nil {
+		return e.logger
+	}
+	return slog.Default()
 }
 
 // NewEngine creates a herald content engine backed by the given SQLite database.
@@ -127,13 +142,13 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 			store.Close()
 			return nil, fmt.Errorf("embedder config: %w", err)
 		}
-		log.Printf("herald: embedder config error, semantic search disabled: %v", err)
+		slog.Default().Warn("embedder config error, semantic search disabled", "err", err)
 	} else if embedder, err := embedding.New(embCfg); err != nil {
 		if !cfg.ReadOnly {
 			store.Close()
 			return nil, fmt.Errorf("create embedder: %w", err)
 		}
-		log.Printf("herald: embedder unavailable, semantic search disabled: %v", err)
+		slog.Default().Warn("embedder unavailable, semantic search disabled", "err", err)
 	} else {
 		LogEmbedModel(embCfg)
 		groupMatcher = ai.NewGroupMatcher(embedder, embCfg.Model, embCfg.Limits())
@@ -148,7 +163,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		if rr, err := embedding.NewReranker(rcfg); err == nil {
 			reranker = rr
 		} else {
-			log.Printf("herald: reranker unavailable, search reranking disabled: %v", err)
+			slog.Default().Warn("reranker unavailable, search reranking disabled", "err", err)
 		}
 	}
 
@@ -442,7 +457,7 @@ func (e *Engine) rerankSearchResults(ctx context.Context, query string, results 
 	if err != nil {
 		if embedding.IsRerankAvailable(err) {
 			// Backend reached but rejected the request (e.g. 4xx) — surface it in logs.
-			log.Printf("herald: rerank failed, keeping first-stage order: %v", err)
+			e.log().Warn("rerank failed, keeping first-stage order", "err", err)
 		}
 		return results
 	}
@@ -651,7 +666,7 @@ func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, er
 		a := articles[i]
 		switch {
 		case r.Err != nil:
-			log.Printf("backfill embed article %d: %v", a.ID, r.Err)
+			e.log().Error("backfill embedding failed", "article", a.ID, "err", r.Err)
 			e.store.MarkArticleEmbeddingFailed(a.ID, model, r.Err.Error()) //nolint:errcheck
 		case len(r.Vectors) == 0:
 			// Body too short to embed meaningfully — deterministic skip.
@@ -662,7 +677,7 @@ func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, er
 				chunks[j] = storage.EmbeddingChunk{Vector: v, StartByte: r.Spans[j].Start, EndByte: r.Spans[j].End}
 			}
 			if err := e.store.StoreArticleEmbeddings(a.ID, chunks, model); err != nil {
-				log.Printf("backfill store embeddings %d: %v", a.ID, err)
+				e.log().Error("storing backfilled embeddings failed", "article", a.ID, "err", err)
 				continue
 			}
 			count++
@@ -757,7 +772,7 @@ func (e *Engine) effectiveIncludeFeeds(userID int64, cfg storage.NewsletterConfi
 	}
 	tagged, err := e.store.GetFeedsByTags(userID, cfg.IncludeTags)
 	if err != nil {
-		log.Printf("herald: resolve digest tags for user %d: %v", userID, err)
+		e.log().Error("resolving digest tags failed", "user", userID, "err", err)
 		return cfg.IncludeFeeds
 	}
 	if len(tagged) == 0 {
@@ -878,7 +893,7 @@ func (e *Engine) SubscribeFeed(userID int64, rawURL, title string) error {
 
 	// Store the initial articles we already fetched
 	if stored, err := e.fetcher.StoreArticles(feedID, result.Feed); err == nil && len(stored) > 0 {
-		log.Printf("herald: stored %d initial articles from %s", len(stored), url)
+		e.log().Info("stored initial articles", "articles", len(stored), "feed", url)
 	}
 
 	// Persist cache headers for next conditional request
@@ -1000,9 +1015,9 @@ func (e *Engine) UnsubscribeFeed(userID, feedID int64) error {
 	}
 	go func() {
 		if deleted, err := e.store.DeleteFeedIfOrphaned(feedID); err != nil {
-			log.Printf("herald: cleanup orphaned feed %d: %v", feedID, err)
+			e.log().Error("cleaning up an orphaned feed failed", "feed", feedID, "err", err)
 		} else if deleted {
-			log.Printf("herald: deleted orphaned feed %d", feedID)
+			e.log().Info("deleted an orphaned feed", "feed", feedID)
 		}
 	}()
 	return nil
@@ -1392,18 +1407,18 @@ func (e *Engine) ProcessDueNewsletters(ctx context.Context) error {
 	for _, schedule := range []string{"hourly", "daily"} {
 		newsletters, err := e.store.GetDueNewsletters(schedule)
 		if err != nil {
-			log.Printf("get due %s newsletters: %v", schedule, err)
+			e.log().Error("reading due newsletters failed", "schedule", schedule, "err", err)
 			continue
 		}
 		for _, nl := range newsletters {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			log.Printf("generating %s digest %q (id=%d)", schedule, nl.Name, nl.ID)
+			e.log().Info("generating a digest", "schedule", schedule, "name", nl.Name, "digest", nl.ID)
 			// GenerateForConfig produces an AI digest and (if a recipient is set)
 			// emails it wrapped in the admin header/footer.
 			if err := e.GenerateForConfig(ctx, nl.UserID, nl.ID); err != nil {
-				log.Printf("digest %d generation failed: %v", nl.ID, err)
+				e.log().Error("digest generation failed", "digest", nl.ID, "err", err)
 				continue
 			}
 		}

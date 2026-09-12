@@ -8,7 +8,6 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -173,7 +172,7 @@ func (f *Fetcher) cacheImagesForArticle(ctx context.Context, articleID int64, ar
 	if resolved, changed := resolveTwitterPics(ctx, f.client, content); changed {
 		content = resolved
 		if err := f.store.UpdateArticleContent(articleID, content); err != nil {
-			log.Printf("herald: twitter pic resolution: content update failed for article %d: %v", articleID, err)
+			f.log().Error("twitter pic resolution: content update failed", "article", articleID, "err", err)
 		}
 	}
 
@@ -190,11 +189,11 @@ func (f *Fetcher) cacheImagesForArticle(ctx context.Context, articleID int64, ar
 		}
 		data, mimeType, w, h, err := fetchAndNormalizeImage(ctx, f.client, imgURL)
 		if err != nil {
-			log.Printf("herald: image cache failed for article %d (%s): %v", articleID, imgURL, err)
+			f.log().Warn("image cache failed", "article", articleID, "url", imgURL, "err", err)
 			continue
 		}
 		if _, err := f.store.StoreArticleImage(articleID, imgURL, data, mimeType, w, h); err != nil {
-			log.Printf("herald: failed to store image for article %d: %v", articleID, err)
+			f.log().Error("storing an image failed", "article", articleID, "err", err)
 			continue
 		}
 		stored++

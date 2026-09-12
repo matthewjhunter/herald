@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -129,7 +128,7 @@ func (h *handlers) feverMark(userID int64, r *http.Request) {
 			kind = storage.FeedbackUnstar
 		}
 		if err != nil {
-			log.Printf("fever: mark item %d as=%q user=%d: %v", id, as, userID, err)
+			h.logger.Error("fever: marking an item failed", "item", id, "as", as, "user", userID, "err", err)
 		}
 		if err == nil && kind != "" {
 			h.engine.RecordFeedback(storage.FeedbackEvent{
@@ -149,7 +148,7 @@ func (h *handlers) feverMark(userID int64, r *http.Request) {
 	case "feed":
 		if as == "read" {
 			if err := h.engine.FeverMarkFeedRead(userID, id, before); err != nil {
-				log.Printf("fever: mark feed %d read user=%d: %v", id, userID, err)
+				h.logger.Error("fever: marking a feed read failed", "feed", id, "user", userID, "err", err)
 			}
 		}
 	case "group":
@@ -162,7 +161,7 @@ func (h *handlers) feverMark(userID int64, r *http.Request) {
 				err = h.engine.FeverMarkGroupRead(userID, id, before)
 			}
 			if err != nil {
-				log.Printf("fever: mark group %d read user=%d: %v", id, userID, err)
+				h.logger.Error("fever: marking a group read failed", "group", id, "user", userID, "err", err)
 			}
 		}
 	}

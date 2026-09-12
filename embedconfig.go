@@ -1,7 +1,7 @@
 package herald
 
 import (
-	"log"
+	"log/slog"
 	"os"
 
 	embedding "github.com/matthewjhunter/go-embedding"
@@ -56,9 +56,10 @@ func strictModelSetByOperator() bool {
 func LogEmbedModel(cfg embedding.Config) {
 	info, known := embedding.LookupModel(cfg.Model)
 	if !known {
-		log.Printf("herald: embedding model %q is unrecognised -- no task prefixes and no input budget", cfg.Model)
+		slog.Default().Warn("embedding model is unrecognised -- no task prefixes and no input budget", "model", cfg.Model)
 		return
 	}
-	log.Printf("herald: embedding model %q resolved as %q (task prefixes: %v, budget: %d bytes)",
-		cfg.Model, info.Canonical, info.HasPrompts, cfg.Limits().MaxBytes)
+	slog.Default().Info("embedding model resolved",
+		"model", cfg.Model, "canonical", info.Canonical,
+		"task_prefixes", info.HasPrompts, "budget_bytes", cfg.Limits().MaxBytes)
 }

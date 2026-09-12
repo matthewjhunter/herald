@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"math/rand/v2"
 	"net/http"
 	"net/url"
@@ -165,7 +164,7 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 			full, err := fetchReadableContent(ctx, f.client, linkedURL)
 			if err != nil {
 				markDone(resultLinkedFetchFailed)
-				log.Printf("herald: linked-article fetch failed for article %d (%s): %v", article.ID, linkedURL, err)
+				f.log().Warn("linked-article fetch failed", "article", article.ID, "url", linkedURL, "err", err)
 				continue
 			}
 			switch {
@@ -175,7 +174,7 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 				markDone(resultContactPage)
 			default:
 				if err := f.store.UpdateArticleLinkedContent(article.ID, linkedURL, sanitizeText(full)); err != nil {
-					log.Printf("herald: failed to store linked content for article %d: %v", article.ID, err)
+					f.log().Error("storing linked content failed", "article", article.ID, "err", err)
 					markDone(resultStoreFailed)
 				} else {
 					markDone(resultLinked)
@@ -192,7 +191,7 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 		full, err := fetchReadableContent(ctx, f.client, article.URL)
 		if err != nil {
 			markDone(resultFetchFailed)
-			log.Printf("herald: full-text fetch failed for article %d (%s): %v", article.ID, article.URL, err)
+			f.log().Warn("full-text fetch failed", "article", article.ID, "url", article.URL, "err", err)
 			continue
 		}
 
@@ -205,17 +204,17 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 		}
 		if looksLikeContactPage(full) {
 			markDone(resultContactPage)
-			log.Printf("herald: rejecting full text for article %d (%s): looks like contact page", article.ID, article.URL)
+			f.log().Info("rejecting full text: looks like a contact page", "article", article.ID, "url", article.URL)
 			continue
 		}
 		if !feedContentOverlaps(article.Content, full) {
 			markDone(resultNoOverlap)
-			log.Printf("herald: rejecting full text for article %d (%s): no phrase overlap with feed content (likely sidebar)", article.ID, article.URL)
+			f.log().Info("rejecting full text: no phrase overlap with the feed content (likely sidebar)", "article", article.ID, "url", article.URL)
 			continue
 		}
 		if err := f.store.UpdateArticleContent(article.ID, sanitizeText(full)); err != nil {
 			markDone(resultStoreFailed)
-			log.Printf("herald: failed to store full text for article %d: %v", article.ID, err)
+			f.log().Error("storing full text failed", "article", article.ID, "err", err)
 		} else {
 			markDone(resultReplaced)
 			updated++

@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"github.com/infodancer/logging"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,11 +72,19 @@ func newPipelineStage(store storage.Store, processor *ai.AIProcessor, groupMatch
 // skips loadConfig for these so they can run before any config exists.
 const annotationSkipConfigLoad = "herald.skip-config-load"
 
+// logLevel is the floor for every line the process emits; see --log-level.
+var logLevel string
+
 func main() {
 	rootCmd := &cobra.Command{
 		Use:   "herald",
 		Short: "Your AI-powered news herald - intelligent RSS/Atom feed reader with AI curation",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// Logging is settled before any subcommand runs, so a line from a
+			// package that logs through slog.Default() -- the engine's
+			// constructor, the storage tracer -- lands in the same stream at
+			// the same level as everything else.
+			slog.SetDefault(logging.NewLogger(logLevel))
 			if cmd.Annotations[annotationSkipConfigLoad] == "true" {
 				return nil
 			}
@@ -83,6 +94,8 @@ func main() {
 
 	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "config file path (default: ./config/config.toml)")
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "format", "f", "json", "output format: json, text, human (default: json)")
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", cmp.Or(os.Getenv("HERALD_LOG_LEVEL"), "info"),
+		"minimum level to log: debug | info | warn | error")
 
 	rootCmd.AddCommand(createUserCmd())
 	rootCmd.AddCommand(adminCmd())

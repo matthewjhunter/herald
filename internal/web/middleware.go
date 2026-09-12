@@ -3,10 +3,9 @@ package web
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/infodancer/oidclient"
 	"github.com/infodancer/oidclient/session"
@@ -53,7 +52,7 @@ func (h *handlers) requireAuth(next http.Handler) http.Handler {
 			// at login, but is logged so a real fault is diagnosable rather than a
 			// silent re-auth loop.
 			if !errors.Is(err, session.ErrNoSession) {
-				log.Printf("herald-web: session authenticate: %v", err)
+				h.logger.Error("session authentication failed", "err", err)
 			}
 			// While the lazy OIDC client has not completed discovery it can
 			// neither validate cookies nor build an authorize URL; degrade to
@@ -96,7 +95,7 @@ func (h *handlers) requireAuth(next http.Handler) http.Handler {
 
 		user, err := h.engine.GetOrProvisionOIDCUser(claims.Sub, claims.Name, claims.Email)
 		if err != nil {
-			log.Printf("herald-web: provision user: %v", err)
+			h.logger.Error("provisioning the user failed", "err", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -148,36 +147,20 @@ func SecurityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// Logging logs each request with method, path, status, and duration.
-func Logging(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rw, r)
-		log.Printf("%s %s %d %s", r.Method, r.URL.Path, rw.status, time.Since(start).Round(time.Millisecond))
-	})
-}
-
-// Recovery catches panics and returns a 500.
-func Recovery(next http.Handler) http.Handler {
+// Recovery catches panics and returns a 500, reporting the panic to logger.
+// A nil logger falls back to slog.Default().
+func Recovery(logger *slog.Logger, next http.Handler) http.Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
-				log.Printf("herald-web: panic: %v", err)
+				logger.Error("panic serving a request",
+					"method", r.Method, "path", r.URL.Path, "panic", err)
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			}
 		}()
 		next.ServeHTTP(w, r)
 	})
-}
-
-// responseWriter wraps http.ResponseWriter to capture the status code.
-type responseWriter struct {
-	http.ResponseWriter
-	status int
-}
-
-func (rw *responseWriter) WriteHeader(code int) {
-	rw.status = code
-	rw.ResponseWriter.WriteHeader(code)
 }

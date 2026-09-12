@@ -3,7 +3,6 @@ package web
 import (
 	"context"
 	"html/template"
-	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -131,7 +130,7 @@ func (h *handlers) handleSummaryGenerate(w http.ResponseWriter, r *http.Request)
 	if id, prompt, err := h.engine.BeginAISummary(uid, nil); err == nil {
 		go func() {
 			if ferr := h.engine.FinishAISummary(context.Background(), uid, id, nil, prompt); ferr != nil {
-				log.Printf("herald-web: AI summary %d (user %d): %v", id, uid, ferr)
+				h.logger.Error("AI summary failed", "article", id, "user", uid, "err", ferr)
 			}
 		}()
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -47,6 +48,19 @@ type Fetcher struct {
 	parser *gofeed.Parser
 	client *http.Client
 	store  storage.Store
+	logger *slog.Logger // nil means slog.Default(); see SetLogger
+}
+
+// SetLogger routes the fetcher's lines to logger. Without one it logs through
+// slog.Default(), which the command sets.
+func (f *Fetcher) SetLogger(logger *slog.Logger) { f.logger = logger }
+
+// log returns the fetcher's logger, or the process default.
+func (f *Fetcher) log() *slog.Logger {
+	if f.logger != nil {
+		return f.logger
+	}
+	return slog.Default()
 }
 
 // OPML structures for parsing

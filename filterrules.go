@@ -1,7 +1,7 @@
 package herald
 
 import (
-	"log"
+	"log/slog"
 	"math"
 	"sort"
 	"strconv"
@@ -56,7 +56,7 @@ func (p filterPlan) hides() bool { return p.matcher != nil && p.goThreshold != n
 func (rf ruleFilter) plan(userID int64) filterPlan {
 	rules, err := rf.store.GetFilterRules(userID, nil)
 	if err != nil {
-		log.Printf("herald: filter rules unavailable for user %d, showing everything: %v", userID, err)
+		slog.Default().Error("filter rules unavailable, showing everything", "user", userID, "err", err)
 		return filterPlan{}
 	}
 	if len(rules) == 0 {
@@ -75,7 +75,7 @@ func (rf ruleFilter) plan(userID int64) filterPlan {
 	if err != nil {
 		// Patterns are compiled at save time, so this is a bug or a hand-edited
 		// row. Log it and fall back to the half SQL can still do.
-		log.Printf("herald: filter rules for user %d will not compile, using exact rules only: %v", userID, err)
+		slog.Default().Error("filter rules will not compile, using exact rules only", "user", userID, "err", err)
 		return filterPlan{sqlThreshold: threshold, applySQL: true}
 	}
 	if matcher.Empty() {
@@ -116,7 +116,7 @@ func (rf ruleFilter) subjects(articles []storage.Article, m *filtermatch.Matcher
 		if err != nil {
 			// Rules on the metadata axes will not fire. Say so rather than
 			// silently under-filtering.
-			log.Printf("herald: article metadata unavailable for filtering: %v", err)
+			slog.Default().Error("article metadata unavailable for filtering", "err", err)
 		}
 	}
 
@@ -174,8 +174,8 @@ func (rf ruleFilter) listFiltered(p filterPlan, limit, offset int, fetch func(wi
 
 	for storeOffset := 0; ; storeOffset += chunk {
 		if budget > 0 && scanned >= budget {
-			log.Printf("herald: filter scan gave up after %d rows with %d of %d articles kept; later pages may be incomplete",
-				scanned, len(kept), want)
+			slog.Default().Warn("filter scan gave up; later pages may be incomplete",
+				"rows_scanned", scanned, "kept", len(kept), "wanted", want)
 			break
 		}
 		batch, err := fetch(chunk, storeOffset)
@@ -236,7 +236,7 @@ func (rf ruleFilter) highInterest(userID int64, threshold float64, limit, offset
 		return nil, nil, err
 	}
 	if len(articles) == window {
-		log.Printf("herald: interest ranking scanned its full window of %d rows; lower-ranked matches may be missing", window)
+		slog.Default().Warn("interest ranking scanned its full window; lower-ranked matches may be missing", "window", window)
 	}
 
 	type scored struct {
