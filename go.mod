@@ -6,9 +6,11 @@ require (
 	codeberg.org/readeck/go-readability/v2 v2.1.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/infodancer/authz v0.1.0
+	github.com/infodancer/logging v0.1.3
+	github.com/infodancer/logging/httplog v0.1.1
 	github.com/infodancer/oidclient v0.9.1
 	github.com/infodancer/smoke v0.1.1
-	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jackc/pgx/v5 v5.11.0
 	github.com/matthewjhunter/airlock v0.1.1
 	github.com/matthewjhunter/go-embedding v0.6.2
 	github.com/microcosm-cc/bluemonday v1.0.27
@@ -32,8 +34,6 @@ require (
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/infodancer/logging v0.1.3 // indirect
-	github.com/infodancer/logging/httplog v0.1.1 // indirect
 	github.com/itlightning/dateparse v0.2.1 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
