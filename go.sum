@@ -67,8 +67,8 @@ github.com/infodancer/authz v0.1.0 h1:Nk4YZ5SHDW8ZAMHFcpDlTr222qutdhmYDbSJ9wT0DK
 github.com/infodancer/authz v0.1.0/go.mod h1:wptT7dYyiCpiGLlXN+ZwDbOvEzC45oHUkMa1My3wlJs=
 github.com/infodancer/logging v0.1.3 h1:1sws1WX71KQWanjVOtgJejS1/FIsdWkTSY3CnwkSc2E=
 github.com/infodancer/logging v0.1.3/go.mod h1:aVD4A4VXYdVgRgjNuKgUBRtaQGcydF8DXqf/UWIkbY4=
-github.com/infodancer/logging/httplog v0.1.1 h1:6BPA7zRQaEyz7i9RcyeEtDEqU7ptp+oelHZ5i1bm11k=
-github.com/infodancer/logging/httplog v0.1.1/go.mod h1:mloHIlKZcl9ISGDPSJilwLC37MFCofJS1LxYVRlPrpQ=
+github.com/infodancer/logging/httplog v0.1.2 h1:c75RJF5G4Hj/uZ8NA5iELY2iDN8t7cDZkrFLQs6Pej4=
+github.com/infodancer/logging/httplog v0.1.2/go.mod h1:mloHIlKZcl9ISGDPSJilwLC37MFCofJS1LxYVRlPrpQ=
 github.com/infodancer/oidclient v0.9.1 h1:UBre0iYjiGPjhP1xGFldWi77r0C/rKerEWQhKtkpJc8=
 github.com/infodancer/oidclient v0.9.1/go.mod h1:R6hRaiawnXVOedrn/4RJR/hx93cD981fRefQo3hfsCQ=
 github.com/infodancer/smoke v0.1.1 h1:fktN4OXtibli7irpSjgzjzxYxnNnHZJDsXXs4RSGnC8=

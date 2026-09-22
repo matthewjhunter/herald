@@ -7,7 +7,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/infodancer/authz v0.1.0
 	github.com/infodancer/logging v0.1.3
-	github.com/infodancer/logging/httplog v0.1.1
+	github.com/infodancer/logging/httplog v0.1.2
 	github.com/infodancer/oidclient v0.9.1
 	github.com/infodancer/smoke v0.1.1
 	github.com/jackc/pgx/v5 v5.11.0
