@@ -3,7 +3,7 @@ module github.com/matthewjhunter/herald
 go 1.26.6
 
 require (
-	codeberg.org/readeck/go-readability/v2 v2.1.2
+	codeberg.org/readeck/go-readability/v2 v2.1.3
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/infodancer/authz v0.1.0
 	github.com/infodancer/logging v0.1.3
