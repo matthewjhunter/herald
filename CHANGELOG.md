@@ -68,6 +68,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The circuit breakers open when the backend is unreachable, not only when
+  it answers 4xx.** A dial timeout, a refused connection, a DNS failure or a
+  5xx was reported as backend-unavailable but never counted, so with the LLM
+  down the security pass still probed every claimed article, each one waiting
+  out the full call timeout: 21 failures over 40 minutes and never a "skipping
+  security pass" line. Three consecutive failures of that kind now open the
+  breaker (a 4xx still takes five, since one can be specific to a single
+  request), and the embedder has a breaker of its own rather than borrowing
+  the LLM's -- it is a separate backend, often on separate hardware. The embed
+  stage skips itself while that breaker is open, and an embed attempt that
+  never reached the backend no longer counts against the article's bounded
+  retry budget, so an outage of a few cycles cannot park pending articles in
+  the terminal error state. (#324)
+
+- **An unreachable embedding backend costs seconds, not minutes.** go-embedding
+  v0.6.3 bounds the TCP connect separately from the inference deadline (5 s by
+  default, `HERALD_EMBED_DIAL_TIMEOUT` or `EMBEDDING_DIAL_TIMEOUT` to change
+  it) and no longer retries a batch one input at a time when the batch never
+  connected. A dead backend used to cost 30 s plus 2 s per input for every
+  attempt, and the per-input fallback multiplied that by the batch size.
+
 - **Article lists order on arrival, not just on the publisher's timestamp.** A
   feed that stamps its posts with no timezone -- Ace of Spades writes
   `August 5, 2026 11:00 AM`, and it parses as UTC while the site posts on
