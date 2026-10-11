@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	embedding "github.com/matthewjhunter/go-embedding"
@@ -10,10 +11,19 @@ import (
 // GroupMatcher produces article embeddings for the grouping pipeline. (The
 // vector matching and centroid math now live in the staged cluster stage; this
 // type is just the embedder the pipeline and diagnostics share.)
+//
+// It carries its own circuit breaker, separate from the LLM client's. The
+// embedding backend is usually a different process and often different
+// hardware, so neither breaker can stand in for the other: the LLM being down
+// must not stop embedding, and the embedder being down must be noticed by the
+// embed stage, which otherwise probes every queued article at a dial timeout
+// apiece -- and go-embedding's one-at-a-time fallback multiplies that by the
+// batch size.
 type GroupMatcher struct {
 	embedder embedding.Embedder
 	model    string // embedding model name, stored alongside vectors
 	limits   embedding.Limits
+	breaker  *breaker
 	// targetTokens is the retrieval chunk target; see DefaultChunkTargetTokens.
 	targetTokens int
 }
@@ -34,8 +44,19 @@ func NewGroupMatcher(embedder embedding.Embedder, model string, limits embedding
 		embedder:     embedder,
 		model:        model,
 		limits:       limits,
+		breaker:      newBreaker("embedding model " + model),
 		targetTokens: DefaultChunkTargetTokens,
 	}
+}
+
+// BackendAvailable reports whether the embedding backend is reachable right
+// now -- i.e. the embedder's circuit breaker is not open. The embed stage checks
+// this before each batch so it can leave the queue for a later cycle with one
+// log line instead of timing out on every article. Probe requests are allowed
+// through once the cooldown elapses, so this returns true again as soon as the
+// breaker transitions to half-open.
+func (m *GroupMatcher) BackendAvailable() bool {
+	return !m.breaker.isOpen()
 }
 
 // DefaultChunkTargetTokens is the size chunks aim for, in tokens.
@@ -202,10 +223,20 @@ func (m *GroupMatcher) EmbedRecords(ctx context.Context, reqs []EmbedRequest, ba
 		return out
 	}
 
+	if m.breaker.isOpen() {
+		_, last := m.breaker.status()
+		err := fmt.Errorf("%w: embedding circuit breaker open (last failure: %s)", ErrBackendUnavailable, last)
+		for _, i := range owner {
+			out[i].Err = err
+		}
+		return out
+	}
+
 	res, err := embedding.BatchEmbedResults(ctx, m.embedder, texts, batchSize, nil)
 	if len(res) != len(texts) {
-		// Every input failed, or the helper broke its index-alignment contract.
-		// Either way there is nothing to zip; fail each record with the cause.
+		// The helper broke its index-alignment contract (it reports an
+		// all-failed batch with a full slice, not a short one). Nothing to zip;
+		// fail each record with the cause.
 		if err == nil {
 			err = fmt.Errorf("embed records: got %d results for %d inputs", len(res), len(texts))
 		}
@@ -217,20 +248,46 @@ func (m *GroupMatcher) EmbedRecords(ctx context.Context, reqs []EmbedRequest, ba
 
 	for j, r := range res {
 		i := owner[j]
-		if out[i].Err != nil {
+		if r.Err != nil {
+			// Every chunk is its own backend attempt, so each failure is
+			// evidence for the breaker even when its article has already
+			// failed on an earlier chunk.
+			err := m.classifyEmbedErr(ctx, r.Err)
+			if out[i].Err == nil {
+				// One failed chunk fails the whole article: a half-embedded
+				// article would look complete to the retry query and leave a
+				// permanent hole in the middle of it.
+				out[i] = EmbedResult{Err: fmt.Errorf("embed record: %w", err)}
+			}
 			continue
 		}
-		if r.Err != nil {
-			// One failed chunk fails the whole article: a half-embedded article
-			// would look complete to the retry query and leave a permanent hole
-			// in the middle of it.
-			out[i] = EmbedResult{Err: fmt.Errorf("embed record: %w", r.Err)}
+		m.breaker.succeed()
+		if out[i].Err != nil {
 			continue
 		}
 		out[i].Vectors = append(out[i].Vectors, r.Vector)
 		out[i].Spans = append(out[i].Spans, spans[j])
 	}
 	return out
+}
+
+// classifyEmbedErr sorts one failed embed input for the breaker and the caller.
+// A transient failure -- a timeout, a refused connection, a 5xx: anything
+// go-embedding reports as retryable -- counts toward opening the breaker and is
+// marked ErrBackendUnavailable, so the embed stage leaves the article for a
+// later cycle instead of charging its bounded retry budget for an outage it had
+// no part in. A permanent failure (4xx, input too long) is the input's own
+// problem: the backend answered, so it neither moves the breaker nor is
+// reported as unavailability. The caller cancelling (daemon shutdown) is
+// skipped: it says nothing about the backend.
+func (m *GroupMatcher) classifyEmbedErr(ctx context.Context, err error) error {
+	if !embedding.IsRetryable(err) {
+		return err
+	}
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		m.breaker.fail(unavailableBreakerThreshold, err.Error())
+	}
+	return fmt.Errorf("%w: %w", ErrBackendUnavailable, err)
 }
 
 // chunkOverlapPct is how much of each chunk is repeated at the start of the
