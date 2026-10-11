@@ -11,8 +11,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
-	"time"
 )
 
 // debugAI enables verbose logging of all model calls when HERALD_DEBUG_AI=1.
@@ -25,17 +23,6 @@ var debugAI = os.Getenv("HERALD_DEBUG_AI") == "1"
 // against a per-article retry budget — doing so lets a brief backend outage
 // permanently orphan whatever was in flight (#100).
 var ErrBackendUnavailable = errors.New("ai backend unavailable")
-
-const (
-	// clientBreakerThreshold is the number of consecutive 4xx errors before the
-	// circuit breaker trips.
-	clientBreakerThreshold = 5
-
-	// defaultBreakerCooldown is how long the breaker stays open before
-	// transitioning to half-open (allowing requests through again). Shorter
-	// than a fetch cycle so the next cycle always starts fresh.
-	defaultBreakerCooldown = 60 * time.Second
-)
 
 // ClientError represents an HTTP client error (4xx) that should not be retried.
 // StatusCode 0 is the synthetic status used for a circuit-breaker-open
@@ -61,37 +48,34 @@ func (e *ClientError) Is(target error) bool {
 // It speaks POST /v1/chat/completions, which is supported by LiteLLM, OpenAI,
 // Ollama (>=0.1.24 with --api-key), and most local inference servers.
 //
-// A built-in circuit breaker trips after clientBreakerThreshold consecutive
-// 4xx errors to stop the current cycle from thrashing the upstream. It
-// auto-recovers to half-open after breakerCooldown; a long-running daemon
-// should never require a process restart to resume work.
+// A built-in circuit breaker stops the current cycle from thrashing a backend
+// that is misconfigured or down: it opens after clientBreakerThreshold
+// consecutive 4xx responses, or after unavailableBreakerThreshold consecutive
+// failures that never produced a response (transport errors and 5xx). The
+// second case is the one that costs: each attempt against an unreachable
+// backend waits out the full call timeout, so without it the daemon would
+// probe every queued article at ~30 s apiece and finish nothing. The breaker
+// auto-recovers to half-open after its cooldown; a long-running daemon should
+// never require a process restart to resume work.
 type openAIClient struct {
 	baseURL    string
 	apiKey     string
 	httpClient *http.Client
-
-	// breakerCooldown is how long the breaker stays open before transitioning
-	// to half-open. Exposed as a field for tests.
-	breakerCooldown time.Duration
+	breaker    *breaker
 
 	// sem bounds the number of in-flight generate() calls in this process.
 	// nil when unbounded (MaxConcurrent <= 0). A buffered channel is the
 	// idiomatic counting semaphore.
 	sem chan struct{}
-
-	mu             sync.Mutex
-	consecutive4xx int
-	circuitOpen    bool
-	openedAt       time.Time
-	lastStatus     int
 }
 
 func newOpenAIClient(baseURL, apiKey string, maxConcurrent int) *openAIClient {
+	baseURL = strings.TrimRight(baseURL, "/")
 	c := &openAIClient{
-		baseURL:         strings.TrimRight(baseURL, "/"),
-		apiKey:          apiKey,
-		httpClient:      &http.Client{},
-		breakerCooldown: defaultBreakerCooldown,
+		baseURL:    baseURL,
+		apiKey:     apiKey,
+		httpClient: &http.Client{},
+		breaker:    newBreaker("LLM at " + baseURL),
 	}
 	if maxConcurrent > 0 {
 		c.sem = make(chan struct{}, maxConcurrent)
@@ -99,50 +83,9 @@ func newOpenAIClient(baseURL, apiKey string, maxConcurrent int) *openAIClient {
 	return c
 }
 
-// tripBreaker increments the consecutive 4xx counter and trips the circuit
-// breaker if the threshold is reached.
-func (c *openAIClient) tripBreaker(statusCode int) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.consecutive4xx++
-	c.lastStatus = statusCode
-	if c.consecutive4xx >= clientBreakerThreshold && !c.circuitOpen {
-		c.circuitOpen = true
-		c.openedAt = time.Now()
-		slog.Default().Error("circuit breaker OPEN; will retry after the cooldown",
-			"consecutive_failures", c.consecutive4xx, "status", statusCode,
-			"base_url", c.baseURL, "cooldown", c.breakerCooldown)
-	}
-}
-
-// resetBreaker clears the consecutive failure counter on a successful call.
-// Also called at the start of each fetch cycle so transient failures never
-// carry across cycles.
-func (c *openAIClient) resetBreaker() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.consecutive4xx = 0
-	c.circuitOpen = false
-	c.lastStatus = 0
-}
-
-// isOpen returns true if the circuit breaker is currently blocking calls.
-// Transitions to half-open (returning false) once breakerCooldown has elapsed,
-// allowing probe requests through.
+// isOpen reports whether the circuit breaker is currently blocking calls.
 func (c *openAIClient) isOpen() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.circuitOpen {
-		return false
-	}
-	if time.Since(c.openedAt) >= c.breakerCooldown {
-		slog.Default().Warn("circuit breaker half-open; allowing probe requests",
-			"cooldown", c.breakerCooldown, "base_url", c.baseURL)
-		c.circuitOpen = false
-		c.consecutive4xx = 0
-		return false
-	}
-	return true
+	return c.breaker.isOpen()
 }
 
 // chatMaxTokens caps the model's response length. Sized for reasoning-style
@@ -190,15 +133,14 @@ type modelsResponse struct {
 //
 // Returns *ClientError for 4xx responses; callers can type-assert to
 // distinguish non-retryable auth/permission failures from transient errors.
-// A built-in circuit breaker blocks all calls after repeated 4xx failures.
+// Every failure to obtain a verdict wraps ErrBackendUnavailable, and the
+// circuit breaker blocks all calls after a run of them.
 func (c *openAIClient) generate(ctx context.Context, model, prompt string, temperature float64) (string, error) {
 	if c.isOpen() {
-		c.mu.Lock()
-		status := c.lastStatus
-		c.mu.Unlock()
+		n, last := c.breaker.status()
 		return "", &ClientError{
 			StatusCode: 0,
-			Body:       fmt.Sprintf("circuit breaker open — AI calls blocked after repeated HTTP %d responses; retrying after cooldown", status),
+			Body:       fmt.Sprintf("circuit breaker open -- AI calls blocked after %d consecutive failures (last: %s); retrying after cooldown", n, last),
 		}
 	}
 
@@ -239,27 +181,28 @@ func (c *openAIClient) generate(ctx context.Context, model, prompt string, tempe
 	if err != nil {
 		// Transport-level failure (connection refused, DNS, timeout): the
 		// request never reached the model, so this is backend-unavailable.
-		return "", fmt.Errorf("%w: %v", ErrBackendUnavailable, err)
+		return "", c.unavailable(ctx, err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("read response: %w", err)
+		// The connection died mid-response: same class as a failed dial.
+		return "", c.unavailable(ctx, fmt.Errorf("read response: %w", err))
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		// 4xx = client error (auth, permissions, bad request) — non-retryable.
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-			c.tripBreaker(resp.StatusCode)
+			c.breaker.fail(clientBreakerThreshold, fmt.Sprintf("HTTP %d", resp.StatusCode))
 			return "", &ClientError{StatusCode: resp.StatusCode, Body: string(respBody)}
 		}
 		// 5xx: the server failed to produce a response — backend-unavailable.
-		return "", fmt.Errorf("%w: HTTP %d: %s", ErrBackendUnavailable, resp.StatusCode, respBody)
+		return "", c.unavailable(ctx, fmt.Errorf("HTTP %d: %s", resp.StatusCode, respBody))
 	}
 
 	// Successful call — reset the breaker.
-	c.resetBreaker()
+	c.breaker.succeed()
 
 	var chatResp chatResponse
 	if err := json.Unmarshal(respBody, &chatResp); err != nil {
@@ -287,6 +230,18 @@ func (c *openAIClient) generate(ctx context.Context, model, prompt string, tempe
 	}
 
 	return result, nil
+}
+
+// unavailable wraps a failure that produced no model response as
+// ErrBackendUnavailable and counts it toward the breaker -- unless the caller
+// cancelled the request (daemon shutdown), which says nothing about the backend.
+// A deadline expiring does count: a backend that never answers is the case the
+// transport threshold exists for.
+func (c *openAIClient) unavailable(ctx context.Context, err error) error {
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		c.breaker.fail(unavailableBreakerThreshold, err.Error())
+	}
+	return fmt.Errorf("%w: %v", ErrBackendUnavailable, err)
 }
 
 // listModels returns model IDs available at the endpoint via GET /v1/models.

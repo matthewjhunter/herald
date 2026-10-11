@@ -86,7 +86,7 @@ func TestBackendAvailableTracksBreaker(t *testing.T) {
 	defer srv.Close()
 
 	c := newOpenAIClient(srv.URL, "bad", 0)
-	c.breakerCooldown = 10 * time.Millisecond
+	c.breaker.cooldown = 10 * time.Millisecond
 	p := &AIProcessor{client: c}
 	ctx := context.Background()
 
@@ -212,7 +212,7 @@ func TestCircuitBreakerHalfOpenAfterCooldown(t *testing.T) {
 	defer srv.Close()
 
 	c := newOpenAIClient(srv.URL, "key", 0)
-	c.breakerCooldown = 50 * time.Millisecond
+	c.breaker.cooldown = 50 * time.Millisecond
 	ctx := context.Background()
 
 	// Trip the breaker on consecutive 400s.
@@ -230,7 +230,7 @@ func TestCircuitBreakerHalfOpenAfterCooldown(t *testing.T) {
 	}
 
 	// After cooldown: flip the upstream and verify a request goes through.
-	time.Sleep(c.breakerCooldown + 10*time.Millisecond)
+	time.Sleep(c.breaker.cooldown + 10*time.Millisecond)
 	failing.Store(false)
 
 	result, err := c.generate(ctx, "model", "hello", 0.7)
@@ -263,7 +263,7 @@ func TestCircuitBreakerRecoversFrom401(t *testing.T) {
 	defer srv.Close()
 
 	c := newOpenAIClient(srv.URL, "bad-key", 0)
-	c.breakerCooldown = 50 * time.Millisecond
+	c.breaker.cooldown = 50 * time.Millisecond
 	ctx := context.Background()
 
 	// Trip the breaker on 401s.
@@ -291,7 +291,7 @@ func TestCircuitBreakerRecoversFrom401(t *testing.T) {
 	}
 
 	// After cooldown and with upstream healthy, the breaker should recover.
-	time.Sleep(c.breakerCooldown + 10*time.Millisecond)
+	time.Sleep(c.breaker.cooldown + 10*time.Millisecond)
 	failing.Store(false)
 
 	result, err := c.generate(ctx, "model", "hello", 0.7)
@@ -306,31 +306,132 @@ func TestCircuitBreakerRecoversFrom401(t *testing.T) {
 	}
 }
 
-func TestCircuitBreakerIgnores5xx(t *testing.T) {
+// A backend that answers 5xx has failed to produce a verdict just as surely as
+// one that is unreachable, and every attempt costs a round trip, so a run of
+// them opens the breaker at the (lower) unavailable threshold.
+func TestCircuitBreakerTripsOn5xx(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`internal error`))
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte(`upstream down`))
 	}))
 	defer srv.Close()
 
 	c := newOpenAIClient(srv.URL, "key", 0)
 	ctx := context.Background()
 
-	// 5xx errors should NOT trip the breaker.
-	for range clientBreakerThreshold + 5 {
-		_, err := c.generate(ctx, "model", "hello", 0.7)
-		if err == nil {
-			t.Fatal("expected error")
+	for i := range unavailableBreakerThreshold {
+		if c.isOpen() {
+			t.Fatalf("breaker open after only %d 5xx responses", i)
 		}
-		// Should NOT be a ClientError.
+		_, err := c.generate(ctx, "model", "hello", 0.7)
+		if !errors.Is(err, ErrBackendUnavailable) {
+			t.Fatalf("5xx: errors.Is(ErrBackendUnavailable) = false; err=%T %v", err, err)
+		}
+		// A 5xx is not a client error: callers must not treat it as one.
 		var ce *ClientError
 		if errors.As(err, &ce) {
 			t.Fatalf("5xx should not produce *ClientError, got: %v", err)
 		}
 	}
+	if !c.isOpen() {
+		t.Fatalf("breaker should be open after %d consecutive 5xx responses", unavailableBreakerThreshold)
+	}
+	_, err := c.generate(ctx, "model", "hello", 0.7)
+	var ce *ClientError
+	if !errors.As(err, &ce) || ce.StatusCode != 0 {
+		t.Fatalf("expected breaker-open ClientError, got %T: %v", err, err)
+	}
+	if !strings.Contains(ce.Body, "HTTP 502") {
+		t.Errorf("breaker-open body should name the last failure, got: %q", ce.Body)
+	}
+}
 
+// The case from the olla outage: with the backend unreachable, each probe
+// waits out a dial timeout, and nothing opened the breaker, so the security
+// pass spent its whole cycle timing out one article at a time (task 9720).
+func TestCircuitBreakerTripsOnTransportFailure(t *testing.T) {
+	// Point at a closed server so every dial is refused.
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := srv.URL
+	srv.Close()
+
+	c := newOpenAIClient(url, "key", 0)
+	ctx := context.Background()
+
+	for i := range unavailableBreakerThreshold {
+		if c.isOpen() {
+			t.Fatalf("breaker open after only %d transport failures", i)
+		}
+		_, err := c.generate(ctx, "model", "hello", 0.7)
+		if !errors.Is(err, ErrBackendUnavailable) {
+			t.Fatalf("transport: errors.Is(ErrBackendUnavailable) = false; err=%T %v", err, err)
+		}
+	}
+	if !c.isOpen() {
+		t.Fatalf("breaker should be open after %d consecutive transport failures", unavailableBreakerThreshold)
+	}
+	_, err := c.generate(ctx, "model", "hello", 0.7)
+	var ce *ClientError
+	if !errors.As(err, &ce) || ce.StatusCode != 0 {
+		t.Fatalf("expected breaker-open ClientError, got %T: %v", err, err)
+	}
+	if !strings.Contains(ce.Body, "connection refused") {
+		t.Errorf("breaker-open body should carry the transport cause, got: %q", ce.Body)
+	}
+}
+
+// A backend that accepts the connection and then never answers is the
+// expensive case: each attempt runs to the call deadline. It must count.
+func TestCircuitBreakerTripsOnDeadline(t *testing.T) {
+	// Handlers block until released; release runs before srv.Close (LIFO) so
+	// Close does not wait on them forever.
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		<-release
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	c := newOpenAIClient(srv.URL, "key", 0)
+	for range unavailableBreakerThreshold {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		_, err := c.generate(ctx, "model", "hello", 0.7)
+		cancel()
+		if !errors.Is(err, ErrBackendUnavailable) {
+			t.Fatalf("deadline: errors.Is(ErrBackendUnavailable) = false; err=%T %v", err, err)
+		}
+	}
+	if !c.isOpen() {
+		t.Fatal("breaker should be open after consecutive call deadlines")
+	}
+}
+
+// The caller cancelling (daemon shutdown mid-batch) says nothing about the
+// backend, so it must not count toward opening the breaker.
+func TestCircuitBreakerIgnoresCallerCancel(t *testing.T) {
+	// Handlers block until released; release runs before srv.Close (LIFO) so
+	// Close does not wait on them forever.
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		<-release
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	c := newOpenAIClient(srv.URL, "key", 0)
+	for range unavailableBreakerThreshold + 2 {
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			cancel()
+		}()
+		_, err := c.generate(ctx, "model", "hello", 0.7)
+		if !errors.Is(err, ErrBackendUnavailable) {
+			t.Fatalf("cancel: errors.Is(ErrBackendUnavailable) = false; err=%T %v", err, err)
+		}
+	}
 	if c.isOpen() {
-		t.Fatal("breaker should not trip on 5xx errors")
+		t.Fatal("caller cancellation must not open the breaker")
 	}
 }
 
