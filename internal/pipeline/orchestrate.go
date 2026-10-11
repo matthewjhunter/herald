@@ -99,6 +99,11 @@ func (s *Stage) Run(ctx context.Context) error {
 	if s.Embedder != nil {
 		if err := s.drain(
 			func(limit int) ([]storage.Article, error) {
+				// Stop fetching once the embedder's breaker opens; the stage
+				// would only skip what we handed it.
+				if !s.Embedder.BackendAvailable() {
+					return nil, nil
+				}
 				return s.Store.GetArticlesWithoutEmbeddings(s.Embedder.Model(), limit)
 			},
 			func(arts []storage.Article) { s.Embed(ctx, arts) },
