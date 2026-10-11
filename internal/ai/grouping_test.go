@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	embedding "github.com/matthewjhunter/go-embedding"
 )
@@ -174,6 +175,118 @@ func TestEmbedRecords_BackendDownFailsEveryRecord(t *testing.T) {
 		if len(r.Vectors) != 0 {
 			t.Errorf("request %d returned %d vectors alongside its error", i, len(r.Vectors))
 		}
+	}
+}
+
+// A backend that is down fails every input with a transient cause, and each
+// one costs a timeout, so a run of them opens the embedder's breaker and the
+// failures are marked backend-unavailable: the stage must leave those articles
+// for a later cycle rather than charge their retry budget.
+func TestEmbedRecords_BackendDownOpensTheBreaker(t *testing.T) {
+	rec := &recordingEmbedder{failOn: func(string) error { return errors.New("connection refused") }}
+	m := NewGroupMatcher(rec, "m", embedding.Limits{})
+	if !m.BackendAvailable() {
+		t.Fatal("breaker open before any call")
+	}
+
+	reqs := make([]EmbedRequest, unavailableBreakerThreshold)
+	for i := range reqs {
+		reqs[i] = EmbedRequest{Body: body(minEmbedContentLen)}
+	}
+	for i, r := range m.EmbedRecords(context.Background(), reqs, 25) {
+		if !errors.Is(r.Err, ErrBackendUnavailable) {
+			t.Errorf("request %d: errors.Is(ErrBackendUnavailable) = false; err=%v", i, r.Err)
+		}
+	}
+	if m.BackendAvailable() {
+		t.Fatalf("breaker still closed after %d transient failures", len(reqs))
+	}
+
+	// While open, nothing goes to the backend and every record is rejected
+	// as unavailable.
+	before := len(rec.callSizes())
+	for i, r := range m.EmbedRecords(context.Background(), reqs[:1], 25) {
+		if !errors.Is(r.Err, ErrBackendUnavailable) {
+			t.Errorf("request %d while open: errors.Is(ErrBackendUnavailable) = false; err=%v", i, r.Err)
+		}
+	}
+	if after := len(rec.callSizes()); after != before {
+		t.Errorf("open breaker let %d request(s) through to the backend", after-before)
+	}
+
+	// Half-open after the cooldown: probes are allowed again.
+	m.breaker.cooldown = time.Millisecond
+	time.Sleep(5 * time.Millisecond)
+	if !m.BackendAvailable() {
+		t.Fatal("breaker did not go half-open after the cooldown")
+	}
+}
+
+// A permanent failure (4xx, input too long) is the input's own problem: the
+// backend answered. It must neither open the breaker nor be reported as the
+// backend being unavailable, or a run of oversized articles would stall the
+// stage and never be marked failed.
+func TestEmbedRecords_PermanentErrorsDoNotOpenTheBreaker(t *testing.T) {
+	rec := &recordingEmbedder{failOn: func(string) error {
+		return &embedding.PermanentError{Err: errors.New("input too long"), TooLong: true}
+	}}
+	m := NewGroupMatcher(rec, "m", embedding.Limits{})
+
+	reqs := make([]EmbedRequest, unavailableBreakerThreshold+2)
+	for i := range reqs {
+		reqs[i] = EmbedRequest{Body: body(minEmbedContentLen)}
+	}
+	for i, r := range m.EmbedRecords(context.Background(), reqs, 25) {
+		if r.Err == nil {
+			t.Errorf("request %d reported success", i)
+		}
+		if errors.Is(r.Err, ErrBackendUnavailable) {
+			t.Errorf("request %d: a permanent error was reported as backend-unavailable: %v", i, r.Err)
+		}
+	}
+	if !m.BackendAvailable() {
+		t.Fatal("permanent errors opened the breaker")
+	}
+}
+
+// A success anywhere in the run closes it: the breaker counts consecutive
+// failures, and the one-by-one fallback reports each input in order.
+func TestEmbedRecords_SuccessClearsTheFailureRun(t *testing.T) {
+	rec := &recordingEmbedder{failOn: func(text string) error {
+		if strings.HasPrefix(text, "bad") {
+			return errors.New("i/o timeout")
+		}
+		return nil
+	}}
+	m := NewGroupMatcher(rec, "m", embedding.Limits{})
+
+	bad := EmbedRequest{Body: "bad " + body(minEmbedContentLen)}
+	good := EmbedRequest{Body: body(minEmbedContentLen)}
+	// Two failures, a success, then threshold-1 failures: never a full run.
+	reqs := []EmbedRequest{bad, bad, good}
+	for range unavailableBreakerThreshold - 1 {
+		reqs = append(reqs, bad)
+	}
+	m.EmbedRecords(context.Background(), reqs, 25)
+	if !m.BackendAvailable() {
+		t.Fatal("a success inside the run should have kept the breaker closed")
+	}
+}
+
+// The caller cancelling says nothing about the backend and must not count.
+func TestEmbedRecords_CallerCancelDoesNotOpenTheBreaker(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rec := &recordingEmbedder{failOn: func(string) error { return ctx.Err() }}
+	m := NewGroupMatcher(rec, "m", embedding.Limits{})
+
+	reqs := make([]EmbedRequest, unavailableBreakerThreshold+2)
+	for i := range reqs {
+		reqs[i] = EmbedRequest{Body: body(minEmbedContentLen)}
+	}
+	m.EmbedRecords(ctx, reqs, 25)
+	if !m.BackendAvailable() {
+		t.Fatal("caller cancellation opened the breaker")
 	}
 }
 

@@ -15,12 +15,24 @@ import (
 type fakeEmbedder struct {
 	model   string
 	embedFn func(body string) ([]float32, error)
+	// unavailable is the fake's breaker: true reports the backend as down.
+	// Zero value available, so tests that never think about it are unaffected.
+	unavailable bool
+	// afterCall, when set, runs after each EmbedRecords call with the lock
+	// held -- the hook a test uses to open the breaker mid-stage.
+	afterCall func(f *fakeEmbedder)
 
 	mu    sync.Mutex
 	calls [][]string // one entry per EmbedRecords call, holding its bodies
 }
 
 func (f *fakeEmbedder) Model() string { return f.model }
+
+func (f *fakeEmbedder) BackendAvailable() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.unavailable
+}
 
 func (f *fakeEmbedder) EmbedRecords(_ context.Context, reqs []ai.EmbedRequest, _ int) []ai.EmbedResult {
 	bodies := make([]string, len(reqs))
@@ -29,6 +41,9 @@ func (f *fakeEmbedder) EmbedRecords(_ context.Context, reqs []ai.EmbedRequest, _
 	}
 	f.mu.Lock()
 	f.calls = append(f.calls, bodies)
+	if f.afterCall != nil {
+		f.afterCall(f)
+	}
 	f.mu.Unlock()
 
 	out := make([]ai.EmbedResult, len(reqs))
@@ -197,6 +212,71 @@ func TestEmbedStage(t *testing.T) {
 		}
 		if embedded[bad.ID] {
 			t.Errorf("the failed article %d stored a vector", bad.ID)
+		}
+	})
+
+	t.Run("skips the stage when the embedding backend is unavailable", func(t *testing.T) {
+		st, store, feedID := newHarness(t, &fakeAI{available: true})
+		emb := &fakeEmbedder{model: "m", unavailable: true}
+		withEmbedder(st, emb)
+		a := seed(t, store, feedID, "a", "body")
+
+		if out := st.Embed(context.Background(), []storage.Article{a}); len(out) != 0 {
+			t.Fatalf("nothing should advance with the backend down, got %v", ids(out))
+		}
+		if n := len(emb.callSizes()); n != 0 {
+			t.Fatalf("stage sent %d request(s) to a backend its breaker reports down", n)
+		}
+		// Nothing was recorded against the article: it is still simply pending.
+		pending, _ := store.GetArticlesWithoutEmbeddings("m", 10)
+		if len(pending) != 1 || pending[0].ID != a.ID {
+			t.Fatalf("article should still be pending with no attempt charged, got %v", ids(pending))
+		}
+	})
+
+	t.Run("backend-unavailable error leaves the article queued, budget untouched", func(t *testing.T) {
+		st, store, feedID := newHarness(t, &fakeAI{available: true})
+		emb := &fakeEmbedder{model: "m", embedFn: func(string) ([]float32, error) {
+			return nil, fmt.Errorf("%w: dial tcp: i/o timeout", ai.ErrBackendUnavailable)
+		}}
+		withEmbedder(st, emb)
+		a := seed(t, store, feedID, "a", "body")
+
+		if out := st.Embed(context.Background(), []storage.Article{a}); len(out) != 0 {
+			t.Fatalf("article should not advance, got %v", ids(out))
+		}
+		// Contrast with a genuine failure, which writes an error row that sits
+		// inside its retry cooldown and so drops out of the queue: an outage
+		// records nothing, and the article is immediately eligible again.
+		pending, _ := store.GetArticlesWithoutEmbeddings("m", 10)
+		if len(pending) != 1 || pending[0].ID != a.ID {
+			t.Fatalf("article should still be pending with no attempt charged, got %v", ids(pending))
+		}
+	})
+
+	t.Run("stops dispatching batches once the breaker opens", func(t *testing.T) {
+		st, store, feedID := newHarness(t, &fakeAI{available: true})
+		// The first batch goes through, then the breaker opens.
+		emb := &fakeEmbedder{model: "m", afterCall: func(f *fakeEmbedder) { f.unavailable = true }}
+		withEmbedder(st, emb)
+		st.Cfg.Ollama.EmbedBatchSize = 3
+
+		var in []storage.Article
+		for i := range 7 {
+			in = append(in, seed(t, store, feedID, fmt.Sprintf("a%d", i), "body"))
+		}
+
+		out := st.Embed(context.Background(), in)
+		if sizes := emb.callSizes(); len(sizes) != 1 {
+			t.Fatalf("stage kept dispatching after the breaker opened: %v", sizes)
+		}
+		if len(out) != 3 {
+			t.Fatalf("the batch that went through should have advanced 3 articles, got %v", ids(out))
+		}
+		// The four left behind carry no attempt and are still pending.
+		pending, _ := store.GetArticlesWithoutEmbeddings("m", 10)
+		if len(pending) != 4 {
+			t.Fatalf("4 undispatched articles should still be pending, got %v", ids(pending))
 		}
 	})
 

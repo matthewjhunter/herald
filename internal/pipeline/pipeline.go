@@ -30,10 +30,14 @@ type AI interface {
 // Embedder is the subset of *ai.GroupMatcher the embed stage calls. EmbedRecords
 // returns one result per request, in order; a result with no vectors and no
 // error means the body was too short to embed meaningfully, which the embed
-// stage treats as a deterministic skip.
+// stage treats as a deterministic skip. BackendAvailable is the embedder's own
+// circuit breaker, independent of the LLM one: the embed stage checks it before
+// each batch so a dead embedding backend costs one log line per cycle rather
+// than a timeout per article.
 type Embedder interface {
 	Model() string
 	EmbedRecords(ctx context.Context, reqs []ai.EmbedRequest, batchSize int) []ai.EmbedResult
+	BackendAvailable() bool
 }
 
 // Stage runs the staged AI pipeline for a single user. Construct one per user
