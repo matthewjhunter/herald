@@ -46,19 +46,24 @@ type User struct {
 
 // Article represents a feed article.
 type Article struct {
-	ID              int64      `json:"id"`
-	FeedID          int64      `json:"feed_id"`
-	Title           string     `json:"title"`
-	URL             string     `json:"url"`
-	Content         string     `json:"content"`
-	Summary         string     `json:"summary"`
-	AISummary       string     `json:"ai_summary,omitempty"`
-	Author          string     `json:"author"`
-	PublishedDate   *time.Time `json:"published_date,omitempty"`
-	FetchedDate     time.Time  `json:"fetched_date"`
-	LinkedURL       string     `json:"linked_url,omitempty"`
-	LinkedContent   string     `json:"linked_content,omitempty"`
-	SecurityFlagged bool       `json:"security_flagged,omitempty"`
+	ID        int64  `json:"id"`
+	FeedID    int64  `json:"feed_id"`
+	Title     string `json:"title"`
+	URL       string `json:"url"`
+	Content   string `json:"content"`
+	Summary   string `json:"summary"`
+	AISummary string `json:"ai_summary,omitempty"`
+	// Provenance of AISummary, recorded when it was generated. Empty when the
+	// summary predates provenance tracking: unknown, not the current prompt.
+	AISummaryModel      string        `json:"ai_summary_model,omitempty"`
+	AISummaryPromptHash string        `json:"ai_summary_prompt_hash,omitempty"`
+	AISummaryDuration   time.Duration `json:"ai_summary_duration,omitempty"`
+	Author              string        `json:"author"`
+	PublishedDate       *time.Time    `json:"published_date,omitempty"`
+	FetchedDate         time.Time     `json:"fetched_date"`
+	LinkedURL           string        `json:"linked_url,omitempty"`
+	LinkedContent       string        `json:"linked_content,omitempty"`
+	SecurityFlagged     bool          `json:"security_flagged,omitempty"`
 	// Read and Starred reflect the requesting user's per-article state
 	// (from read_state). They are only populated by the list/search queries
 	// that select them; single-article fetches leave them zero.

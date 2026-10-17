@@ -411,13 +411,19 @@ type searchResultsData struct {
 }
 
 type articleViewData struct {
-	ID                     int64
-	Title                  string
-	Author                 string
-	FeedTitle              string
-	URL                    string
-	PublishedDateFmt       string
-	AISummary              string
+	ID               int64
+	Title            string
+	Author           string
+	FeedTitle        string
+	URL              string
+	PublishedDateFmt string
+	AISummary        string
+	// Provenance of the summary (model, formatted model-call duration, prompt
+	// hash). All empty for summaries that predate provenance tracking, and the
+	// template falls back to the bare "AI Summary" label rather than guessing.
+	SummaryModel           string
+	SummaryDuration        string
+	SummaryPromptHash      string
 	SanitizedContent       template.HTML
 	Starred                bool
 	Read                   bool
@@ -1125,16 +1131,19 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := articleViewData{
-		ID:               article.ID,
-		Title:            article.Title,
-		Author:           article.Author,
-		FeedTitle:        feedTitle,
-		URL:              article.URL,
-		PublishedDateFmt: formatDate(bestDate(article.PublishedDate, &article.FetchedDate)),
-		AISummary:        article.AISummary,
-		SanitizedContent: template.HTML(sanitized), //nolint:gosec // sanitized by bluemonday
-		SecurityFlagged:  article.SecurityFlagged,
-		LinkedURL:        article.LinkedURL,
+		ID:                article.ID,
+		Title:             article.Title,
+		Author:            article.Author,
+		FeedTitle:         feedTitle,
+		URL:               article.URL,
+		PublishedDateFmt:  formatDate(bestDate(article.PublishedDate, &article.FetchedDate)),
+		AISummary:         article.AISummary,
+		SummaryModel:      article.AISummaryModel,
+		SummaryDuration:   formatSummaryDuration(article.AISummaryDuration),
+		SummaryPromptHash: article.AISummaryPromptHash,
+		SanitizedContent:  template.HTML(sanitized), //nolint:gosec // sanitized by bluemonday
+		SecurityFlagged:   article.SecurityFlagged,
+		LinkedURL:         article.LinkedURL,
 		// The article was just auto-marked read above, so the toggle starts
 		// in the read state (offering "Mark unread").
 		Read: true,
@@ -1179,6 +1188,43 @@ func (h *handlers) handleArticleView(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.renderFragment(w, "article_view", data)
+}
+
+// formatSummaryDuration renders a model-call duration for the summary header:
+// tenths of a second under a minute ("4.2s"), whole seconds above ("1m5s"),
+// and "" when nothing was recorded so the template can omit it.
+func formatSummaryDuration(d time.Duration) string {
+	switch {
+	case d <= 0:
+		return ""
+	case d < time.Minute:
+		return d.Round(100 * time.Millisecond).String()
+	default:
+		return d.Round(time.Second).String()
+	}
+}
+
+// handleArticleSummaryPrompt serves the prompt template an article's AI summary
+// was generated from, as a fragment the "prompt" link under the summary header
+// swaps in. 404 when the summary recorded no prompt, so the link (which the view
+// only renders when a hash exists) never shows a prompt that is merely current.
+func (h *handlers) handleArticleSummaryPrompt(w http.ResponseWriter, r *http.Request) {
+	uid := userFromContext(r.Context()).ID
+	articleID, err := strconv.ParseInt(r.PathValue("articleID"), 10, 64)
+	if err != nil {
+		h.renderError(w, http.StatusBadRequest, "Invalid article ID")
+		return
+	}
+	prompt, err := h.engine.GetArticleSummaryPrompt(uid, articleID)
+	if err != nil {
+		h.renderError(w, http.StatusNotFound, "Article not found")
+		return
+	}
+	if prompt == "" {
+		h.renderError(w, http.StatusNotFound, "The prompt for this summary was not recorded.")
+		return
+	}
+	h.renderFragment(w, "summary_prompt", prompt)
 }
 
 func (h *handlers) handleSidebar(w http.ResponseWriter, r *http.Request) {

@@ -216,6 +216,36 @@
     border-radius: 4px;
 }
 
+.reading-pane .ai-summary-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+}
+
+.reading-pane .ai-summary-meta {
+    font-size: 0.8rem;
+}
+
+.reading-pane .ai-summary > p:last-of-type {
+    margin-bottom: 0;
+}
+
+.reading-pane .ai-summary-prompt:not(:empty) {
+    margin-top: 0.75rem;
+}
+
+.reading-pane .ai-summary-prompt-text {
+    font-size: 0.75rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 24rem;
+    overflow: auto;
+    margin: 0;
+}
+
 .reading-pane .article-content {
     line-height: 1.7;
 }

@@ -601,6 +601,113 @@ func TestHandleArticleView(t *testing.T) {
 	}
 }
 
+// The summary header names what produced the text -- model, how long the call
+// took, and a link to the prompt -- when that was recorded. The prompt route is
+// scoped through the article's own recorded hash, so it returns exactly the
+// template that hash identifies and nothing for a summary without one.
+func TestHandleArticleView_SummaryProvenance(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	const prompt = "Summarize this in {{.MaxSummaryLength}} characters: {{.Content}}"
+	hash := storage.HashPromptTemplate(prompt)
+	if err := tf.store.RegisterPromptVersion(storage.PromptVersion{
+		UserID: 0, PromptType: "summarization", Template: prompt, TemplateHash: hash, Source: "config",
+	}); err != nil {
+		t.Fatalf("RegisterPromptVersion: %v", err)
+	}
+	prov := storage.SummaryProvenance{Model: "claude-sonnet-5-5", PromptHash: hash, Duration: 4200 * time.Millisecond}
+	if err := tf.store.UpdateArticleAISummary(tf.articleID, "A recorded summary.", prov); err != nil {
+		t.Fatalf("UpdateArticleAISummary: %v", err)
+	}
+
+	path := "/articles/" + itoa(tf.articleID)
+	rr := authedRequest(t, tf, "GET", path, map[string]string{"HX-Request": "true"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"Summary by claude-sonnet-5-5", "4.2s", path + "/summary-prompt"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("article view should contain %q", want)
+		}
+	}
+	if strings.Contains(body, ">AI Summary<") {
+		t.Error("a summary with a recorded model should not fall back to the bare label")
+	}
+
+	rr = authedRequest(t, tf, "GET", path+"/summary-prompt", map[string]string{"HX-Request": "true"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("prompt status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	// Escaped, since the template text is rendered into HTML; the point is
+	// that the recorded template comes back, not some current one.
+	if got := rr.Body.String(); !strings.Contains(got, "Summarize this in {{.MaxSummaryLength}} characters: {{.Content}}") {
+		t.Errorf("prompt fragment should contain the recorded template, got %q", got)
+	}
+}
+
+// A summary written before provenance was tracked keeps the bare label and
+// offers no prompt link; the prompt route says so rather than guessing.
+func TestHandleArticleView_SummaryWithoutProvenance(t *testing.T) {
+	tf := newTestFixtures(t)
+	if err := tf.store.UpdateArticleAISummary(tf.articleID, "An old summary.", storage.SummaryProvenance{}); err != nil {
+		t.Fatalf("UpdateArticleAISummary: %v", err)
+	}
+
+	path := "/articles/" + itoa(tf.articleID)
+	rr := authedRequest(t, tf, "GET", path, map[string]string{"HX-Request": "true"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rr.Code, http.StatusOK)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, ">AI Summary<") {
+		t.Error("unrecorded provenance should fall back to the bare AI Summary label")
+	}
+	if strings.Contains(body, "Summary by") || strings.Contains(body, "/summary-prompt") {
+		t.Error("unrecorded provenance must not claim a model or offer a prompt link")
+	}
+
+	rr = authedRequest(t, tf, "GET", path+"/summary-prompt", map[string]string{"HX-Request": "true"})
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("prompt status: got %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+// The prompt route is subject to the same subscription check as the article.
+func TestHandleArticleSummaryPrompt_NotSubscribed(t *testing.T) {
+	tf := newTestFixtures(t)
+	otherFeed, err := tf.store.AddFeed("https://other.example/feed", "Other", "")
+	if err != nil {
+		t.Fatalf("AddFeed: %v", err)
+	}
+	otherID, err := tf.store.AddArticle(&storage.Article{FeedID: otherFeed, GUID: "other-1", Title: "Other", URL: "https://other.example/1", Content: "<p>x</p>"})
+	if err != nil {
+		t.Fatalf("AddArticle: %v", err)
+	}
+	if err := tf.store.UpdateArticleAISummary(otherID, "s", storage.SummaryProvenance{Model: "m", PromptHash: "h"}); err != nil {
+		t.Fatalf("UpdateArticleAISummary: %v", err)
+	}
+	rr := authedRequest(t, tf, "GET", "/articles/"+itoa(otherID)+"/summary-prompt", map[string]string{"HX-Request": "true"})
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+func TestFormatSummaryDuration(t *testing.T) {
+	cases := map[time.Duration]string{
+		0:                        "",
+		850 * time.Millisecond:   "900ms",
+		4200 * time.Millisecond:  "4.2s",
+		4 * time.Second:          "4s",
+		65400 * time.Millisecond: "1m5s",
+	}
+	for d, want := range cases {
+		if got := formatSummaryDuration(d); got != want {
+			t.Errorf("formatSummaryDuration(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
 func TestHandleSearch_PastedURLFindsLinkers(t *testing.T) {
 	tf := newTestFixtures(t)
 

@@ -120,6 +120,16 @@
       "complete": true
     },
     {
+      "method": "GET",
+      "pattern": "/articles/{articleID}/summary-prompt",
+      "effect": "read_only",
+      "example_params": {
+        "articleID": "1"
+      },
+      "skip": "404 unless the seeded summary recorded a prompt hash",
+      "complete": true
+    },
+    {
       "method": "POST",
       "pattern": "/articles/{articleID}/visit",
       "effect": "mutating",

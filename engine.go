@@ -304,8 +304,32 @@ func (e *Engine) GetArticleForUser(userID, articleID int64) (*Article, error) {
 	result := articleFromInternal(*a)
 	if summary, err := e.store.GetArticleSummary(articleID); err == nil && summary != nil {
 		result.AISummary = summary.AISummary
+		result.AISummaryModel = summary.Model
+		result.AISummaryPromptHash = summary.PromptHash
+		result.AISummaryDuration = summary.Duration
 	}
 	return &result, nil
+}
+
+// GetArticleSummaryPrompt returns the prompt template the article's AI summary
+// was generated from, or "" when the summary has no recorded provenance or its
+// hash is not in the prompt history. Scoped to the user's subscriptions like
+// GetArticleForUser, and reached only through an article's own recorded hash:
+// the global summarization prompt is the only text this can surface, never
+// another user's curation prompt by guessed hash.
+func (e *Engine) GetArticleSummaryPrompt(userID, articleID int64) (string, error) {
+	subscribed, err := e.store.UserSubscribedToArticleFeed(userID, articleID)
+	if err != nil || !subscribed {
+		return "", fmt.Errorf("article %d not found for user %d", articleID, userID)
+	}
+	summary, err := e.store.GetArticleSummary(articleID)
+	if err != nil {
+		return "", err
+	}
+	if summary == nil || summary.PromptHash == "" {
+		return "", nil
+	}
+	return e.store.GetPromptTemplateByHash(summary.PromptHash)
 }
 
 // maxBacklinks caps how many "linked by" entries the article view shows.
