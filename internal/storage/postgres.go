@@ -1479,10 +1479,21 @@ func (s *PostgresStore) HasFilterRules(userID int64) (bool, error) {
 
 // --- Article summaries ---
 
-func (s *PostgresStore) UpdateArticleAISummary(articleID int64, aiSummary string) error {
+func (s *PostgresStore) UpdateArticleAISummary(articleID int64, aiSummary string, prov SummaryProvenance) error {
+	// Zero provenance is stored as NULL, never as an empty string or 0ms: the
+	// column's NULL means "not recorded", and a store with nothing to say must
+	// read back the same way.
+	var durationMs *int64
+	if prov.Duration > 0 {
+		ms := prov.Duration.Milliseconds()
+		durationMs = &ms
+	}
 	if err := s.q.UpdateArticleAISummary(context.Background(), db.UpdateArticleAISummaryParams{
-		ArticleID: articleID,
-		AiSummary: aiSummary,
+		ArticleID:  articleID,
+		AiSummary:  aiSummary,
+		Model:      nullableText(prov.Model),
+		PromptHash: nullableText(prov.PromptHash),
+		DurationMs: durationMs,
 	}); err != nil {
 		return fmt.Errorf("failed to update AI summary: %w", err)
 	}
@@ -1507,11 +1518,21 @@ func (s *PostgresStore) GetArticleSummary(articleID int64) (*ArticleSummary, err
 	if err != nil {
 		return nil, fmt.Errorf("failed to get article summary: %w", err)
 	}
-	return &ArticleSummary{
+	out := &ArticleSummary{
 		ArticleID:   r.ArticleID,
 		AISummary:   r.AiSummary,
 		GeneratedAt: r.GeneratedAt,
-	}, nil
+	}
+	if r.Model != nil {
+		out.Model = *r.Model
+	}
+	if r.PromptHash != nil {
+		out.PromptHash = *r.PromptHash
+	}
+	if r.DurationMs != nil {
+		out.Duration = time.Duration(*r.DurationMs) * time.Millisecond
+	}
+	return out, nil
 }
 
 func (s *PostgresStore) GetArticleBacklinks(userID, excludeID int64, needle string, limit int) ([]Backlink, error) {

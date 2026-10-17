@@ -43,7 +43,7 @@ func (q *Queries) GetArticleSummaries(ctx context.Context, articleIds []int64) (
 }
 
 const getArticleSummary = `-- name: GetArticleSummary :one
-SELECT article_id, ai_summary, generated_at
+SELECT article_id, ai_summary, generated_at, model, prompt_hash, duration_ms
 FROM article_summaries
 WHERE article_id = $1
 `
@@ -52,12 +52,22 @@ type GetArticleSummaryRow struct {
 	ArticleID   int64
 	AiSummary   string
 	GeneratedAt time.Time
+	Model       *string
+	PromptHash  *string
+	DurationMs  *int64
 }
 
 func (q *Queries) GetArticleSummary(ctx context.Context, articleID int64) (GetArticleSummaryRow, error) {
 	row := q.db.QueryRow(ctx, getArticleSummary, articleID)
 	var i GetArticleSummaryRow
-	err := row.Scan(&i.ArticleID, &i.AiSummary, &i.GeneratedAt)
+	err := row.Scan(
+		&i.ArticleID,
+		&i.AiSummary,
+		&i.GeneratedAt,
+		&i.Model,
+		&i.PromptHash,
+		&i.DurationMs,
+	)
 	return i, err
 }
 
@@ -80,20 +90,34 @@ func (q *Queries) MarkSummarizationSkipped(ctx context.Context, arg MarkSummariz
 }
 
 const updateArticleAISummary = `-- name: UpdateArticleAISummary :exec
-INSERT INTO article_summaries (article_id, ai_summary, skip_reason)
-VALUES ($1, $2, NULL)
+INSERT INTO article_summaries (article_id, ai_summary, skip_reason, model, prompt_hash, duration_ms)
+VALUES ($1, $2, NULL, $3, $4, $5)
 ON CONFLICT (article_id) DO UPDATE SET
   ai_summary = EXCLUDED.ai_summary,
   skip_reason = NULL,
+  model = EXCLUDED.model,
+  prompt_hash = EXCLUDED.prompt_hash,
+  duration_ms = EXCLUDED.duration_ms,
   generated_at = NOW()
 `
 
 type UpdateArticleAISummaryParams struct {
-	ArticleID int64
-	AiSummary string
+	ArticleID  int64
+	AiSummary  string
+	Model      *string
+	PromptHash *string
+	DurationMs *int64
 }
 
+// Provenance (model, prompt hash, duration) travels with the text: a re-summary
+// replaces all of it, so a row never pairs new text with an old model.
 func (q *Queries) UpdateArticleAISummary(ctx context.Context, arg UpdateArticleAISummaryParams) error {
-	_, err := q.db.Exec(ctx, updateArticleAISummary, arg.ArticleID, arg.AiSummary)
+	_, err := q.db.Exec(ctx, updateArticleAISummary,
+		arg.ArticleID,
+		arg.AiSummary,
+		arg.Model,
+		arg.PromptHash,
+		arg.DurationMs,
+	)
 	return err
 }

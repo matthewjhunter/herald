@@ -156,12 +156,13 @@ func (s *Stage) summarizeOne(ctx context.Context, article storage.Article) *stor
 	}
 
 	maxLen := s.Cfg.Summarization.MaxSummaryLength
-	summary, err := s.AI.SummarizeArticle(ctx, article.Title, content, maxLen)
+	result, err := s.AI.SummarizeArticle(ctx, article.Title, content, maxLen)
 	if err != nil {
 		// Transient — leave unsummarized, retry next cycle.
 		s.Formatter.Warning("summarization failed for article %d: %v", article.ID, err)
 		return nil
 	}
+	summary := result.Summary
 	if ai.LooksLikeGarbage(summary) {
 		// Mostly load-related, sometimes recovers under lower load — retry.
 		s.Formatter.Warning("discarding garbled summary for article %d", article.ID)
@@ -182,7 +183,11 @@ func (s *Stage) summarizeOne(ctx context.Context, article storage.Article) *stor
 		return &article
 	}
 
-	if err := s.Store.UpdateArticleAISummary(article.ID, summary); err != nil {
+	// Provenance goes down with the text: this is the one point where which
+	// model and prompt produced this summary is known, and reconstructing it
+	// later reads back whatever is current instead.
+	prov := storage.SummaryProvenance{Model: result.Model, PromptHash: result.PromptHash, Duration: result.Duration}
+	if err := s.Store.UpdateArticleAISummary(article.ID, summary, prov); err != nil {
 		s.Formatter.Warning("failed to cache AI summary for %d: %v", article.ID, err)
 		return nil
 	}

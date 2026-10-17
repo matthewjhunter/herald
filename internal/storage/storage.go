@@ -61,6 +61,20 @@ type ArticleSummary struct {
 	ArticleID   int64
 	AISummary   string
 	GeneratedAt time.Time
+	// Provenance recorded when the summary was generated. Zero for rows
+	// written before it was tracked: unknown, not "whatever is current".
+	SummaryProvenance
+}
+
+// SummaryProvenance is what is known for certain only at generation time:
+// which model wrote the summary, the hash of the prompt it was given (the
+// content-addressed key into prompt_versions), and how long the model call
+// took. Recorded alongside the text so a later prompt or model change cannot
+// mislabel summaries written before it.
+type SummaryProvenance struct {
+	Model      string
+	PromptHash string
+	Duration   time.Duration
 }
 
 // ArticleLinkSource is the raw text the link-extraction stage parses outbound

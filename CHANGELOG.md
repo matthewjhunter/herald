@@ -41,6 +41,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The summary header names the model, the time it took, and the prompt.**
+  Every summary in the reading pane was labelled "AI Summary" with nothing to
+  say which model wrote it or what it was told. It now reads "Summary by
+  <model>", followed by how long the model call took and a "prompt" link that
+  swaps in the exact template the summary was generated from. The three are
+  recorded with the text at generation time (migration 0019), the way curation
+  scores already record their model and prompt hash, so a later prompt or model
+  change cannot mislabel older summaries. Summaries written before this keep
+  the bare label and no link rather than claiming whatever prompt is current.
+
+  The prompt is served through the article's own recorded hash and the reader's
+  subscription check, so only the global summarization prompt is reachable
+  that way. Along the way, the model field on the admin summarization prompt
+  now takes effect; the form accepted it and the summarizer ignored it in
+  favor of the curation model.
+
 - **Filter rules can match article text, with substring and regex patterns.**
   Three new axes -- `title`, `summary`, `content` -- match the article's own
   text, which no rule could reach before, and a new match mode (`exact`,

@@ -127,6 +127,9 @@ type ArticleSummary struct {
 	AiSummary   string
 	SkipReason  *string
 	GeneratedAt time.Time
+	Model       *string
+	PromptHash  *string
+	DurationMs  *int64
 }
 
 type ArticleVote struct {

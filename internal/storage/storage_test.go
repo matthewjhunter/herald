@@ -660,7 +660,7 @@ func TestArticleSummary(t *testing.T) {
 	}
 
 	// Set a summary
-	if err := store.UpdateArticleAISummary(articleID, "This is an AI summary"); err != nil {
+	if err := store.UpdateArticleAISummary(articleID, "This is an AI summary", SummaryProvenance{}); err != nil {
 		t.Fatalf("UpdateArticleAISummary failed: %v", err)
 	}
 
@@ -1644,7 +1644,7 @@ func TestGetUnsummarizedScoredArticles(t *testing.T) {
 		URL: "https://example.com/1", PublishedDate: &now,
 	})
 	store.ScreenArticleSecurity(a1, 0, "none", false, false)
-	store.UpdateArticleAISummary(a1, "an existing summary")
+	store.UpdateArticleAISummary(a1, "an existing summary", SummaryProvenance{})
 
 	// Article 2: scored, passed security, NO summary — included.
 	a2, _ := store.AddArticle(&Article{
@@ -2738,7 +2738,7 @@ func TestGetProcessingStats(t *testing.T) {
 	if err := store.SetInterestScore(1, a2, 7, "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.UpdateArticleAISummary(a2, "a real summary"); err != nil {
+	if err := store.UpdateArticleAISummary(a2, "a real summary", SummaryProvenance{}); err != nil {
 		t.Fatal(err)
 	}
 

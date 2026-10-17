@@ -150,6 +150,7 @@ func NewRouter(engine *herald.Engine, validator *oidclient.Client, issuer string
 	mux.Handle("GET /search", auth(http.HandlerFunc(h.handleSearch)))
 	mux.Handle("GET /articles", auth(http.HandlerFunc(h.handleArticleList)))
 	mux.Handle("GET /articles/{articleID}", auth(http.HandlerFunc(h.handleArticleView)), smoke.Example("articleID", "1"))
+	mux.Handle("GET /articles/{articleID}/summary-prompt", auth(http.HandlerFunc(h.handleArticleSummaryPrompt)), smoke.Example("articleID", "1"), smoke.Skip("404 unless the seeded summary recorded a prompt hash"))
 	mux.Handle("GET /sidebar", auth(http.HandlerFunc(h.handleSidebar)))
 	mux.Handle("POST /articles/mark-all-read", auth(http.HandlerFunc(h.handleMarkAllRead)), smoke.Form(url.Values{"ids": {"1"}}))
 	mux.Handle("POST /articles/{articleID}/star", auth(http.HandlerFunc(h.handleStarToggle)), smoke.Example("articleID", "1"), smoke.Form(url.Values{"starred": {"true"}}))

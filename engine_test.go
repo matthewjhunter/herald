@@ -215,7 +215,7 @@ func TestGetArticleForUser(t *testing.T) {
 	}
 
 	// Store an AI summary and verify it's returned
-	engine.store.UpdateArticleAISummary(articleID, "This is the AI-generated summary.")
+	engine.store.UpdateArticleAISummary(articleID, "This is the AI-generated summary.", storage.SummaryProvenance{})
 
 	article, err = engine.GetArticleForUser(1, articleID)
 	if err != nil {
@@ -374,7 +374,7 @@ func TestGetFeedStats(t *testing.T) {
 	engine.store.UpdateReadState(1, id1, true, nil)
 
 	// Summarize one article in feed 2
-	engine.store.UpdateArticleAISummary(id4, "Summary of article 4")
+	engine.store.UpdateArticleAISummary(id4, "Summary of article 4", storage.SummaryProvenance{})
 
 	result, err := engine.GetFeedStats(1)
 	if err != nil {

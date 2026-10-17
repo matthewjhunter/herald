@@ -5,41 +5,65 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
+
+// ArticleSummaryResult is a generated summary with its provenance: which
+// model wrote it, the hash of the prompt it was given, and how long the model
+// call took. Carried out to the caller so it can be recorded with the text,
+// which is the only moment it is known for certain.
+type ArticleSummaryResult struct {
+	Summary    string
+	Model      string
+	PromptHash string
+	Duration   time.Duration
+}
 
 // SummarizeArticle generates an AI summary for a single article.
 // maxSummaryLength is communicated to the model in the prompt; pass 0 to omit.
 // The summary is a property of the article, shared by every subscriber (#162),
-// so it always uses the global summarization prompt/temperature (the user_id=0
-// admin override, then config, then default) — never a per-user prompt.
-func (p *AIProcessor) SummarizeArticle(ctx context.Context, title, content string, maxSummaryLength int) (string, error) {
+// so it always uses the global summarization prompt/temperature/model (the
+// user_id=0 admin override, then config, then default) — never a per-user
+// prompt.
+func (p *AIProcessor) SummarizeArticle(ctx context.Context, title, content string, maxSummaryLength int) (*ArticleSummaryResult, error) {
 	const globalUser = int64(0)
-	promptTemplate, err := p.promptLoader.GetPrompt(globalUser, PromptTypeSummarization)
+	resolved, err := p.promptLoader.Resolve(globalUser, PromptTypeSummarization)
 	if err != nil {
-		return "", fmt.Errorf("failed to load summarization prompt: %w", err)
+		return nil, fmt.Errorf("failed to load summarization prompt: %w", err)
 	}
 
 	data, err := fencedArticleData(title, content)
 	if err != nil {
-		return "", fmt.Errorf("failed to prepare summarization prompt content: %w", err)
+		return nil, fmt.Errorf("failed to prepare summarization prompt content: %w", err)
 	}
 	data["MaxSummaryLength"] = maxSummaryLength
-	prompt, err := ExecutePrompt(promptTemplate, data)
+	prompt, err := ExecutePrompt(resolved.Template, data)
 	if err != nil {
-		return "", fmt.Errorf("failed to render summarization prompt: %w", err)
+		return nil, fmt.Errorf("failed to render summarization prompt: %w", err)
 	}
 
-	temperature := p.promptLoader.GetTemperature(globalUser, PromptTypeSummarization)
+	// The admin page lets the summarization prompt name its own model; fall
+	// back to the processor default below every tier the loader knows about.
+	model := resolved.Model
+	if model == "" {
+		model = p.curationModel
+	}
 
 	callCtx, cancel := p.withCallTimeout(ctx)
 	defer cancel()
 
-	result, err := p.client.generate(callCtx, p.curationModel, prompt, temperature)
+	start := time.Now()
+	result, err := p.client.generate(callCtx, model, prompt, resolved.Temperature)
 	if err != nil {
-		return "", fmt.Errorf("article summarization failed: %w", err)
+		return nil, fmt.Errorf("article summarization failed: %w", err)
 	}
 
-	return strings.TrimSpace(result), nil
+	return &ArticleSummaryResult{
+		Summary:    strings.TrimSpace(result),
+		Model:      model,
+		PromptHash: resolved.Hash,
+		Duration:   time.Since(start),
+	}, nil
 }
 
 // GroupSummaryInput represents an article for group summary generation.

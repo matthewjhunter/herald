@@ -63,14 +63,18 @@ func (f *fakeAI) SecurityCheck(_ context.Context, title, content string) (*ai.Se
 	return &ai.SecurityResult{Threat: 1}, nil
 }
 
-func (f *fakeAI) SummarizeArticle(_ context.Context, title, content string, _ int) (string, error) {
+func (f *fakeAI) SummarizeArticle(_ context.Context, title, content string, _ int) (*ai.ArticleSummaryResult, error) {
 	f.mu.Lock()
 	f.sumCalls++
 	f.mu.Unlock()
+	summary := "a fine summary"
 	if f.summarizeFn != nil {
-		return f.summarizeFn(title, content)
+		var err error
+		if summary, err = f.summarizeFn(title, content); err != nil {
+			return nil, err
+		}
 	}
-	return "a fine summary", nil
+	return &ai.ArticleSummaryResult{Summary: summary, Model: "fake-model", PromptHash: "fakehash", Duration: 1500 * time.Millisecond}, nil
 }
 
 func (f *fakeAI) CurateArticle(_ context.Context, _ int64, title, content string, _ []string) (*ai.CurationResult, error) {
@@ -420,6 +424,12 @@ func TestSummarizeStage(t *testing.T) {
 		if got == nil || got.AISummary != "good summary" {
 			t.Fatalf("summary not cached: %+v", got)
 		}
+		// Provenance is recorded with the text, from what the model call
+		// reported rather than from whatever prompt is current later.
+		want := storage.SummaryProvenance{Model: "fake-model", PromptHash: "fakehash", Duration: 1500 * time.Millisecond}
+		if got.SummaryProvenance != want {
+			t.Errorf("provenance: got %+v, want %+v", got.SummaryProvenance, want)
+		}
 	})
 
 	t.Run("garbled summary is a transient skip", func(t *testing.T) {
@@ -488,7 +498,7 @@ func TestSummarizeStage(t *testing.T) {
 	t.Run("already-summarized article passes through without a model call", func(t *testing.T) {
 		a := seed(t, store, feedID, "cached", "body")
 		mustPass(a)
-		if err := store.UpdateArticleAISummary(a.ID, "preexisting"); err != nil {
+		if err := store.UpdateArticleAISummary(a.ID, "preexisting", storage.SummaryProvenance{}); err != nil {
 			t.Fatal(err)
 		}
 		before := st.AI.(*fakeAI).sumCalls
