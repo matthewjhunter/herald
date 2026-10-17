@@ -32,7 +32,7 @@ func TestArticleSummarySharedAcrossUsers(t *testing.T) {
 			t.Fatalf("article should await one global summarization, got %v", articleIDs(got))
 		}
 
-		if err := store.UpdateArticleAISummary(id, "one shared summary"); err != nil {
+		if err := store.UpdateArticleAISummary(id, "one shared summary", SummaryProvenance{}); err != nil {
 			t.Fatalf("UpdateArticleAISummary: %v", err)
 		}
 
@@ -64,7 +64,7 @@ func TestGetArticleSummariesBatch(t *testing.T) {
 		bare, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "bare", Title: "bare",
 			URL: "https://example.com/bare", PublishedDate: &now})
 
-		if err := store.UpdateArticleAISummary(summarized, "inline summary"); err != nil {
+		if err := store.UpdateArticleAISummary(summarized, "inline summary", SummaryProvenance{}); err != nil {
 			t.Fatalf("UpdateArticleAISummary: %v", err)
 		}
 		if err := store.MarkSummarizationSkipped(skipped, "too short"); err != nil {
@@ -127,6 +127,66 @@ func TestSummarizationSkipSharedAcrossUsers(t *testing.T) {
 		sum, err := store.GetArticleSummary(id)
 		if err != nil || sum == nil || sum.AISummary != "" {
 			t.Fatalf("expected an empty-summary skip row, got %+v err=%v", sum, err)
+		}
+	})
+}
+
+// Provenance travels with the summary text (model, prompt hash, model-call
+// duration) and is replaced wholesale on re-summary, so a row never pairs new
+// text with the model that wrote the old one. A summary stored with nothing to
+// say reads back zero, not an empty-string model that looks recorded.
+func TestArticleSummaryProvenance(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+	feedID, err := store.AddFeed("https://example.com/feed", "Feed", "")
+	if err != nil {
+		t.Fatalf("AddFeed: %v", err)
+	}
+	id, err := store.AddArticle(&Article{FeedID: feedID, GUID: "prov", Title: "Prov", URL: "https://example.com/prov", Content: "body"})
+	if err != nil {
+		t.Fatalf("AddArticle: %v", err)
+	}
+
+	t.Run("unrecorded provenance reads back zero", func(t *testing.T) {
+		if err := store.UpdateArticleAISummary(id, "first", SummaryProvenance{}); err != nil {
+			t.Fatalf("UpdateArticleAISummary: %v", err)
+		}
+		sum, err := store.GetArticleSummary(id)
+		if err != nil || sum == nil {
+			t.Fatalf("GetArticleSummary: %v, %+v", err, sum)
+		}
+		if sum.SummaryProvenance != (SummaryProvenance{}) {
+			t.Errorf("expected zero provenance, got %+v", sum.SummaryProvenance)
+		}
+	})
+
+	t.Run("recorded provenance round-trips", func(t *testing.T) {
+		want := SummaryProvenance{Model: "claude-sonnet-5-5", PromptHash: "abc123", Duration: 4200 * time.Millisecond}
+		if err := store.UpdateArticleAISummary(id, "second", want); err != nil {
+			t.Fatalf("UpdateArticleAISummary: %v", err)
+		}
+		sum, err := store.GetArticleSummary(id)
+		if err != nil || sum == nil {
+			t.Fatalf("GetArticleSummary: %v, %+v", err, sum)
+		}
+		if sum.AISummary != "second" {
+			t.Errorf("summary text: got %q", sum.AISummary)
+		}
+		if sum.SummaryProvenance != want {
+			t.Errorf("provenance: got %+v, want %+v", sum.SummaryProvenance, want)
+		}
+	})
+
+	t.Run("re-summary without provenance clears the old provenance", func(t *testing.T) {
+		if err := store.UpdateArticleAISummary(id, "third", SummaryProvenance{}); err != nil {
+			t.Fatalf("UpdateArticleAISummary: %v", err)
+		}
+		sum, err := store.GetArticleSummary(id)
+		if err != nil || sum == nil {
+			t.Fatalf("GetArticleSummary: %v, %+v", err, sum)
+		}
+		if sum.SummaryProvenance != (SummaryProvenance{}) {
+			t.Errorf("stale provenance survived a re-summary: %+v", sum.SummaryProvenance)
 		}
 	})
 }

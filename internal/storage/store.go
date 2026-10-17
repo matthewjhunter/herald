@@ -261,7 +261,9 @@ type Store interface {
 	HasFilterRules(userID int64) (bool, error)
 
 	// Article summaries (per-article, shared by all subscribers — #162)
-	UpdateArticleAISummary(articleID int64, aiSummary string) error
+	// UpdateArticleAISummary caches the summary text with its provenance; a
+	// re-summary replaces both, so a row never pairs new text with an old model.
+	UpdateArticleAISummary(articleID int64, aiSummary string, prov SummaryProvenance) error
 	MarkSummarizationSkipped(articleID int64, reason string) error
 	GetArticleSummary(articleID int64) (*ArticleSummary, error)
 	// GetArticleBacklinks returns articles in the user's feeds with an extracted
