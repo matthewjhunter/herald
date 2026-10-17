@@ -529,7 +529,7 @@ func TestHandleArticleList_InlineAISummary(t *testing.T) {
 	tf := newTestFixtures(t)
 
 	const summary = "Batch-fetched inline summary for the list."
-	if err := tf.store.UpdateArticleAISummary(tf.articleID, summary); err != nil {
+	if err := tf.store.UpdateArticleAISummary(tf.articleID, summary, storage.SummaryProvenance{}); err != nil {
 		t.Fatalf("UpdateArticleAISummary: %v", err)
 	}
 
