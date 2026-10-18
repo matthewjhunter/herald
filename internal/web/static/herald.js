@@ -432,6 +432,27 @@
         }
     });
 
+    // AI summary "prompt" link. The first click lets htmx fetch the prompt
+    // into the link's target; once it is there, each click hides or shows it
+    // without another request. Keyed off data-summary-prompt-toggle so other
+    // htmx links with a populated target are left alone. Cancelling
+    // htmx:beforeRequest skips the request; aria-expanded tracks the state
+    // for assistive tech since the link text does not change.
+    document.body.addEventListener('htmx:beforeRequest', function(e) {
+        var link = e.detail.elt;
+        if (!link || !link.hasAttribute || !link.hasAttribute('data-summary-prompt-toggle')) return;
+        var target = e.detail.target;
+        if (!target || target.childNodes.length === 0) return;
+        e.preventDefault();
+        target.hidden = !target.hidden;
+        link.setAttribute('aria-expanded', target.hidden ? 'false' : 'true');
+    });
+    document.body.addEventListener('htmx:afterSwap', function(e) {
+        var link = e.detail.elt;
+        if (!link || !link.hasAttribute || !link.hasAttribute('data-summary-prompt-toggle')) return;
+        link.setAttribute('aria-expanded', 'true');
+    });
+
     // Save scroll position before navigation
     document.addEventListener('htmx:beforeRequest', function(e) {
         var list = document.getElementById('article-list');

@@ -19,7 +19,7 @@
          model or prompt that happens to be current. */}}
     <div class="ai-summary-head">
         {{if .SummaryModel}}<strong>Summary by {{.SummaryModel}}</strong>{{else}}<strong>AI Summary</strong>{{end}}
-        {{if or .SummaryDuration .SummaryPromptHash}}<span class="ai-summary-meta secondary">{{if .SummaryDuration}}<span title="Time the model took to write this summary">{{.SummaryDuration}}</span>{{end}}{{if .SummaryPromptHash}}{{if .SummaryDuration}} &middot; {{end}}<a href="/articles/{{.ID}}/summary-prompt" hx-get="/articles/{{.ID}}/summary-prompt" hx-target="#summary-prompt-{{.ID}}" hx-swap="innerHTML" title="Show the prompt this summary was generated from">prompt</a>{{end}}</span>{{end}}
+        {{if or .SummaryDuration .SummaryPromptHash}}<span class="ai-summary-meta secondary">{{if .SummaryDuration}}<span title="Time the model took to write this summary">{{.SummaryDuration}}</span>{{end}}{{if .SummaryPromptHash}}{{if .SummaryDuration}} &middot; {{end}}<a href="/articles/{{.ID}}/summary-prompt" hx-get="/articles/{{.ID}}/summary-prompt" hx-target="#summary-prompt-{{.ID}}" hx-swap="innerHTML" data-summary-prompt-toggle aria-expanded="false" aria-controls="summary-prompt-{{.ID}}" title="Show or hide the prompt this summary was generated from">prompt</a>{{end}}</span>{{end}}
     </div>
     <p>{{.AISummary}}</p>
     {{if .SummaryPromptHash}}<div id="summary-prompt-{{.ID}}" class="ai-summary-prompt"></div>{{end}}
