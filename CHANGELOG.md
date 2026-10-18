@@ -45,7 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Every summary in the reading pane was labelled "AI Summary" with nothing to
   say which model wrote it or what it was told. It now reads "Summary by
   <model>", followed by how long the model call took and a "prompt" link that
-  swaps in the exact template the summary was generated from. The three are
+  swaps in the exact template the summary was generated from (click again to
+  hide it; it is fetched once). The three are
   recorded with the text at generation time (migration 0019), the way curation
   scores already record their model and prompt hash, so a later prompt or model
   change cannot mislabel older summaries. Summaries written before this keep
