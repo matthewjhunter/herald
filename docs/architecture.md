@@ -87,6 +87,10 @@ Group Matching (embedding + cosine similarity)
 Notification Output
 ```
 
+### Batch path
+
+With `[batch]` enabled, the screen and curate stages submit their work to a provider batch API and collect the results on later cycles instead of calling the model synchronously. The rendering, parsing, and thresholds are shared with the synchronous path, so the two produce comparable verdicts; only the transport and the timing differ. See [batch-scoring.md](batch-scoring.md).
+
 ### Security Screening
 
 The security model receives article title and truncated content (2000 chars). The prompt instructs it to detect prompt injection, adversarial content intended to manipulate AI systems, and other malicious patterns. Temperature is 0.3 by default for consistent, conservative decisions.

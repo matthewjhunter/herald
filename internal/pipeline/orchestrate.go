@@ -88,13 +88,15 @@ func (s *Stage) Run(ctx context.Context) error {
 		return nil
 	}
 
-	if err := s.drain(
-		func(limit int) ([]storage.Article, error) {
-			return s.Store.GetUnscoredCurationArticles(s.UserID, s.Cfg.Thresholds.MaxSecurityThreat, limit)
-		},
-		func(arts []storage.Article) { s.Curate(ctx, arts) },
-	); err != nil {
-		return err
+	if !s.BatchCuration {
+		if err := s.drain(
+			func(limit int) ([]storage.Article, error) {
+				return s.Store.GetUnscoredCurationArticles(s.UserID, s.Cfg.Thresholds.MaxSecurityThreat, limit)
+			},
+			func(arts []storage.Article) { s.Curate(ctx, arts) },
+		); err != nil {
+			return err
+		}
 	}
 	if s.Embedder != nil {
 		if err := s.drain(

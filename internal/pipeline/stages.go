@@ -80,10 +80,18 @@ func (s *Stage) securityOne(ctx context.Context, article storage.Article) *stora
 		return nil
 	}
 
-	// Threat scale (plan 012): 0 = clean, higher = worse. A LOW threat passes.
-	//   threat <= passThreat            -> pass, queued for curation
-	//   passThreat < threat <= border   -> borderline, flagged for audit, excluded
-	//   threat > border                 -> hard block, excluded
+	return s.recordSecurityVerdict(article, secResult)
+}
+
+// recordSecurityVerdict writes a screen verdict against the article and
+// returns the article when it passed, nil when it was blocked or flagged.
+// Shared by the synchronous screen and the batch path so both apply the same
+// thresholds:
+//
+//	threat <= passThreat            -> pass, queued for curation
+//	passThreat < threat <= border   -> borderline, flagged for audit, excluded
+//	threat > border                 -> hard block, excluded
+func (s *Stage) recordSecurityVerdict(article storage.Article, secResult *ai.SecurityResult) *storage.Article {
 	passThreat := s.Cfg.Thresholds.MaxSecurityThreat
 	if passThreat == 0 {
 		passThreat = 3.0

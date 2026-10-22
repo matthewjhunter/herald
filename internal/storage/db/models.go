@@ -10,6 +10,55 @@ import (
 	"github.com/pgvector/pgvector-go"
 )
 
+type AiBatch struct {
+	ID               string
+	Provider         string
+	Kind             string
+	Model            string
+	Status           string
+	RequestCount     int
+	SubmittedAt      time.Time
+	ExpiresAt        *time.Time
+	LastPolledAt     *time.Time
+	ProviderEndedAt  *time.Time
+	EndedAt          *time.Time
+	Error            *string
+	Adopted          bool
+	InputTokens      int64
+	OutputTokens     int64
+	CacheReadTokens  int64
+	CacheWriteTokens int64
+}
+
+type AiBatchRequest struct {
+	BatchID          string
+	CustomID         string
+	Kind             string
+	UserID           int64
+	SubjectKey       string
+	ArticleID        *int64
+	ChunkIndex       int
+	ChunkCount       int
+	Model            string
+	PromptHash       *string
+	Outcome          string
+	ResolvedAt       *time.Time
+	Error            *string
+	Threat           *float64
+	Category         *string
+	Verified         *bool
+	InputTokens      int
+	OutputTokens     int
+	CacheReadTokens  int
+	CacheWriteTokens int
+}
+
+type AiBatchRequestArticle struct {
+	BatchID   string
+	CustomID  string
+	ArticleID int64
+}
+
 type AiSummary struct {
 	ID             int64
 	UserID         int64

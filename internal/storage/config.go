@@ -69,6 +69,35 @@ type Config struct {
 		DisableThinking bool `toml:"disable_thinking"`
 	} `toml:"ollama"`
 
+	// Batch routes the security screen and the curation score through a
+	// provider's asynchronous batch API instead of one synchronous call per
+	// article (docs/batch-scoring.md). Off by default; the [ollama] path stays
+	// the fallback and the only path for local models.
+	Batch struct {
+		Enabled bool `toml:"enabled"`
+		// Provider selects the wire format: "anthropic" (Message Batches) is
+		// implemented; "openai" is reserved.
+		Provider string `toml:"provider"`
+		// BaseURL is the Messages URL root: https://api.anthropic.com/v1/messages
+		// directly, or a gateway path that maps onto it such as
+		// https://host/proxy/anthropic/v1/messages. The client appends /batches.
+		BaseURL string `toml:"base_url"`
+		APIKey  string `toml:"api_key"`
+		// AuthStyle is "bearer" (a gateway that re-keys upstream) or
+		// "x-api-key" (direct to Anthropic).
+		AuthStyle string `toml:"auth_style"`
+		// Stages lists the kinds that take the batch path: "screen", "curate".
+		Stages []string `toml:"stages"`
+		// CacheTTL marks the system block for prompt caching: "5m" or "1h".
+		// Anthropic recommends 1h inside batches, since a batch can outlive a
+		// five-minute entry.
+		CacheTTL string `toml:"cache_ttl"`
+		// MaxRequests caps one provider submission.
+		MaxRequests int `toml:"max_requests"`
+		// PollMinInterval spaces status checks on a running batch.
+		PollMinInterval Duration `toml:"poll_min_interval"`
+	} `toml:"batch"`
+
 	Thresholds struct {
 		InterestScore float64 `toml:"interest_score"`
 		// Threat scale (plan 012): 0 = clean, higher = worse. An article PASSES
@@ -242,6 +271,12 @@ func DefaultConfig() *Config {
 	cfg.Ollama.MaxConcurrent = 8
 	cfg.Ollama.EmbedBatchSize = DefaultEmbedBatchSize
 	cfg.Ollama.EmbedMaxParallel = DefaultEmbedMaxParallel
+	cfg.Batch.Provider = "anthropic"
+	cfg.Batch.AuthStyle = "bearer"
+	cfg.Batch.Stages = []string{"screen", "curate"}
+	cfg.Batch.CacheTTL = "1h"
+	cfg.Batch.MaxRequests = 1000
+	cfg.Batch.PollMinInterval = Duration(2 * time.Minute)
 	cfg.Summarization.MinArticleLength = 200
 	cfg.Summarization.MaxSummaryLength = 500
 	cfg.Grouping.Enabled = true
