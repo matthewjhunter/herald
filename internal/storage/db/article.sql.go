@@ -66,7 +66,8 @@ FROM (
 ) claimed
 WHERE a.id = claimed.id
 RETURNING a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-          a.author, a.published_date, a.fetched_date
+          a.author, a.published_date, a.fetched_date,
+          a.linked_url, a.linked_content
 `
 
 type ClaimUnscreenedArticlesParams struct {
@@ -85,6 +86,8 @@ type ClaimUnscreenedArticlesRow struct {
 	Author        *string
 	PublishedDate *time.Time
 	FetchedDate   time.Time
+	LinkedUrl     string
+	LinkedContent string
 }
 
 // Atomically claim up to @lim unscreened articles for a screener worker (#233):
@@ -115,6 +118,8 @@ func (q *Queries) ClaimUnscreenedArticles(ctx context.Context, arg ClaimUnscreen
 			&i.Author,
 			&i.PublishedDate,
 			&i.FetchedDate,
+			&i.LinkedUrl,
+			&i.LinkedContent,
 		); err != nil {
 			return nil, err
 		}
@@ -585,7 +590,8 @@ func (q *Queries) GetUnscoredArticleCount(ctx context.Context, userID int64) (in
 
 const getUnscoredCurationArticles = `-- name: GetUnscoredCurationArticles :many
 SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-       a.author, a.published_date, a.fetched_date
+       a.author, a.published_date, a.fetched_date,
+       a.linked_url, a.linked_content
 FROM articles a
 JOIN user_feeds uf ON a.feed_id = uf.feed_id
 LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
@@ -613,6 +619,8 @@ type GetUnscoredCurationArticlesRow struct {
 	Author        *string
 	PublishedDate *time.Time
 	FetchedDate   time.Time
+	LinkedUrl     string
+	LinkedContent string
 }
 
 func (q *Queries) GetUnscoredCurationArticles(ctx context.Context, arg GetUnscoredCurationArticlesParams) ([]GetUnscoredCurationArticlesRow, error) {
@@ -635,6 +643,8 @@ func (q *Queries) GetUnscoredCurationArticles(ctx context.Context, arg GetUnscor
 			&i.Author,
 			&i.PublishedDate,
 			&i.FetchedDate,
+			&i.LinkedUrl,
+			&i.LinkedContent,
 		); err != nil {
 			return nil, err
 		}
@@ -648,7 +658,8 @@ func (q *Queries) GetUnscoredCurationArticles(ctx context.Context, arg GetUnscor
 
 const getUnscreenedArticles = `-- name: GetUnscreenedArticles :many
 SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-       a.author, a.published_date, a.fetched_date
+       a.author, a.published_date, a.fetched_date,
+       a.linked_url, a.linked_content
 FROM articles a
 WHERE a.security_screened_at IS NULL AND a.security_attempts < 3
 ORDER BY a.published_date DESC
@@ -666,6 +677,8 @@ type GetUnscreenedArticlesRow struct {
 	Author        *string
 	PublishedDate *time.Time
 	FetchedDate   time.Time
+	LinkedUrl     string
+	LinkedContent string
 }
 
 func (q *Queries) GetUnscreenedArticles(ctx context.Context, lim int32) ([]GetUnscreenedArticlesRow, error) {
@@ -688,6 +701,8 @@ func (q *Queries) GetUnscreenedArticles(ctx context.Context, lim int32) ([]GetUn
 			&i.Author,
 			&i.PublishedDate,
 			&i.FetchedDate,
+			&i.LinkedUrl,
+			&i.LinkedContent,
 		); err != nil {
 			return nil, err
 		}
@@ -715,7 +730,8 @@ func (q *Queries) GetUnsummarizedArticleCount(ctx context.Context) (int, error) 
 
 const getUnsummarizedScoredArticles = `-- name: GetUnsummarizedScoredArticles :many
 SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-       a.author, a.published_date, a.fetched_date
+       a.author, a.published_date, a.fetched_date,
+       a.linked_url, a.linked_content
 FROM articles a
 LEFT JOIN article_summaries asumm ON asumm.article_id = a.id
 WHERE a.security_threat <= $1::double precision AND asumm.article_id IS NULL
@@ -739,6 +755,8 @@ type GetUnsummarizedScoredArticlesRow struct {
 	Author        *string
 	PublishedDate *time.Time
 	FetchedDate   time.Time
+	LinkedUrl     string
+	LinkedContent string
 }
 
 func (q *Queries) GetUnsummarizedScoredArticles(ctx context.Context, arg GetUnsummarizedScoredArticlesParams) ([]GetUnsummarizedScoredArticlesRow, error) {
@@ -761,6 +779,8 @@ func (q *Queries) GetUnsummarizedScoredArticles(ctx context.Context, arg GetUnsu
 			&i.Author,
 			&i.PublishedDate,
 			&i.FetchedDate,
+			&i.LinkedUrl,
+			&i.LinkedContent,
 		); err != nil {
 			return nil, err
 		}

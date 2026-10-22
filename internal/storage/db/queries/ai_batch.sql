@@ -60,7 +60,8 @@ WHERE batch_id = @batch_id AND custom_id = @custom_id;
 -- have a pending curation request for this user are waiting on a batch and
 -- must not be submitted again.
 SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-       a.author, a.published_date, a.fetched_date
+       a.author, a.published_date, a.fetched_date,
+       a.linked_url, a.linked_content
 FROM articles a
 JOIN user_feeds uf ON a.feed_id = uf.feed_id
 LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
