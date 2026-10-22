@@ -41,7 +41,7 @@ const maxResultLineBytes = 16 << 20
 // AnthropicOptions configures an Anthropic submitter.
 type AnthropicOptions struct {
 	// BaseURL is the Messages URL root: https://api.anthropic.com/v1/messages
-	// directly, or a gateway path such as https://host/proxy/anthropic that
+	// directly, or a gateway path such as https://host/proxy/anthropic/v1/messages that
 	// maps onto it. The client appends /batches.
 	BaseURL string
 	APIKey  string

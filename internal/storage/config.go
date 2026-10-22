@@ -80,7 +80,7 @@ type Config struct {
 		Provider string `toml:"provider"`
 		// BaseURL is the Messages URL root: https://api.anthropic.com/v1/messages
 		// directly, or a gateway path that maps onto it such as
-		// https://host/proxy/anthropic. The client appends /batches.
+		// https://host/proxy/anthropic/v1/messages. The client appends /batches.
 		BaseURL string `toml:"base_url"`
 		APIKey  string `toml:"api_key"`
 		// AuthStyle is "bearer" (a gateway that re-keys upstream) or

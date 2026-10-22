@@ -106,7 +106,7 @@ Provider-specific knobs are constructor options, not interface surface: the Anth
 - Status: GET `{base}/batches/{id}`; `ended` maps to StatusEnded, anything else to StatusRunning. Anthropic has no batch-level failure; validation errors arrive per request.
 - Results: GET `{base}/batches/{id}/results`, decode JSONL line by line. `succeeded` yields the first text block of `result.message` and its usage; `errored` yields Err from `result.error`; `expired` and `canceled` yield their Outcome with no Err.
 - Cancel: POST `{base}/batches/{id}/cancel`. List: GET `{base}/batches?limit=`.
-- Base URL: through nenya it is `https://nenya.infodancer.net/proxy/anthropic`, which nenya maps onto `https://api.anthropic.com/v1/messages`; direct it is `https://api.anthropic.com/v1/messages`. The implementation always sends `anthropic-version`; nenya overrides it with its own, which is harmless.
+- Base URL: through nenya it is `https://nenya.infodancer.net/proxy/anthropic/v1/messages` (nenya's passthrough prefixes the provider's scheme and host only, so the Messages path is spelled out); direct it is `https://api.anthropic.com/v1/messages`. The implementation always sends `anthropic-version`; nenya overrides it with its own, which is harmless.
 
 ### OpenAI implementation (follow-up, not in the first change)
 
@@ -199,7 +199,7 @@ A gateway in the path may retry a create on a transport error and return only th
 # the only path for local models.
 enabled    = false
 provider   = "anthropic"                                  # anthropic | openai
-base_url   = "https://nenya.infodancer.net/proxy/anthropic"
+base_url   = "https://nenya.infodancer.net/proxy/anthropic/v1/messages"
 api_key    = "..."                                        # bearer; nenya's client token when going through the gateway
 auth_style = "bearer"                                     # bearer | x-api-key (direct to Anthropic)
 stages     = ["screen", "curate"]                         # which kinds use the batch path
