@@ -53,7 +53,7 @@ func (p *AIProcessor) SummarizeArticle(ctx context.Context, title, content strin
 	defer cancel()
 
 	start := time.Now()
-	result, err := p.client.generate(callCtx, model, prompt, resolved.Temperature)
+	result, err := p.client.generate(callCtx, model, "", prompt, resolved.Temperature)
 	if err != nil {
 		return nil, fmt.Errorf("article summarization failed: %w", err)
 	}
@@ -119,7 +119,7 @@ func (p *AIProcessor) GenerateGroupSummary(ctx context.Context, userID int64, to
 	callCtx, cancel := p.withCallTimeout(ctx)
 	defer cancel()
 
-	result, err := p.client.generate(callCtx, p.curationModel, prompt, temperature)
+	result, err := p.client.generate(callCtx, p.curationModel, "", prompt, temperature)
 	if err != nil {
 		return nil, fmt.Errorf("group summarization failed: %w", err)
 	}
@@ -147,7 +147,7 @@ Summary:
 	callCtx, cancel := p.withCallTimeout(ctx)
 	defer cancel()
 
-	topic, err := p.client.generate(callCtx, p.curationModel, prompt, 0.3)
+	topic, err := p.client.generate(callCtx, p.curationModel, "", prompt, 0.3)
 	if err != nil {
 		return "", fmt.Errorf("topic refinement failed: %w", err)
 	}
@@ -256,7 +256,7 @@ func (p *AIProcessor) GenerateNewsletterContent(ctx context.Context, userID int6
 	callCtx, cancel := p.withCallTimeout(ctx)
 	defer cancel()
 
-	result, err := p.client.generate(callCtx, p.curationModel, prompt, temperature)
+	result, err := p.client.generate(callCtx, p.curationModel, "", prompt, temperature)
 	if err != nil {
 		return nil, fmt.Errorf("newsletter generation failed: %w", err)
 	}

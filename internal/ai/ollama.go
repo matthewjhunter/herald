@@ -143,11 +143,13 @@ func (p *AIProcessor) SecurityCheck(ctx context.Context, title, content string) 
 		if err != nil {
 			return nil, fmt.Errorf("failed to prepare security prompt content: %w", err)
 		}
-		promptText, err := ExecutePrompt(override, data)
+		// An override may define a "system" block for its stable half; a flat
+		// one renders entirely as the user message and simply is not cached.
+		system, input, err := ExecutePromptParts(override, data)
 		if err != nil {
 			return nil, fmt.Errorf("failed to render security override prompt: %w", err)
 		}
-		finding, err := p.screenSpan(ctx, model, temperature, promptText, screened)
+		finding, err := p.screenSpan(ctx, model, temperature, system, input, screened)
 		if err != nil {
 			return nil, err
 		}
@@ -172,7 +174,7 @@ func (p *AIProcessor) SecurityCheck(ctx context.Context, title, content string) 
 		}
 		// Verify the verdict's evidence against the chunk the model actually saw,
 		// not the whole article -- a citation must be in the span that produced it.
-		finding, err := p.screenSpan(ctx, model, temperature, rendered.Text, chunk)
+		finding, err := p.screenSpan(ctx, model, temperature, rendered.Instructions, rendered.Input, chunk)
 		if err != nil {
 			// Fail closed: an unscanned or unparseable chunk cannot be assumed
 			// clean, so the whole screen is retryable rather than a partial pass.
@@ -188,15 +190,18 @@ func (p *AIProcessor) SecurityCheck(ctx context.Context, title, content string) 
 	return p.assembleSecurityResult(maxLLM, category, verified, screened), nil
 }
 
-// screenSpan runs one LLM screen over promptText, parses the verdict, and
-// verifies its cited evidence against evidence (the exact span the model saw).
-// It returns a retryable error for an empty reply, an unparseable verdict, or a
-// verdict whose evidence is not present -- SecurityCheck never fails open.
-func (p *AIProcessor) screenSpan(ctx context.Context, model string, temperature float64, promptText, evidence string) (screen.Finding, error) {
+// screenSpan runs one LLM screen, parses the verdict, and verifies its cited
+// evidence against evidence (the exact span the model saw). instructions is
+// airlock's stable half of the prompt and goes as the system message; input is
+// the fenced span and goes as the user message, so the gateway can cache the
+// first across articles. It returns a retryable error for an empty reply, an
+// unparseable verdict, or a verdict whose evidence is not present --
+// SecurityCheck never fails open.
+func (p *AIProcessor) screenSpan(ctx context.Context, model string, temperature float64, instructions, input, evidence string) (screen.Finding, error) {
 	callCtx, cancel := p.withCallTimeout(ctx)
 	defer cancel()
 
-	responseText, err := p.client.generate(callCtx, model, promptText, temperature)
+	responseText, err := p.client.generate(callCtx, model, instructions, input, temperature)
 	if err != nil {
 		return screen.Finding{}, fmt.Errorf("ollama security check failed: %w", err)
 	}
@@ -260,7 +265,7 @@ func (p *AIProcessor) CurateArticle(ctx context.Context, userID int64, title, co
 		return nil, fmt.Errorf("failed to prepare curation prompt content: %w", err)
 	}
 	data["Keywords"] = keywordStr
-	prompt, err := ExecutePrompt(resolved.Template, data)
+	system, prompt, err := ExecutePromptParts(resolved.Template, data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to render curation prompt: %w", err)
 	}
@@ -282,7 +287,7 @@ func (p *AIProcessor) CurateArticle(ctx context.Context, userID int64, title, co
 	callCtx, cancel := p.withCallTimeout(ctx)
 	defer cancel()
 
-	responseText, err := p.client.generate(callCtx, model, prompt, temperature)
+	responseText, err := p.client.generate(callCtx, model, system, prompt, temperature)
 	if err != nil {
 		return nil, fmt.Errorf("ollama curation failed: %w", err)
 	}

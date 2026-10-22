@@ -26,7 +26,7 @@ func TestGenerateReportsBackendUnavailable(t *testing.T) {
 			w.Write([]byte(`{"error":"model not found"}`))
 		}))
 		defer srv.Close()
-		_, err := newOpenAIClient(srv.URL, "k", 0).generate(ctx, "m", "hi", 0.7)
+		_, err := newOpenAIClient(srv.URL, "k", 0).generate(ctx, "m", "", "hi", 0.7)
 		if !errors.Is(err, ErrBackendUnavailable) {
 			t.Fatalf("4xx: errors.Is(ErrBackendUnavailable) = false; err=%T %v", err, err)
 		}
@@ -38,7 +38,7 @@ func TestGenerateReportsBackendUnavailable(t *testing.T) {
 			w.Write([]byte("upstream down"))
 		}))
 		defer srv.Close()
-		_, err := newOpenAIClient(srv.URL, "k", 0).generate(ctx, "m", "hi", 0.7)
+		_, err := newOpenAIClient(srv.URL, "k", 0).generate(ctx, "m", "", "hi", 0.7)
 		if !errors.Is(err, ErrBackendUnavailable) {
 			t.Fatalf("5xx: errors.Is(ErrBackendUnavailable) = false; err=%T %v", err, err)
 		}
@@ -49,7 +49,7 @@ func TestGenerateReportsBackendUnavailable(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 		url := srv.URL
 		srv.Close()
-		_, err := newOpenAIClient(url, "k", 0).generate(ctx, "m", "hi", 0.7)
+		_, err := newOpenAIClient(url, "k", 0).generate(ctx, "m", "", "hi", 0.7)
 		if !errors.Is(err, ErrBackendUnavailable) {
 			t.Fatalf("transport: errors.Is(ErrBackendUnavailable) = false; err=%T %v", err, err)
 		}
@@ -63,12 +63,12 @@ func TestGenerateReportsBackendUnavailable(t *testing.T) {
 		defer srv.Close()
 		c := newOpenAIClient(srv.URL, "bad", 0)
 		for range clientBreakerThreshold {
-			c.generate(ctx, "m", "hi", 0.7) //nolint:errcheck
+			c.generate(ctx, "m", "", "hi", 0.7) //nolint:errcheck
 		}
 		if !c.isOpen() {
 			t.Fatal("expected breaker open after threshold 4xx")
 		}
-		_, err := c.generate(ctx, "m", "hi", 0.7)
+		_, err := c.generate(ctx, "m", "", "hi", 0.7)
 		if !errors.Is(err, ErrBackendUnavailable) {
 			t.Fatalf("breaker-open: errors.Is(ErrBackendUnavailable) = false; err=%T %v", err, err)
 		}
@@ -95,7 +95,7 @@ func TestBackendAvailableTracksBreaker(t *testing.T) {
 	}
 
 	for range clientBreakerThreshold {
-		c.generate(ctx, "m", "hi", 0.7) //nolint:errcheck
+		c.generate(ctx, "m", "", "hi", 0.7) //nolint:errcheck
 	}
 	if p.BackendAvailable() {
 		t.Fatal("expected BackendAvailable false once the breaker is open")
@@ -122,7 +122,7 @@ func TestCircuitBreakerTripsAfterConsecutive4xx(t *testing.T) {
 
 	// First clientBreakerThreshold calls should each return ClientError.
 	for i := range clientBreakerThreshold {
-		_, err := c.generate(ctx, "test-model", "hello", 0.7)
+		_, err := c.generate(ctx, "test-model", "", "hello", 0.7)
 		if err == nil {
 			t.Fatalf("call %d: expected error, got nil", i+1)
 		}
@@ -141,7 +141,7 @@ func TestCircuitBreakerTripsAfterConsecutive4xx(t *testing.T) {
 	}
 
 	// Subsequent calls should fail immediately without hitting the server.
-	_, err := c.generate(ctx, "test-model", "hello", 0.7)
+	_, err := c.generate(ctx, "test-model", "", "hello", 0.7)
 	if err == nil {
 		t.Fatal("expected error from open breaker")
 	}
@@ -171,11 +171,11 @@ func TestCircuitBreakerResetsOnSuccess(t *testing.T) {
 
 	// Run up to threshold-1 failures.
 	for range clientBreakerThreshold - 1 {
-		c.generate(ctx, "model", "hello", 0.7)
+		c.generate(ctx, "model", "", "hello", 0.7)
 	}
 
 	// Next call succeeds — should reset the counter.
-	result, err := c.generate(ctx, "model", "hello", 0.7)
+	result, err := c.generate(ctx, "model", "", "hello", 0.7)
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestCircuitBreakerResetsOnSuccess(t *testing.T) {
 	// Counter was reset, so threshold-1 more failures should NOT trip it.
 	callCount = 0 // Reset server to fail again.
 	for range clientBreakerThreshold - 1 {
-		c.generate(ctx, "model", "hello", 0.7)
+		c.generate(ctx, "model", "", "hello", 0.7)
 	}
 	if c.isOpen() {
 		t.Fatal("breaker should not be open after only threshold-1 failures post-reset")
@@ -217,14 +217,14 @@ func TestCircuitBreakerHalfOpenAfterCooldown(t *testing.T) {
 
 	// Trip the breaker on consecutive 400s.
 	for range clientBreakerThreshold {
-		c.generate(ctx, "model", "hello", 0.7) //nolint:errcheck
+		c.generate(ctx, "model", "", "hello", 0.7) //nolint:errcheck
 	}
 	if !c.isOpen() {
 		t.Fatal("expected breaker open after threshold 400s")
 	}
 
 	// Before cooldown: still blocked.
-	_, err := c.generate(ctx, "model", "hello", 0.7)
+	_, err := c.generate(ctx, "model", "", "hello", 0.7)
 	if err == nil {
 		t.Fatal("expected breaker to block call before cooldown")
 	}
@@ -233,7 +233,7 @@ func TestCircuitBreakerHalfOpenAfterCooldown(t *testing.T) {
 	time.Sleep(c.breaker.cooldown + 10*time.Millisecond)
 	failing.Store(false)
 
-	result, err := c.generate(ctx, "model", "hello", 0.7)
+	result, err := c.generate(ctx, "model", "", "hello", 0.7)
 	if err != nil {
 		t.Fatalf("expected success after cooldown, got: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestCircuitBreakerRecoversFrom401(t *testing.T) {
 
 	// Trip the breaker on 401s.
 	for range clientBreakerThreshold {
-		c.generate(ctx, "model", "hello", 0.7) //nolint:errcheck
+		c.generate(ctx, "model", "", "hello", 0.7) //nolint:errcheck
 	}
 	if !c.isOpen() {
 		t.Fatal("expected breaker open after 401s")
@@ -276,7 +276,7 @@ func TestCircuitBreakerRecoversFrom401(t *testing.T) {
 
 	// Error body should reference the observed status code, not speculate
 	// about causes or demand a restart.
-	_, err := c.generate(ctx, "model", "hello", 0.7)
+	_, err := c.generate(ctx, "model", "", "hello", 0.7)
 	var ce *ClientError
 	if !errors.As(err, &ce) {
 		t.Fatalf("expected *ClientError, got %T: %v", err, err)
@@ -294,7 +294,7 @@ func TestCircuitBreakerRecoversFrom401(t *testing.T) {
 	time.Sleep(c.breaker.cooldown + 10*time.Millisecond)
 	failing.Store(false)
 
-	result, err := c.generate(ctx, "model", "hello", 0.7)
+	result, err := c.generate(ctx, "model", "", "hello", 0.7)
 	if err != nil {
 		t.Fatalf("expected success after cooldown, got: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestCircuitBreakerTripsOn5xx(t *testing.T) {
 		if c.isOpen() {
 			t.Fatalf("breaker open after only %d 5xx responses", i)
 		}
-		_, err := c.generate(ctx, "model", "hello", 0.7)
+		_, err := c.generate(ctx, "model", "", "hello", 0.7)
 		if !errors.Is(err, ErrBackendUnavailable) {
 			t.Fatalf("5xx: errors.Is(ErrBackendUnavailable) = false; err=%T %v", err, err)
 		}
@@ -336,7 +336,7 @@ func TestCircuitBreakerTripsOn5xx(t *testing.T) {
 	if !c.isOpen() {
 		t.Fatalf("breaker should be open after %d consecutive 5xx responses", unavailableBreakerThreshold)
 	}
-	_, err := c.generate(ctx, "model", "hello", 0.7)
+	_, err := c.generate(ctx, "model", "", "hello", 0.7)
 	var ce *ClientError
 	if !errors.As(err, &ce) || ce.StatusCode != 0 {
 		t.Fatalf("expected breaker-open ClientError, got %T: %v", err, err)
@@ -362,7 +362,7 @@ func TestCircuitBreakerTripsOnTransportFailure(t *testing.T) {
 		if c.isOpen() {
 			t.Fatalf("breaker open after only %d transport failures", i)
 		}
-		_, err := c.generate(ctx, "model", "hello", 0.7)
+		_, err := c.generate(ctx, "model", "", "hello", 0.7)
 		if !errors.Is(err, ErrBackendUnavailable) {
 			t.Fatalf("transport: errors.Is(ErrBackendUnavailable) = false; err=%T %v", err, err)
 		}
@@ -370,7 +370,7 @@ func TestCircuitBreakerTripsOnTransportFailure(t *testing.T) {
 	if !c.isOpen() {
 		t.Fatalf("breaker should be open after %d consecutive transport failures", unavailableBreakerThreshold)
 	}
-	_, err := c.generate(ctx, "model", "hello", 0.7)
+	_, err := c.generate(ctx, "model", "", "hello", 0.7)
 	var ce *ClientError
 	if !errors.As(err, &ce) || ce.StatusCode != 0 {
 		t.Fatalf("expected breaker-open ClientError, got %T: %v", err, err)
@@ -395,7 +395,7 @@ func TestCircuitBreakerTripsOnDeadline(t *testing.T) {
 	c := newOpenAIClient(srv.URL, "key", 0)
 	for range unavailableBreakerThreshold {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-		_, err := c.generate(ctx, "model", "hello", 0.7)
+		_, err := c.generate(ctx, "model", "", "hello", 0.7)
 		cancel()
 		if !errors.Is(err, ErrBackendUnavailable) {
 			t.Fatalf("deadline: errors.Is(ErrBackendUnavailable) = false; err=%T %v", err, err)
@@ -425,7 +425,7 @@ func TestCircuitBreakerIgnoresCallerCancel(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 			cancel()
 		}()
-		_, err := c.generate(ctx, "model", "hello", 0.7)
+		_, err := c.generate(ctx, "model", "", "hello", 0.7)
 		if !errors.Is(err, ErrBackendUnavailable) {
 			t.Fatalf("cancel: errors.Is(ErrBackendUnavailable) = false; err=%T %v", err, err)
 		}
@@ -452,7 +452,7 @@ func TestGenerate_SendsMaxTokens(t *testing.T) {
 	defer srv.Close()
 
 	c := newOpenAIClient(srv.URL, "", 0)
-	if _, err := c.generate(context.Background(), "test-model", "hello", 0.1); err != nil {
+	if _, err := c.generate(context.Background(), "test-model", "", "hello", 0.1); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 	if captured.MaxTokens != chatMaxTokens {
@@ -561,7 +561,7 @@ func TestSemaphoreCeilingEnforced(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c.generate(ctx, "m", "p", 0.1) //nolint:errcheck
+			c.generate(ctx, "m", "", "p", 0.1) //nolint:errcheck
 		}()
 	}
 
@@ -592,7 +592,7 @@ func TestSemaphoreUnboundedWhenZero(t *testing.T) {
 		t.Fatal("expected sem == nil for maxConcurrent=0")
 	}
 
-	result, err := c.generate(context.Background(), "m", "p", 0.1)
+	result, err := c.generate(context.Background(), "m", "", "p", 0.1)
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -626,7 +626,7 @@ func TestSemaphoreContextCancelWhileWaiting(t *testing.T) {
 	go func() {
 		// Signal that we're about to call generate, then call it.
 		close(ready)
-		c.generate(bgCtx, "m", "p", 0.1) //nolint:errcheck
+		c.generate(bgCtx, "m", "", "p", 0.1) //nolint:errcheck
 	}()
 	<-ready
 	// Give the goroutine time to acquire the slot.
@@ -636,11 +636,43 @@ func TestSemaphoreContextCancelWhileWaiting(t *testing.T) {
 	cancelledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := c.generate(cancelledCtx, "m", "p", 0.1)
+	_, err := c.generate(cancelledCtx, "m", "", "p", 0.1)
 	if err == nil {
 		t.Fatal("expected error from cancelled context, got nil")
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}
+
+func TestGenerateSendsSystemMessageFirst(t *testing.T) {
+	var got chatRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+	c := newOpenAIClient(srv.URL, "k", 0)
+	ctx := context.Background()
+
+	if _, err := c.generate(ctx, "m", "stable instructions", "per-call input", 0.7); err != nil {
+		t.Fatal(err)
+	}
+	want := []chatMessage{
+		{Role: "system", Content: "stable instructions"},
+		{Role: "user", Content: "per-call input"},
+	}
+	if len(got.Messages) != 2 || got.Messages[0] != want[0] || got.Messages[1] != want[1] {
+		t.Errorf("messages = %+v, want %+v", got.Messages, want)
+	}
+
+	if _, err := c.generate(ctx, "m", "", "only input", 0.7); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Messages) != 1 || got.Messages[0].Role != "user" {
+		t.Errorf("empty system still sent a system message: %+v", got.Messages)
 	}
 }
