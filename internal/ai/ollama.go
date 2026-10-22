@@ -63,6 +63,22 @@ type SecurityResult struct {
 	LLMThreat float64
 	// RegexThreat is airlock/detect's Score()/10 (0..10). Component, not stored.
 	RegexThreat float64
+
+	// Provenance and the raw material of the verdict, filled in by
+	// SecurityCheck for the model output corpus (docs/model-outputs.md):
+	// the model and instructions every chunk was screened with, and one
+	// entry per chunk with the completion as the model wrote it.
+	Model      string
+	PromptHash string
+	Chunks     []ScreenChunkOutput
+}
+
+// ScreenChunkOutput is one chunk's screen call: its index in the plan, the
+// model's completion verbatim, and the finding parsed from it.
+type ScreenChunkOutput struct {
+	Index    int
+	Response string
+	Finding  screen.Finding
 }
 
 type CurationResult struct {
@@ -74,6 +90,11 @@ type CurationResult struct {
 	// which is the only moment it is known for certain (#258).
 	Model      string `json:"-"`
 	PromptHash string `json:"-"`
+	// Keywords is the interests list the prompt was rendered with, and
+	// Response the model's completion verbatim; both are kept for the model
+	// output corpus (docs/model-outputs.md).
+	Keywords string `json:"-"`
+	Response string `json:"-"`
 }
 
 // NewAIProcessor creates a new AI processor backed by an OpenAI-compatible
@@ -132,29 +153,35 @@ func (p *AIProcessor) SecurityCheck(ctx context.Context, title, content string) 
 		return nil, err
 	}
 	findings := make([]screen.Finding, 0, len(plan.Requests))
+	chunks := make([]ScreenChunkOutput, 0, len(plan.Requests))
 	for i, req := range plan.Requests {
-		finding, err := p.screenSpan(ctx, plan, req, plan.Chunks[i])
+		finding, response, err := p.screenSpan(ctx, plan, req, plan.Chunks[i])
 		if err != nil {
 			// Fail closed: an unscanned or unparseable chunk cannot be assumed
 			// clean, so the whole screen is retryable rather than a partial pass.
 			return nil, err
 		}
 		findings = append(findings, finding)
+		chunks = append(chunks, ScreenChunkOutput{Index: i, Response: response, Finding: finding})
 	}
-	return p.SecurityVerdict(findings, plan.Screened), nil
+	res := p.SecurityVerdict(findings, plan.Screened)
+	res.Model, res.PromptHash, res.Chunks = plan.Model, plan.PromptHash, chunks
+	return res, nil
 }
 
 // screenSpan runs one LLM screen synchronously and parses the verdict against
-// evidence, the exact span the model saw.
-func (p *AIProcessor) screenSpan(ctx context.Context, plan *SecurityPlan, req batch.Request, evidence string) (screen.Finding, error) {
+// evidence, the exact span the model saw. The completion comes back with the
+// finding so the caller can keep it.
+func (p *AIProcessor) screenSpan(ctx context.Context, plan *SecurityPlan, req batch.Request, evidence string) (screen.Finding, string, error) {
 	callCtx, cancel := p.withCallTimeout(ctx)
 	defer cancel()
 
 	responseText, err := p.client.generate(callCtx, req.Model, req.System, req.User, plan.Temperature)
 	if err != nil {
-		return screen.Finding{}, fmt.Errorf("ollama security check failed: %w", err)
+		return screen.Finding{}, "", fmt.Errorf("ollama security check failed: %w", err)
 	}
-	return p.ParseSecurityFinding(responseText, evidence)
+	finding, err := p.ParseSecurityFinding(responseText, evidence)
+	return finding, responseText, err
 }
 
 func (p *AIProcessor) assembleSecurityResult(llmThreat float64, category string, verified bool, screened string) *SecurityResult {

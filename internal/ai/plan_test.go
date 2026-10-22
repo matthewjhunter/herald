@@ -49,6 +49,11 @@ func TestSecurityPlan_ShortArticleIsOneRequest(t *testing.T) {
 	if plan.Chunks[0] != plan.Screened || !strings.HasPrefix(plan.Screened, "Recipe\n\n") {
 		t.Fatalf("screened span = %q", plan.Screened)
 	}
+	// The instructions have an identity, derived from their text, so a corpus
+	// row can say which screen prompt produced it (docs/model-outputs.md).
+	if plan.PromptHash != HashTemplate(r.System) {
+		t.Fatalf("prompt hash = %q, want hash of the instructions", plan.PromptHash)
+	}
 }
 
 func TestSecurityPlan_LongArticleChunksShareInstructions(t *testing.T) {
@@ -92,6 +97,9 @@ Judge this: {{.Content}}`
 	}
 	if !strings.HasPrefix(plan.Requests[0].User, "Judge this:") {
 		t.Fatalf("override user half = %q", plan.Requests[0].User[:30])
+	}
+	if plan.PromptHash != HashTemplate(cfg.Prompts.Security) {
+		t.Fatalf("override prompt hash = %q, want hash of the override template", plan.PromptHash)
 	}
 }
 
@@ -155,8 +163,8 @@ func TestCurationPlan_CarriesProvenanceAndKeywords(t *testing.T) {
 	if !strings.Contains(r.User, "Rust 2.0 announced") || strings.Contains(r.System, "Rust 2.0 announced") {
 		t.Fatal("article must be in the user half only")
 	}
-	if plan.PromptHash == "" || plan.Model != "cur-model" {
-		t.Fatalf("provenance = %q %q", plan.Model, plan.PromptHash)
+	if plan.PromptHash == "" || plan.Model != "cur-model" || plan.Keywords != "rust, compilers" {
+		t.Fatalf("provenance = %q %q %q", plan.Model, plan.PromptHash, plan.Keywords)
 	}
 
 	none, err := p.CurationPlan(7, "T", "C", nil)
@@ -166,21 +174,29 @@ func TestCurationPlan_CarriesProvenanceAndKeywords(t *testing.T) {
 	if !strings.Contains(none.Request.System, "No specific preferences") {
 		t.Fatal("empty keywords must render the no-preferences line")
 	}
+	if none.Keywords != "" {
+		t.Fatalf("no keywords must record an empty list, got %q", none.Keywords)
+	}
 }
 
 func TestParseCuration(t *testing.T) {
-	plan := &CurationPlan{Model: "cur-model", PromptHash: "abc"}
+	plan := &CurationPlan{Model: "cur-model", PromptHash: "abc", Keywords: "go"}
 
-	good := plan.ParseCuration("Sure. {\"interest_score\": 8.5, \"reasoning\": \"on topic\"} done")
+	raw := "Sure. {\"interest_score\": 8.5, \"reasoning\": \"on topic\"} done"
+	good := plan.ParseCuration(raw)
 	if good.InterestScore != 8.5 || good.Reasoning != "on topic" || good.Model != "cur-model" || good.PromptHash != "abc" {
 		t.Fatalf("good = %+v", good)
+	}
+	// The completion survives parsing verbatim, with the keywords it answered.
+	if good.Response != raw || good.Keywords != "go" {
+		t.Fatalf("corpus fields = %q %q", good.Response, good.Keywords)
 	}
 	empty := plan.ParseCuration("")
 	if empty.InterestScore != 0 || !strings.Contains(empty.Reasoning, "no content") || empty.Model != "cur-model" {
 		t.Fatalf("empty = %+v", empty)
 	}
 	bad := plan.ParseCuration(`{"interest_score": "nine"}`)
-	if bad.InterestScore != 0 || !strings.Contains(bad.Reasoning, "JSON") || bad.PromptHash != "abc" {
+	if bad.InterestScore != 0 || !strings.Contains(bad.Reasoning, "JSON") || bad.PromptHash != "abc" || bad.Response != `{"interest_score": "nine"}` {
 		t.Fatalf("bad = %+v", bad)
 	}
 }

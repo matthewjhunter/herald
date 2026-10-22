@@ -30,6 +30,10 @@ type SecurityPlan struct {
 	Screened    string
 	Model       string
 	Temperature float64
+	// PromptHash identifies the screen instructions every chunk was sent with:
+	// the hash of the override template, or of airlock's rendered
+	// instructions, which are the same for every chunk of every article.
+	PromptHash string
 }
 
 // SecurityPlan renders the screen prompt for an article. An operator override
@@ -67,6 +71,7 @@ func (p *AIProcessor) SecurityPlan(title, content string) (*SecurityPlan, error)
 		}
 		plan.Requests = []batch.Request{{Model: plan.Model, System: system, User: input, MaxTokens: chatMaxTokens}}
 		plan.Chunks = []string{screened}
+		plan.PromptHash = HashTemplate(override)
 		return plan, nil
 	}
 
@@ -91,6 +96,9 @@ func (p *AIProcessor) SecurityPlan(title, content string) (*SecurityPlan, error)
 			MaxTokens: chatMaxTokens,
 		})
 		plan.Chunks = append(plan.Chunks, chunk)
+	}
+	if len(plan.Requests) > 0 {
+		plan.PromptHash = HashTemplate(plan.Requests[0].System)
 	}
 	return plan, nil
 }
@@ -138,6 +146,10 @@ type CurationPlan struct {
 	Model       string
 	PromptHash  string
 	Temperature float64
+	// Keywords is the interests list as rendered into the prompt, comma
+	// joined; empty when the user has none. Part of the input, so it is
+	// recorded beside the output (docs/model-outputs.md).
+	Keywords string
 }
 
 // CurationPlan renders the curation prompt for an article and user.
@@ -157,6 +169,7 @@ func (p *AIProcessor) CurationPlan(userID int64, title, content string, keywords
 		return nil, fmt.Errorf("failed to prepare curation prompt content: %w", err)
 	}
 	data["Keywords"] = keywordStr
+	keywordsJoined := strings.Join(keywords, ", ")
 	system, prompt, err := ExecutePromptParts(resolved.Template, data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to render curation prompt: %w", err)
@@ -171,6 +184,7 @@ func (p *AIProcessor) CurationPlan(userID int64, title, content string, keywords
 		Model:       model,
 		PromptHash:  resolved.Hash,
 		Temperature: resolved.Temperature,
+		Keywords:    keywordsJoined,
 	}, nil
 }
 
@@ -182,6 +196,8 @@ func (plan *CurationPlan) ParseCuration(responseText string) *CurationResult {
 	provenance := func(r *CurationResult) *CurationResult {
 		r.Model = plan.Model
 		r.PromptHash = plan.PromptHash
+		r.Keywords = plan.Keywords
+		r.Response = responseText
 		return r
 	}
 	extracted := extractJSON(responseText)

@@ -62,6 +62,9 @@ func TestSummarizeArticle_ReportsProvenance(t *testing.T) {
 	if got.Summary != "A short summary." {
 		t.Errorf("summary: got %q", got.Summary)
 	}
+	if got.Response != "  A short summary.  " {
+		t.Errorf("raw response must survive untrimmed for the corpus, got %q", got.Response)
+	}
 	if got.Model != "test-model" || got.Model != sentModel {
 		t.Errorf("model: got %q, server saw %q, want test-model", got.Model, sentModel)
 	}

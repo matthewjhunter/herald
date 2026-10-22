@@ -56,6 +56,33 @@ func TestSecurityCheck_RejectsFabricatedEvidence(t *testing.T) {
 	}
 }
 
+// Every chunk's completion comes back with the verdict, with the model and
+// prompt identity, so the pipeline can record the corpus rows
+// (docs/model-outputs.md) without a second look at the plan.
+func TestSecurityCheck_CarriesChunkOutputs(t *testing.T) {
+	reply := `{"threat":0,"category":"none","evidence":"","reason":"nothing addressed to an AI"}`
+	var calls int32
+	p := fakeModelServerFunc(t, &calls, func(string) string { return reply })
+
+	content := strings.Repeat("Ordinary sentence about gardening. ", 400) // past one chunk
+	res, err := p.SecurityCheck(context.Background(), "Garden", content)
+	if err != nil {
+		t.Fatalf("SecurityCheck: %v", err)
+	}
+	if calls < 2 || len(res.Chunks) != int(calls) {
+		t.Fatalf("chunks recorded = %d, model calls = %d; want one per call and more than one", len(res.Chunks), calls)
+	}
+	for i, c := range res.Chunks {
+		if c.Index != i || c.Response != reply || c.Finding.Threat != 0 {
+			t.Errorf("chunk %d = %+v", i, c)
+		}
+	}
+	plan, _ := p.SecurityPlan("Garden", content)
+	if res.Model != "test-model" || res.PromptHash == "" || res.PromptHash != plan.PromptHash {
+		t.Errorf("provenance = %q %q, plan hash %q", res.Model, res.PromptHash, plan.PromptHash)
+	}
+}
+
 // A clean verdict (threat 0, no evidence) on benign content is the common case:
 // it must succeed with a low threat.
 func TestSecurityCheck_CleanVerdictPasses(t *testing.T) {
