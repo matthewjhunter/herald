@@ -245,7 +245,9 @@ func (b *BatchStage) send(ctx context.Context, k Kind, model string, chunk []Bui
 	return nil
 }
 
-// Poll checks every running batch and applies the ones that ended. A batch
+// Poll checks every running batch of a registered kind and applies the ones
+// that ended. Batches of other kinds belong to another process (the screen
+// and curate daemons each register their own) and are left alone. A batch
 // whose results cannot be fetched stays running for the next cycle. Results
 // are applied before the batch is marked finished, so a crash mid-apply
 // re-applies on the next poll; every write Apply makes is idempotent.
@@ -258,6 +260,9 @@ func (b *BatchStage) Poll(ctx context.Context) error {
 	for _, rec := range running {
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if b.kind(rec.Kind) == nil {
+			continue
 		}
 		if rec.LastPolledAt != nil && b.PollMinInterval > 0 && now.Sub(*rec.LastPolledAt) < b.PollMinInterval {
 			continue

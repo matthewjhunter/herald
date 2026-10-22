@@ -16,6 +16,7 @@ import (
 	embedding "github.com/matthewjhunter/go-embedding"
 	herald "github.com/matthewjhunter/herald"
 	"github.com/matthewjhunter/herald/internal/ai"
+	"github.com/matthewjhunter/herald/internal/ai/batch"
 	"github.com/matthewjhunter/herald/internal/feeds"
 	"github.com/matthewjhunter/herald/internal/output"
 	"github.com/matthewjhunter/herald/internal/pipeline"
@@ -65,6 +66,61 @@ func newPipelineStage(store storage.Store, processor *ai.AIProcessor, groupMatch
 		st.Embedder = groupMatcher
 	}
 	return st
+}
+
+// batchMode is the Mode hook from [batch]: nil when batching is off, else
+// true for the kinds listed in [batch].stages for every user. A later tier
+// system can replace the per-user answer without touching the stages.
+func batchMode() pipeline.Mode {
+	if !cfg.Batch.Enabled {
+		return nil
+	}
+	kinds := make(map[string]bool, len(cfg.Batch.Stages))
+	for _, k := range cfg.Batch.Stages {
+		kinds[k] = true
+	}
+	return func(_ int64, kind string) bool { return kinds[kind] }
+}
+
+func newBatchSubmitter() (batch.Submitter, error) {
+	switch cfg.Batch.Provider {
+	case "", "anthropic":
+		return batch.NewAnthropic(batch.AnthropicOptions{
+			BaseURL:   cfg.Batch.BaseURL,
+			APIKey:    cfg.Batch.APIKey,
+			AuthStyle: batch.AuthStyle(cfg.Batch.AuthStyle),
+			CacheTTL:  cfg.Batch.CacheTTL,
+		})
+	default:
+		return nil, fmt.Errorf("[batch] provider %q is not supported (anthropic only for now)", cfg.Batch.Provider)
+	}
+}
+
+// newBatchStage builds the batch stage for this process's stages: the screen
+// daemon registers the screen kind, the curate daemon the curate kind, so each
+// polls and applies only its own batches. Returns nil when no registered kind
+// takes the batch path.
+func newBatchStage(store storage.Store, processor *ai.AIProcessor, formatter *output.Formatter, stages stageSet, mode pipeline.Mode) (*pipeline.BatchStage, error) {
+	var kinds []pipeline.Kind
+	base := newPipelineStage(store, processor, nil, formatter, cfg.DefaultUserID)
+	if stages.has(stageScreen) && mode(0, pipeline.KindScreen) {
+		kinds = append(kinds, &pipeline.ScreenKind{Stage: base, Planner: processor, Mode: mode})
+	}
+	if stages.has(stageCurate) && mode(cfg.DefaultUserID, pipeline.KindCurate) {
+		kinds = append(kinds, &pipeline.CurateKind{Stage: base, Planner: processor, Users: store.GetAllSubscribingUsers, Mode: mode})
+	}
+	if len(kinds) == 0 {
+		return nil, nil
+	}
+	sub, err := newBatchSubmitter()
+	if err != nil {
+		return nil, err
+	}
+	return &pipeline.BatchStage{
+		Store: store, Submitter: sub, Kinds: kinds, Formatter: formatter,
+		MaxRequests:     cfg.Batch.MaxRequests,
+		PollMinInterval: time.Duration(cfg.Batch.PollMinInterval),
+	}, nil
 }
 
 // annotationSkipConfigLoad marks a subcommand that bootstraps its own
@@ -519,6 +575,28 @@ func runCycle(ctx context.Context, stages stageSet) error {
 		formatter.Warning("skipping embedding backfill and group matching")
 	}
 
+	// Batch path (docs/batch-scoring.md): results are collected before the
+	// synchronous stages run, so a refunded claim is visible to them, and new
+	// work is submitted after, so the synchronous stages have had their turn
+	// at anything they own.
+	mode := batchMode()
+	var batchStage *pipeline.BatchStage
+	if mode != nil {
+		batchStage, err = newBatchStage(store, processor, formatter, stages, mode)
+		if err != nil {
+			formatter.Warning("batch scoring disabled this cycle, falling back to synchronous calls: %v", err)
+			mode = nil
+		}
+	}
+	if batchStage != nil {
+		if err := batchStage.Reconcile(ctx); err != nil {
+			formatter.Warning("batch reconcile failed: %v", err)
+		}
+		if err := batchStage.Poll(ctx); err != nil {
+			formatter.Warning("batch poll failed: %v", err)
+		}
+	}
+
 	// SCREEN stage: security screening and summarization are global -- each
 	// article is screened and summarized once, the verdict/summary shared by every
 	// subscriber (#141, #162). Runs before curation so this cycle's freshly
@@ -527,9 +605,11 @@ func runCycle(ctx context.Context, stages stageSet) error {
 	// on the article queue (#233).
 	if stages.has(stageScreen) {
 		securityStage := newPipelineStage(store, processor, groupMatcher, formatter, cfg.DefaultUserID)
-		totalProcessed, err := securityStage.RunSecurity(ctx)
-		if err != nil {
-			formatter.Warning("security pass failed: %v", err)
+		totalProcessed := 0
+		if mode == nil || !mode(0, pipeline.KindScreen) {
+			if totalProcessed, err = securityStage.RunSecurity(ctx); err != nil {
+				formatter.Warning("security pass failed: %v", err)
+			}
 		}
 		if _, err := securityStage.RunSummaries(ctx); err != nil {
 			formatter.Warning("summarize pass failed: %v", err)
@@ -552,9 +632,16 @@ func runCycle(ctx context.Context, stages stageSet) error {
 		}
 		for _, userID := range allUserIDs {
 			stage := newPipelineStage(store, processor, groupMatcher, formatter, userID)
+			stage.BatchCuration = mode != nil && mode(userID, pipeline.KindCurate)
 			if err := stage.Run(ctx); err != nil {
 				formatter.Warning("pipeline failed for user %d: %v", userID, err)
 			}
+		}
+	}
+
+	if batchStage != nil {
+		if err := batchStage.Submit(ctx); err != nil {
+			formatter.Warning("batch submit failed: %v", err)
 		}
 	}
 

@@ -490,3 +490,60 @@ func TestCut_NeverSplitsASubject(t *testing.T) {
 		t.Fatalf("chunk sizes = %v, want [4 5 1]", sizes)
 	}
 }
+
+func TestBatchPoll_IgnoresOtherProcessesKinds(t *testing.T) {
+	bs, sub, _, store, feedID := newBatchHarness(t)
+	a := seed(t, store, feedID, "a", "The Rust team shipped a new edition.")
+	if err := store.ScreenArticleSecurity(a.ID, 0, "none", true, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := bs.Submit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	id := curateCustomID(a.ID, 1)
+	sub.end("fb_1", succeeded(id, `{"interest_score": 7, "reasoning": "x"}`, 1, 1))
+
+	// A screen-only process must leave the curate batch for the curate process.
+	screenOnly := &BatchStage{Store: store, Submitter: sub, Formatter: bs.Formatter, Kinds: bs.Kinds[:1]}
+	if err := screenOnly.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := store.GetAIBatch("fb_1")
+	if rec.Status != storage.AIBatchRunning || rec.LastPolledAt != nil {
+		t.Fatalf("screen-only poller touched a curate batch: %+v", rec)
+	}
+	if err := bs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ = store.GetAIBatch("fb_1"); rec.Status != storage.AIBatchEnded {
+		t.Fatalf("owning poller did not finish it: %+v", rec)
+	}
+}
+
+func TestCurateKind_DueSpansUsersAndHonorsMode(t *testing.T) {
+	bs, sub, _, store, feedID := newBatchHarness(t)
+	if err := store.SubscribeUserToFeed(2, feedID); err != nil {
+		t.Fatal(err)
+	}
+	a := seed(t, store, feedID, "a", "The Rust team shipped a new edition.")
+	if err := store.ScreenArticleSecurity(a.ID, 0, "none", true, false); err != nil {
+		t.Fatal(err)
+	}
+	curate := bs.Kinds[1].(*CurateKind)
+	curate.Users = func() ([]int64, error) { return []int64{1, 2}, nil }
+	curate.Mode = func(user int64, kind string) bool { return kind == KindCurate && user != 2 }
+	if err := bs.Submit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	reqs := sub.lastSubmit()
+	if len(reqs) != 1 || reqs[0].CustomID != curateCustomID(a.ID, 1) {
+		t.Fatalf("user 2 is synchronous and must not be batched: %+v", reqs)
+	}
+	curate.Mode = nil
+	if err := bs.Submit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if reqs = sub.lastSubmit(); len(sub.submits) != 2 || reqs[0].CustomID != curateCustomID(a.ID, 2) {
+		t.Fatalf("user 2 not batched once allowed: %+v", sub.submits)
+	}
+}

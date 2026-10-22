@@ -41,11 +41,16 @@ const (
 type ScreenKind struct {
 	Stage   *Stage
 	Planner Planner
+	// Mode gates submission; nil means always. Results are applied regardless.
+	Mode Mode
 }
 
 func (k *ScreenKind) Name() string { return KindScreen }
 
 func (k *ScreenKind) Due(_ context.Context, limit int) ([]Subject, error) {
+	if k.Mode != nil && !k.Mode(0, KindScreen) {
+		return nil, nil
+	}
 	arts, err := k.Stage.Store.ClaimUnscreenedArticles(limit, batchSecurityLeaseSeconds)
 	if err != nil {
 		return nil, err
@@ -188,24 +193,44 @@ func (k *ScreenKind) Adopt(customID string) (storage.AIBatchRequest, bool) {
 	}, true
 }
 
-// CurateKind batches one user's curation. There is no claim: the pending
-// request rows are the in-flight set, and a request that did not succeed
-// simply leaves the article eligible for the next cycle.
+// CurateKind batches curation for every user Users returns. There is no
+// claim: the pending request rows are the in-flight set, and a request that
+// did not succeed simply leaves the article eligible for the next cycle.
 type CurateKind struct {
 	Stage   *Stage
 	Planner Planner
+	// Users lists the users to curate for; nil means the stage's own user.
+	Users func() ([]int64, error)
+	// Mode gates submission per user; nil means always.
+	Mode Mode
 }
 
 func (k *CurateKind) Name() string { return KindCurate }
 
 func (k *CurateKind) Due(_ context.Context, limit int) ([]Subject, error) {
-	arts, err := k.Stage.Store.GetUnbatchedCurationArticles(k.Stage.UserID, k.Stage.Cfg.Thresholds.MaxSecurityThreat, limit)
-	if err != nil {
-		return nil, err
+	users := []int64{k.Stage.UserID}
+	if k.Users != nil {
+		var err error
+		if users, err = k.Users(); err != nil {
+			return nil, err
+		}
 	}
-	subjects := make([]Subject, 0, len(arts))
-	for _, a := range arts {
-		subjects = append(subjects, Subject{Key: strconv.FormatInt(a.ID, 10), UserID: k.Stage.UserID, Articles: []storage.Article{a}})
+	var subjects []Subject
+	for _, user := range users {
+		if k.Mode != nil && !k.Mode(user, KindCurate) {
+			continue
+		}
+		remaining := limit - len(subjects)
+		if remaining <= 0 {
+			break
+		}
+		arts, err := k.Stage.Store.GetUnbatchedCurationArticles(user, k.Stage.Cfg.Thresholds.MaxSecurityThreat, remaining)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range arts {
+			subjects = append(subjects, Subject{Key: strconv.FormatInt(a.ID, 10), UserID: user, Articles: []storage.Article{a}})
+		}
 	}
 	return subjects, nil
 }

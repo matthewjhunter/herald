@@ -51,6 +51,11 @@ type Stage struct {
 	Formatter *output.Formatter
 	UserID    int64
 
+	// BatchCuration means this user's curation goes through the batch stage,
+	// so Run skips the synchronous curation drain and runs only the embed and
+	// cluster passes.
+	BatchCuration bool
+
 	// BuildEmbedInput builds the record embedded for an article. Injected so the
 	// pipeline package does not import the root herald package (which imports
 	// pipeline) — set to herald.BuildArticleEmbedInput at wiring.
