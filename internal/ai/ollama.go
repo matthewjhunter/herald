@@ -2,7 +2,6 @@ package ai
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/matthewjhunter/airlock/detect"
 	"github.com/matthewjhunter/airlock/screen"
+	"github.com/matthewjhunter/herald/internal/ai/batch"
 	"github.com/matthewjhunter/herald/internal/storage"
 )
 
@@ -127,121 +127,36 @@ func newPromptLoaderSafe(store, config any) *PromptLoader {
 // temperature (the user_id=0 admin override, then config, then default) — never
 // a per-user prompt. Only curation (relevance) is per-user.
 func (p *AIProcessor) SecurityCheck(ctx context.Context, title, content string) (*SecurityResult, error) {
-	const globalUser = int64(0)
-
-	// One screened span per article: airlock's prompt screens a single Content
-	// block, so title and content are folded together and one verdict covers both.
-	screened := title + "\n\n" + content
-
-	temperature := p.promptLoader.GetTemperature(globalUser, PromptTypeSecurity)
-	model := p.promptLoader.GetModel(globalUser, PromptTypeSecurity)
-	if model == "" {
-		model = p.securityModel
+	plan, err := p.SecurityPlan(title, content)
+	if err != nil {
+		return nil, err
 	}
-
-	// An operator prompt override takes the single-call path: fencedArticleData
-	// caps content at maxPromptContentLen (context-safe), overrides are rare and
-	// operator-authored, and the override template is not chunk-shaped. Chunking
-	// the override path is tracked separately (#238).
-	if override, ok := p.promptLoader.SecurityOverride(); ok {
-		data, err := fencedArticleData(title, content)
-		if err != nil {
-			return nil, fmt.Errorf("failed to prepare security prompt content: %w", err)
-		}
-		// An override may define a "system" block for its stable half; a flat
-		// one renders entirely as the user message and simply is not cached.
-		system, input, err := ExecutePromptParts(override, data)
-		if err != nil {
-			return nil, fmt.Errorf("failed to render security override prompt: %w", err)
-		}
-		finding, err := p.screenSpan(ctx, model, temperature, system, input, screened)
-		if err != nil {
-			return nil, err
-		}
-		return p.assembleSecurityResult(float64(finding.Threat), finding.Category, finding.Verified, screened), nil
-	}
-
-	// Default path: screen the whole body, not just its head. A long article is
-	// split into overlapping windows that each fit the model's context, screened
-	// independently, and combined worst-wins -- the article's LLM threat is the
-	// max across chunks (#238). Head-only truncation would let an injection padded
-	// behind benign filler slip past unseen; sending the full body blows the
-	// context window and 500s. Overlap keeps a payload straddling a boundary whole
-	// in at least one window.
-	chunks := chunkText(screened, maxScreenChunkLen, screenChunkOverlap)
-	maxLLM := -1.0
-	var category string
-	var verified bool
-	for _, chunk := range chunks {
-		rendered, err := screen.Render(chunk, screen.Options{Exclusions: heraldCarveouts})
-		if err != nil {
-			return nil, fmt.Errorf("failed to render security prompt: %w", err)
-		}
-		// Verify the verdict's evidence against the chunk the model actually saw,
-		// not the whole article -- a citation must be in the span that produced it.
-		finding, err := p.screenSpan(ctx, model, temperature, rendered.Instructions, rendered.Input, chunk)
+	findings := make([]screen.Finding, 0, len(plan.Requests))
+	for i, req := range plan.Requests {
+		finding, err := p.screenSpan(ctx, plan, req, plan.Chunks[i])
 		if err != nil {
 			// Fail closed: an unscanned or unparseable chunk cannot be assumed
 			// clean, so the whole screen is retryable rather than a partial pass.
 			return nil, err
 		}
-		if float64(finding.Threat) > maxLLM {
-			maxLLM = float64(finding.Threat)
-			category = finding.Category
-			verified = finding.Verified
-		}
+		findings = append(findings, finding)
 	}
-
-	return p.assembleSecurityResult(maxLLM, category, verified, screened), nil
+	return p.SecurityVerdict(findings, plan.Screened), nil
 }
 
-// screenSpan runs one LLM screen, parses the verdict, and verifies its cited
-// evidence against evidence (the exact span the model saw). instructions is
-// airlock's stable half of the prompt and goes as the system message; input is
-// the fenced span and goes as the user message, so the gateway can cache the
-// first across articles. It returns a retryable error for an empty reply, an
-// unparseable verdict, or a verdict whose evidence is not present --
-// SecurityCheck never fails open.
-func (p *AIProcessor) screenSpan(ctx context.Context, model string, temperature float64, instructions, input, evidence string) (screen.Finding, error) {
+// screenSpan runs one LLM screen synchronously and parses the verdict against
+// evidence, the exact span the model saw.
+func (p *AIProcessor) screenSpan(ctx context.Context, plan *SecurityPlan, req batch.Request, evidence string) (screen.Finding, error) {
 	callCtx, cancel := p.withCallTimeout(ctx)
 	defer cancel()
 
-	responseText, err := p.client.generate(callCtx, model, instructions, input, temperature)
+	responseText, err := p.client.generate(callCtx, req.Model, req.System, req.User, plan.Temperature)
 	if err != nil {
 		return screen.Finding{}, fmt.Errorf("ollama security check failed: %w", err)
 	}
-
-	if strings.TrimSpace(responseText) == "" {
-		// Model burned output budget on a reasoning trace before emitting JSON.
-		// Return as a retryable error — not a security verdict.
-		return screen.Finding{}, fmt.Errorf("security check returned no JSON (model reasoning exhausted output budget)")
-	}
-
-	// ParseVerdict tolerates the wrappers models add (markdown fences, leading
-	// commentary) and neutralizes/bounds the attacker-derived fields. An override
-	// that does not ask for airlock's JSON shape lands here as a parse error,
-	// which we return as a failed screen (retryable) -- never "no threat".
-	verdict, err := screen.ParseVerdict(responseText)
-	if err != nil {
-		return screen.Finding{}, fmt.Errorf("security check returned unparseable verdict: %w", err)
-	}
-
-	// Reduce to the payload-free record. Finding re-verifies the model's cited
-	// evidence against the screened content: a verdict citing a span that is not
-	// there is fabricated, and Finding returns an error rather than a weak pass.
-	// Treat that as a failed (retryable) screen.
-	finding, err := verdict.Finding(evidence)
-	if err != nil {
-		return screen.Finding{}, fmt.Errorf("security check produced an unusable verdict: %w", err)
-	}
-	return finding, nil
+	return p.ParseSecurityFinding(responseText, evidence)
 }
 
-// assembleSecurityResult combines the LLM threat (already reduced across chunks)
-// with the deterministic regex prescreen and returns the stored verdict. The
-// regex corpus runs over the whole neutralized article once -- it has no context
-// limit -- and only ever raises the score: Threat is max(LLM, regex), never an
-// average.
 func (p *AIProcessor) assembleSecurityResult(llmThreat float64, category string, verified bool, screened string) *SecurityResult {
 	regexThreat := float64(detect.Detect(neutralizeFence(screened)).Score()) / 10.0
 	return &SecurityResult{
@@ -255,68 +170,21 @@ func (p *AIProcessor) assembleSecurityResult(llmThreat float64, category string,
 
 // CurateArticle scores an article for interest/relevance.
 func (p *AIProcessor) CurateArticle(ctx context.Context, userID int64, title, content string, keywords []string) (*CurationResult, error) {
-	keywordStr := "No specific preferences"
-	if len(keywords) > 0 {
-		keywordStr = strings.Join(keywords, ", ")
-	}
-
-	resolved, err := p.promptLoader.Resolve(userID, PromptTypeCuration)
+	plan, err := p.CurationPlan(userID, title, content, keywords)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load curation prompt: %w", err)
-	}
-
-	data, err := fencedArticleData(title, content)
-	if err != nil {
-		return nil, fmt.Errorf("failed to prepare curation prompt content: %w", err)
-	}
-	data["Keywords"] = keywordStr
-	system, prompt, err := ExecutePromptParts(resolved.Template, data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to render curation prompt: %w", err)
-	}
-
-	temperature := resolved.Temperature
-	model := resolved.Model
-	if model == "" {
-		model = p.curationModel
-	}
-	// The effective model can come from the processor default, below every tier
-	// the loader knows about, so provenance is stamped from what was actually
-	// sent rather than from what resolution proposed.
-	provenance := func(r *CurationResult) *CurationResult {
-		r.Model = model
-		r.PromptHash = resolved.Hash
-		return r
+		return nil, err
 	}
 
 	callCtx, cancel := p.withCallTimeout(ctx)
 	defer cancel()
 
-	responseText, err := p.client.generate(callCtx, model, system, prompt, temperature)
+	responseText, err := p.client.generate(callCtx, plan.Request.Model, plan.Request.System, plan.Request.User, plan.Temperature)
 	if err != nil {
 		return nil, fmt.Errorf("ollama curation failed: %w", err)
 	}
-
-	extracted := extractJSON(responseText)
-	if strings.TrimSpace(extracted) == "" {
-		return provenance(&CurationResult{
-			InterestScore: 0,
-			Reasoning:     "Curation returned no content (likely max_tokens exhausted by model reasoning) -- not scored",
-		}), nil
-	}
-
-	var result CurationResult
-	if err := json.Unmarshal([]byte(extracted), &result); err != nil {
-		return provenance(&CurationResult{
-			InterestScore: 0,
-			Reasoning:     "Curation response did not match expected JSON format -- possible prompt injection",
-		}), nil
-	}
-
-	return provenance(&result), nil
+	return plan.ParseCuration(responseText), nil
 }
 
-// ListModels returns the names of all models available at the configured endpoint.
 func (p *AIProcessor) ListModels(ctx context.Context) ([]string, error) {
 	return p.client.listModels(ctx)
 }
