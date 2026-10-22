@@ -158,6 +158,19 @@ type Store interface {
 	// for the harness's --unsafe-first mode. Diagnostic; read-only.
 	GetLowSafetyArticleSample(limit int) ([]ScreenedArticle, error)
 	SetInterestScore(userID, articleID int64, interestScore float64, scoreModel, promptHash string) error
+	// Asynchronous scoring batches (docs/batch-scoring.md). RecordAIBatch
+	// stores a submission and its requests atomically; the poller lists running
+	// batches, resolves requests as results arrive, and finishes the batch with
+	// its summed usage. GetUnbatchedCurationArticles is the curation feed minus
+	// the articles already waiting on a pending batch request.
+	RecordAIBatch(b AIBatch, reqs []AIBatchRequest) error
+	GetAIBatch(id string) (*AIBatch, error)
+	ListRunningAIBatches() ([]AIBatch, error)
+	TouchAIBatchPolled(id string) error
+	FinishAIBatch(id, status, errMsg string, usage AIBatchUsage) error
+	ListAIBatchRequests(batchID string) ([]AIBatchRequest, error)
+	ResolveAIBatchRequest(r AIBatchRequest) error
+	GetUnbatchedCurationArticles(userID int64, maxSecurityThreat float64, limit int) ([]Article, error)
 	IncrementAIRetries(userID, articleID int64) error
 	ResetScores(userID int64, securityOnly bool, belowScore float64) (int64, error)
 	GetScoreStats(userID int64) (*ScoreStatsResult, error)
