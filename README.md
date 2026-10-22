@@ -133,6 +133,20 @@ curation_model = "llama3.1:8b"
 # verdict arrives as content instead of an empty reply. Off by default.
 # disable_thinking = true
 
+# Asynchronous scoring through a provider batch API (docs/batch-scoring.md):
+# half the synchronous price, results within the hour and at most a day
+# later. Off by default; [ollama] stays the fallback and the local-model path.
+# [batch]
+# enabled    = true
+# provider   = "anthropic"                       # Message Batches API
+# base_url   = "https://api.anthropic.com/v1/messages"   # or a gateway path that maps onto it
+# api_key    = "sk-ant-..."
+# auth_style = "x-api-key"                       # "bearer" for a gateway that re-keys upstream
+# stages     = ["screen", "curate"]              # which stages take the batch path
+# cache_ttl  = "1h"                              # prompt-cache marker on the shared instructions
+# max_requests      = 1000                       # per submitted batch
+# poll_min_interval = "2m"
+
 [thresholds]
 interest_score = 8.0           # articles above this score trigger notifications
 max_security_threat = 3.0      # threat scale (0=clean); articles above this are excluded

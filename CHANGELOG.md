@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Batch scoring** (`[batch]`, docs/batch-scoring.md): the security screen
+  and the curation score can run through a provider's asynchronous batch API
+  instead of one synchronous call per article. Anthropic's Message Batches
+  API is the first implementation, behind a provider-neutral `Submitter`
+  interface sized to the OpenAI Batch API as well. Each cycle collects the
+  batches that ended, applies their verdicts and scores through the same
+  thresholds and parsers as the synchronous path, and submits what is due;
+  screen claims hold a 25-hour lease, curation's in-flight set is the pending
+  request rows, and a batch the provider knows but the table does not is
+  adopted at the next cycle. Two tables record every submission and request
+  with its outcome and token usage. Off by default.
+
 - **`[ollama] disable_thinking`** sends `chat_template_kwargs.enable_thinking =
   false` on every security and curation call, the same switch the summary
   backend already had. A reasoning model such as Qwen3 otherwise spends the

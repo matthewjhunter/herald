@@ -1,6 +1,6 @@
 # Batch scoring
 
-Design for running the security screen and the curation score through a provider's asynchronous batch API instead of one synchronous chat call per article. Written 2026-10-21; status: proposed.
+Design for running the security screen and the curation score through a provider's asynchronous batch API instead of one synchronous chat call per article. Written 2026-10-21; status: implemented for Anthropic (screen and curate kinds), OpenAI and the digest kind pending.
 
 ## Why
 
