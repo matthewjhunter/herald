@@ -135,6 +135,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **AI stages now see the linked body of a link post.** The screen, curation,
+  summarization, and batch article lists selected the article without its
+  linked_url and linked_content, so every stage judged a link-blog post by
+  its teaser while the reader got the linked page. In batch mode the screen
+  built from the teaser (one chunk) and applied against the full body
+  (several), failed every apply as "content changed in flight", refunded the
+  attempt, and resubmitted the article every cycle forever. The lists now
+  carry the linked body, and an in-flight mismatch spends the attempt so a
+  recurring one exhausts the budget instead of looping.
+
 - **The circuit breakers open when the backend is unreachable, not only when
   it answers 4xx.** A dial timeout, a refused connection, a DNS failure or a
   5xx was reported as backend-unavailable but never counted, so with the LLM
