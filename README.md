@@ -129,6 +129,9 @@ Herald reads `config/config.toml`. Key sections:
 base_url = "http://localhost:11434"
 security_model = "gemma3:4b"
 curation_model = "llama3.1:8b"
+# For a reasoning model (Qwen3 and kin): skip its thinking pass so the JSON
+# verdict arrives as content instead of an empty reply. Off by default.
+# disable_thinking = true
 
 [thresholds]
 interest_score = 8.0           # articles above this score trigger notifications
