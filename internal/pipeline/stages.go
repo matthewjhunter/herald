@@ -65,6 +65,17 @@ func (s *Stage) securityOne(ctx context.Context, article storage.Article) *stora
 	}
 
 	secResult, err := s.AI.SecurityCheck(ctx, article.Title, content)
+	if err == nil {
+		contentHash := storage.ContentHash(content)
+		for _, c := range secResult.Chunks {
+			s.recordModelOutput(storage.ModelOutput{
+				Kind: storage.ModelOutputScreen, ArticleID: article.ID, ChunkIndex: c.Index, ChunkCount: len(secResult.Chunks),
+				Model: secResult.Model, PromptHash: secResult.PromptHash, ContentHash: contentHash,
+				Response: c.Response, Parsed: screenParsed(c.Finding.Threat, c.Finding.Category, c.Finding.Verified),
+				Via: storage.ModelOutputViaSync, Trainable: true,
+			})
+		}
+	}
 	if err != nil {
 		s.Formatter.Warning("security check failed for article %d: %v", article.ID, err)
 		// The attempt was counted when the article was claimed (#233). A genuine
@@ -81,6 +92,33 @@ func (s *Stage) securityOne(ctx context.Context, article storage.Article) *stora
 	}
 
 	return s.recordSecurityVerdict(article, secResult)
+}
+
+// recordModelOutput appends one scoring call to the model output corpus
+// (docs/model-outputs.md). The corpus is a side record: a failed write is
+// logged and never fails the stage that produced the verdict.
+func (s *Stage) recordModelOutput(o storage.ModelOutput) {
+	if _, err := s.Store.RecordModelOutput(o); err != nil {
+		s.Formatter.Warning("could not record %s model output for article %d: %v", o.Kind, o.ArticleID, err)
+	}
+}
+
+// screenParsed is the parsed field of a screen corpus row.
+func screenParsed(threat int, category string, verified bool) map[string]any {
+	return map[string]any{"threat": threat, "category": category, "verified": verified}
+}
+
+// curationParsed is the parsed field of a curate corpus row.
+func curationParsed(res *ai.CurationResult) map[string]any {
+	return map[string]any{"interest_score": res.InterestScore, "reasoning": res.Reasoning}
+}
+
+// optionalKeywords is the keywords column: NULL when the prompt had none.
+func optionalKeywords(k string) *string {
+	if k == "" {
+		return nil
+	}
+	return &k
 }
 
 // recordSecurityVerdict writes a screen verdict against the article and
@@ -176,20 +214,33 @@ func (s *Stage) summarizeOne(ctx context.Context, article storage.Article) *stor
 		s.Formatter.Warning("discarding garbled summary for article %d", article.ID)
 		return nil
 	}
+	// Every kept-or-rejected completion goes to the corpus; which it was is
+	// in the parsed field, so a trainer can keep only the accepted ones.
+	record := func(accepted bool, reason string) {
+		s.recordModelOutput(storage.ModelOutput{
+			Kind: storage.ModelOutputSummarize, ArticleID: article.ID,
+			Model: result.Model, PromptHash: result.PromptHash, ContentHash: storage.ContentHash(content),
+			Response: result.Response, Parsed: map[string]any{"length": len(summary), "accepted": accepted, "reason": reason},
+			Via: storage.ModelOutputViaSync, Trainable: true,
+		})
+	}
 	// Deterministic rejections: the model can't compress this content any
 	// further. Mark skipped so we stop retrying, and still advance the article.
 	if len(summary) > len(content) {
 		reason := fmt.Sprintf("summary longer than content (%d > %d)", len(summary), len(content))
 		s.Formatter.Warning("marking article %d summarization skipped: %s", article.ID, reason)
 		s.Store.MarkSummarizationSkipped(article.ID, reason) //nolint:errcheck
+		record(false, reason)
 		return &article
 	}
 	if maxLen > 0 && len(summary) > maxLen+maxLen*15/100 {
 		reason := fmt.Sprintf("summary exceeds max length by >15%% (%d > %d)", len(summary), maxLen)
 		s.Formatter.Warning("marking article %d summarization skipped: %s", article.ID, reason)
 		s.Store.MarkSummarizationSkipped(article.ID, reason) //nolint:errcheck
+		record(false, reason)
 		return &article
 	}
+	record(true, "")
 
 	// Provenance goes down with the text: this is the one point where which
 	// model and prompt produced this summary is known, and reconstructing it
@@ -242,6 +293,12 @@ func (s *Stage) curateOne(ctx context.Context, article storage.Article, security
 	// back whatever is current instead (#258).
 	s.Store.SetInterestScore(s.UserID, article.ID, curResult.InterestScore, //nolint:errcheck
 		curResult.Model, curResult.PromptHash)
+	s.recordModelOutput(storage.ModelOutput{
+		Kind: storage.ModelOutputCurate, ArticleID: article.ID, UserID: &s.UserID,
+		Model: curResult.Model, PromptHash: curResult.PromptHash, ContentHash: storage.ContentHash(content),
+		Keywords: optionalKeywords(curResult.Keywords), Response: curResult.Response, Parsed: curationParsed(curResult),
+		Via: storage.ModelOutputViaSync, Trainable: true,
+	})
 	s.Formatter.OutputProcessingStatus(article.ID, article.Title, curResult.InterestScore, securityScore, true)
 	s.Formatter.Info("scored article %d: interest=%.1f security=%.1f: %s", article.ID, curResult.InterestScore, securityScore, article.Title)
 	return &article

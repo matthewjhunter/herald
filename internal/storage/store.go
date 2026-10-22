@@ -171,6 +171,14 @@ type Store interface {
 	ListAIBatchRequests(batchID string) ([]AIBatchRequest, error)
 	ResolveAIBatchRequest(r AIBatchRequest) error
 	GetUnbatchedCurationArticles(userID int64, maxSecurityThreat float64, limit int) ([]Article, error)
+
+	// Model output corpus (docs/model-outputs.md): one row per scoring call,
+	// with the completion and the identity of its input, for training local
+	// models. RecordModelOutput appends; the List methods read back by article
+	// (tests, inspection) and by kind for the trainable export scan.
+	RecordModelOutput(o ModelOutput) (int64, error)
+	ListModelOutputsByArticle(articleID int64) ([]ModelOutput, error)
+	ListTrainableModelOutputs(kind string, afterID int64, limit int) ([]ModelOutput, error)
 	IncrementAIRetries(userID, articleID int64) error
 	ResetScores(userID int64, securityOnly bool, belowScore float64) (int64, error)
 	GetScoreStats(userID int64) (*ScoreStatsResult, error)

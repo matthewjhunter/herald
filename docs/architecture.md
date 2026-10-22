@@ -91,6 +91,10 @@ Notification Output
 
 With `[batch]` enabled, the screen and curate stages submit their work to a provider batch API and collect the results on later cycles instead of calling the model synchronously. The rendering, parsing, and thresholds are shared with the synchronous path, so the two produce comparable verdicts; only the transport and the timing differ. See [batch-scoring.md](batch-scoring.md).
 
+### Model output corpus
+
+Every screen, summarize, and curate call, synchronous or batch, also appends a row to `model_outputs` with the completion verbatim, the hash of the content the prompt saw, and the model and prompt identity, so a local model can later be trained on herald's own scoring. Batch rows are marked not trainable. See [model-outputs.md](model-outputs.md).
+
 ### Security Screening
 
 The security model receives article title and truncated content (2000 chars). The prompt instructs it to detect prompt injection, adversarial content intended to manipulate AI systems, and other malicious patterns. Temperature is 0.3 by default for consistent, conservative decisions.

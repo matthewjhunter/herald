@@ -296,6 +296,24 @@ type GroupSummary struct {
 	GeneratedAt      time.Time
 }
 
+type ModelOutput struct {
+	ID          int64
+	Kind        string
+	ArticleID   int64
+	UserID      *int64
+	ChunkIndex  int
+	ChunkCount  int
+	Model       string
+	PromptHash  string
+	ContentHash string
+	Keywords    *string
+	Response    string
+	Parsed      []byte
+	Via         string
+	Trainable   bool
+	CreatedAt   time.Time
+}
+
 type Newsletter struct {
 	ID              int64
 	UserID          int64

@@ -17,6 +17,9 @@ type ArticleSummaryResult struct {
 	Model      string
 	PromptHash string
 	Duration   time.Duration
+	// Response is the completion verbatim, before trimming, for the model
+	// output corpus (docs/model-outputs.md).
+	Response string
 }
 
 // SummarizeArticle generates an AI summary for a single article.
@@ -63,6 +66,7 @@ func (p *AIProcessor) SummarizeArticle(ctx context.Context, title, content strin
 		Model:      model,
 		PromptHash: resolved.Hash,
 		Duration:   time.Since(start),
+		Response:   result,
 	}, nil
 }
 

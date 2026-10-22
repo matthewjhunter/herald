@@ -113,4 +113,4 @@ Mapping runs in the curate daemon's cycle as a pure store operation: for every (
 - How the mapping exposes its terms to the user. A settings page with weights is the obvious answer and the wrong one for most readers; a few named presets plus the existing keywords and threshold may be all that is needed, with weights as an admin or power-user surface.
 - Re-analysis policy when the prompt changes. Records are versioned by hash, so the question is only how far back to re-run, and the batch discount makes "all of it" plausible.
 
-See docs/batch-scoring.md for the batch path the analyze kind rides on, docs/feedback-events.md for the corpus that evaluates the mapping, and docs/prompts.md for the prompt tiers.
+See docs/batch-scoring.md for the batch path the analyze kind rides on, docs/feedback-events.md for the corpus that evaluates the mapping, docs/model-outputs.md for the table that keeps every completion for training, and docs/prompts.md for the prompt tiers.
