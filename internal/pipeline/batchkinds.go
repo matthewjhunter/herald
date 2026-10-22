@@ -122,7 +122,10 @@ func (k *ScreenKind) Release(rows []storage.AIBatchRequest, outcome string) {
 // that did not succeed fails the whole article closed: expired and canceled
 // chunks refund the attempt, errored ones spend it. The chunks are recomputed
 // from the article as stored now; if the content changed in flight the chunk
-// count differs and the article is released to be screened afresh.
+// count differs and the article is released to be screened afresh. That
+// release spends the attempt: a fetch race converges on the retry, while a
+// mismatch that recurs every cycle must exhaust the budget rather than
+// resubmit the article forever.
 func (k *ScreenKind) Apply(_ context.Context, rows []storage.AIBatchRequest, results map[string]batch.Result) error {
 	if len(rows) == 0 || rows[0].ArticleID == nil {
 		return nil
@@ -155,7 +158,7 @@ func (k *ScreenKind) Apply(_ context.Context, rows []storage.AIBatchRequest, res
 		return fmt.Errorf("article %d: re-render: %w", articleID, err)
 	}
 	if len(plan.Chunks) != len(rows) {
-		k.Release(rows, "")
+		k.Release(rows, storage.AIBatchErrored)
 		return fmt.Errorf("article %d: content changed in flight (%d chunks sent, %d now); released to be screened afresh", articleID, len(rows), len(plan.Chunks))
 	}
 	findings := make([]screen.Finding, 0, len(rows))

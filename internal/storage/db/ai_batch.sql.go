@@ -79,7 +79,8 @@ func (q *Queries) GetAIBatch(ctx context.Context, id string) (AiBatch, error) {
 
 const getUnbatchedCurationArticles = `-- name: GetUnbatchedCurationArticles :many
 SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-       a.author, a.published_date, a.fetched_date
+       a.author, a.published_date, a.fetched_date,
+       a.linked_url, a.linked_content
 FROM articles a
 JOIN user_feeds uf ON a.feed_id = uf.feed_id
 LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id
@@ -111,6 +112,8 @@ type GetUnbatchedCurationArticlesRow struct {
 	Author        *string
 	PublishedDate *time.Time
 	FetchedDate   time.Time
+	LinkedUrl     string
+	LinkedContent string
 }
 
 // GetUnscoredCurationArticles minus the in-flight set: articles that already
@@ -136,6 +139,8 @@ func (q *Queries) GetUnbatchedCurationArticles(ctx context.Context, arg GetUnbat
 			&i.Author,
 			&i.PublishedDate,
 			&i.FetchedDate,
+			&i.LinkedUrl,
+			&i.LinkedContent,
 		); err != nil {
 			return nil, err
 		}

@@ -41,7 +41,8 @@ WHERE uf.user_id = @user_id
 
 -- name: GetUnsummarizedScoredArticles :many
 SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-       a.author, a.published_date, a.fetched_date
+       a.author, a.published_date, a.fetched_date,
+       a.linked_url, a.linked_content
 FROM articles a
 LEFT JOIN article_summaries asumm ON asumm.article_id = a.id
 WHERE a.security_threat <= @max_security_threat::double precision AND asumm.article_id IS NULL
@@ -50,7 +51,8 @@ LIMIT @lim;
 
 -- name: GetUnscreenedArticles :many
 SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-       a.author, a.published_date, a.fetched_date
+       a.author, a.published_date, a.fetched_date,
+       a.linked_url, a.linked_content
 FROM articles a
 WHERE a.security_screened_at IS NULL AND a.security_attempts < 3
 ORDER BY a.published_date DESC
@@ -79,7 +81,8 @@ FROM (
 ) claimed
 WHERE a.id = claimed.id
 RETURNING a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-          a.author, a.published_date, a.fetched_date;
+          a.author, a.published_date, a.fetched_date,
+          a.linked_url, a.linked_content;
 
 -- name: ReleaseSecurityClaim :exec
 -- Clear the claim after a genuine (non-backend) screening failure so the row can
@@ -97,7 +100,8 @@ WHERE id = @id;
 
 -- name: GetUnscoredCurationArticles :many
 SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
-       a.author, a.published_date, a.fetched_date
+       a.author, a.published_date, a.fetched_date,
+       a.linked_url, a.linked_content
 FROM articles a
 JOIN user_feeds uf ON a.feed_id = uf.feed_id
 LEFT JOIN read_state rs ON a.id = rs.article_id AND rs.user_id = uf.user_id

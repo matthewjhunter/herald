@@ -277,6 +277,8 @@ func (s *PostgresStore) GetUnbatchedCurationArticles(userID int64, maxSecurityTh
 	articles := make([]Article, len(rows))
 	for i, r := range rows {
 		articles[i] = coreArticle(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate)
+		articles[i].LinkedURL = r.LinkedUrl
+		articles[i].LinkedContent = r.LinkedContent
 	}
 	return articles, nil
 }

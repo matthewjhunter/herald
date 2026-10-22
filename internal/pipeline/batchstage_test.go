@@ -565,3 +565,92 @@ func TestCurateKind_DueSpansUsersAndHonorsMode(t *testing.T) {
 		t.Fatalf("user 2 not batched once allowed: %+v", sub.submits)
 	}
 }
+
+// TestBatchPoll_LinkPostScreensLinkedBody covers a link-blog post: a short
+// teaser plus the linked page fetched into linked_content. The screen must
+// send the body the reader sees, and build and apply must agree on it; a
+// claim query that drops the linked body sends one chunk and re-renders
+// several, which failed every apply as "content changed" and resubmitted the
+// article every cycle forever.
+func TestBatchPoll_LinkPostScreensLinkedBody(t *testing.T) {
+	bs, sub, _, store, feedID := newBatchHarness(t)
+	post := seed(t, store, feedID, "link", `<a href="https://linked.example/story">A story worth reading.</a>`)
+	linked := strings.Repeat("The linked story goes on at some length. ", 600)
+	if err := store.UpdateArticleLinkedContent(post.ID, "https://linked.example/story", linked); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := bs.Submit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	reqs := sub.lastSubmit()
+	if len(reqs) < 2 {
+		t.Fatalf("link post sent as %d chunk(s); the linked body was not screened", len(reqs))
+	}
+	var results []batch.Result
+	for _, r := range reqs {
+		results = append(results, succeeded(r.CustomID, cleanVerdict, 10, 1))
+	}
+	sub.end("fb_1", results...)
+	if err := bs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	scores, _ := store.GetArticleSecurityScores([]int64{post.ID})
+	if v, ok := scores[post.ID]; !ok || v != 0 {
+		t.Fatalf("link post verdict = %v, %v; want a stored clean verdict", v, ok)
+	}
+	outs, _ := store.ListModelOutputsByArticle(post.ID)
+	if len(outs) != len(reqs) {
+		t.Fatalf("corpus rows = %d, want one per chunk (%d)", len(outs), len(reqs))
+	}
+	if left, _ := store.ClaimUnscreenedArticles(10, 0); len(left) != 0 {
+		t.Fatalf("screened link post still claimable: %v", ids(left))
+	}
+}
+
+// TestBatchPoll_ContentChangedSpendsAttempt: an article whose body changes
+// between submit and apply is released to be screened afresh, and the attempt
+// is spent, not refunded. A genuine fetch race converges on the retry; a
+// mismatch that recurs every cycle exhausts the budget and surfaces as an
+// unscreened article instead of a request resubmitted forever.
+func TestBatchPoll_ContentChangedSpendsAttempt(t *testing.T) {
+	bs, sub, _, store, feedID := newBatchHarness(t)
+	short := "Combine flour and water, then bake for twenty minutes."
+	long := strings.Repeat("Gardening advice for the autumn months. ", 600)
+	a := seed(t, store, feedID, "a", short)
+
+	for round := 1; round <= 3; round++ {
+		if err := bs.Submit(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		reqs := sub.lastSubmit()
+		if len(reqs) == 0 {
+			t.Fatalf("round %d: article not claimed; attempts refunded instead of spent?", round)
+		}
+		// The body changes while the batch is out.
+		next := long
+		if round%2 == 0 {
+			next = short
+		}
+		if err := store.UpdateArticleContent(a.ID, next); err != nil {
+			t.Fatal(err)
+		}
+		var results []batch.Result
+		for _, r := range reqs {
+			results = append(results, succeeded(r.CustomID, cleanVerdict, 10, 1))
+		}
+		sub.end(fmt.Sprintf("fb_%d", round), results...)
+		if err := bs.Poll(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if scores, _ := store.GetArticleSecurityScores([]int64{a.ID}); len(scores) != 0 {
+			t.Fatalf("round %d: verdict stored for content the model never saw: %v", round, scores)
+		}
+	}
+	// Three spent attempts: the budget is exhausted and the article is no
+	// longer claimable by anyone.
+	if left, _ := store.ClaimUnscreenedArticles(10, 0); len(left) != 0 {
+		t.Fatalf("article still claimable after three in-flight mismatches: %v", ids(left))
+	}
+}

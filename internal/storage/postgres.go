@@ -982,6 +982,8 @@ func (s *PostgresStore) GetUnsummarizedScoredArticles(maxSecurityThreat float64,
 	articles := make([]Article, len(rows))
 	for i, r := range rows {
 		articles[i] = coreArticle(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate)
+		articles[i].LinkedURL = r.LinkedUrl
+		articles[i].LinkedContent = r.LinkedContent
 	}
 	return articles, nil
 }
@@ -1047,6 +1049,8 @@ func (s *PostgresStore) GetUnscreenedArticles(limit int) ([]Article, error) {
 	articles := make([]Article, len(rows))
 	for i, r := range rows {
 		articles[i] = coreArticle(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate)
+		articles[i].LinkedURL = r.LinkedUrl
+		articles[i].LinkedContent = r.LinkedContent
 	}
 	return articles, nil
 }
@@ -1062,6 +1066,8 @@ func (s *PostgresStore) ClaimUnscreenedArticles(limit int, leaseSeconds float64)
 	articles := make([]Article, len(rows))
 	for i, r := range rows {
 		articles[i] = coreArticle(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate)
+		articles[i].LinkedURL = r.LinkedUrl
+		articles[i].LinkedContent = r.LinkedContent
 	}
 	return articles, nil
 }
@@ -1095,6 +1101,8 @@ func (s *PostgresStore) GetUnscoredCurationArticles(userID int64, maxSecurityThr
 	articles := make([]Article, len(rows))
 	for i, r := range rows {
 		articles[i] = coreArticle(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate)
+		articles[i].LinkedURL = r.LinkedUrl
+		articles[i].LinkedContent = r.LinkedContent
 	}
 	return articles, nil
 }
