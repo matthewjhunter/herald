@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`[ollama] disable_thinking`** sends `chat_template_kwargs.enable_thinking =
+  false` on every security and curation call, the same switch the summary
+  backend already had. A reasoning model such as Qwen3 otherwise spends the
+  whole completion budget on its thinking pass and returns an empty reply,
+  which the screen fails closed on and the curator scores as unscored. Off by
+  default and omitted from the request when off, so non-reasoning models and
+  gateways that reject unknown fields see no change.
+
 ### Changed
 
 - **The security screen and curation prompts go to the model as two
