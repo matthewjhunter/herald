@@ -31,6 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Curation prompt rubric**: the default curation prompt now carries the
+  judgement rules it used to leave implicit (the interests list is a boost,
+  not a gate; judge the article, not the feed; viewpoint is not a scoring
+  axis; how to treat link posts, truncated text, and roundups) and the JSON
+  output spec moved into the stable system half. The system half is now
+  long enough to clear cloud providers' prompt-cache minimum, so it is
+  cached across articles instead of re-sent in full on every call. Scores
+  written with the new prompt carry a new prompt hash.
+
 - **The security screen and curation prompts go to the model as two
   messages.** The stable half -- airlock's screening instructions, or the
   curation scale and the user's interests -- is the system message, and the
