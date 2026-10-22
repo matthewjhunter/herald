@@ -74,7 +74,7 @@ func (f *fakeAI) SummarizeArticle(_ context.Context, title, content string, _ in
 			return nil, err
 		}
 	}
-	return &ai.ArticleSummaryResult{Summary: summary, Model: "fake-model", PromptHash: "fakehash", Duration: 1500 * time.Millisecond}, nil
+	return &ai.ArticleSummaryResult{Summary: summary, Model: "fake-model", PromptHash: "fakehash", Duration: 1500 * time.Millisecond, Response: " " + summary + " "}, nil
 }
 
 func (f *fakeAI) CurateArticle(_ context.Context, _ int64, title, content string, _ []string) (*ai.CurationResult, error) {
@@ -618,4 +618,85 @@ func TestCurateStage(t *testing.T) {
 			t.Fatalf("failed article should still await curation, got %v", ids(cur))
 		}
 	})
+}
+
+// Every synchronous scoring call lands in the model output corpus as a
+// trainable row carrying the completion, the hash of the content the model
+// saw, and (for curation) the keywords (docs/model-outputs.md).
+func TestStagesRecordModelOutputs(t *testing.T) {
+	t.Run("security records one row per chunk", func(t *testing.T) {
+		fake := &fakeAI{available: true, securityFn: func(string, string) (*ai.SecurityResult, error) {
+			return &ai.SecurityResult{Threat: 1, Model: "sec", PromptHash: "sech", Chunks: []ai.ScreenChunkOutput{
+				{Index: 0, Response: `{"threat":1}`}, {Index: 1, Response: `{"threat":0}`},
+			}}, nil
+		}}
+		st, store, feedID := newHarness(t, fake)
+		a := seed(t, store, feedID, "pass", strings.Repeat("x", 500))
+		st.Security(context.Background(), []storage.Article{a})
+		outs, err := store.ListModelOutputsByArticle(a.ID)
+		if err != nil || len(outs) != 2 {
+			t.Fatalf("rows = %d, %v", len(outs), err)
+		}
+		for i, o := range outs {
+			if o.Kind != storage.ModelOutputScreen || o.ChunkIndex != i || o.ChunkCount != 2 || !o.Trainable || o.Via != "sync" || o.Model != "sec" || o.PromptHash != "sech" || o.ContentHash != storage.ContentHash(articleContent(a)) || o.UserID != nil {
+				t.Errorf("row %d = %+v", i, o)
+			}
+		}
+	})
+
+	t.Run("summarize records accepted and rejected completions", func(t *testing.T) {
+		st, store, feedID := newHarness(t, &fakeAI{available: true})
+		st.AI.(*fakeAI).summarizeFn = func(string, string) (string, error) { return "good summary", nil }
+		a := seed(t, store, feedID, "good", summarizableBody)
+		if err := store.ScreenArticleSecurity(a.ID, 1, "none", false, false); err != nil {
+			t.Fatal(err)
+		}
+		st.Summarize(context.Background(), []storage.Article{a})
+		outs, _ := store.ListModelOutputsByArticle(a.ID)
+		if len(outs) != 1 || outs[0].Kind != storage.ModelOutputSummarize || !outs[0].Trainable || outs[0].Model != "fake-model" || outs[0].PromptHash != "fakehash" || outs[0].Response != " good summary " || !parsedAccepted(t, outs[0]) {
+			t.Fatalf("accepted row = %+v", outs)
+		}
+
+		st.AI.(*fakeAI).summarizeFn = func(_, content string) (string, error) { return content + " and then some", nil }
+		long := seed(t, store, feedID, "long", summarizableBody)
+		if err := store.ScreenArticleSecurity(long.ID, 1, "none", false, false); err != nil {
+			t.Fatal(err)
+		}
+		st.Summarize(context.Background(), []storage.Article{long})
+		outs, _ = store.ListModelOutputsByArticle(long.ID)
+		if len(outs) != 1 || parsedAccepted(t, outs[0]) {
+			t.Fatalf("rejected row = %+v", outs)
+		}
+	})
+
+	t.Run("curate records the completion with keywords", func(t *testing.T) {
+		fake := &fakeAI{available: true, curateFn: func(string, string) (*ai.CurationResult, error) {
+			return &ai.CurationResult{InterestScore: 8.0, Reasoning: "on topic", Model: "cur", PromptHash: "curh", Keywords: "go, security", Response: `{"interest_score": 8, "reasoning": "on topic"}`}, nil
+		}}
+		st, store, feedID := newHarness(t, fake)
+		a := seed(t, store, feedID, "x", "body text")
+		if err := store.ScreenArticleSecurity(a.ID, 1, "none", false, false); err != nil {
+			t.Fatal(err)
+		}
+		st.Curate(context.Background(), []storage.Article{a})
+		outs, _ := store.ListModelOutputsByArticle(a.ID)
+		if len(outs) != 1 {
+			t.Fatalf("rows = %+v", outs)
+		}
+		o := outs[0]
+		if o.Kind != storage.ModelOutputCurate || !o.Trainable || o.Via != "sync" || o.UserID == nil || *o.UserID != 1 || o.Keywords == nil || *o.Keywords != "go, security" || o.Model != "cur" || o.PromptHash != "curh" || !strings.Contains(o.Response, "on topic") || o.ContentHash != storage.ContentHash(articleContent(a)) {
+			t.Fatalf("row = %+v", o)
+		}
+	})
+}
+
+func parsedAccepted(t *testing.T, o storage.ModelOutput) bool {
+	t.Helper()
+	var parsed struct {
+		Accepted bool `json:"accepted"`
+	}
+	if err := json.Unmarshal(o.Parsed.(json.RawMessage), &parsed); err != nil {
+		t.Fatalf("parsed field: %v", err)
+	}
+	return parsed.Accepted
 }

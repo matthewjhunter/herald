@@ -101,20 +101,22 @@ func newBatchSubmitter() (batch.Submitter, error) {
 // polls and applies only its own batches. Returns nil when no registered kind
 // takes the batch path.
 func newBatchStage(store storage.Store, processor *ai.AIProcessor, formatter *output.Formatter, stages stageSet, mode pipeline.Mode) (*pipeline.BatchStage, error) {
-	var kinds []pipeline.Kind
-	base := newPipelineStage(store, processor, nil, formatter, cfg.DefaultUserID)
-	if stages.has(stageScreen) && mode(0, pipeline.KindScreen) {
-		kinds = append(kinds, &pipeline.ScreenKind{Stage: base, Planner: processor, Mode: mode})
-	}
-	if stages.has(stageCurate) && mode(cfg.DefaultUserID, pipeline.KindCurate) {
-		kinds = append(kinds, &pipeline.CurateKind{Stage: base, Planner: processor, Users: store.GetAllSubscribingUsers, Mode: mode})
-	}
-	if len(kinds) == 0 {
+	screenBatched := stages.has(stageScreen) && mode(0, pipeline.KindScreen)
+	curateBatched := stages.has(stageCurate) && mode(cfg.DefaultUserID, pipeline.KindCurate)
+	if !screenBatched && !curateBatched {
 		return nil, nil
 	}
 	sub, err := newBatchSubmitter()
 	if err != nil {
 		return nil, err
+	}
+	var kinds []pipeline.Kind
+	base := newPipelineStage(store, processor, nil, formatter, cfg.DefaultUserID)
+	if screenBatched {
+		kinds = append(kinds, &pipeline.ScreenKind{Stage: base, Planner: processor, Mode: mode, Provider: sub.Provider()})
+	}
+	if curateBatched {
+		kinds = append(kinds, &pipeline.CurateKind{Stage: base, Planner: processor, Users: store.GetAllSubscribingUsers, Mode: mode, Provider: sub.Provider()})
 	}
 	return &pipeline.BatchStage{
 		Store: store, Submitter: sub, Kinds: kinds, Formatter: formatter,

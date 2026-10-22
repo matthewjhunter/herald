@@ -43,6 +43,9 @@ type ScreenKind struct {
 	Planner Planner
 	// Mode gates submission; nil means always. Results are applied regardless.
 	Mode Mode
+	// Provider names the batch provider whose results Apply records, for the
+	// corpus row's via column. Batch results are never marked trainable.
+	Provider string
 }
 
 func (k *ScreenKind) Name() string { return KindScreen }
@@ -90,7 +93,7 @@ func (k *ScreenKind) Build(subject Subject) (Built, error) {
 		built.Requests[i] = req
 		built.Rows[i] = storage.AIBatchRequest{
 			CustomID: req.CustomID, Kind: KindScreen, SubjectKey: subject.Key, ArticleID: &id,
-			ChunkIndex: i, ChunkCount: len(plan.Requests), Model: plan.Model,
+			ChunkIndex: i, ChunkCount: len(plan.Requests), Model: plan.Model, PromptHash: plan.PromptHash,
 		}
 	}
 	return built, nil
@@ -145,7 +148,8 @@ func (k *ScreenKind) Apply(_ context.Context, rows []storage.AIBatchRequest, res
 	if article == nil {
 		return nil // deleted in flight; nothing to write
 	}
-	plan, err := k.Planner.SecurityPlan(article.Title, articleContent(*article))
+	content := articleContent(*article)
+	plan, err := k.Planner.SecurityPlan(article.Title, content)
 	if err != nil {
 		k.Release(rows, storage.AIBatchErrored)
 		return fmt.Errorf("article %d: re-render: %w", articleID, err)
@@ -173,6 +177,12 @@ func (k *ScreenKind) Apply(_ context.Context, rows []storage.AIBatchRequest, res
 		verified := f.Verified
 		r.Threat, r.Category, r.Verified = &threat, &category, &verified
 		k.Stage.Store.ResolveAIBatchRequest(r) //nolint:errcheck // the finding is a diagnostic copy; the verdict below is the record
+		k.Stage.recordModelOutput(storage.ModelOutput{
+			Kind: storage.ModelOutputScreen, ArticleID: articleID, ChunkIndex: r.ChunkIndex, ChunkCount: len(rows),
+			Model: plan.Model, PromptHash: plan.PromptHash, ContentHash: storage.ContentHash(content),
+			Response: results[r.CustomID].Text, Parsed: screenParsed(f.Threat, f.Category, f.Verified),
+			Via: storage.ModelOutputViaBatch(k.Provider), Trainable: false,
+		})
 	}
 	k.Stage.recordSecurityVerdict(*article, k.Planner.SecurityVerdict(findings, plan.Screened))
 	return nil
@@ -203,6 +213,9 @@ type CurateKind struct {
 	Users func() ([]int64, error)
 	// Mode gates submission per user; nil means always.
 	Mode Mode
+	// Provider names the batch provider whose results Apply records, for the
+	// corpus row's via column. Batch results are never marked trainable.
+	Provider string
 }
 
 func (k *CurateKind) Name() string { return KindCurate }
@@ -271,7 +284,7 @@ func (k *CurateKind) Apply(_ context.Context, rows []storage.AIBatchRequest, res
 		}
 		return nil
 	}
-	plan := &ai.CurationPlan{Model: row.Model, PromptHash: row.PromptHash}
+	plan := &ai.CurationPlan{Model: row.Model, PromptHash: row.PromptHash, Keywords: strings.Join(k.Stage.Cfg.Preferences.Keywords, ", ")}
 	res := plan.ParseCuration(r.Text)
 	if err := k.Stage.Store.SetInterestScore(row.UserID, *row.ArticleID, res.InterestScore, res.Model, res.PromptHash); err != nil {
 		return fmt.Errorf("article %d for user %d: %w", *row.ArticleID, row.UserID, err)
@@ -279,6 +292,16 @@ func (k *CurateKind) Apply(_ context.Context, rows []storage.AIBatchRequest, res
 	title := row.SubjectKey
 	if article, err := k.Stage.Store.GetArticle(*row.ArticleID); err == nil && article != nil {
 		title = article.Title
+		// Hashed from the live article: the exporter compares against the
+		// same, so a rewrite between submit and apply shows up as a mismatch
+		// there rather than being silently recorded as the input.
+		userID := row.UserID
+		k.Stage.recordModelOutput(storage.ModelOutput{
+			Kind: storage.ModelOutputCurate, ArticleID: *row.ArticleID, UserID: &userID,
+			Model: res.Model, PromptHash: res.PromptHash, ContentHash: storage.ContentHash(articleContent(*article)),
+			Keywords: optionalKeywords(res.Keywords), Response: res.Response, Parsed: curationParsed(res),
+			Via: storage.ModelOutputViaBatch(k.Provider), Trainable: false,
+		})
 	}
 	k.Stage.Formatter.Info("scored article %d (batch): interest=%.1f: %s", *row.ArticleID, res.InterestScore, title)
 	return nil

@@ -131,7 +131,7 @@ func newBatchHarness(t *testing.T) (*BatchStage, *fakeSubmitter, *Stage, storage
 	sub := newFakeSubmitter()
 	bs := &BatchStage{
 		Store: store, Submitter: sub, Formatter: st.Formatter,
-		Kinds: []Kind{&ScreenKind{Stage: st, Planner: planner}, &CurateKind{Stage: st, Planner: planner}},
+		Kinds: []Kind{&ScreenKind{Stage: st, Planner: planner, Provider: sub.Provider()}, &CurateKind{Stage: st, Planner: planner, Provider: sub.Provider()}},
 	}
 	return bs, sub, st, store, feedID
 }
@@ -240,6 +240,17 @@ func TestBatchPoll_AppliesScreenVerdicts(t *testing.T) {
 	}
 	if scores[hostile.ID] < 7 {
 		t.Fatalf("hostile article threat = %v, want the model's 8", scores[hostile.ID])
+	}
+	// Both completions land in the corpus, marked as batch output: never trainable.
+	for _, a := range []storage.Article{clean, hostile} {
+		outs, err := store.ListModelOutputsByArticle(a.ID)
+		if err != nil || len(outs) != 1 {
+			t.Fatalf("corpus rows for %d = %d, %v", a.ID, len(outs), err)
+		}
+		o := outs[0]
+		if o.Kind != storage.ModelOutputScreen || o.Trainable || o.Via != "batch:fake" || o.Model != "sec-model" || o.PromptHash == "" || o.ContentHash != storage.ContentHash(articleContent(a)) || o.Response == "" {
+			t.Fatalf("corpus row = %+v", o)
+		}
 	}
 	// The clean article flows on to curation; the hostile one does not.
 	due, _ := store.GetUnbatchedCurationArticles(1, 3.0, 10)
@@ -378,6 +389,10 @@ func TestBatchCurate_SubmitsAndScores(t *testing.T) {
 	scores, err := store.GetArticleInterestScores(1, []int64{a.ID})
 	if err != nil || scores[a.ID] != 8.5 {
 		t.Fatalf("interest score not written: %v %v", scores, err)
+	}
+	outs, _ := store.ListModelOutputsByArticle(a.ID)
+	if len(outs) != 1 || outs[0].Kind != storage.ModelOutputCurate || outs[0].Trainable || outs[0].Via != "batch:fake" || outs[0].UserID == nil || *outs[0].UserID != 1 || outs[0].Keywords == nil || *outs[0].Keywords != "rust" || !strings.Contains(outs[0].Response, "on topic") {
+		t.Fatalf("corpus row = %+v", outs)
 	}
 }
 
