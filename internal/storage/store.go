@@ -167,7 +167,7 @@ type Store interface {
 	GetAIBatch(id string) (*AIBatch, error)
 	ListRunningAIBatches() ([]AIBatch, error)
 	TouchAIBatchPolled(id string) error
-	FinishAIBatch(id, status, errMsg string, usage AIBatchUsage) error
+	FinishAIBatch(id, status, errMsg string, usage AIBatchUsage, providerEndedAt *time.Time) error
 	ListAIBatchRequests(batchID string) ([]AIBatchRequest, error)
 	ResolveAIBatchRequest(r AIBatchRequest) error
 	GetUnbatchedCurationArticles(userID int64, maxSecurityThreat float64, limit int) ([]Article, error)

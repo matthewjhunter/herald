@@ -59,8 +59,11 @@ type AIBatch struct {
 	SubmittedAt  time.Time
 	ExpiresAt    *time.Time
 	LastPolledAt *time.Time
-	EndedAt      *time.Time
-	Error        string
+	// ProviderEndedAt is when the provider said processing finished; EndedAt
+	// is when herald applied the results. Their difference is detection lag.
+	ProviderEndedAt *time.Time
+	EndedAt         *time.Time
+	Error           string
 	// Adopted marks a batch found upstream at startup that the table did not
 	// know; its prompt provenance is the currently resolved prompt, not the
 	// one that was sent.
@@ -155,7 +158,7 @@ func (s *PostgresStore) GetAIBatch(id string) (*AIBatch, error) {
 		}
 		return nil, fmt.Errorf("get ai batch %s: %w", id, err)
 	}
-	b := aiBatchFromRow(row.ID, row.Provider, row.Kind, row.Model, row.Status, row.RequestCount, row.SubmittedAt, row.ExpiresAt, row.LastPolledAt, row.EndedAt, row.Error, row.Adopted, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheWriteTokens)
+	b := aiBatchFromRow(row.ID, row.Provider, row.Kind, row.Model, row.Status, row.RequestCount, row.SubmittedAt, row.ExpiresAt, row.LastPolledAt, row.ProviderEndedAt, row.EndedAt, row.Error, row.Adopted, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheWriteTokens)
 	return &b, nil
 }
 
@@ -167,15 +170,15 @@ func (s *PostgresStore) ListRunningAIBatches() ([]AIBatch, error) {
 	}
 	out := make([]AIBatch, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, aiBatchFromRow(row.ID, row.Provider, row.Kind, row.Model, row.Status, row.RequestCount, row.SubmittedAt, row.ExpiresAt, row.LastPolledAt, row.EndedAt, row.Error, row.Adopted, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheWriteTokens))
+		out = append(out, aiBatchFromRow(row.ID, row.Provider, row.Kind, row.Model, row.Status, row.RequestCount, row.SubmittedAt, row.ExpiresAt, row.LastPolledAt, row.ProviderEndedAt, row.EndedAt, row.Error, row.Adopted, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheWriteTokens))
 	}
 	return out, nil
 }
 
-func aiBatchFromRow(id, provider, kind, model, status string, count int, submitted time.Time, expires, polled, ended *time.Time, errMsg *string, adopted bool, in, out, cr, cw int64) AIBatch {
+func aiBatchFromRow(id, provider, kind, model, status string, count int, submitted time.Time, expires, polled, providerEnded, ended *time.Time, errMsg *string, adopted bool, in, out, cr, cw int64) AIBatch {
 	b := AIBatch{
 		ID: id, Provider: provider, Kind: kind, Model: model, Status: status, RequestCount: count,
-		SubmittedAt: submitted, ExpiresAt: expires, LastPolledAt: polled, EndedAt: ended, Adopted: adopted,
+		SubmittedAt: submitted, ExpiresAt: expires, LastPolledAt: polled, ProviderEndedAt: providerEnded, EndedAt: ended, Adopted: adopted,
 		Usage: AIBatchUsage{InputTokens: in, OutputTokens: out, CacheReadTokens: cr, CacheWriteTokens: cw},
 	}
 	if errMsg != nil {
@@ -192,14 +195,15 @@ func (s *PostgresStore) TouchAIBatchPolled(id string) error {
 	return nil
 }
 
-// FinishAIBatch records the terminal status, the summed usage, and the end time.
-func (s *PostgresStore) FinishAIBatch(id, status, errMsg string, usage AIBatchUsage) error {
+// FinishAIBatch records the terminal status, the summed usage, the provider's
+// own end time (nil when it reported none), and the moment of application.
+func (s *PostgresStore) FinishAIBatch(id, status, errMsg string, usage AIBatchUsage, providerEndedAt *time.Time) error {
 	var e *string
 	if errMsg != "" {
 		e = &errMsg
 	}
 	if err := s.q.FinishAIBatch(context.Background(), db.FinishAIBatchParams{
-		ID: id, Status: status, Error: e,
+		ID: id, Status: status, Error: e, ProviderEndedAt: providerEndedAt,
 		InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens,
 		CacheReadTokens: usage.CacheReadTokens, CacheWriteTokens: usage.CacheWriteTokens,
 	}); err != nil {

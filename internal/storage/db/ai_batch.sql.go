@@ -13,14 +13,16 @@ import (
 const finishAIBatch = `-- name: FinishAIBatch :exec
 UPDATE ai_batches
 SET status = $1, error = $2::text, ended_at = NOW(),
-    input_tokens = $3, output_tokens = $4,
-    cache_read_tokens = $5, cache_write_tokens = $6
-WHERE id = $7
+    provider_ended_at = $3::timestamptz,
+    input_tokens = $4, output_tokens = $5,
+    cache_read_tokens = $6, cache_write_tokens = $7
+WHERE id = $8
 `
 
 type FinishAIBatchParams struct {
 	Status           string
 	Error            *string
+	ProviderEndedAt  *time.Time
 	InputTokens      int64
 	OutputTokens     int64
 	CacheReadTokens  int64
@@ -28,11 +30,13 @@ type FinishAIBatchParams struct {
 	ID               string
 }
 
-// Terminal update: the status, the summed usage, and the moment it ended.
+// Terminal update: the status, the summed usage, the provider's own end time
+// when it reported one, and the moment herald applied the results.
 func (q *Queries) FinishAIBatch(ctx context.Context, arg FinishAIBatchParams) error {
 	_, err := q.db.Exec(ctx, finishAIBatch,
 		arg.Status,
 		arg.Error,
+		arg.ProviderEndedAt,
 		arg.InputTokens,
 		arg.OutputTokens,
 		arg.CacheReadTokens,
@@ -43,7 +47,7 @@ func (q *Queries) FinishAIBatch(ctx context.Context, arg FinishAIBatchParams) er
 }
 
 const getAIBatch = `-- name: GetAIBatch :one
-SELECT id, provider, kind, model, status, request_count, submitted_at, expires_at, last_polled_at, ended_at, error, adopted,
+SELECT id, provider, kind, model, status, request_count, submitted_at, expires_at, last_polled_at, provider_ended_at, ended_at, error, adopted,
        input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
 FROM ai_batches WHERE id = $1
 `
@@ -61,6 +65,7 @@ func (q *Queries) GetAIBatch(ctx context.Context, id string) (AiBatch, error) {
 		&i.SubmittedAt,
 		&i.ExpiresAt,
 		&i.LastPolledAt,
+		&i.ProviderEndedAt,
 		&i.EndedAt,
 		&i.Error,
 		&i.Adopted,
@@ -303,7 +308,7 @@ func (q *Queries) ListAIBatchRequests(ctx context.Context, batchID string) ([]Ai
 }
 
 const listRunningAIBatches = `-- name: ListRunningAIBatches :many
-SELECT id, provider, kind, model, status, request_count, submitted_at, expires_at, last_polled_at, ended_at, error, adopted,
+SELECT id, provider, kind, model, status, request_count, submitted_at, expires_at, last_polled_at, provider_ended_at, ended_at, error, adopted,
        input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
 FROM ai_batches WHERE status = 'running' ORDER BY submitted_at
 `
@@ -327,6 +332,7 @@ func (q *Queries) ListRunningAIBatches(ctx context.Context) ([]AiBatch, error) {
 			&i.SubmittedAt,
 			&i.ExpiresAt,
 			&i.LastPolledAt,
+			&i.ProviderEndedAt,
 			&i.EndedAt,
 			&i.Error,
 			&i.Adopted,

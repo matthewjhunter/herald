@@ -20,6 +20,7 @@ type AiBatch struct {
 	SubmittedAt      time.Time
 	ExpiresAt        *time.Time
 	LastPolledAt     *time.Time
+	ProviderEndedAt  *time.Time
 	EndedAt          *time.Time
 	Error            *string
 	Adopted          bool

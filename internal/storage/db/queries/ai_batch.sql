@@ -14,12 +14,12 @@ VALUES (@batch_id, @custom_id, @article_id)
 ON CONFLICT DO NOTHING;
 
 -- name: GetAIBatch :one
-SELECT id, provider, kind, model, status, request_count, submitted_at, expires_at, last_polled_at, ended_at, error, adopted,
+SELECT id, provider, kind, model, status, request_count, submitted_at, expires_at, last_polled_at, provider_ended_at, ended_at, error, adopted,
        input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
 FROM ai_batches WHERE id = @id;
 
 -- name: ListRunningAIBatches :many
-SELECT id, provider, kind, model, status, request_count, submitted_at, expires_at, last_polled_at, ended_at, error, adopted,
+SELECT id, provider, kind, model, status, request_count, submitted_at, expires_at, last_polled_at, provider_ended_at, ended_at, error, adopted,
        input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
 FROM ai_batches WHERE status = 'running' ORDER BY submitted_at;
 
@@ -27,9 +27,11 @@ FROM ai_batches WHERE status = 'running' ORDER BY submitted_at;
 UPDATE ai_batches SET last_polled_at = NOW() WHERE id = @id;
 
 -- name: FinishAIBatch :exec
--- Terminal update: the status, the summed usage, and the moment it ended.
+-- Terminal update: the status, the summed usage, the provider's own end time
+-- when it reported one, and the moment herald applied the results.
 UPDATE ai_batches
 SET status = @status, error = sqlc.narg('error')::text, ended_at = NOW(),
+    provider_ended_at = sqlc.narg('provider_ended_at')::timestamptz,
     input_tokens = @input_tokens, output_tokens = @output_tokens,
     cache_read_tokens = @cache_read_tokens, cache_write_tokens = @cache_write_tokens
 WHERE id = @id;

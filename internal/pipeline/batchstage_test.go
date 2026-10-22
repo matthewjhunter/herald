@@ -225,6 +225,9 @@ func TestBatchPoll_AppliesScreenVerdicts(t *testing.T) {
 	if rec.Status != storage.AIBatchEnded || rec.Usage.InputTokens != 110 || rec.Usage.OutputTokens != 22 || rec.Usage.CacheReadTokens != 200 {
 		t.Fatalf("finished batch = %+v", rec)
 	}
+	if rec.ProviderEndedAt == nil || rec.EndedAt == nil || rec.EndedAt.Before(*rec.ProviderEndedAt) {
+		t.Fatalf("provider end time not carried from the status response: %+v", rec)
+	}
 	rows, _ := store.ListAIBatchRequests(batchID)
 	for _, r := range rows {
 		if r.Outcome != storage.AIBatchSucceeded || r.Threat == nil || r.Category == nil {

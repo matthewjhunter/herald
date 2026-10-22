@@ -95,22 +95,26 @@ func TestAIBatch_RecordListResolveFinish(t *testing.T) {
 			t.Fatal("untouched request changed")
 		}
 
-		if err := store.FinishAIBatch("msgbatch_1", AIBatchEnded, "", AIBatchUsage{InputTokens: 10, OutputTokens: 3, CacheReadTokens: 1700}); err != nil {
+		providerEnd := time.Now().Add(-20 * time.Minute).Truncate(time.Second)
+		if err := store.FinishAIBatch("msgbatch_1", AIBatchEnded, "", AIBatchUsage{InputTokens: 10, OutputTokens: 3, CacheReadTokens: 1700}, &providerEnd); err != nil {
 			t.Fatal(err)
 		}
 		got, _ = store.GetAIBatch("msgbatch_1")
 		if got.Status != AIBatchEnded || got.EndedAt == nil || got.Usage.CacheReadTokens != 1700 || got.Error != "" {
 			t.Fatalf("finished = %+v", got)
 		}
+		if got.ProviderEndedAt == nil || !got.ProviderEndedAt.Equal(providerEnd) || !got.EndedAt.After(providerEnd) {
+			t.Fatalf("provider end %v / applied %v: processing time and detection lag must be separable", got.ProviderEndedAt, got.EndedAt)
+		}
 		if running, _ := store.ListRunningAIBatches(); len(running) != 0 {
 			t.Fatalf("finished batch still listed as running: %+v", running)
 		}
 
-		if err := store.FinishAIBatch("msgbatch_1", AIBatchFailed, "gateway 502", AIBatchUsage{}); err != nil {
+		if err := store.FinishAIBatch("msgbatch_1", AIBatchFailed, "gateway 502", AIBatchUsage{}, nil); err != nil {
 			t.Fatal(err)
 		}
 		got, _ = store.GetAIBatch("msgbatch_1")
-		if got.Status != AIBatchFailed || got.Error != "gateway 502" {
+		if got.Status != AIBatchFailed || got.Error != "gateway 502" || got.ProviderEndedAt != nil {
 			t.Fatalf("failed = %+v", got)
 		}
 	})

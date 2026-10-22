@@ -358,7 +358,7 @@ func (b *BatchStage) pollOne(ctx context.Context, rec storage.AIBatch, now time.
 		}
 	}
 
-	if err := b.Store.FinishAIBatch(rec.ID, finish, "", usage); err != nil {
+	if err := b.Store.FinishAIBatch(rec.ID, finish, "", usage, st.EndedAt); err != nil {
 		return fmt.Errorf("finish: %w", err)
 	}
 	b.Formatter.Info("batch %s %s: %d requests, %d succeeded, %d errored, %d expired, %d canceled; tokens in %d out %d cache read %d write %d",

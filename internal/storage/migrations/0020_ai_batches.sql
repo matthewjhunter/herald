@@ -43,6 +43,11 @@ CREATE TABLE IF NOT EXISTS ai_batches (
     submitted_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at         TIMESTAMPTZ,
     last_polled_at     TIMESTAMPTZ,
+    -- When the provider reports the batch finished processing. ended_at below
+    -- is when herald saw that and applied the results, which lags by up to a
+    -- cycle; the difference between the two is detection lag, and
+    -- provider_ended_at - submitted_at is the provider's processing time.
+    provider_ended_at  TIMESTAMPTZ,
     ended_at           TIMESTAMPTZ,
     error              TEXT,
     adopted            BOOLEAN NOT NULL DEFAULT FALSE,
