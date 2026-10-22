@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Model output corpus** (`model_outputs`, docs/model-outputs.md): every
+  screen, summarize, and curate call records the model's completion
+  verbatim beside the hash of the content it saw, the curation keywords,
+  and the model and prompt hash, in an append-only table meant for training
+  a local model on herald's own scoring. Rows default to trainable; the
+  batch stage writes its rows as not trainable because that output came
+  from a cloud provider. The screen prompt gained a prompt hash for this.
+
 - **Batch scoring** (`[batch]`, docs/batch-scoring.md): the security screen
   and the curation score can run through a provider's asynchronous batch API
   instead of one synchronous call per article. Anthropic's Message Batches
