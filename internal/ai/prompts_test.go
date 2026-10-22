@@ -214,18 +214,28 @@ func TestExecutePromptParts(t *testing.T) {
 		if strings.Contains(system, "abc123") || strings.Contains(system, "<untrusted-") {
 			t.Error("system half names the fence; it must be identical across articles")
 		}
-		for _, want := range []string{"news curator", "User interests: go, security", "Score using the full range"} {
+		for _, want := range []string{"news curator", "User interests: go, security", "Score using the full range", "boost, not a gate", "Judge the article, not the feed", "Viewpoint is not a scoring axis", `"interest_score"`} {
 			if !strings.Contains(system, want) {
 				t.Errorf("system half lacks %q", want)
 			}
 		}
-		for _, want := range []string{"<untrusted-abc123>\nT\n</untrusted-abc123>", "<untrusted-abc123>\nC\n</untrusted-abc123>", `"interest_score"`} {
+		for _, want := range []string{"<untrusted-abc123>\nT\n</untrusted-abc123>", "<untrusted-abc123>\nC\n</untrusted-abc123>"} {
 			if !strings.Contains(user, want) {
 				t.Errorf("user half lacks %q", want)
 			}
 		}
-		if strings.Contains(user, "Score using the full range") {
-			t.Error("scoring scale leaked into the user half")
+		for _, leaked := range []string{"Score using the full range", "Respond ONLY", `"interest_score"`} {
+			if strings.Contains(user, leaked) {
+				t.Errorf("stable instruction %q leaked into the user half", leaked)
+			}
+		}
+		// The system half is the cacheable prefix. Cloud providers ignore the
+		// cache marker below a minimum prefix length (512 tokens on current
+		// Anthropic models, roughly 2,200 bytes of English), so the rubric
+		// must stay comfortably above it or every curation call pays full
+		// price for the prompt.
+		if len(system) < 2400 {
+			t.Errorf("system half is %d bytes; it must stay above the provider cache minimum", len(system))
 		}
 	})
 }
