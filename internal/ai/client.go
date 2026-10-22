@@ -58,10 +58,14 @@ func (e *ClientError) Is(target error) bool {
 // auto-recovers to half-open after its cooldown; a long-running daemon should
 // never require a process restart to resume work.
 type openAIClient struct {
-	baseURL    string
-	apiKey     string
-	httpClient *http.Client
-	breaker    *breaker
+	// disableThinking sends chat_template_kwargs.enable_thinking=false so a
+	// reasoning backend answers as content rather than exhausting max_tokens on
+	// reasoning_content. Off by default; see storage.Config.Ollama.DisableThinking.
+	disableThinking bool
+	baseURL         string
+	apiKey          string
+	httpClient      *http.Client
+	breaker         *breaker
 
 	// sem bounds the number of in-flight generate() calls in this process.
 	// nil when unbounded (MaxConcurrent <= 0). A buffered channel is the
@@ -171,6 +175,9 @@ func (c *openAIClient) generate(ctx context.Context, model, system, prompt strin
 		Temperature: temperature,
 		MaxTokens:   chatMaxTokens,
 		Stream:      false,
+	}
+	if c.disableThinking {
+		body.ChatTemplateKwargs = map[string]any{"enable_thinking": false}
 	}
 
 	data, err := json.Marshal(body)

@@ -60,6 +60,13 @@ type Config struct {
 		// MaxConcurrent bounds the number of in-flight generate() calls in this
 		// process. <= 0 means unbounded (no gate).
 		MaxConcurrent int `toml:"max_concurrent"`
+		// DisableThinking sends chat_template_kwargs.enable_thinking=false on
+		// every scoring call so a reasoning model (Qwen3 via Lemonade) writes
+		// its verdict as content instead of spending the whole completion
+		// budget on a thinking pass and returning nothing. Leave it off for
+		// non-reasoning models and for any gateway that rejects unknown
+		// fields; the field is omitted entirely when false.
+		DisableThinking bool `toml:"disable_thinking"`
 	} `toml:"ollama"`
 
 	Thresholds struct {

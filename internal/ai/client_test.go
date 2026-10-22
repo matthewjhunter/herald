@@ -676,3 +676,34 @@ func TestGenerateSendsSystemMessageFirst(t *testing.T) {
 		t.Errorf("empty system still sent a system message: %+v", got.Messages)
 	}
 }
+
+func TestGenerateDisablesThinkingOnlyWhenConfigured(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = nil
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+	ctx := context.Background()
+
+	c := newOpenAIClient(srv.URL, "k", 0)
+	if _, err := c.generate(ctx, "m", "", "hi", 0.7); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := got["chat_template_kwargs"]; present {
+		t.Errorf("chat_template_kwargs sent without the flag: %v", got["chat_template_kwargs"])
+	}
+
+	c.disableThinking = true
+	if _, err := c.generate(ctx, "m", "", "hi", 0.7); err != nil {
+		t.Fatal(err)
+	}
+	kw, _ := got["chat_template_kwargs"].(map[string]any)
+	if v, ok := kw["enable_thinking"].(bool); !ok || v {
+		t.Errorf("chat_template_kwargs = %v, want enable_thinking=false", got["chat_template_kwargs"])
+	}
+}

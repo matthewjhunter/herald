@@ -86,6 +86,7 @@ func NewAIProcessor(baseURL, securityModel, curationModel string, store any, con
 	var apiKey string
 	callTimeout := 2 * time.Minute
 	maxConcurrent := 0
+	disableThinking := false
 	if cfg, ok := config.(*storage.Config); ok && cfg != nil {
 		if cfg.Ollama.APIKey != "" {
 			apiKey = cfg.Ollama.APIKey
@@ -94,12 +95,16 @@ func NewAIProcessor(baseURL, securityModel, curationModel string, store any, con
 			callTimeout = time.Duration(cfg.Ollama.Timeout)
 		}
 		maxConcurrent = cfg.Ollama.MaxConcurrent
+		disableThinking = cfg.Ollama.DisableThinking
 	}
 
 	promptLoader := newPromptLoaderSafe(store, config)
 
+	client := newOpenAIClient(baseURL, apiKey, maxConcurrent)
+	client.disableThinking = disableThinking
+
 	return &AIProcessor{
-		client:        newOpenAIClient(baseURL, apiKey, maxConcurrent),
+		client:        client,
 		securityModel: securityModel,
 		curationModel: curationModel,
 		promptLoader:  promptLoader,
