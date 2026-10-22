@@ -30,10 +30,12 @@ The common shape is: submit a list of (id, model, system, user, max tokens) and 
 Package `internal/ai/batch`.
 
 ```go
-// Request is one scoring call, provider-neutral. System and User are the two
-// halves every scoring prompt already renders: the stable instructions and the
-// per-article input. CustomID must match ^[a-zA-Z0-9_-]{1,64}$, the stricter
-// of the two providers' rules.
+// Request is one model call, provider-neutral. System and User are the two
+// halves every prompt already renders: the stable instructions and the
+// per-call input. Nothing bounds their size here; a request may carry one
+// article chunk or a day's worth of articles, and the kind that builds it
+// owns the input budget (see Long context). CustomID must match
+// ^[a-zA-Z0-9_-]{1,64}$, the stricter of the two providers' rules.
 type Request struct {
     CustomID  string
     Model     string
@@ -115,25 +117,50 @@ Provider-specific knobs are constructor options, not interface surface: the Anth
 
 ## Herald integration
 
-### What the AI layer exposes
+### Kinds
 
-`SecurityCheck` and `CurateArticle` keep their signatures for the synchronous path. The prompt rendering they do is lifted into builders the batch stage can call, and the synchronous methods become thin loops over the same builders, so there is one rendering path and one parser per prompt:
+The stage does not know what a request is for. Each kind of work registers a builder, a parser, and an applier, and the stage drives all kinds the same way:
 
 ```go
-// SecurityRequests renders the screen prompt for every chunk of an article.
-// One request per chunk; the caller assembles the verdict with
-// SecurityVerdict once every chunk has answered.
+// Kind is one category of batched work. The stage calls Build to turn due
+// subjects into requests, Parse on each result, and Apply once every request
+// of a subject has resolved.
+type Kind interface {
+    Name() string                                   // "screen", "curate", "digest"
+    Due(ctx, store, userID) ([]Subject, error)      // what should be submitted now
+    Build(ctx, subject) ([]Request, Provenance, error)
+    Parse(result) (Parsed, error)
+    Apply(ctx, store, subject, []Parsed) error      // write the outcome
+    Release(ctx, store, subject, outcome) error     // undo the claim on failure
+}
+```
+
+A `Subject` is whatever a kind scores: one article for screen, one article and user for curate, one user and date for a digest. It carries the article ids it covers so the storage layer can record them without knowing the kind.
+
+The first two kinds lift their rendering out of `SecurityCheck` and `CurateArticle`, and the synchronous methods become loops over the same builders, so there is one rendering path and one parser per prompt:
+
+```go
 func (p *AIProcessor) SecurityRequests(title, content string) (reqs []batch.Request, screened string, err error)
 func (p *AIProcessor) SecurityVerdict(findings []screen.Finding, screened string) *SecurityResult
 func (p *AIProcessor) ParseSecurityFinding(text, evidence string) (screen.Finding, error)
 
-// CurationRequest renders the curation prompt for one article and user,
-// returning the provenance (model, prompt hash) to record with the score.
 func (p *AIProcessor) CurationRequest(userID int64, title, content string, keywords []string) (batch.Request, CurationProvenance, error)
 func (p *AIProcessor) ParseCuration(text string) *CurationResult
 ```
 
-The custom id is assigned by the batch stage, not the builder: `s-<article>-<chunk>` for screen requests and `c-<article>-<user>` for curation. Both fit the 64-character rule by a wide margin and are parseable on their own, which matters for reconciliation below.
+Custom ids are assigned by the stage and are parseable on their own, which reconciliation relies on: `s-<article>-<chunk>` for screen, `c-<article>-<user>` for curate, `d-<user>-<yyyymmdd>` for a digest. All fit the 64-character rule by a wide margin.
+
+### Mode policy
+
+Whether a given piece of work goes through the batch path or the synchronous one is a policy decision, not a deployment-wide switch:
+
+```go
+// Mode decides, per user and kind, whether work is batched. The first
+// implementation reads [batch].stages; a later one can read the user's tier.
+type Mode func(userID int64, kind string) bool
+```
+
+The daemon consults it when choosing between `BatchStage` and the synchronous stage for each user and kind. This is the one hook the user-tier idea below needs from the batching layer, so it goes in now.
 
 ### Storage
 
@@ -141,7 +168,9 @@ Migration 0020 adds two tables.
 
 `ai_batches` records every submission: `id` (the provider's batch id), `provider`, `kind` (`screen` or `curate`), `model`, `status`, `request_count`, `submitted_at`, `last_polled_at`, `ended_at`, `error`, and the usage totals summed from the results (`input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`). The usage columns are the only cost visibility herald has on this path, because a gateway passthrough does no accounting.
 
-`ai_batch_requests` maps each request to its subject: `batch_id`, `custom_id` (primary key with batch_id), `kind`, `article_id`, `user_id` (0 for screen), `chunk_index`, `chunk_count`, `model`, `prompt_hash`, `outcome` (pending, succeeded, errored, expired, canceled), `resolved_at`. Parsed numbers that must wait for sibling chunks are stored here too: `threat`, `category`, `verified` for screen rows. Nothing the model wrote is stored, consistent with the payload-free verdict rule.
+`ai_batch_requests` maps each request to its subject: `batch_id`, `custom_id` (primary key with batch_id), `kind`, `user_id` (0 for global work), `subject_key` (the kind's own identity for the subject, such as the article id or a user-and-date pair), `chunk_index`, `chunk_count`, `model`, `prompt_hash`, `outcome` (pending, succeeded, errored, expired, canceled), `resolved_at`, and the request's own usage (`input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`) so cost can be attributed per user as well as summed per batch. Parsed numbers that must wait for sibling chunks are stored here too: `threat`, `category`, `verified` for screen rows. Nothing the model wrote is stored, consistent with the payload-free verdict rule.
+
+`ai_batch_request_articles` (`batch_id`, `custom_id`, `article_id`) records which articles a request covered. Screen and curate rows have exactly one; a digest has many. The single-article kinds also keep `article_id` denormalized on the request row because the in-flight queries below filter on it.
 
 ### Claims and leases
 
@@ -189,6 +218,25 @@ Models stay in `[ollama]` (`security_model`, `curation_model`) and in per-user p
 - Prompt edited while a batch is in flight: the request row carries the hash of the prompt that was sent, and that is what gets recorded.
 - Nenya retry duplicating a create: reconciliation adopts the orphan; its rows resolve the same articles a second time, and the second write is idempotent (same verdict, same score upsert).
 
+## Long context
+
+Every current Claude model carries a 1M-token context window, Sonnet 5.5 included, and the batch price table (fetched 2026-10-21) prices input flat per model, with Haiku 5.5 above 100K tokens the only long-prompt tier. Two things follow for herald.
+
+**Per-article prompts stop truncating.** `maxPromptContentLen` caps curation and summary content at 3,000 characters, a budget chosen for small local models. The batch request builders take the model's context from the provider's model list (herald already carries a byte-based token estimator and never ships a tokenizer) and send the whole article when it fits. The screen keeps its chunking: its windows exist for verdict locality and evidence verification, not for context size.
+
+**A digest kind sees everything at once.** The group and newsletter summaries today are built from titles, short AI summaries, and scores. A digest request for one user and one day can carry the full text of every article that passed the screen and scored above threshold, a few hundred articles at roughly a thousand tokens each, inside the window with room to spare. At batch prices on Sonnet 5.5 that is on the order of a few tenths of a dollar per user per day, less with the shared instructions cached. That is the quality jump the batch path makes affordable, and it is a new kind, not a change to the per-article stages: `Due` fires once per user per schedule, `Build` returns one request with the day's articles, `Apply` stores the digest against the user and date. The builder guards the input budget per model and drops the lowest-scored articles first when a day does not fit.
+
+## Future: user tiers
+
+Not designed here; noted so the batching layer does not foreclose it. The idea is two or three roles:
+
+- **Free**: batch path only, no prompt customization, so the system half is byte-identical across every free user and the cache is shared.
+- **Paid**: custom prompts, synchronous scoring for freshness, plus a scheduled per-user digest (a morning run, say) on the batch path.
+
+What the batching layer already provides for that: the `Mode` hook decides per user and kind; the prompt hash on every request row records which prompt a paid user's call used; `user_id` and per-request usage on the rows give cost attribution; the `Kind` interface with `Due` is where a schedule lives; `subject_key` makes a scheduled run idempotent per user and date.
+
+One prompt change becomes necessary at that point. The curation template puts the user's keywords in the system block, which makes the cached prefix per-user. For a shared free-tier cache the keywords move to the user half. With one user today it changes nothing, so it waits.
+
 ## Work plan
 
 Small commits on `feat/batch-scoring`, tests first for each:
@@ -196,8 +244,8 @@ Small commits on `feat/batch-scoring`, tests first for each:
 1. `internal/ai/batch`: interface, Anthropic implementation, httptest fakes covering submit, status, results (all four outcomes), cancel, list, body-size guard.
 2. `internal/ai`: lift the request builders and parsers out of `SecurityCheck` and `CurateArticle`; the synchronous methods call them; existing tests keep passing.
 3. Migration 0020, sqlc queries, `Store` methods, Postgres tests.
-4. `pipeline.BatchStage` with a fake submitter and fake store: submit grouping and caps, poll and apply, chunk assembly, outcome-to-claim mapping, reconciliation.
+4. `pipeline.BatchStage` with a fake submitter and fake store: the `Kind` registry, submit grouping and caps, poll and apply, chunk assembly, outcome-to-claim mapping, reconciliation, the `Mode` hook.
 5. Config, daemon wiring, README and CHANGELOG.
-6. OpenAI implementation as a follow-up issue once the Anthropic path has run in production.
+6. Follow-up issues: the OpenAI implementation once the Anthropic path has run in production; the digest kind; lifting the 3,000-character cap for cloud models.
 
 The homelab change is a config template edit after the herald release: the `[batch]` block pointing at nenya's Anthropic passthrough with the client token.
