@@ -301,3 +301,38 @@ func ExecutePrompt(promptTemplate string, data any) (string, error) {
 
 	return buf.String(), nil
 }
+
+// SystemTemplateName is the name of the optional block a prompt template may
+// define for its stable half: {{define "system"}}...{{end}}.
+const SystemTemplateName = "system"
+
+// ExecutePromptParts renders a prompt template as a system half and a user half.
+//
+// A template may define a block named "system" for the part that is the same on
+// every call: the instructions, the scoring scale, a user's standing interests.
+// That block renders to system; everything outside it renders to user and holds
+// what changes per call -- the fence nonce and the article. The two go as two
+// chat messages, so a gateway that caches prompt prefixes can reuse the system
+// half across articles. A template without a "system" block renders entirely to
+// user with an empty system, so an operator override written as one flat prompt
+// keeps working; it just cannot be cached.
+func ExecutePromptParts(promptTemplate string, data any) (system, user string, err error) {
+	tmpl, err := template.New("prompt").Parse(promptTemplate)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to parse prompt template: %w", err)
+	}
+
+	if sys := tmpl.Lookup(SystemTemplateName); sys != nil {
+		var buf strings.Builder
+		if err := sys.Execute(&buf, data); err != nil {
+			return "", "", fmt.Errorf("failed to execute prompt system template: %w", err)
+		}
+		system = strings.TrimSpace(buf.String())
+	}
+
+	var buf strings.Builder
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", "", fmt.Errorf("failed to execute prompt template: %w", err)
+	}
+	return system, strings.TrimSpace(buf.String()), nil
+}

@@ -37,7 +37,7 @@ func (p *AIProcessor) LegacySecurityScore(ctx context.Context, title, content st
 	callCtx, cancel := p.withCallTimeout(ctx)
 	defer cancel()
 
-	responseText, err := p.client.generate(callCtx, model, prompt, temperature)
+	responseText, err := p.client.generate(callCtx, model, "", prompt, temperature)
 	if err != nil {
 		return 0, fmt.Errorf("legacy screen: %w", err)
 	}

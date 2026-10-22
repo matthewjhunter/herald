@@ -135,7 +135,14 @@ type modelsResponse struct {
 // distinguish non-retryable auth/permission failures from transient errors.
 // Every failure to obtain a verdict wraps ErrBackendUnavailable, and the
 // circuit breaker blocks all calls after a run of them.
-func (c *openAIClient) generate(ctx context.Context, model, prompt string, temperature float64) (string, error) {
+// generate sends prompt as the user message and returns the reply. A non-empty
+// system goes first as a system message. Callers put the part of a prompt that is
+// the same on every call there -- instructions, criteria, a user's standing
+// preferences -- and the per-call part in prompt, so a gateway that caches
+// prompt prefixes can reuse the system message across calls instead of billing
+// it with every article. Providers only match cached prefixes at message
+// boundaries; the same bytes in one message never hit.
+func (c *openAIClient) generate(ctx context.Context, model, system, prompt string, temperature float64) (string, error) {
 	if c.isOpen() {
 		n, last := c.breaker.status()
 		return "", &ClientError{
@@ -153,11 +160,14 @@ func (c *openAIClient) generate(ctx context.Context, model, prompt string, tempe
 		}
 	}
 
+	messages := make([]chatMessage, 0, 2)
+	if system != "" {
+		messages = append(messages, chatMessage{Role: "system", Content: system})
+	}
+	messages = append(messages, chatMessage{Role: "user", Content: prompt})
 	body := chatRequest{
-		Model: model,
-		Messages: []chatMessage{
-			{Role: "user", Content: prompt},
-		},
+		Model:       model,
+		Messages:    messages,
 		Temperature: temperature,
 		MaxTokens:   chatMaxTokens,
 		Stream:      false,

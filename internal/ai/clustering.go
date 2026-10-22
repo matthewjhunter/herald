@@ -53,7 +53,7 @@ Rules:
 	callCtx, cancel := p.withCallTimeout(ctx)
 	defer cancel()
 
-	responseText, err := p.client.generate(callCtx, p.curationModel, prompt, 0.3)
+	responseText, err := p.client.generate(callCtx, p.curationModel, "", prompt, 0.3)
 	if err != nil {
 		return nil, fmt.Errorf("clustering failed: %w", err)
 	}

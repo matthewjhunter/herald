@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/matthewjhunter/herald/internal/storage"
@@ -174,4 +175,57 @@ func TestExecutePrompt_InvalidTemplate(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid template, got nil")
 	}
+}
+
+func TestExecutePromptParts(t *testing.T) {
+	t.Run("system block splits off", func(t *testing.T) {
+		tmpl := "{{define \"system\" -}}\nRules for {{.Who}}.\n{{- end -}}\nArticle: {{.Body}}\n"
+		system, user, err := ExecutePromptParts(tmpl, map[string]any{"Who": "alice", "Body": "text"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if system != "Rules for alice." {
+			t.Errorf("system = %q", system)
+		}
+		if user != "Article: text" {
+			t.Errorf("user = %q", user)
+		}
+	})
+
+	t.Run("flat template is all user", func(t *testing.T) {
+		system, user, err := ExecutePromptParts("Rate {{.Body}} now.", map[string]any{"Body": "this"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if system != "" {
+			t.Errorf("system = %q, want empty", system)
+		}
+		if user != "Rate this now." {
+			t.Errorf("user = %q", user)
+		}
+	})
+
+	t.Run("default curation prompt keeps the nonce out of the system half", func(t *testing.T) {
+		data := map[string]any{"Nonce": "abc123", "Title": "T", "Content": "C", "Keywords": "go, security"}
+		system, user, err := ExecutePromptParts(defaultCurationPrompt, data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(system, "abc123") || strings.Contains(system, "<untrusted-") {
+			t.Error("system half names the fence; it must be identical across articles")
+		}
+		for _, want := range []string{"news curator", "User interests: go, security", "Score using the full range"} {
+			if !strings.Contains(system, want) {
+				t.Errorf("system half lacks %q", want)
+			}
+		}
+		for _, want := range []string{"<untrusted-abc123>\nT\n</untrusted-abc123>", "<untrusted-abc123>\nC\n</untrusted-abc123>", `"interest_score"`} {
+			if !strings.Contains(user, want) {
+				t.Errorf("user half lacks %q", want)
+			}
+		}
+		if strings.Contains(user, "Score using the full range") {
+			t.Error("scoring scale leaked into the user half")
+		}
+	})
 }
