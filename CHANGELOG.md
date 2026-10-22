@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The security screen and curation prompts go to the model as two
+  messages.** The stable half -- airlock's screening instructions, or the
+  curation scale and the user's interests -- is the system message, and the
+  per-call half -- the fence nonce, the article, the output format -- is the
+  user message. One flat message could never hit a prompt cache: providers
+  only match cached prefixes at message boundaries, and the nonce sat in the
+  second paragraph. With the gateway's prefix caching on, the instruction
+  text is billed once per cache lifetime instead of once per article. An
+  operator override written as one flat prompt still works and simply is not
+  cached; to cache it, wrap its stable part in `{{define "system"}}...{{end}}`.
+
 - **Herald logs leveled logfmt, and serves a real access log.** Every line the
   binary emitted went through the standard `log` package, so it reached Loki as
   `detected_level=unknown` and the error alert matched none of them -- a failing
