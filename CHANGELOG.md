@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A link post's linked page is fenced apart from the post.** The curation
+  and summarization prompts used to receive the feed body and the fetched
+  linked page as one block, so the model could not tell the poster's take
+  from the page someone else wrote, and the 3,000-char cap fell wherever it
+  fell. The linked page now goes in as a second untrusted block labelled with
+  its host, budgeted from what the post leaves of the cap, with one line of
+  instruction in each prompt. The security screen still chunks the joined
+  text. Prompt truncation now cuts on a rune boundary.
+
 ### Added
 
 - **Model output corpus** (`model_outputs`, docs/model-outputs.md): every

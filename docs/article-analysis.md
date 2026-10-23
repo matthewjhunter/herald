@@ -80,7 +80,7 @@ The per-user kNN scorer (#255) fits here as another term, or as a replacement fo
 ## Prompt shape
 
 - **System half:** the whole rubric, the vocabularies, the summary length rules, the JSON schema. Expected to be 1,500 to 2,500 tokens. No per-user content, so one cache entry serves everything. On local models this is the part to measure: a 4B model handed a long schema will drop fields, so the parser accepts partial records and the vocabulary check rejects invalid values field by field rather than failing the article.
-- **User half:** the nonce-fenced title and content as today, plus the feed's categories as a labeled hint block, and the article's publication date and the feed's title. Nothing from the user's account.
+- **User half:** the nonce-fenced title and content as today, with a link post's linked page in its own fence labelled by host, plus the feed's categories as a labeled hint block, and the article's publication date and the feed's title. Nothing from the user's account.
 - **Long context:** on cloud models the whole article should go in; the 3,000-character cap exists for local models. Lifting it for cloud is the follow-up already noted in docs/batch-scoring.md.
 - **Custom per-user prompts:** keep the mechanism (user_prompts) for an optional second pass. Its input is the article plus the analysis record, and its output is a per-user override of the mapped score. Not batched, not shared, the paid-tier shape from the tiers note.
 
