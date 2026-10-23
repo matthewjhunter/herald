@@ -624,11 +624,18 @@ func TestSkipFullTextRe(t *testing.T) {
 		"https://www.youtube.com/shorts/piM5i-4M2eo",
 		"https://youtube.com/shorts/abc123",
 		"https://youtu.be/dQw4w9WgXcQ",
+		"https://www.amazon.com/dp/b00btkapuu?ref=t_ac_spc_accepted_tier_1",
+		"https://amazon.co.uk/gp/product/B08WSTTCMG",
+		"https://smile.amazon.de/dp/B0F6ZPJXNQ",
+		"https://amzn.to/3abc",
+		"https://a.co/d/abc123",
 	}
 	noMatch := []string{
 		"https://www.youtube.com/watch?v=dQw4w9WgXcQ",
 		"https://www.youtube.com/channel/UC123",
 		"https://arstechnica.com/article",
+		"https://aws.amazon.com/blogs/security/post",
+		"https://example.com/why-amazon.com-matters",
 		"",
 	}
 	for _, u := range match {

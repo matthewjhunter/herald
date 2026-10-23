@@ -146,6 +146,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Amazon product pages are no longer fetched as full text.** Link-blog
+  affiliate posts point at Amazon listings, which readability extracted as
+  a product description and its reviews and stored as the "full article".
+  Amazon domains and the amzn.to and a.co shorteners join the full-text
+  skip list.
+
 - **AI stages now see the linked body of a link post.** The screen, curation,
   summarization, and batch article lists selected the article without its
   linked_url and linked_content, so every stage judged a link-blog post by
