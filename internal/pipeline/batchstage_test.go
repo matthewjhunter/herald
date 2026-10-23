@@ -654,3 +654,32 @@ func TestBatchPoll_ContentChangedSpendsAttempt(t *testing.T) {
 		t.Fatalf("article still claimable after three in-flight mismatches: %v", ids(left))
 	}
 }
+
+func TestBatchCurate_LinkPostFencedSeparately(t *testing.T) {
+	bs, sub, _, store, feedID := newBatchHarness(t)
+	post := seed(t, store, feedID, "link", `<a href="https://linked.example/story">Heh.</a>`)
+	if err := store.UpdateArticleLinkedContent(post.ID, "https://linked.example/story", "The linked story says things."); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ScreenArticleSecurity(post.ID, 0, "none", false, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := bs.Submit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, reqs := range sub.submits {
+		for _, r := range reqs {
+			if !strings.HasPrefix(r.CustomID, "c-") {
+				continue
+			}
+			found = true
+			if strings.Count(r.User, "\n<untrusted-") != 3 || !strings.Contains(r.User, "linked.example") {
+				t.Fatalf("batch curation request does not fence the linked page apart:\n%s", r.User)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no curation request submitted for the link post")
+	}
+}

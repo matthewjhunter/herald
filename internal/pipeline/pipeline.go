@@ -20,8 +20,8 @@ import (
 // open, instead of attempting (and logging) one blocked call per article.
 type AI interface {
 	SecurityCheck(ctx context.Context, title, content string) (*ai.SecurityResult, error)
-	SummarizeArticle(ctx context.Context, title, content string, maxSummaryLength int) (*ai.ArticleSummaryResult, error)
-	CurateArticle(ctx context.Context, userID int64, title, content string, keywords []string) (*ai.CurationResult, error)
+	SummarizeArticle(ctx context.Context, text ai.ArticleText, maxSummaryLength int) (*ai.ArticleSummaryResult, error)
+	CurateArticle(ctx context.Context, userID int64, text ai.ArticleText, keywords []string) (*ai.CurationResult, error)
 	GenerateGroupSummary(ctx context.Context, userID int64, topic string, articles []ai.GroupSummaryInput) (*ai.GroupSummaryResult, error)
 	RefineGroupTopic(ctx context.Context, userID int64, groupSummary string) (string, error)
 	BackendAvailable() bool
@@ -174,4 +174,22 @@ func proseLength(sanitizedHTML string) int {
 		}
 	}
 	return n
+}
+
+// articleText splits the article the way the curation and summarization
+// prompts fence it: the post's own body (falling back to its RSS summary) and
+// the linked page apart from it, each sanitized as the web view sanitizes it.
+// articleContent, which joins the two, remains what the screen chunks and
+// what the corpus content hash covers.
+func articleText(a storage.Article) ai.ArticleText {
+	content := a.Content
+	if content == "" {
+		content = a.Summary
+	}
+	return ai.ArticleText{
+		Title:         a.Title,
+		Content:       sanitize.HTML(content),
+		LinkedURL:     a.LinkedURL,
+		LinkedContent: sanitize.HTML(a.LinkedContent),
+	}
 }

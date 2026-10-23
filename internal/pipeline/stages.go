@@ -202,7 +202,7 @@ func (s *Stage) summarizeOne(ctx context.Context, article storage.Article) *stor
 	}
 
 	maxLen := s.Cfg.Summarization.MaxSummaryLength
-	result, err := s.AI.SummarizeArticle(ctx, article.Title, content, maxLen)
+	result, err := s.AI.SummarizeArticle(ctx, articleText(article), maxLen)
 	if err != nil {
 		// Transient — leave unsummarized, retry next cycle.
 		s.Formatter.Warning("summarization failed for article %d: %v", article.ID, err)
@@ -281,7 +281,7 @@ func (s *Stage) Curate(ctx context.Context, in []storage.Article) []storage.Arti
 
 func (s *Stage) curateOne(ctx context.Context, article storage.Article, securityScore float64) *storage.Article {
 	content := articleContent(article)
-	curResult, err := s.AI.CurateArticle(ctx, s.UserID, article.Title, content, s.Cfg.Preferences.Keywords)
+	curResult, err := s.AI.CurateArticle(ctx, s.UserID, articleText(article), s.Cfg.Preferences.Keywords)
 	if err != nil {
 		s.Formatter.Warning("curation failed for article %d: %v", article.ID, err)
 		return nil
