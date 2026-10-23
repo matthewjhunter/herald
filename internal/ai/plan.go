@@ -152,8 +152,9 @@ type CurationPlan struct {
 	Keywords string
 }
 
-// CurationPlan renders the curation prompt for an article and user.
-func (p *AIProcessor) CurationPlan(userID int64, title, content string, keywords []string) (*CurationPlan, error) {
+// CurationPlan renders the curation prompt for an article and user. A link
+// post's linked page goes in as its own fenced block.
+func (p *AIProcessor) CurationPlan(userID int64, text ArticleText, keywords []string) (*CurationPlan, error) {
 	keywordStr := "No specific preferences"
 	if len(keywords) > 0 {
 		keywordStr = strings.Join(keywords, ", ")
@@ -164,7 +165,7 @@ func (p *AIProcessor) CurationPlan(userID int64, title, content string, keywords
 		return nil, fmt.Errorf("failed to load curation prompt: %w", err)
 	}
 
-	data, err := fencedArticleData(title, content)
+	data, err := fencedArticleText(text)
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare curation prompt content: %w", err)
 	}

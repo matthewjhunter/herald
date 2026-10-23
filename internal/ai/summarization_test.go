@@ -55,7 +55,7 @@ func TestSummarizeArticle_ReportsProvenance(t *testing.T) {
 		return "  A short summary.  "
 	})
 
-	got, err := p.SummarizeArticle(context.Background(), "Title", "Some article body text long enough to summarize.", 200)
+	got, err := p.SummarizeArticle(context.Background(), ArticleText{Title: "Title", Content: "Some article body text long enough to summarize."}, 200)
 	if err != nil {
 		t.Fatalf("SummarizeArticle: %v", err)
 	}

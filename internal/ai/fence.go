@@ -1,6 +1,8 @@
 package ai
 
 import (
+	"net/url"
+
 	"github.com/matthewjhunter/airlock/wrap"
 )
 
@@ -61,4 +63,52 @@ func fencedArticleData(title, content string) (map[string]any, error) {
 		"Title":   neutralizeFence(title),
 		"Content": neutralizeFence(truncateText(content, maxPromptContentLen)),
 	}, nil
+}
+
+// ArticleText is an article as a stage hands it to a prompt: the post's own
+// body and, apart from it, the page a link post points to when the full-text
+// pass fetched one. The two are fenced separately so the model can tell the
+// poster's words from a page someone else wrote; the web view draws the same
+// line with a rule and a "Full article from" label.
+type ArticleText struct {
+	Title   string
+	Content string
+	// LinkedURL and LinkedContent are the linked page; both empty when there
+	// is none.
+	LinkedURL     string
+	LinkedContent string
+}
+
+// fencedArticleText builds the template data for the curation and
+// summarization prompts: fencedArticleData's keys plus LinkedHost and
+// LinkedContent, which are empty when there is no linked page so a template
+// can test for the block. The linked page gets whatever the post leaves of the
+// shared prompt budget, so a link post's one-line take and the page it points
+// to fit the same prompt a full article does.
+func fencedArticleText(text ArticleText) (map[string]any, error) {
+	data, err := fencedArticleData(text.Title, text.Content)
+	if err != nil {
+		return nil, err
+	}
+	data["LinkedHost"] = ""
+	data["LinkedContent"] = ""
+	if text.LinkedContent == "" {
+		return data, nil
+	}
+	budget := maxPromptContentLen - len(data["Content"].(string))
+	if budget <= 0 {
+		return data, nil
+	}
+	data["LinkedHost"] = neutralizeFence(linkedHost(text.LinkedURL))
+	data["LinkedContent"] = neutralizeFence(truncateText(text.LinkedContent, budget))
+	return data, nil
+}
+
+// linkedHost labels the linked block with where the page came from: the host
+// alone, so the prompt carries a source and not an arbitrary URL.
+func linkedHost(raw string) string {
+	if u, err := url.Parse(raw); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return raw
 }
