@@ -196,8 +196,8 @@ func (p *AIProcessor) assembleSecurityResult(llmThreat float64, category string,
 }
 
 // CurateArticle scores an article for interest/relevance.
-func (p *AIProcessor) CurateArticle(ctx context.Context, userID int64, title, content string, keywords []string) (*CurationResult, error) {
-	plan, err := p.CurationPlan(userID, title, content, keywords)
+func (p *AIProcessor) CurateArticle(ctx context.Context, userID int64, text ArticleText, keywords []string) (*CurationResult, error) {
+	plan, err := p.CurationPlan(userID, text, keywords)
 	if err != nil {
 		return nil, err
 	}
@@ -224,11 +224,17 @@ func (p *AIProcessor) ListModels(ctx context.Context) ([]string, error) {
 // security screen always sees everything those downstream models will see.
 const maxPromptContentLen = 3000
 
+// truncateText cuts text to at most maxLen bytes on a rune boundary, marking
+// the cut, so a multibyte character is never split into invalid UTF-8.
 func truncateText(text string, maxLen int) string {
 	if len(text) <= maxLen {
 		return text
 	}
-	return text[:maxLen] + "..."
+	cut := maxLen
+	for cut > 0 && text[cut]&0xC0 == 0x80 {
+		cut--
+	}
+	return text[:cut] + "..."
 }
 
 // Security screening splits a long article into overlapping windows so the whole

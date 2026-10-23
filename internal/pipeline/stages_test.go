@@ -25,6 +25,8 @@ type fakeAI struct {
 	securityFn  func(title, content string) (*ai.SecurityResult, error)
 	summarizeFn func(title, content string) (string, error)
 	curateFn    func(title, content string) (*ai.CurationResult, error)
+	// texts is every article handed to summarize or curate, in order.
+	texts []ai.ArticleText
 
 	groupSummaryFn func(topic string, articles []ai.GroupSummaryInput) (*ai.GroupSummaryResult, error)
 	refineTopicFn  func(summary string) (string, error)
@@ -63,10 +65,12 @@ func (f *fakeAI) SecurityCheck(_ context.Context, title, content string) (*ai.Se
 	return &ai.SecurityResult{Threat: 1}, nil
 }
 
-func (f *fakeAI) SummarizeArticle(_ context.Context, title, content string, _ int) (*ai.ArticleSummaryResult, error) {
+func (f *fakeAI) SummarizeArticle(_ context.Context, text ai.ArticleText, _ int) (*ai.ArticleSummaryResult, error) {
 	f.mu.Lock()
 	f.sumCalls++
+	f.texts = append(f.texts, text)
 	f.mu.Unlock()
+	title, content := text.Title, text.Content
 	summary := "a fine summary"
 	if f.summarizeFn != nil {
 		var err error
@@ -77,10 +81,12 @@ func (f *fakeAI) SummarizeArticle(_ context.Context, title, content string, _ in
 	return &ai.ArticleSummaryResult{Summary: summary, Model: "fake-model", PromptHash: "fakehash", Duration: 1500 * time.Millisecond, Response: " " + summary + " "}, nil
 }
 
-func (f *fakeAI) CurateArticle(_ context.Context, _ int64, title, content string, _ []string) (*ai.CurationResult, error) {
+func (f *fakeAI) CurateArticle(_ context.Context, _ int64, text ai.ArticleText, _ []string) (*ai.CurationResult, error) {
 	f.mu.Lock()
 	f.curCalls++
+	f.texts = append(f.texts, text)
 	f.mu.Unlock()
+	title, content := text.Title, text.Content
 	if f.curateFn != nil {
 		return f.curateFn(title, content)
 	}
@@ -699,4 +705,36 @@ func parsedAccepted(t *testing.T, o storage.ModelOutput) bool {
 		t.Fatalf("parsed field: %v", err)
 	}
 	return parsed.Accepted
+}
+
+// TestStagesFenceLinkedPageSeparately: the summarize and curate stages hand
+// the model the post's own body and the linked page as separate parts, so
+// the prompt can fence them apart. The joined form stays for the screen.
+func TestStagesFenceLinkedPageSeparately(t *testing.T) {
+	fake := &fakeAI{available: true}
+	st, store, feedID := newHarness(t, fake)
+	a := seed(t, store, feedID, "link", `<a href="https://linked.example/story">Heh.</a>`)
+	linked := strings.Repeat("The linked story goes on at some length. ", 10)
+	if err := store.UpdateArticleLinkedContent(a.ID, "https://linked.example/story", linked); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ScreenArticleSecurity(a.ID, 1, "none", false, false); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	arts, _ := store.GetUnsummarizedScoredArticles(3.0, 10)
+	st.Summarize(ctx, arts)
+	arts, _ = store.GetUnscoredCurationArticles(1, 3.0, 10)
+	st.Curate(ctx, arts)
+	if len(fake.texts) != 2 {
+		t.Fatalf("model calls = %d, want summarize and curate", len(fake.texts))
+	}
+	for _, text := range fake.texts {
+		if text.LinkedURL != "https://linked.example/story" || !strings.Contains(text.LinkedContent, "linked story") {
+			t.Fatalf("linked page not handed over separately: %+v", text)
+		}
+		if strings.Contains(text.Content, "linked story") || !strings.Contains(text.Content, "Heh.") {
+			t.Fatalf("post body must carry only the post: %q", text.Content)
+		}
+	}
 }

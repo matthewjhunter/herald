@@ -20,7 +20,7 @@ type Planner interface {
 	SecurityPlan(title, content string) (*ai.SecurityPlan, error)
 	ParseSecurityFinding(responseText, evidence string) (screen.Finding, error)
 	SecurityVerdict(findings []screen.Finding, screened string) *ai.SecurityResult
-	CurationPlan(userID int64, title, content string, keywords []string) (*ai.CurationPlan, error)
+	CurationPlan(userID int64, text ai.ArticleText, keywords []string) (*ai.CurationPlan, error)
 }
 
 // batchSecurityLeaseSeconds holds a screen claim across a provider batch's
@@ -253,7 +253,7 @@ func (k *CurateKind) Due(_ context.Context, limit int) ([]Subject, error) {
 
 func (k *CurateKind) Build(subject Subject) (Built, error) {
 	a := subject.Articles[0]
-	plan, err := k.Planner.CurationPlan(subject.UserID, a.Title, articleContent(a), k.Stage.Cfg.Preferences.Keywords)
+	plan, err := k.Planner.CurationPlan(subject.UserID, articleText(a), k.Stage.Cfg.Preferences.Keywords)
 	if err != nil {
 		return Built{}, err
 	}

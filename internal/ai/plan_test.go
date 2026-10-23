@@ -149,7 +149,7 @@ func TestSecurityVerdict_WorstChunkWinsAndRegexCorroborates(t *testing.T) {
 
 func TestCurationPlan_CarriesProvenanceAndKeywords(t *testing.T) {
 	p := newPlanner(t, nil)
-	plan, err := p.CurationPlan(7, "Rust 2.0 announced", "The Rust team shipped a new edition.", []string{"rust", "compilers"})
+	plan, err := p.CurationPlan(7, ArticleText{Title: "Rust 2.0 announced", Content: "The Rust team shipped a new edition."}, []string{"rust", "compilers"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestCurationPlan_CarriesProvenanceAndKeywords(t *testing.T) {
 		t.Fatalf("provenance = %q %q %q", plan.Model, plan.PromptHash, plan.Keywords)
 	}
 
-	none, err := p.CurationPlan(7, "T", "C", nil)
+	none, err := p.CurationPlan(7, ArticleText{Title: "T", Content: "C"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

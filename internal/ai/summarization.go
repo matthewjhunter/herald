@@ -28,14 +28,14 @@ type ArticleSummaryResult struct {
 // so it always uses the global summarization prompt/temperature/model (the
 // user_id=0 admin override, then config, then default) — never a per-user
 // prompt.
-func (p *AIProcessor) SummarizeArticle(ctx context.Context, title, content string, maxSummaryLength int) (*ArticleSummaryResult, error) {
+func (p *AIProcessor) SummarizeArticle(ctx context.Context, text ArticleText, maxSummaryLength int) (*ArticleSummaryResult, error) {
 	const globalUser = int64(0)
 	resolved, err := p.promptLoader.Resolve(globalUser, PromptTypeSummarization)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load summarization prompt: %w", err)
 	}
 
-	data, err := fencedArticleData(title, content)
+	data, err := fencedArticleText(text)
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare summarization prompt content: %w", err)
 	}
