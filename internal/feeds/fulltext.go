@@ -16,11 +16,15 @@ import (
 	"golang.org/x/net/html"
 )
 
-// skipFullTextRe matches URLs that readability cannot usefully process.
-// Articles and linked posts matching this pattern are silently skipped
-// rather than logged as failures.
+// skipFullTextRe matches URLs that readability cannot usefully process, or
+// whose page is not an article: video shorts, and Amazon product pages, which
+// link-blog affiliate posts point at and which extract as a product listing
+// and its reviews. Articles and linked posts matching this pattern are
+// silently skipped rather than logged as failures. The Amazon match is
+// anchored at the scheme so a path mentioning amazon.com, or an aws.amazon.com
+// post, is not caught.
 var skipFullTextRe = regexp.MustCompile(
-	`(?i)(youtube\.com/shorts/|youtu\.be/)`,
+	`(?i)(youtube\.com/shorts/|youtu\.be/|://(www\.|smile\.)?amazon\.[a-z.]+/|://amzn\.(to|com)/|://a\.co/)`,
 )
 
 // imageURLRe matches URLs ending in common image file extensions.
