@@ -106,7 +106,7 @@ func (s *Stage) Run(ctx context.Context) error {
 				if !s.Embedder.BackendAvailable() {
 					return nil, nil
 				}
-				return s.Store.GetArticlesWithoutEmbeddings(s.Embedder.Model(), limit)
+				return s.Store.GetArticlesWithoutEmbeddings(s.Embedder.Model(), s.Cfg.Thresholds.MaxSecurityThreat, limit)
 			},
 			func(arts []storage.Article) { s.Embed(ctx, arts) },
 		); err != nil {

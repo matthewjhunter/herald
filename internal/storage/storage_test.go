@@ -1792,6 +1792,7 @@ func TestStoreAndGetArticleEmbeddings(t *testing.T) {
 		FeedID: feedID, GUID: "a2", Title: "Article 2",
 		URL: "https://example.com/2", Content: "Content 2", PublishedDate: &now,
 	})
+	summarized(t, store, artID1, artID2)
 
 	// Initially no embeddings
 	embs, err := store.GetArticleEmbeddings(userID, "nomic-embed-text")
@@ -1821,7 +1822,7 @@ func TestStoreAndGetArticleEmbeddings(t *testing.T) {
 	}
 
 	// GetArticlesWithoutEmbeddings should return article 2
-	missing, err := store.GetArticlesWithoutEmbeddings("nomic-embed-text", 100)
+	missing, err := store.GetArticlesWithoutEmbeddings("nomic-embed-text", 3.0, 100)
 	if err != nil {
 		t.Fatalf("GetArticlesWithoutEmbeddings: %v", err)
 	}
@@ -1833,7 +1834,7 @@ func TestStoreAndGetArticleEmbeddings(t *testing.T) {
 	}
 
 	// Different model should see both as missing
-	missing, err = store.GetArticlesWithoutEmbeddings("other-model", 100)
+	missing, err = store.GetArticlesWithoutEmbeddings("other-model", 3.0, 100)
 	if err != nil {
 		t.Fatalf("GetArticlesWithoutEmbeddings other-model: %v", err)
 	}
@@ -1884,6 +1885,7 @@ func TestEmbeddingStatusLifecycle(t *testing.T) {
 	now := time.Now()
 	addArticle := func(guid string) int64 {
 		id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: guid, Title: guid, URL: "u/" + guid, Content: "x", PublishedDate: &now})
+		summarized(t, store, id)
 		return id
 	}
 	a1 := addArticle("a1") // will get a real embedding
@@ -1908,7 +1910,7 @@ func TestEmbeddingStatusLifecycle(t *testing.T) {
 		t.Fatalf("MarkArticleEmbeddingFailed a3 (1): %v", err)
 	}
 
-	missing, err := store.GetArticlesWithoutEmbeddings(model, 100)
+	missing, err := store.GetArticlesWithoutEmbeddings(model, 3.0, 100)
 	if err != nil {
 		t.Fatalf("GetArticlesWithoutEmbeddings: %v", err)
 	}
@@ -1937,7 +1939,7 @@ func TestEmbeddingStatusLifecycle(t *testing.T) {
 			t.Fatalf("MarkArticleEmbeddingFailed a3 (retry %d): %v", i, err)
 		}
 	}
-	missing, _ = store.GetArticlesWithoutEmbeddings(model, 100)
+	missing, _ = store.GetArticlesWithoutEmbeddings(model, 3.0, 100)
 	for _, a := range missing {
 		if a.ID == a3 {
 			t.Errorf("a3 should be exhausted after %d failures, but is still retry-eligible", EmbedMaxAttempts)
@@ -1948,7 +1950,7 @@ func TestEmbeddingStatusLifecycle(t *testing.T) {
 	if err := storeEmbedding(store, a3, embVec(5, 6, 7, 8), model); err != nil {
 		t.Fatalf("StoreArticleEmbedding a3 (recovery): %v", err)
 	}
-	missing, _ = store.GetArticlesWithoutEmbeddings(model, 100)
+	missing, _ = store.GetArticlesWithoutEmbeddings(model, 3.0, 100)
 	for _, a := range missing {
 		if a.ID == a3 {
 			t.Errorf("a3 should not appear after successful re-embed")
@@ -1967,6 +1969,7 @@ func TestEmbeddingFailedAttemptsIncrement(t *testing.T) {
 	feedID, _ := store.AddFeed("https://example.com/feed", "F", "")
 	now := time.Now()
 	id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "x", Title: "x", URL: "u", Content: "x", PublishedDate: &now})
+	summarized(t, store, id)
 
 	const model = "nomic-embed-text"
 	for i := 1; i <= 3; i++ {
@@ -1977,7 +1980,7 @@ func TestEmbeddingFailedAttemptsIncrement(t *testing.T) {
 
 	// After 3 calls, attempts should be 3 and the row should still be
 	// retry-eligible (3 < EmbedMaxAttempts=5).
-	missing, _ := store.GetArticlesWithoutEmbeddings(model, 100)
+	missing, _ := store.GetArticlesWithoutEmbeddings(model, 3.0, 100)
 	found := false
 	for _, a := range missing {
 		if a.ID == id {
@@ -2004,6 +2007,7 @@ func TestResetStuckEmbeddings(t *testing.T) {
 	now := time.Now()
 	addArticle := func(guid string) int64 {
 		id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: guid, Title: guid, URL: "u/" + guid, Content: "x", PublishedDate: &now})
+		summarized(t, store, id)
 		return id
 	}
 	stuck403 := addArticle("stuck403")     // status=error, attempts=max, "HTTP 403"
@@ -2058,7 +2062,7 @@ func TestResetStuckEmbeddings(t *testing.T) {
 		t.Errorf("expected to reset 1 row (stuck403), got %d", n)
 	}
 
-	missing, _ := store.GetArticlesWithoutEmbeddings(model, 100)
+	missing, _ := store.GetArticlesWithoutEmbeddings(model, 3.0, 100)
 	gotIDs := make(map[int64]bool)
 	for _, a := range missing {
 		gotIDs[a.ID] = true
@@ -2087,7 +2091,7 @@ func TestResetStuckEmbeddings(t *testing.T) {
 	}
 
 	// otherModel should still be stuck under its own model.
-	missingOther, _ := store.GetArticlesWithoutEmbeddings(otherModelName, 100)
+	missingOther, _ := store.GetArticlesWithoutEmbeddings(otherModelName, 3.0, 100)
 	for _, a := range missingOther {
 		if a.ID == otherModel {
 			// Should NOT be eligible — still attempts=max for its own model.
@@ -2113,6 +2117,7 @@ func TestEmbeddingRetryCooldown(t *testing.T) {
 	feedID, _ := store.AddFeed("https://example.com/feed", "F", "")
 	now := time.Now()
 	id, _ := store.AddArticle(&Article{FeedID: feedID, GUID: "x", Title: "x", URL: "u", Content: "x", PublishedDate: &now})
+	summarized(t, store, id)
 
 	const model = "nomic-embed-text"
 	if err := store.MarkArticleEmbeddingFailed(id, model, "transient"); err != nil {
@@ -2120,7 +2125,7 @@ func TestEmbeddingRetryCooldown(t *testing.T) {
 	}
 
 	// Cooldown active: row must NOT be returned even though attempts<5.
-	missing, err := store.GetArticlesWithoutEmbeddings(model, 100)
+	missing, err := store.GetArticlesWithoutEmbeddings(model, 3.0, 100)
 	if err != nil {
 		t.Fatalf("GetArticlesWithoutEmbeddings during cooldown: %v", err)
 	}
@@ -2132,7 +2137,7 @@ func TestEmbeddingRetryCooldown(t *testing.T) {
 
 	// Simulate cooldown elapsed by zeroing it; row should now be eligible.
 	EmbedRetryCooldown = 0
-	missing, err = store.GetArticlesWithoutEmbeddings(model, 100)
+	missing, err = store.GetArticlesWithoutEmbeddings(model, 3.0, 100)
 	if err != nil {
 		t.Fatalf("GetArticlesWithoutEmbeddings after cooldown: %v", err)
 	}
@@ -2402,6 +2407,17 @@ func TestNewsletterCRUD(t *testing.T) {
 // eachStore runs fn against a fresh Postgres-backed store. It predates herald
 // going Postgres-only (it used to fan out across both backends); the signature
 // is kept so its many callers stay unchanged.
+// summarized writes a summary row for each article so it clears the embed
+// queue's gate (the queue waits for the summary stage).
+func summarized(t *testing.T, store Store, ids ...int64) {
+	t.Helper()
+	for _, id := range ids {
+		if err := store.UpdateArticleAISummary(id, "summary of "+fmt.Sprint(id), SummaryProvenance{}); err != nil {
+			t.Fatalf("UpdateArticleAISummary(%d): %v", id, err)
+		}
+	}
+}
+
 func eachStore(t *testing.T, fn func(t *testing.T, store Store)) {
 	t.Helper()
 	store, cleanup := newTestStore(t)

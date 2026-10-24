@@ -2697,15 +2697,19 @@ func (s *PostgresStore) ResetStuckEmbeddings(model, errorPattern string) (int64,
 }
 
 // GetArticlesWithoutEmbeddings returns articles eligible for an embedding
-// pass under the given model. See SQLiteStore for retry-eligibility rules.
-func (s *PostgresStore) GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error) {
+// pass under the given model: no vector yet (or a retryable failure past its
+// cooldown), and summarized, or never going to be -- see the query for the
+// gate. maxSecurityThreat is the summary stage's threshold, so the two agree
+// on which articles a summary will never come for.
+func (s *PostgresStore) GetArticlesWithoutEmbeddings(model string, maxSecurityThreat float64, limit int) ([]Article, error) {
 	cutoff := time.Now().UTC().Add(-EmbedRetryCooldown)
 	rows, err := s.q.GetArticlesWithoutEmbeddings(context.Background(), db.GetArticlesWithoutEmbeddingsParams{
-		EmbeddingModel: model,
-		Status:         int16(EmbedStatusError),
-		MaxAttempts:    EmbedMaxAttempts,
-		Cutoff:         cutoff,
-		Lim:            int32(limit),
+		EmbeddingModel:    model,
+		Status:            int16(EmbedStatusError),
+		MaxAttempts:       EmbedMaxAttempts,
+		Cutoff:            cutoff,
+		MaxSecurityThreat: maxSecurityThreat,
+		Lim:               int32(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("get articles without embeddings: %w", err)
@@ -2715,6 +2719,8 @@ func (s *PostgresStore) GetArticlesWithoutEmbeddings(model string, limit int) ([
 		articles[i] = coreArticle(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate)
 		// Carried so the embed stage can prefix it to every chunk (#286).
 		articles[i].AISummary = r.AiSummary
+		articles[i].LinkedURL = r.LinkedUrl
+		articles[i].LinkedContent = r.LinkedContent
 	}
 	return articles, nil
 }

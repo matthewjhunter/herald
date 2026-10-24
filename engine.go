@@ -675,7 +675,7 @@ func (e *Engine) BackfillEmbeddings(ctx context.Context, batchSize int) (int, er
 		return 0, fmt.Errorf("embedding not configured (no Ollama URL)")
 	}
 	model := e.groupMatcher.Model()
-	articles, err := e.store.GetArticlesWithoutEmbeddings(model, batchSize)
+	articles, err := e.store.GetArticlesWithoutEmbeddings(model, e.config.Thresholds.MaxSecurityThreat, batchSize)
 	if err != nil {
 		return 0, err
 	}

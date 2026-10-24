@@ -83,6 +83,17 @@ func (f *fakeEmbedder) callSizes() []int {
 	return sizes
 }
 
+// summarized writes a summary row so the article clears the embed queue's
+// gate; the queue waits for the summary stage.
+func summarized(t *testing.T, store storage.Store, ids ...int64) {
+	t.Helper()
+	for _, id := range ids {
+		if err := store.UpdateArticleAISummary(id, "summary", storage.SummaryProvenance{}); err != nil {
+			t.Fatalf("UpdateArticleAISummary(%d): %v", id, err)
+		}
+	}
+}
+
 func withEmbedder(st *Stage, emb *fakeEmbedder) {
 	st.Embedder = emb
 	st.BuildEmbedInput = func(a storage.Article) ai.EmbedRequest {
@@ -127,7 +138,7 @@ func TestEmbedStage(t *testing.T) {
 		if len(cohort) != 0 {
 			t.Fatalf("skipped article must not be in cohort, got %v", ids(cohort))
 		}
-		pending, _ := store.GetArticlesWithoutEmbeddings("m", 10)
+		pending, _ := store.GetArticlesWithoutEmbeddings("m", 3.0, 10)
 		if len(pending) != 0 {
 			t.Fatalf("skipped article must not be retried, got %v", ids(pending))
 		}
@@ -220,6 +231,7 @@ func TestEmbedStage(t *testing.T) {
 		emb := &fakeEmbedder{model: "m", unavailable: true}
 		withEmbedder(st, emb)
 		a := seed(t, store, feedID, "a", "body")
+		summarized(t, store, a.ID)
 
 		if out := st.Embed(context.Background(), []storage.Article{a}); len(out) != 0 {
 			t.Fatalf("nothing should advance with the backend down, got %v", ids(out))
@@ -228,7 +240,7 @@ func TestEmbedStage(t *testing.T) {
 			t.Fatalf("stage sent %d request(s) to a backend its breaker reports down", n)
 		}
 		// Nothing was recorded against the article: it is still simply pending.
-		pending, _ := store.GetArticlesWithoutEmbeddings("m", 10)
+		pending, _ := store.GetArticlesWithoutEmbeddings("m", 3.0, 10)
 		if len(pending) != 1 || pending[0].ID != a.ID {
 			t.Fatalf("article should still be pending with no attempt charged, got %v", ids(pending))
 		}
@@ -241,6 +253,7 @@ func TestEmbedStage(t *testing.T) {
 		}}
 		withEmbedder(st, emb)
 		a := seed(t, store, feedID, "a", "body")
+		summarized(t, store, a.ID)
 
 		if out := st.Embed(context.Background(), []storage.Article{a}); len(out) != 0 {
 			t.Fatalf("article should not advance, got %v", ids(out))
@@ -248,7 +261,7 @@ func TestEmbedStage(t *testing.T) {
 		// Contrast with a genuine failure, which writes an error row that sits
 		// inside its retry cooldown and so drops out of the queue: an outage
 		// records nothing, and the article is immediately eligible again.
-		pending, _ := store.GetArticlesWithoutEmbeddings("m", 10)
+		pending, _ := store.GetArticlesWithoutEmbeddings("m", 3.0, 10)
 		if len(pending) != 1 || pending[0].ID != a.ID {
 			t.Fatalf("article should still be pending with no attempt charged, got %v", ids(pending))
 		}
@@ -263,7 +276,9 @@ func TestEmbedStage(t *testing.T) {
 
 		var in []storage.Article
 		for i := range 7 {
-			in = append(in, seed(t, store, feedID, fmt.Sprintf("a%d", i), "body"))
+			a := seed(t, store, feedID, fmt.Sprintf("a%d", i), "body")
+			summarized(t, store, a.ID)
+			in = append(in, a)
 		}
 
 		out := st.Embed(context.Background(), in)
@@ -274,7 +289,7 @@ func TestEmbedStage(t *testing.T) {
 			t.Fatalf("the batch that went through should have advanced 3 articles, got %v", ids(out))
 		}
 		// The four left behind carry no attempt and are still pending.
-		pending, _ := store.GetArticlesWithoutEmbeddings("m", 10)
+		pending, _ := store.GetArticlesWithoutEmbeddings("m", 3.0, 10)
 		if len(pending) != 4 {
 			t.Fatalf("4 undispatched articles should still be pending, got %v", ids(pending))
 		}

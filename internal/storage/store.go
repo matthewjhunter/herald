@@ -340,7 +340,10 @@ type Store interface {
 	MarkArticleEmbeddingFailed(articleID int64, model, errMsg string) error
 	GetArticleEmbeddings(userID int64, model string) ([]ArticleEmbeddingRow, error)
 	SemanticSearch(userID int64, model string, queryVec []float32, maxDist float64, limit int) ([]SemanticHit, error)
-	GetArticlesWithoutEmbeddings(model string, limit int) ([]Article, error)
+	// GetArticlesWithoutEmbeddings is the embed queue: articles under model
+	// with no usable vector that the summary stage has finished with (or will
+	// never reach, judged against maxSecurityThreat).
+	GetArticlesWithoutEmbeddings(model string, maxSecurityThreat float64, limit int) ([]Article, error)
 	ResetAllArticleEmbeddings() (int64, error)
 	ResetAllGroupEmbeddings() (int64, error)
 	ResetStuckEmbeddings(model, errorPattern string) (int64, error)

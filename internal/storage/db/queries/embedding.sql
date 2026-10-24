@@ -55,20 +55,31 @@ WHERE embedding_model = @embedding_model AND status = @status AND attempts >= @m
   AND error_message LIKE @error_pattern::text;
 
 -- name: GetArticlesWithoutEmbeddings :many
--- ai_summary comes along because it is prefixed to every chunk as contextual
--- retrieval (#286): a chunk from the middle of an article carries no clue what
--- the article is about, and herald has already paid for a summary that says so.
--- COALESCE because summarization is a separate stage that may not have run yet
--- (or may have skipped the article); an empty summary just means no context.
+-- The embed queue. An article is eligible once the summary stage has had its
+-- say: ai_summary is prefixed to every chunk as retrieval context (#286), and a
+-- vector built before the summary existed never picks it up, since nothing
+-- re-embeds. So the queue waits for an article_summaries row (a summary or a
+-- recorded skip) the way curation waits for the screen. Articles the summary
+-- stage will never reach still embed, else they would sit in the queue forever:
+-- screened but over the threat threshold (or screened with no score), and
+-- those whose screening attempts are exhausted (GetUnscreenedArticles' cap).
+-- linked_content comes along because the embed input appends the linked page
+-- to the body; a projection without it embeds a link post on its commentary
+-- alone.
 SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
        a.author, a.published_date, a.fetched_date,
+       a.linked_url, a.linked_content,
        COALESCE(s.ai_summary, '') AS ai_summary
 FROM articles a
 LEFT JOIN article_summaries s ON s.article_id = a.id
 LEFT JOIN article_embeddings ae ON a.id = ae.article_id AND ae.embedding_model = @embedding_model
-WHERE ae.article_id IS NULL
+WHERE (ae.article_id IS NULL
    OR (ae.status = @status AND ae.attempts < @max_attempts::int
-       AND (ae.last_attempted_at IS NULL OR ae.last_attempted_at < @cutoff::timestamptz))
+       AND (ae.last_attempted_at IS NULL OR ae.last_attempted_at < @cutoff::timestamptz)))
+  AND (s.article_id IS NOT NULL
+   OR (a.security_screened_at IS NOT NULL
+       AND NOT COALESCE(a.security_threat <= @max_security_threat::double precision, FALSE))
+   OR (a.security_screened_at IS NULL AND a.security_attempts >= 3))
 ORDER BY a.published_date DESC
 LIMIT @lim;
 
