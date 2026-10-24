@@ -46,7 +46,7 @@ All prompts are loaded through the `PromptLoader` (see Prompt System below).
 
 ### GroupMatcher (`internal/ai`)
 
-Embeds article text (title + AI summary) with a local model via `go-embedding`. The match itself -- nearest group centroid within the threshold -- runs as a pgvector distance query in the database (#186), not a cosine loop in the app.
+Embeds each article as a record (feed, author, categories, title, and the article's AI summary as context) over the body in chunks, with a local model via `go-embedding`. The match itself -- nearest group centroid within the threshold -- runs as a pgvector distance query in the database (#186), not a cosine loop in the app.
 
 ### Store (`internal/storage`)
 
@@ -160,7 +160,7 @@ Herald clusters articles covering the same event using vector embeddings rather 
 
 ### Embedding
 
-Article text (title + AI summary) is embedded using a local model via the `go-embedding` library. Embeddings are stored as pgvector `vector` values: `article_embeddings.embedding` per article, and `article_groups.embedding` for each group's centroid.
+Each article is embedded as a record: metadata fields (feed, author, categories, title) plus the body, with a link post's linked page appended, split into chunks that fit the model. The article's AI summary is prefixed to every chunk as retrieval context (#286), so the embed queue (`GetArticlesWithoutEmbeddings`) waits for the summary stage to finish with an article, or to be unable to reach it (over the threat threshold, screening attempts exhausted), before embedding it; nothing re-embeds when a summary arrives later. Embeddings are stored as pgvector `vector` values: one `article_embedding_chunks` row per chunk, `article_embeddings` for the per-article status, and `article_groups.embedding` for each group's centroid.
 
 ### Matching (pgvector ANN)
 

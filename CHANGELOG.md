@@ -146,6 +146,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Embeddings wait for the summary and include the linked page.** The embed
+  queue took an article as soon as it arrived, so under batch screening
+  nearly every vector was built hours before its summary existed and the
+  summary context that is meant to ride on every chunk was empty; nothing
+  re-embeds later. The queue now waits for the summary stage (a summary or a
+  recorded skip), letting through only articles it will never reach. The
+  queue also omitted linked_url and linked_content, so a link post embedded
+  on its commentary alone despite the embed input appending the linked page.
+  Existing vectors are not rebuilt.
+
 - **Amazon product pages are no longer fetched as full text.** Link-blog
   affiliate posts point at Amazon listings, which readability extracted as
   a product description and its reviews and stored as the "full article".
