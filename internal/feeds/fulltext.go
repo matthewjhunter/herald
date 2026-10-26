@@ -13,6 +13,7 @@ import (
 	"time"
 
 	readability "codeberg.org/readeck/go-readability/v2"
+	"github.com/go-shiori/dom"
 	"golang.org/x/net/html"
 )
 
@@ -199,10 +200,11 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 			continue
 		}
 
-		// Only replace content if we got substantially more text than the feed
-		// provided — at least 300 chars more — and it doesn't look like a
-		// contact/sidebar page that readability mistook for the article body.
-		if textLength(full) < textLength(article.Content)+300 {
+		// Only replace content if we got substantially more than the feed
+		// provided -- at least 300 chars more text, or the post's images -- and
+		// it doesn't look like a contact/sidebar page that readability mistook
+		// for the article body.
+		if textLength(full) < textLength(article.Content)+300 && !gainsImages(article.Content, full) {
 			markDone(resultTooShort)
 			continue
 		}
@@ -361,9 +363,14 @@ func extractLinkPostURL(content, articleURL string) string {
 // text. When there is zero overlap, the extraction likely captured a sidebar
 // or other unrelated page region rather than the article body.
 //
+// The syndication footer is left out of the comparison. It repeats the post
+// title, and the title shows up all over a page -- in a comment that quotes
+// it, a related-posts box, a "N thoughts on" heading -- so a match on it says
+// nothing about whether the extraction is the body.
+//
 // Returns true (allows replacement) when feed content is too short to judge.
 func feedContentOverlaps(feedContent, extracted string) bool {
-	feedPlain := strings.ToLower(stripTags(feedContent))
+	feedPlain := strings.ToLower(stripSyndicationFooter(strings.TrimSpace(stripTags(feedContent))))
 	words := strings.Fields(feedPlain)
 	if len(words) < 3 {
 		return true // Not enough feed content to judge
@@ -378,6 +385,50 @@ func feedContentOverlaps(feedContent, extracted string) bool {
 		}
 	}
 	return false
+}
+
+// gainsImages reports whether an extraction is worth taking for its images
+// though it adds little text: a one-line post around a screenshot or two,
+// whose feed item is a teaser with a placeholder thumbnail. The extraction
+// must bring more real images than the feed has and keep at least half the
+// teaser's text, so a stray image block that drops the prose does not qualify.
+// The overlap check still runs afterwards.
+func gainsImages(feedContent, extracted string) bool {
+	if countContentImages(extracted) <= countContentImages(feedContent) {
+		return false
+	}
+	teaser := textLength(stripSyndicationFooter(strings.TrimSpace(stripTags(feedContent))))
+	return 2*textLength(extracted) >= teaser
+}
+
+// countContentImages counts <img> elements whose src is a fetchable http(s)
+// URL. Lazy-load placeholders (a data: URI with the real address in
+// data-src) are not counted: the reader sees a blank pixel.
+func countContentImages(content string) int {
+	doc, err := html.Parse(strings.NewReader(content))
+	if err != nil {
+		return 0
+	}
+	n := 0
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		if node.Type == html.ElementNode && node.Data == "img" {
+			for _, a := range node.Attr {
+				if a.Key == "src" {
+					src := strings.ToLower(strings.TrimSpace(a.Val))
+					if strings.HasPrefix(src, "https://") || strings.HasPrefix(src, "http://") {
+						n++
+					}
+					break
+				}
+			}
+		}
+		for c := node.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	return n
 }
 
 // textLength counts non-whitespace characters outside of HTML tags.
@@ -453,7 +504,16 @@ func fetchReadableContent(ctx context.Context, client *http.Client, articleURL s
 	}
 
 	const maxArticleBytes = 10 << 20 // 10 MB cap for full-text extraction.
-	article, err := readability.FromReader(io.LimitReader(resp.Body, maxArticleBytes), parsedURL)
+	// dom.Parse is what readability.FromReader uses, charset detection
+	// included; parsing here first lets the comment thread go before
+	// readability can score it.
+	doc, err := dom.Parse(io.LimitReader(resp.Body, maxArticleBytes))
+	if err != nil {
+		return "", fmt.Errorf("parse %s: %w", articleURL, err)
+	}
+	stripCommentSections(doc)
+	parser := readability.NewParser()
+	article, err := parser.ParseAndMutate(doc, parsedURL)
 	if err != nil {
 		return "", fmt.Errorf("readability parse: %w", err)
 	}
@@ -469,6 +529,76 @@ func fetchReadableContent(ctx context.Context, client *http.Client, articleURL s
 		return "", fmt.Errorf("readability rendered empty content for %s", articleURL)
 	}
 	return trimSurroundingBoilerplate(buf.String()), nil
+}
+
+// commentSectionIDs and commentSectionClasses name the containers that
+// WordPress themes, wpDiscuz, Jetpack, and Disqus put reader comments and the
+// reply form in. Matching is exact -- an id, or one whole class token -- so a
+// class that merely contains the word ("commentary", "no-comments-yet") is
+// left alone.
+var (
+	commentSectionIDs = map[string]bool{
+		"comments": true, "respond": true, "wpdcom": true,
+		"disqus_thread": true, "comment-section": true, "commentform": true,
+	}
+	commentSectionClasses = map[string]bool{
+		"comments-area": true, "comment-list": true, "commentlist": true,
+		"comment-respond": true, "wpd-thread-list": true, "wpdiscuz-comment-area": true,
+	}
+)
+
+// stripCommentSections removes reader-comment containers from a parsed page
+// before readability scores it.
+//
+// Readability already discounts comment-looking nodes, but only on its first
+// pass. When that pass yields under 500 characters -- a one-line post around
+// a couple of images -- it retries with the filter off, and a thread of ninety
+// comments then outscores the post on text alone. The extraction becomes the
+// thread, and the phrase-overlap check can be satisfied by any commenter who
+// quotes the title. Removing the thread up front leaves the retry nothing to
+// fall back to.
+//
+// The page's structural elements are never removed, even if a theme hangs a
+// comment id on one: losing the article to a misnamed wrapper is worse than
+// keeping a thread.
+func stripCommentSections(doc *html.Node) {
+	var doomed []*html.Node
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && isCommentSection(n) {
+			doomed = append(doomed, n)
+			return // everything inside goes with it
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	for _, n := range doomed {
+		n.Parent.RemoveChild(n)
+	}
+}
+
+func isCommentSection(n *html.Node) bool {
+	switch n.Data {
+	case "html", "head", "body", "main", "article":
+		return false
+	}
+	for _, a := range n.Attr {
+		switch a.Key {
+		case "id":
+			if commentSectionIDs[strings.ToLower(a.Val)] {
+				return true
+			}
+		case "class":
+			for _, c := range strings.Fields(strings.ToLower(a.Val)) {
+				if commentSectionClasses[c] {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // Tags that group other blocks. Only these are candidates for trimming: a

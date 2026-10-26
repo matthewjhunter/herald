@@ -146,6 +146,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Short posts no longer come back as their comment thread.** Readability
+  retries without its comment filter when the first pass finds under 500
+  characters, so a one-line post around a couple of images was stored as
+  its wpDiscuz thread. Comment containers (WordPress, wpDiscuz, Jetpack,
+  Disqus) are now removed before readability sees the page. The overlap
+  check that should have caught it was matching on the post title inside
+  the "appeared first on" footer; the footer is now left out of it. And an
+  extraction that brings the post's images is accepted even when it adds
+  little text, so those images now reach the reader.
+
 - **Amazon product pages are no longer fetched as full text.** Link-blog
   affiliate posts point at Amazon listings, which readability extracted as
   a product description and its reviews and stored as the "full article".
