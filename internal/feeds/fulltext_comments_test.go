@@ -80,6 +80,11 @@ func shortPostWithCommentsHTML() string {
 </body></html>`
 }
 
+// shortPostFeedContent is what the feed carried for the post: a teaser with a
+// lazy-load placeholder thumbnail and the Yoast footer, which repeats the title.
+const shortPostFeedContent = `<p><img width="150" height="150" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" data-src="https://example.com/uploads/truth-post-150x150.jpg" />Not sure how this works, but it's likely details will follow: [SOURCE] Posted in Donald Trump, Voter Fraud</p>
+<p>The post <a rel="nofollow" href="https://example.com/post/">Interesting - Reward for Identifying Voter Fraud</a> appeared first on <a rel="nofollow" href="https://example.com">The Last Refuge</a>.</p>`
+
 func TestFetchReadableContent_ExcludesCommentThread(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -164,5 +169,19 @@ func TestStripCommentSections(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestFeedContentOverlaps_IgnoresSyndicationFooter covers the false match that
+// let a comment thread through: the Yoast footer repeats the post title, and a
+// comment quoting the title then "overlapped" the feed.
+func TestFeedContentOverlaps_IgnoresSyndicationFooter(t *testing.T) {
+	extracted := `<div><p>Reader 7</p><p>Great news about identifying voter fraud, finally.</p></div>`
+	if feedContentOverlaps(shortPostFeedContent, extracted) {
+		t.Error("a match on the footer's copy of the title should not count as overlap")
+	}
+	body := `<div><p>Not sure how this works, but it's likely details will follow:</p></div>`
+	if !feedContentOverlaps(shortPostFeedContent, body) {
+		t.Error("a match on the teaser text should still count as overlap")
 	}
 }

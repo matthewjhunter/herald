@@ -362,9 +362,14 @@ func extractLinkPostURL(content, articleURL string) string {
 // text. When there is zero overlap, the extraction likely captured a sidebar
 // or other unrelated page region rather than the article body.
 //
+// The syndication footer is left out of the comparison. It repeats the post
+// title, and the title shows up all over a page -- in a comment that quotes
+// it, a related-posts box, a "N thoughts on" heading -- so a match on it says
+// nothing about whether the extraction is the body.
+//
 // Returns true (allows replacement) when feed content is too short to judge.
 func feedContentOverlaps(feedContent, extracted string) bool {
-	feedPlain := strings.ToLower(stripTags(feedContent))
+	feedPlain := strings.ToLower(stripSyndicationFooter(strings.TrimSpace(stripTags(feedContent))))
 	words := strings.Fields(feedPlain)
 	if len(words) < 3 {
 		return true // Not enough feed content to judge
