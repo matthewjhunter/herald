@@ -13,6 +13,7 @@ import (
 	"time"
 
 	readability "codeberg.org/readeck/go-readability/v2"
+	"github.com/go-shiori/dom"
 	"golang.org/x/net/html"
 )
 
@@ -453,7 +454,16 @@ func fetchReadableContent(ctx context.Context, client *http.Client, articleURL s
 	}
 
 	const maxArticleBytes = 10 << 20 // 10 MB cap for full-text extraction.
-	article, err := readability.FromReader(io.LimitReader(resp.Body, maxArticleBytes), parsedURL)
+	// dom.Parse is what readability.FromReader uses, charset detection
+	// included; parsing here first lets the comment thread go before
+	// readability can score it.
+	doc, err := dom.Parse(io.LimitReader(resp.Body, maxArticleBytes))
+	if err != nil {
+		return "", fmt.Errorf("parse %s: %w", articleURL, err)
+	}
+	stripCommentSections(doc)
+	parser := readability.NewParser()
+	article, err := parser.ParseAndMutate(doc, parsedURL)
 	if err != nil {
 		return "", fmt.Errorf("readability parse: %w", err)
 	}
@@ -469,6 +479,76 @@ func fetchReadableContent(ctx context.Context, client *http.Client, articleURL s
 		return "", fmt.Errorf("readability rendered empty content for %s", articleURL)
 	}
 	return trimSurroundingBoilerplate(buf.String()), nil
+}
+
+// commentSectionIDs and commentSectionClasses name the containers that
+// WordPress themes, wpDiscuz, Jetpack, and Disqus put reader comments and the
+// reply form in. Matching is exact -- an id, or one whole class token -- so a
+// class that merely contains the word ("commentary", "no-comments-yet") is
+// left alone.
+var (
+	commentSectionIDs = map[string]bool{
+		"comments": true, "respond": true, "wpdcom": true,
+		"disqus_thread": true, "comment-section": true, "commentform": true,
+	}
+	commentSectionClasses = map[string]bool{
+		"comments-area": true, "comment-list": true, "commentlist": true,
+		"comment-respond": true, "wpd-thread-list": true, "wpdiscuz-comment-area": true,
+	}
+)
+
+// stripCommentSections removes reader-comment containers from a parsed page
+// before readability scores it.
+//
+// Readability already discounts comment-looking nodes, but only on its first
+// pass. When that pass yields under 500 characters -- a one-line post around
+// a couple of images -- it retries with the filter off, and a thread of ninety
+// comments then outscores the post on text alone. The extraction becomes the
+// thread, and the phrase-overlap check can be satisfied by any commenter who
+// quotes the title. Removing the thread up front leaves the retry nothing to
+// fall back to.
+//
+// The page's structural elements are never removed, even if a theme hangs a
+// comment id on one: losing the article to a misnamed wrapper is worse than
+// keeping a thread.
+func stripCommentSections(doc *html.Node) {
+	var doomed []*html.Node
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && isCommentSection(n) {
+			doomed = append(doomed, n)
+			return // everything inside goes with it
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	for _, n := range doomed {
+		n.Parent.RemoveChild(n)
+	}
+}
+
+func isCommentSection(n *html.Node) bool {
+	switch n.Data {
+	case "html", "head", "body", "main", "article":
+		return false
+	}
+	for _, a := range n.Attr {
+		switch a.Key {
+		case "id":
+			if commentSectionIDs[strings.ToLower(a.Val)] {
+				return true
+			}
+		case "class":
+			for _, c := range strings.Fields(strings.ToLower(a.Val)) {
+				if commentSectionClasses[c] {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // Tags that group other blocks. Only these are candidates for trimming: a
