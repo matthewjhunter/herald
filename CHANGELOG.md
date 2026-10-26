@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Go 1.26.10.** go.mod now requires Go 1.26.10, which CI and release
+  builds follow, picking up the standard library fixes for GO-2026-6809
+  (crypto/x509 distrust of compromised intermediates) and GO-2026-6617
+  (net/http HTTP/2 HPACK encoder race).
+
 ### Changed
 
 - **A link post's linked page is fenced apart from the post.** The curation
