@@ -200,10 +200,11 @@ func (f *Fetcher) FetchFullTextForArticles(ctx context.Context) (int, error) {
 			continue
 		}
 
-		// Only replace content if we got substantially more text than the feed
-		// provided — at least 300 chars more — and it doesn't look like a
-		// contact/sidebar page that readability mistook for the article body.
-		if textLength(full) < textLength(article.Content)+300 {
+		// Only replace content if we got substantially more than the feed
+		// provided -- at least 300 chars more text, or the post's images -- and
+		// it doesn't look like a contact/sidebar page that readability mistook
+		// for the article body.
+		if textLength(full) < textLength(article.Content)+300 && !gainsImages(article.Content, full) {
 			markDone(resultTooShort)
 			continue
 		}
@@ -384,6 +385,50 @@ func feedContentOverlaps(feedContent, extracted string) bool {
 		}
 	}
 	return false
+}
+
+// gainsImages reports whether an extraction is worth taking for its images
+// though it adds little text: a one-line post around a screenshot or two,
+// whose feed item is a teaser with a placeholder thumbnail. The extraction
+// must bring more real images than the feed has and keep at least half the
+// teaser's text, so a stray image block that drops the prose does not qualify.
+// The overlap check still runs afterwards.
+func gainsImages(feedContent, extracted string) bool {
+	if countContentImages(extracted) <= countContentImages(feedContent) {
+		return false
+	}
+	teaser := textLength(stripSyndicationFooter(strings.TrimSpace(stripTags(feedContent))))
+	return 2*textLength(extracted) >= teaser
+}
+
+// countContentImages counts <img> elements whose src is a fetchable http(s)
+// URL. Lazy-load placeholders (a data: URI with the real address in
+// data-src) are not counted: the reader sees a blank pixel.
+func countContentImages(content string) int {
+	doc, err := html.Parse(strings.NewReader(content))
+	if err != nil {
+		return 0
+	}
+	n := 0
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		if node.Type == html.ElementNode && node.Data == "img" {
+			for _, a := range node.Attr {
+				if a.Key == "src" {
+					src := strings.ToLower(strings.TrimSpace(a.Val))
+					if strings.HasPrefix(src, "https://") || strings.HasPrefix(src, "http://") {
+						n++
+					}
+					break
+				}
+			}
+		}
+		for c := node.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	return n
 }
 
 // textLength counts non-whitespace characters outside of HTML tags.

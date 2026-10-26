@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/matthewjhunter/herald/internal/storage"
 	"golang.org/x/net/html"
 )
 
@@ -184,4 +185,103 @@ func TestFeedContentOverlaps_IgnoresSyndicationFooter(t *testing.T) {
 	if !feedContentOverlaps(shortPostFeedContent, body) {
 		t.Error("a match on the teaser text should still count as overlap")
 	}
+}
+
+func TestFetchFullTextForArticles_ShortPostGainsImages(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, shortPostWithCommentsHTML())
+	}))
+	defer srv.Close()
+
+	store := newFullTextTestStore(t)
+	feedID, _ := store.AddFeed(srv.URL, "Short Post Feed", "")
+	pub := time.Now()
+	articleID, err := store.AddArticle(&storage.Article{
+		FeedID:        feedID,
+		GUID:          "short-post-images",
+		Title:         "Interesting - Reward for Identifying Voter Fraud",
+		URL:           srv.URL,
+		Content:       sameHost(shortPostFeedContent, srv.URL),
+		PublishedDate: &pub,
+	})
+	if err != nil {
+		t.Fatalf("AddArticle: %v", err)
+	}
+
+	n, err := NewFetcher(store).FetchFullTextForArticles(context.Background())
+	if err != nil {
+		t.Fatalf("FetchFullTextForArticles: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected the image-bearing extraction to replace the teaser, got %d updates", n)
+	}
+	got, err := store.GetArticle(articleID)
+	if err != nil {
+		t.Fatalf("GetArticle: %v", err)
+	}
+	for _, want := range []string{"Not sure how this works", "truth-post.jpg", "waving-1024x596.png"} {
+		if !strings.Contains(got.Content, want) {
+			t.Errorf("stored content missing %q:\n%s", want, got.Content)
+		}
+	}
+	if strings.Contains(got.Content, "Commenter number") {
+		t.Error("comment thread stored as article content")
+	}
+}
+
+// A short extraction that adds no images is still not worth the swap: the
+// image allowance must not reopen the door the length gate closes.
+func TestFetchFullTextForArticles_ShortExtractionWithoutImagesRejected(t *testing.T) {
+	page := `<!DOCTYPE html><html><body><article><div class="post-content">
+<p>Not sure how this works, but it's likely details will follow:</p>
+<p>[<a href="https://truthsocial.example/post/1">SOURCE</a>]</p>
+</div></article></body></html>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, page)
+	}))
+	defer srv.Close()
+
+	store := newFullTextTestStore(t)
+	feedID, _ := store.AddFeed(srv.URL, "Short Post Feed", "")
+	pub := time.Now()
+	if _, err := store.AddArticle(&storage.Article{
+		FeedID: feedID, GUID: "short-no-images", Title: "t", URL: srv.URL,
+		Content: sameHost(shortPostFeedContent, srv.URL), PublishedDate: &pub,
+	}); err != nil {
+		t.Fatalf("AddArticle: %v", err)
+	}
+	n, err := NewFetcher(store).FetchFullTextForArticles(context.Background())
+	if err != nil {
+		t.Fatalf("FetchFullTextForArticles: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected no replacement for a text-only extraction no longer than the feed, got %d", n)
+	}
+}
+
+func TestCountContentImages(t *testing.T) {
+	tests := []struct {
+		html string
+		want int
+	}{
+		{`<p>no images</p>`, 0},
+		{`<img src="https://example.com/a.jpg"><img src="http://example.com/b.png">`, 2},
+		{`<img src="data:image/gif;base64,R0lGOD" data-src="https://example.com/a.jpg">`, 0},
+		{`<img alt="no src">`, 0},
+		{`<IMG SRC="https://example.com/a.jpg">`, 1},
+	}
+	for _, tt := range tests {
+		if got := countContentImages(tt.html); got != tt.want {
+			t.Errorf("countContentImages(%q) = %d, want %d", tt.html, got, tt.want)
+		}
+	}
+}
+
+// sameHost points the feed item's links at the test server, as a real
+// WordPress footer links back to its own site. Left on another host, the short
+// teaser reads as a link-blog post and takes the linked-article path instead.
+func sameHost(content, base string) string {
+	return strings.ReplaceAll(content, "https://example.com", base)
 }
