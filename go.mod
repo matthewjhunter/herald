@@ -1,6 +1,6 @@
 module github.com/matthewjhunter/herald
 
-go 1.26.6
+go 1.26.10
 
 require (
 	codeberg.org/readeck/go-readability/v2 v2.1.3
