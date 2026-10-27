@@ -153,6 +153,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The full-text queue query no longer scans the articles table.** A
+  partial index on pending rows (migration 0022) serves the per-cycle
+  poll for articles awaiting a full-text fetch, which prod logged as a
+  slow query (#342).
+
 - **Short posts no longer come back as their comment thread.** Readability
   retries without its comment filter when the first pass finds under 500
   characters, so a one-line post around a couple of images was stored as
