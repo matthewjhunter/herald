@@ -1858,9 +1858,12 @@ func (h *handlers) handleArticleImage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", img.MimeType)
-	w.Header().Set("Cache-Control", "public, max-age=2592000") // 30 days
-	w.Write(img.Data)                                          //nolint:errcheck
+	if !servableImageType(img.MimeType) {
+		h.logger.Warn("refusing to serve cached image with non-image type", "image", imageID, "mime", img.MimeType)
+		http.NotFound(w, r)
+		return
+	}
+	writeCachedImage(w, img.MimeType, img.Data, "public, max-age=2592000") // 30 days
 }
 
 // handleFeedFavicon serves the cached favicon for a feed as an image.
@@ -1876,9 +1879,12 @@ func (h *handlers) handleFeedFavicon(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", fav.MimeType)
-	w.Header().Set("Cache-Control", "public, max-age=604800") // 7 days
-	w.Write(fav.Data)                                         //nolint:errcheck
+	if !servableImageType(fav.MimeType) {
+		h.logger.Warn("refusing to serve cached favicon with non-image type", "feed", feedID, "mime", fav.MimeType)
+		http.NotFound(w, r)
+		return
+	}
+	writeCachedImage(w, fav.MimeType, fav.Data, "public, max-age=604800") // 7 days
 }
 
 func (h *handlers) handleOPMLImport(w http.ResponseWriter, r *http.Request) {
