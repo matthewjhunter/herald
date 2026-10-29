@@ -5,11 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"image"
-	"image/color"
-	"image/draw"
-	"image/jpeg"
-	"image/png"
 	"io"
 	"net/http"
 	"net/url"
@@ -22,7 +17,7 @@ import (
 const maxFaviconBytes = 256 * 1024 // 256 KB
 
 // maxFaviconDim is the maximum width or height of a stored favicon.
-// Images larger than this are resized (nearest-neighbour) before storing.
+// Images larger than this are scaled down before storing (ICO is stored as-is).
 const maxFaviconDim = 64
 
 // FetchFaviconsForFeeds fetches and caches favicons for all subscribed feeds
@@ -83,11 +78,11 @@ func (e *faviconHTTPError) Error() string {
 var errEmptyFavicon = errors.New("empty favicon")
 
 // classifyFaviconFailure labels a favicon fetch error "permanent" (won't change
-// on retry: 404/403/410/451/401 or an empty body) or "transient" (5xx,
-// timeouts, network/DNS errors, parse failures) so the negative cache can pick
-// a backoff window.
+// on retry: 404/403/410/451/401, an empty body, or a body that is not a
+// supported image) or "transient" (5xx, timeouts, network/DNS errors, parse
+// failures) so the negative cache can pick a backoff window.
 func classifyFaviconFailure(err error) string {
-	if errors.Is(err, errEmptyFavicon) {
+	if errors.Is(err, errEmptyFavicon) || errors.Is(err, errUnsupportedImage) {
 		return "permanent"
 	}
 	var he *faviconHTTPError
@@ -109,8 +104,8 @@ func classifyFaviconFailure(err error) string {
 //  3. If found, fetch that URL.
 //  4. If not found or the fetch fails, fall back to scheme://host/favicon.ico.
 //
-// The returned data is either a resized PNG (for decodable PNG/JPEG sources)
-// or the raw bytes for formats we can't decode (ICO, GIF, etc.).
+// The returned data is a re-encoded raster scaled to fit maxFaviconDim, or a
+// raw ICO (see safeFavicon).
 func fetchFavicon(ctx context.Context, client *http.Client, feedURL string) ([]byte, string, error) {
 	parsed, err := url.Parse(feedURL)
 	if err != nil || parsed.Host == "" {
@@ -199,9 +194,10 @@ func extractIconHref(body []byte, base *url.URL) string {
 	return found
 }
 
-// fetchAndNormalize fetches iconURL and returns (data, mimeType).
-// PNG and JPEG images are decoded, resized if needed, and re-encoded as PNG.
-// Other formats (ICO, GIF, SVG) are stored as raw bytes up to maxFaviconBytes.
+// fetchAndNormalize fetches iconURL and returns (data, mimeType) in a form
+// that is safe to serve from herald's origin (see safeFavicon). Anything that is
+// not an ICO, PNG, JPEG, GIF, or WebP image is refused, whatever its
+// Content-Type says.
 func fetchAndNormalize(ctx context.Context, client *http.Client, iconURL string) ([]byte, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, iconURL, nil)
 	if err != nil {
@@ -219,103 +215,20 @@ func fetchAndNormalize(ctx context.Context, client *http.Client, iconURL string)
 		return nil, "", &faviconHTTPError{status: resp.StatusCode, url: iconURL}
 	}
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFaviconBytes))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFaviconBytes+1))
 	if err != nil {
 		return nil, "", fmt.Errorf("read favicon: %w", err)
 	}
 	if len(data) == 0 {
 		return nil, "", fmt.Errorf("%w at %s", errEmptyFavicon, iconURL)
 	}
-
-	ct := strings.ToLower(resp.Header.Get("Content-Type"))
-	// Normalize Content-Type; some servers send "image/x-icon" for ICO.
-	switch {
-	case strings.Contains(ct, "png"):
-		ct = "image/png"
-	case strings.Contains(ct, "jpeg") || strings.Contains(ct, "jpg"):
-		ct = "image/jpeg"
+	if len(data) > maxFaviconBytes {
+		return nil, "", fmt.Errorf("favicon at %s exceeds %d byte limit", iconURL, maxFaviconBytes)
 	}
 
-	// For PNG and JPEG we can decode, resize if needed, and re-encode as PNG.
-	if ct == "image/png" || ct == "image/jpeg" {
-		if normalized, err := normalizeFavicon(data); err == nil {
-			return normalized, "image/png", nil
-		}
-		// Fall through to raw storage if decode/encode fails.
-	}
-
-	// Fallback: store raw bytes with sniffed MIME type.
-	if ct == "" || ct == "application/octet-stream" {
-		ct = http.DetectContentType(data)
-	}
-	return data, ct, nil
-}
-
-// normalizeFavicon decodes img data, resizes to maxFaviconDim if needed,
-// and returns PNG-encoded bytes.
-func normalizeFavicon(data []byte) ([]byte, error) {
-	src, _, err := image.Decode(bytes.NewReader(data))
+	img, err := safeFavicon(data)
 	if err != nil {
-		return nil, err
+		return nil, "", fmt.Errorf("favicon at %s: %w", iconURL, err)
 	}
-
-	b := src.Bounds()
-	w, h := b.Dx(), b.Dy()
-	if w <= maxFaviconDim && h <= maxFaviconDim {
-		// Already small enough — just re-encode as PNG.
-		var buf bytes.Buffer
-		if err := png.Encode(&buf, src); err != nil {
-			return nil, err
-		}
-		return buf.Bytes(), nil
-	}
-
-	// Scale down proportionally.
-	if w > h {
-		h = h * maxFaviconDim / w
-		w = maxFaviconDim
-	} else {
-		w = w * maxFaviconDim / h
-		h = maxFaviconDim
-	}
-	if w < 1 {
-		w = 1
-	}
-	if h < 1 {
-		h = 1
-	}
-
-	dst := image.NewRGBA(image.Rect(0, 0, w, h))
-	draw.Draw(dst, dst.Bounds(), nearestNeighbourScaled{src, b, w, h}, image.Point{}, draw.Src)
-
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, dst); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+	return img.Data, img.MimeType, nil
 }
-
-// nearestNeighbourScaled implements image.Image by mapping destination
-// pixels back to the source using nearest-neighbour interpolation.
-type nearestNeighbourScaled struct {
-	src        image.Image
-	srcBounds  image.Rectangle
-	dstW, dstH int
-}
-
-func (n nearestNeighbourScaled) ColorModel() color.Model {
-	return n.src.ColorModel()
-}
-
-func (n nearestNeighbourScaled) Bounds() image.Rectangle {
-	return image.Rect(0, 0, n.dstW, n.dstH)
-}
-
-func (n nearestNeighbourScaled) At(x, y int) color.Color {
-	srcX := x * n.srcBounds.Dx() / n.dstW
-	srcY := y * n.srcBounds.Dy() / n.dstH
-	return n.src.At(n.srcBounds.Min.X+srcX, n.srcBounds.Min.Y+srcY)
-}
-
-// jpeg import used for image.Decode side-effect registration.
-var _ = jpeg.Decode

@@ -33,6 +33,7 @@ func TestClassifyFaviconFailure(t *testing.T) {
 		{"empty", fmt.Errorf("%w at https://x/favicon.ico", errEmptyFavicon), "permanent"},
 		{"wrapped-404", fmt.Errorf("fetch: %w", &faviconHTTPError{status: 404}), "permanent"},
 		{"network", fmt.Errorf("dial tcp: i/o timeout"), "transient"},
+		{"not an image", fmt.Errorf("favicon: %w", errUnsupportedImage), "permanent"},
 	}
 	for _, c := range cases {
 		if got := classifyFaviconFailure(c.err); got != c.want {
@@ -92,60 +93,6 @@ func TestExtractIconHref_IgnoresBodyLinks(t *testing.T) {
 	}
 }
 
-// --- normalizeFavicon tests ---
-
-func TestNormalizeFavicon_SmallPNG(t *testing.T) {
-	// A 16x16 PNG should be stored as-is (re-encoded as PNG).
-	data := makePNG(t, 16, 16)
-	out, err := normalizeFavicon(data)
-	if err != nil {
-		t.Fatalf("normalizeFavicon: %v", err)
-	}
-	img, err := png.Decode(bytes.NewReader(out))
-	if err != nil {
-		t.Fatalf("output is not valid PNG: %v", err)
-	}
-	if img.Bounds().Dx() != 16 || img.Bounds().Dy() != 16 {
-		t.Errorf("expected 16x16, got %dx%d", img.Bounds().Dx(), img.Bounds().Dy())
-	}
-}
-
-func TestNormalizeFavicon_LargePNG(t *testing.T) {
-	// A 512x512 PNG should be resized to 64x64.
-	data := makePNG(t, 512, 512)
-	out, err := normalizeFavicon(data)
-	if err != nil {
-		t.Fatalf("normalizeFavicon: %v", err)
-	}
-	img, err := png.Decode(bytes.NewReader(out))
-	if err != nil {
-		t.Fatalf("output is not valid PNG: %v", err)
-	}
-	if img.Bounds().Dx() > maxFaviconDim || img.Bounds().Dy() > maxFaviconDim {
-		t.Errorf("expected max %d, got %dx%d", maxFaviconDim, img.Bounds().Dx(), img.Bounds().Dy())
-	}
-}
-
-func TestNormalizeFavicon_NonSquare(t *testing.T) {
-	// 128x32 → should fit within 64x64 preserving aspect ratio.
-	data := makePNG(t, 128, 32)
-	out, err := normalizeFavicon(data)
-	if err != nil {
-		t.Fatalf("normalizeFavicon: %v", err)
-	}
-	img, _ := png.Decode(bytes.NewReader(out))
-	if img.Bounds().Dx() > maxFaviconDim || img.Bounds().Dy() > maxFaviconDim {
-		t.Errorf("dimension exceeded maxFaviconDim: %dx%d", img.Bounds().Dx(), img.Bounds().Dy())
-	}
-}
-
-func TestNormalizeFavicon_InvalidData(t *testing.T) {
-	_, err := normalizeFavicon([]byte("not an image"))
-	if err == nil {
-		t.Error("expected error for invalid image data")
-	}
-}
-
 // --- fetchFavicon integration tests ---
 
 func TestFetchFavicon_UsesIconLink(t *testing.T) {
@@ -169,8 +116,8 @@ func TestFetchFavicon_UsesIconLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchFavicon: %v", err)
 	}
-	if mime != "image/png" {
-		t.Errorf("mime=%q, want image/png", mime)
+	if mime != "image/webp" {
+		t.Errorf("mime=%q, want image/webp", mime)
 	}
 	if len(data) == 0 {
 		t.Error("expected non-empty data")
@@ -217,6 +164,40 @@ func TestFetchFavicon_404(t *testing.T) {
 	}
 }
 
+// A site whose icon link points at HTML or SVG gets no favicon, and the
+// failure is permanent so it is not re-fetched every cycle (#344).
+func TestFetchFavicon_RejectsNonImages(t *testing.T) {
+	for name, tc := range map[string]struct{ contentType, body string }{
+		"html": {"text/html", htmlWithScript},
+		"svg":  {"image/svg+xml", svgWithScript},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/":
+					w.Header().Set("Content-Type", "text/html")
+					fmt.Fprint(w, `<html><head><link rel="icon" href="/icon"></head></html>`)
+				case "/icon":
+					w.Header().Set("Content-Type", tc.contentType)
+					fmt.Fprint(w, tc.body)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+
+			client := &http.Client{Timeout: 5 * time.Second}
+			_, mime, err := fetchFavicon(context.Background(), client, srv.URL+"/feed.xml")
+			if err == nil {
+				t.Fatalf("stored favicon as %q, want rejection", mime)
+			}
+			if kind := classifyFaviconFailure(err); kind != "permanent" {
+				t.Errorf("failure kind = %q, want permanent", kind)
+			}
+		})
+	}
+}
+
 // --- FetchFaviconsForFeeds integration ---
 
 func TestFetchFaviconsForFeeds(t *testing.T) {
@@ -255,8 +236,8 @@ func TestFetchFaviconsForFeeds(t *testing.T) {
 	if fav == nil {
 		t.Fatal("expected favicon to be stored")
 	}
-	if fav.MimeType != "image/png" {
-		t.Errorf("mime=%q, want image/png", fav.MimeType)
+	if fav.MimeType != "image/webp" {
+		t.Errorf("mime=%q, want image/webp", fav.MimeType)
 	}
 }
 
