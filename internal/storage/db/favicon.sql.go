@@ -19,35 +19,6 @@ func (q *Queries) ClearFaviconFailure(ctx context.Context, feedID int64) error {
 	return err
 }
 
-const getAllFeedFavicons = `-- name: GetAllFeedFavicons :many
-SELECT feed_id, data, mime_type, fetched_at FROM feed_favicons
-`
-
-func (q *Queries) GetAllFeedFavicons(ctx context.Context) ([]FeedFavicon, error) {
-	rows, err := q.db.Query(ctx, getAllFeedFavicons)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []FeedFavicon{}
-	for rows.Next() {
-		var i FeedFavicon
-		if err := rows.Scan(
-			&i.FeedID,
-			&i.Data,
-			&i.MimeType,
-			&i.FetchedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getFeedFavicon = `-- name: GetFeedFavicon :one
 SELECT feed_id, data, mime_type, fetched_at FROM feed_favicons WHERE feed_id = $1
 `
@@ -107,6 +78,40 @@ func (q *Queries) GetSubscribedFeedsWithoutFavicons(ctx context.Context) ([]Feed
 			&i.Status,
 			&i.FaviconFailedAt,
 			&i.FaviconFailKind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getUserFeedFavicons = `-- name: GetUserFeedFavicons :many
+SELECT ff.feed_id, ff.data, ff.mime_type, ff.fetched_at FROM feed_favicons ff
+JOIN user_feeds uf ON uf.feed_id = ff.feed_id
+WHERE uf.user_id = $1
+ORDER BY ff.feed_id
+`
+
+// Favicons for the feeds a user subscribes to. Scoped so a Fever client
+// cannot learn which feeds other users follow (#347).
+func (q *Queries) GetUserFeedFavicons(ctx context.Context, userID int64) ([]FeedFavicon, error) {
+	rows, err := q.db.Query(ctx, getUserFeedFavicons, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FeedFavicon{}
+	for rows.Next() {
+		var i FeedFavicon
+		if err := rows.Scan(
+			&i.FeedID,
+			&i.Data,
+			&i.MimeType,
+			&i.FetchedAt,
 		); err != nil {
 			return nil, err
 		}

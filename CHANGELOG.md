@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other stored type, and image responses carry a sandboxing CSP of their
   own. Migration 0023 deletes the rows the old code left behind. SVG images
   are no longer cached, so they do not display.
+- **Fever `&favicons` no longer leaks other users' feeds (#347).** The
+  response carried the favicon of every feed in the database, keyed by feed
+  ID; it now covers only the requesting user's subscriptions.
 - **Go 1.26.10.** go.mod now requires Go 1.26.10, which CI and release
   builds follow, picking up the standard library fixes for GO-2026-6809
   (crypto/x509 distrust of compromised intermediates) and GO-2026-6617

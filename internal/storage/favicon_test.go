@@ -85,3 +85,41 @@ func TestFaviconFailureBackoff(t *testing.T) {
 		}
 	})
 }
+
+// TestGetUserFeedFavicons covers #347: the Fever &favicons response must only
+// carry favicons for feeds the requesting user subscribes to, or it reveals
+// what other users follow.
+func TestGetUserFeedFavicons(t *testing.T) {
+	eachStore(t, func(t *testing.T, store Store) {
+		alice, _ := store.CreateUser("alice")
+		bob, _ := store.CreateUser("bob")
+		shared, _ := store.AddFeed("https://shared.example/feed", "Shared", "")
+		aliceOnly, _ := store.AddFeed("https://alice.example/feed", "Alice", "")
+		bobOnly, _ := store.AddFeed("https://bob.example/feed", "Bob", "")
+		for _, s := range []struct{ user, feed int64 }{{alice, shared}, {alice, aliceOnly}, {bob, shared}, {bob, bobOnly}} {
+			if err := store.SubscribeUserToFeed(s.user, s.feed); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, f := range []int64{shared, aliceOnly, bobOnly} {
+			if err := store.StoreFeedFavicon(f, []byte{0x89, 'P', 'N', 'G'}, "image/png"); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		got, err := store.GetUserFeedFavicons(alice)
+		if err != nil {
+			t.Fatalf("GetUserFeedFavicons: %v", err)
+		}
+		ids := map[int64]bool{}
+		for _, f := range got {
+			ids[f.FeedID] = true
+		}
+		if len(got) != 2 || !ids[shared] || !ids[aliceOnly] {
+			t.Errorf("alice got favicons for feeds %v, want exactly %d and %d", ids, shared, aliceOnly)
+		}
+		if ids[bobOnly] {
+			t.Error("alice received the favicon of a feed only bob subscribes to")
+		}
+	})
+}
