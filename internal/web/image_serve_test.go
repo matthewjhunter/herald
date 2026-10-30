@@ -118,3 +118,30 @@ func isIn(s string, list []string) bool {
 	}
 	return false
 }
+
+// Both routes require login and /images is gated on the user's subscriptions,
+// so the responses must be private: a shared cache (proxy, CDN) storing them
+// would hand one user's images to another (#346).
+func TestCachedImageRoutes_CacheControlPrivate(t *testing.T) {
+	tf := newTestFixtures(t)
+	png := []byte{0x89, 'P', 'N', 'G'}
+	id, err := tf.store.StoreArticleImage(tf.articleID, "https://example.com/a.png", png, "image/png", 1, 1)
+	if err != nil {
+		t.Fatalf("StoreArticleImage: %v", err)
+	}
+	if err := tf.store.StoreFeedFavicon(tf.feedID, png, "image/png"); err != nil {
+		t.Fatalf("StoreFeedFavicon: %v", err)
+	}
+	for path, want := range map[string]string{
+		"/images/" + itoa(id):                    "private, max-age=2592000",
+		"/feeds/" + itoa(tf.feedID) + "/favicon": "private, max-age=604800",
+	} {
+		rr := authedRequest(t, tf, "GET", path, nil)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s: status %d, want 200", path, rr.Code)
+		}
+		if got := rr.Header().Get("Cache-Control"); got != want {
+			t.Errorf("%s: Cache-Control = %q, want %q", path, got, want)
+		}
+	}
+}

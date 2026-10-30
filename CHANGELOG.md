@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fever `&favicons` no longer leaks other users' feeds (#347).** The
   response carried the favicon of every feed in the database, keyed by feed
   ID; it now covers only the requesting user's subscriptions.
+- **Cached images and favicons are marked `private` (#346).** Both routes
+  require login, but sent `Cache-Control: public`, so a shared proxy or CDN
+  could store one user's image and serve it to another.
 - **Go 1.26.10.** go.mod now requires Go 1.26.10, which CI and release
   builds follow, picking up the standard library fixes for GO-2026-6809
   (crypto/x509 distrust of compromised intermediates) and GO-2026-6617
