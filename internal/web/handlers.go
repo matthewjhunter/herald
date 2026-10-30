@@ -1863,7 +1863,7 @@ func (h *handlers) handleArticleImage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	writeCachedImage(w, img.MimeType, img.Data, "public, max-age=2592000") // 30 days
+	writeCachedImage(w, img.MimeType, img.Data, "private, max-age=2592000") // 30 days
 }
 
 // handleFeedFavicon serves the cached favicon for a feed as an image.
@@ -1884,7 +1884,7 @@ func (h *handlers) handleFeedFavicon(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	writeCachedImage(w, fav.MimeType, fav.Data, "public, max-age=604800") // 7 days
+	writeCachedImage(w, fav.MimeType, fav.Data, "private, max-age=604800") // 7 days
 }
 
 func (h *handlers) handleOPMLImport(w http.ResponseWriter, r *http.Request) {
