@@ -74,7 +74,7 @@ func (h *handlers) handleFever(w http.ResponseWriter, r *http.Request) {
 
 	// &favicons returns base64-encoded feed icons.
 	if _, ok := r.Form["favicons"]; ok {
-		h.feverAddFavicons(resp)
+		h.feverAddFavicons(user.ID, resp)
 	}
 	// &links returns article clusters as Fever hot links.
 	if _, ok := r.Form["links"]; ok {
@@ -188,7 +188,7 @@ func (h *handlers) feverAddFeeds(userID int64, resp map[string]any) {
 
 	// Build a set of feed IDs that have a cached favicon for fast lookup.
 	faviconFeeds := make(map[int64]bool)
-	if favicons, err := h.engine.GetAllFeedFavicons(); err == nil {
+	if favicons, err := h.engine.GetUserFeedFavicons(userID); err == nil {
 		for _, fav := range favicons {
 			faviconFeeds[fav.FeedID] = true
 		}
@@ -393,8 +393,8 @@ type feverFavicon struct {
 	Data string `json:"data"` // "mime_type;base64,<base64-encoded-data>"
 }
 
-func (h *handlers) feverAddFavicons(resp map[string]any) {
-	favicons, err := h.engine.GetAllFeedFavicons()
+func (h *handlers) feverAddFavicons(userID int64, resp map[string]any) {
+	favicons, err := h.engine.GetUserFeedFavicons(userID)
 	if err != nil || len(favicons) == 0 {
 		resp["favicons"] = []any{}
 		return

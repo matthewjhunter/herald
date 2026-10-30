@@ -116,9 +116,10 @@ func (e *Engine) GetFeverLinks(userID int64) ([]storage.FeverLink, error) {
 	return e.store.GetFeverLinks(userID)
 }
 
-// GetAllFeedFavicons returns all cached feed favicons for the Fever &favicons endpoint.
-func (e *Engine) GetAllFeedFavicons() ([]storage.FeedFavicon, error) {
-	return e.store.GetAllFeedFavicons()
+// GetUserFeedFavicons returns the cached favicons for the feeds a user
+// subscribes to, for the Fever &favicons endpoint.
+func (e *Engine) GetUserFeedFavicons(userID int64) ([]storage.FeedFavicon, error) {
+	return e.store.GetUserFeedFavicons(userID)
 }
 
 // GetFeedFavicon returns the cached favicon for a specific feed.

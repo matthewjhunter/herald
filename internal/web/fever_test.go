@@ -86,3 +86,43 @@ func TestFeverItems_SanitizesXSS(t *testing.T) {
 		t.Fatal("did not find the test article in Fever items")
 	}
 }
+
+// TestFeverFavicons_ScopedToUser covers #347: &favicons returns icons only for
+// the requesting user's feeds, never for a feed only another user follows.
+func TestFeverFavicons_ScopedToUser(t *testing.T) {
+	tf := newTestFixtures(t)
+
+	const apiKey = "test-fever-key"
+	if err := tf.store.SetFeverCredential(tf.userID, apiKey); err != nil {
+		t.Fatalf("SetFeverCredential: %v", err)
+	}
+	other, err := tf.store.CreateUser("other")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	otherFeed, err := tf.store.AddFeed("https://other.example/feed", "Other", "")
+	if err != nil {
+		t.Fatalf("AddFeed: %v", err)
+	}
+	if err := tf.store.SubscribeUserToFeed(other, otherFeed); err != nil {
+		t.Fatalf("SubscribeUserToFeed: %v", err)
+	}
+	png := []byte{0x89, 'P', 'N', 'G'}
+	for _, f := range []int64{tf.feedID, otherFeed} {
+		if err := tf.store.StoreFeedFavicon(f, png, "image/png"); err != nil {
+			t.Fatalf("StoreFeedFavicon: %v", err)
+		}
+	}
+
+	resp := feverRequest(t, tf, url.Values{"api_key": {apiKey}, "favicons": {""}})
+	favicons, _ := resp["favicons"].([]any)
+	var ids []int64
+	for _, raw := range favicons {
+		fav, _ := raw.(map[string]any)
+		id, _ := fav["id"].(float64)
+		ids = append(ids, int64(id))
+	}
+	if len(ids) != 1 || ids[0] != tf.feedID {
+		t.Errorf("favicon feed IDs = %v, want only [%d]; feed %d belongs to another user", ids, tf.feedID, otherFeed)
+	}
+}

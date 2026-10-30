@@ -414,7 +414,7 @@ type Store interface {
 	RecordFaviconFailure(feedID int64, kind string) error
 	ClearFaviconFailure(feedID int64) error
 	GetFeedFavicon(feedID int64) (*FeedFavicon, error)
-	GetAllFeedFavicons() ([]FeedFavicon, error)
+	GetUserFeedFavicons(userID int64) ([]FeedFavicon, error)
 	GetSubscribedFeedsWithoutFavicons() ([]Feed, error)
 
 	// Feed tags (per-user, many-to-many)

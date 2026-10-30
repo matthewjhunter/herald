@@ -2110,10 +2110,10 @@ func (s *PostgresStore) GetFeedFavicon(feedID int64) (*FeedFavicon, error) {
 	return &f, nil
 }
 
-func (s *PostgresStore) GetAllFeedFavicons() ([]FeedFavicon, error) {
-	rows, err := s.q.GetAllFeedFavicons(context.Background())
+func (s *PostgresStore) GetUserFeedFavicons(userID int64) ([]FeedFavicon, error) {
+	rows, err := s.q.GetUserFeedFavicons(context.Background(), userID)
 	if err != nil {
-		return nil, fmt.Errorf("get all feed favicons: %w", err)
+		return nil, fmt.Errorf("get user feed favicons: %w", err)
 	}
 	favicons := make([]FeedFavicon, len(rows))
 	for i, r := range rows {

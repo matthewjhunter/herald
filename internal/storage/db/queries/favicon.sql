@@ -7,8 +7,13 @@ ON CONFLICT (feed_id) DO UPDATE SET
 -- name: GetFeedFavicon :one
 SELECT * FROM feed_favicons WHERE feed_id = @feed_id;
 
--- name: GetAllFeedFavicons :many
-SELECT * FROM feed_favicons;
+-- name: GetUserFeedFavicons :many
+-- Favicons for the feeds a user subscribes to. Scoped so a Fever client
+-- cannot learn which feeds other users follow (#347).
+SELECT ff.* FROM feed_favicons ff
+JOIN user_feeds uf ON uf.feed_id = ff.feed_id
+WHERE uf.user_id = @user_id
+ORDER BY ff.feed_id;
 
 -- name: GetSubscribedFeedsWithoutFavicons :many
 -- Feeds a user subscribes to that have no cached favicon AND are not inside a
