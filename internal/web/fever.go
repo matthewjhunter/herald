@@ -399,12 +399,15 @@ func (h *handlers) feverAddFavicons(resp map[string]any) {
 		resp["favicons"] = []any{}
 		return
 	}
-	ff := make([]feverFavicon, len(favicons))
-	for i, f := range favicons {
-		ff[i] = feverFavicon{
+	ff := make([]feverFavicon, 0, len(favicons))
+	for _, f := range favicons {
+		if !servableImageType(f.MimeType) {
+			continue
+		}
+		ff = append(ff, feverFavicon{
 			ID:   f.FeedID,
 			Data: fmt.Sprintf("%s;base64,%s", f.MimeType, base64.StdEncoding.EncodeToString(f.Data)),
-		}
+		})
 	}
 	resp["favicons"] = ff
 }

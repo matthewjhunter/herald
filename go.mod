@@ -11,6 +11,7 @@ require (
 	github.com/infodancer/logging/httplog v0.1.2
 	github.com/infodancer/oidclient v0.9.1
 	github.com/infodancer/smoke v0.1.1
+	github.com/infodancer/web/media v0.1.4
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/matthewjhunter/airlock v0.1.2
 	github.com/matthewjhunter/go-embedding v0.6.3
@@ -21,10 +22,12 @@ require (
 	github.com/pgvector/pgvector-go/pgx v0.4.1
 	github.com/pressly/goose/v3 v3.29.0
 	github.com/spf13/cobra v1.10.2
+	golang.org/x/image v0.45.0
 	golang.org/x/net v0.61.0
 )
 
 require (
+	github.com/HugoSmits86/nativewebp v1.3.0 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/coreos/go-oidc/v3 v3.20.0 // indirect
@@ -34,6 +37,7 @@ require (
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/infodancer/web/pgtest v0.1.0 // indirect
 	github.com/itlightning/dateparse v0.2.1 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The image and favicon caches no longer serve documents (#344).** An
+  `<img src>` or icon link pointing at HTML or SVG used to be cached under
+  the server's Content-Type and served from herald's own origin, where the
+  site CSP lets inline script run. Both caches now take the type from the
+  bytes and store only re-encoded PNG/JPEG/GIF/WebP rasters (via
+  infodancer/web/media), plus ICO for favicons. Cached images now come out
+  as WebP (JPEG sources stay JPEG), and an animated GIF keeps its first
+  frame. The serving routes and the Fever `&favicons` endpoint refuse any
+  other stored type, and image responses carry a sandboxing CSP of their
+  own. Migration 0023 deletes the rows the old code left behind. SVG images
+  are no longer cached, so they do not display.
 - **Go 1.26.10.** go.mod now requires Go 1.26.10, which CI and release
   builds follow, picking up the standard library fixes for GO-2026-6809
   (crypto/x509 distrust of compromised intermediates) and GO-2026-6617

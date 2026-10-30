@@ -7,7 +7,6 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
-	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -74,79 +73,6 @@ func TestExtractImageURLs_SkipsNonHTTP(t *testing.T) {
 
 // --- normalizeMIME tests ---
 
-func TestNormalizeMIME_PNG(t *testing.T) {
-	if got := normalizeMIME("image/png", nil); got != "image/png" {
-		t.Errorf("got %q", got)
-	}
-}
-
-func TestNormalizeMIME_JPEGWithCharset(t *testing.T) {
-	if got := normalizeMIME("image/jpeg; charset=utf-8", nil); got != "image/jpeg" {
-		t.Errorf("got %q", got)
-	}
-}
-
-func TestNormalizeMIME_Sniff(t *testing.T) {
-	data := makeJPEG(t, 8, 8)
-	if got := normalizeMIME("application/octet-stream", data); got != "image/jpeg" {
-		t.Errorf("got %q, want image/jpeg", got)
-	}
-}
-
-// --- resizeIfNeeded tests ---
-
-func TestResizeIfNeeded_SmallPNG(t *testing.T) {
-	data := makePNG(t, 32, 32)
-	out, w, h, err := resizeIfNeeded(data, "image/png")
-	if err != nil {
-		t.Fatalf("resizeIfNeeded: %v", err)
-	}
-	if w != 32 || h != 32 {
-		t.Errorf("expected 32x32, got %dx%d", w, h)
-	}
-	if _, err := png.Decode(bytes.NewReader(out)); err != nil {
-		t.Errorf("output is not valid PNG: %v", err)
-	}
-}
-
-func TestResizeIfNeeded_LargePNG(t *testing.T) {
-	data := makePNG(t, 2000, 1000)
-	out, w, h, err := resizeIfNeeded(data, "image/png")
-	if err != nil {
-		t.Fatalf("resizeIfNeeded: %v", err)
-	}
-	if w > maxImageDim || h > maxImageDim {
-		t.Errorf("expected max %d, got %dx%d", maxImageDim, w, h)
-	}
-	if w != maxImageDim {
-		t.Errorf("expected width=%d (was wider), got %d", maxImageDim, w)
-	}
-	if _, err := png.Decode(bytes.NewReader(out)); err != nil {
-		t.Errorf("output is not valid PNG: %v", err)
-	}
-}
-
-func TestResizeIfNeeded_JPEG(t *testing.T) {
-	data := makeJPEG(t, 1600, 900)
-	out, w, h, err := resizeIfNeeded(data, "image/jpeg")
-	if err != nil {
-		t.Fatalf("resizeIfNeeded JPEG: %v", err)
-	}
-	if w > maxImageDim || h > maxImageDim {
-		t.Errorf("expected max %d, got %dx%d", maxImageDim, w, h)
-	}
-	if _, err := jpeg.Decode(bytes.NewReader(out)); err != nil {
-		t.Errorf("output is not valid JPEG: %v", err)
-	}
-}
-
-func TestResizeIfNeeded_InvalidData(t *testing.T) {
-	_, _, _, err := resizeIfNeeded([]byte("not an image"), "image/png")
-	if err == nil {
-		t.Error("expected error for invalid image data")
-	}
-}
-
 // --- fetchAndNormalizeImage tests ---
 
 func TestFetchAndNormalizeImage_PNG(t *testing.T) {
@@ -162,14 +88,62 @@ func TestFetchAndNormalizeImage_PNG(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchAndNormalizeImage: %v", err)
 	}
-	if mime != "image/png" {
-		t.Errorf("mime=%q, want image/png", mime)
+	if mime != "image/webp" {
+		t.Errorf("mime=%q, want image/webp", mime)
 	}
 	if w != 64 || h != 64 {
 		t.Errorf("expected 64x64, got %dx%d", w, h)
 	}
 	if len(out) == 0 {
 		t.Error("expected non-empty output")
+	}
+}
+
+// The stored type comes from the bytes, never the Content-Type header, and only
+// raster images are stored: an <img src> pointing at HTML or SVG must not end
+// up served from herald's origin (#344).
+func TestFetchAndNormalizeImage_RejectsNonImages(t *testing.T) {
+	cases := []struct {
+		name, contentType, body string
+	}{
+		{"html labelled png", "image/png", htmlWithScript},
+		{"html", "text/html", htmlWithScript},
+		{"html without content type", "", htmlWithScript},
+		{"svg", "image/svg+xml", svgWithScript},
+		{"svg labelled png", "image/png", svgWithScript},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", tc.contentType)
+				w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			client := &http.Client{Timeout: 5 * time.Second}
+			data, mime, _, _, err := fetchAndNormalizeImage(context.Background(), client, srv.URL)
+			if err == nil {
+				t.Fatalf("stored %d bytes as %q, want rejection", len(data), mime)
+			}
+		})
+	}
+}
+
+func TestFetchAndNormalizeImage_TypeFromBytes(t *testing.T) {
+	gifData := makeGIF(t, 10, 10, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write(gifData)
+	}))
+	defer srv.Close()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	_, mime, _, _, err := fetchAndNormalizeImage(context.Background(), client, srv.URL)
+	if err != nil {
+		t.Fatalf("fetchAndNormalizeImage: %v", err)
+	}
+	if mime != "image/webp" {
+		t.Errorf("mime=%q, want image/webp", mime)
 	}
 }
 
@@ -246,6 +220,44 @@ func TestCacheArticleImages_StoresImages(t *testing.T) {
 	}
 	if len(imageMap) != 1 {
 		t.Errorf("expected 1 image in map, got %d", len(imageMap))
+	}
+}
+
+func TestCacheArticleImages_SkipsNonImages(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, htmlWithScript)
+	}))
+	defer srv.Close()
+
+	store := newFullTextTestStore(t)
+	feedID, _ := store.AddFeed("https://example.com/feed.xml", "Test Feed", "")
+	pub := time.Now()
+	articleID, err := store.AddArticle(&storage.Article{
+		FeedID:        feedID,
+		GUID:          "img-html-1",
+		Title:         "Article with HTML image",
+		URL:           srv.URL + "/article",
+		Content:       fmt.Sprintf(`<p>Text</p><img src="%s/x.png">`, srv.URL),
+		PublishedDate: &pub,
+	})
+	if err != nil {
+		t.Fatalf("AddArticle: %v", err)
+	}
+
+	n, err := NewFetcher(store).CacheArticleImages(context.Background())
+	if err != nil {
+		t.Fatalf("CacheArticleImages: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("cached %d images, want 0", n)
+	}
+	imageMap, err := store.GetArticleImageMap(articleID)
+	if err != nil {
+		t.Fatalf("GetArticleImageMap: %v", err)
+	}
+	if len(imageMap) != 0 {
+		t.Errorf("image map has %d entries, want 0", len(imageMap))
 	}
 }
 

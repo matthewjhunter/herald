@@ -1,12 +1,8 @@
 package feeds
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"image"
-	"image/jpeg"
-	"image/png"
 	"io"
 	"net/http"
 	"net/url"
@@ -23,7 +19,7 @@ const (
 	maxImageBytes = 2 * 1024 * 1024 // 2 MB
 
 	// maxImageDim is the maximum width or height of a stored image.
-	// Images larger than this are resized before storage.
+	// Images larger than this are scaled down before storage.
 	maxImageDim = 1200
 
 	// maxImagesPerArticle caps how many images we process per article to
@@ -241,10 +237,9 @@ func extractImageURLs(content string, base *url.URL) []string {
 	return urls
 }
 
-// fetchAndNormalizeImage fetches an image URL and normalizes it:
-//   - PNG/JPEG: decode, resize to maxImageDim if needed, re-encode as same format
-//   - GIF: store as-is (preserves animation)
-//   - Other formats: store as-is if under maxImageBytes
+// fetchAndNormalizeImage fetches an image URL and returns it in a form that is
+// safe to serve from herald's origin (see safeImage). Anything that is not a
+// PNG, JPEG, GIF, or WebP image is refused, whatever its Content-Type says.
 //
 // Returns (data, mimeType, width, height, error).
 func fetchAndNormalizeImage(ctx context.Context, client *http.Client, imgURL string) ([]byte, string, int, int, error) {
@@ -275,125 +270,11 @@ func fetchAndNormalizeImage(ctx context.Context, client *http.Client, imgURL str
 		return nil, "", 0, 0, fmt.Errorf("empty image at %s", imgURL)
 	}
 
-	ct := normalizeMIME(resp.Header.Get("Content-Type"), data)
-
-	switch ct {
-	case "image/png":
-		out, w, h, err := resizeIfNeeded(data, ct)
-		if err == nil {
-			return out, "image/png", w, h, nil
-		}
-		// Decode failed — store raw.
-	case "image/jpeg":
-		out, w, h, err := resizeIfNeeded(data, ct)
-		if err == nil {
-			return out, "image/jpeg", w, h, nil
-		}
-		// Decode failed — store raw.
-	}
-
-	// GIF, WebP, SVG, ICO, or decode failure: store raw.
-	return data, ct, 0, 0, nil
-}
-
-// resizeIfNeeded decodes the image, resizes if any dimension exceeds maxImageDim,
-// and re-encodes in the same format. Returns (data, width, height, error).
-func resizeIfNeeded(data []byte, mimeType string) ([]byte, int, int, error) {
-	src, _, err := image.Decode(bytes.NewReader(data))
+	img, err := safeImage(data, maxImageDim, maxImageBytes)
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, "", 0, 0, fmt.Errorf("image at %s: %w", imgURL, err)
 	}
-
-	b := src.Bounds()
-	w, h := b.Dx(), b.Dy()
-
-	if w <= maxImageDim && h <= maxImageDim {
-		// Already fits; re-encode to strip metadata and normalize.
-		var buf bytes.Buffer
-		if mimeType == "image/jpeg" {
-			err = jpeg.Encode(&buf, src, &jpeg.Options{Quality: 85})
-		} else {
-			err = png.Encode(&buf, src)
-		}
-		if err != nil {
-			return nil, 0, 0, err
-		}
-		return buf.Bytes(), w, h, nil
-	}
-
-	// Scale proportionally to fit within maxImageDim × maxImageDim.
-	if w > h {
-		h = h * maxImageDim / w
-		w = maxImageDim
-	} else {
-		w = w * maxImageDim / h
-		h = maxImageDim
-	}
-	if w < 1 {
-		w = 1
-	}
-	if h < 1 {
-		h = 1
-	}
-
-	dst := image.NewRGBA(image.Rect(0, 0, w, h))
-	drawNearest(dst, src, b)
-
-	var buf bytes.Buffer
-	if mimeType == "image/jpeg" {
-		err = jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 85})
-	} else {
-		err = png.Encode(&buf, dst)
-	}
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	return buf.Bytes(), w, h, nil
-}
-
-// drawNearest fills dst with src scaled via nearest-neighbour interpolation.
-func drawNearest(dst *image.RGBA, src image.Image, srcBounds image.Rectangle) {
-	dw := dst.Bounds().Dx()
-	dh := dst.Bounds().Dy()
-	sw := srcBounds.Dx()
-	sh := srcBounds.Dy()
-	for y := range dh {
-		for x := range dw {
-			sx := x * sw / dw
-			sy := y * sh / dh
-			dst.Set(x, y, src.At(srcBounds.Min.X+sx, srcBounds.Min.Y+sy))
-		}
-	}
-}
-
-// normalizeMIME maps Content-Type values to canonical image MIME types,
-// falling back to http.DetectContentType when the header is absent or generic.
-func normalizeMIME(ct string, data []byte) string {
-	ct = strings.ToLower(strings.SplitN(ct, ";", 2)[0])
-	ct = strings.TrimSpace(ct)
-	switch ct {
-	case "image/png":
-		return "image/png"
-	case "image/jpeg", "image/jpg":
-		return "image/jpeg"
-	case "image/gif":
-		return "image/gif"
-	case "image/webp":
-		return "image/webp"
-	case "image/svg+xml":
-		return "image/svg+xml"
-	case "image/x-icon", "image/vnd.microsoft.icon":
-		return "image/x-icon"
-	}
-	// Sniff from bytes.
-	sniffed := http.DetectContentType(data)
-	if strings.HasPrefix(sniffed, "image/") {
-		return strings.SplitN(sniffed, ";", 2)[0]
-	}
-	if ct != "" && ct != "application/octet-stream" {
-		return ct
-	}
-	return "application/octet-stream"
+	return img.Data, img.MimeType, img.Width, img.Height, nil
 }
 
 // nodeAttr returns the value of the named attribute on an HTML node.
@@ -405,6 +286,3 @@ func nodeAttr(n *html.Node, key string) string {
 	}
 	return ""
 }
-
-// jpeg import used for image.Decode side-effect registration.
-var _ = jpeg.Decode
