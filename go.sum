@@ -75,8 +75,8 @@ github.com/infodancer/oidclient v0.9.1 h1:UBre0iYjiGPjhP1xGFldWi77r0C/rKerEWQhKt
 github.com/infodancer/oidclient v0.9.1/go.mod h1:R6hRaiawnXVOedrn/4RJR/hx93cD981fRefQo3hfsCQ=
 github.com/infodancer/smoke v0.1.1 h1:fktN4OXtibli7irpSjgzjzxYxnNnHZJDsXXs4RSGnC8=
 github.com/infodancer/smoke v0.1.1/go.mod h1:GS5zF/W2bErRud5bV/CWUhyDMtGOyWMxDHxIyNroYbk=
-github.com/infodancer/web/media v0.1.4 h1:bQ/KROr/EmAypFH2wsqTSyqU0cb2ioapUZ1aqrcfhsw=
-github.com/infodancer/web/media v0.1.4/go.mod h1:IwXJaBCQG3Tuf91tWwe40rgfu0mtjpkzR3RA4ANH9Nk=
+github.com/infodancer/web/media v0.1.5 h1:/BzKmYMMr7WGPomvn5DUnVsb5Cl/LjCfg/U5TXr0h4g=
+github.com/infodancer/web/media v0.1.5/go.mod h1:fCCm2SVeLYk/2bXtD0GxCYGWXDT5hoKLpxzZWQbuxyU=
 github.com/infodancer/web/pgtest v0.1.0 h1:klix/EixAftANeWWDopTDIX9zroMlYQH55vOBQCbYMQ=
 github.com/infodancer/web/pgtest v0.1.0/go.mod h1:ClPdamg/N2roxFh5PeWfEHvTzfYh/0Fm7VxHE2eHjvA=
 github.com/itlightning/dateparse v0.2.1 h1:AB0NJTyI0HYcerEUMovKZOiQVBg1mBPxgAnWQwzLP6g=
