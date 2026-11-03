@@ -22,7 +22,7 @@ require (
 	github.com/pgvector/pgvector-go/pgx v0.4.1
 	github.com/pressly/goose/v3 v3.29.0
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/image v0.45.0
+	golang.org/x/image v0.47.0
 	golang.org/x/net v0.61.0
 )
 
