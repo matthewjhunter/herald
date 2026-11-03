@@ -12,7 +12,7 @@ require (
 	github.com/infodancer/oidclient v0.9.1
 	github.com/infodancer/smoke v0.1.1
 	github.com/infodancer/web/media v0.1.5
-	github.com/jackc/pgx/v5 v5.11.0
+	github.com/jackc/pgx/v5 v5.12.0
 	github.com/matthewjhunter/airlock v0.1.2
 	github.com/matthewjhunter/go-embedding v0.6.3
 	github.com/microcosm-cc/bluemonday v1.0.27
