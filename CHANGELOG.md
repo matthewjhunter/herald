@@ -44,6 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Fever requests are logged.** Each authenticated Fever API call logs one
+  `fever request` line: the user, the sections asked for, `since_id` /
+  `max_id`, the count and range of `with_ids`, the count and ID range of the
+  items returned, and the unread/saved ID counts; mark operations log what
+  was marked. A rejected key logs why, without the key. Errors loading items,
+  unread or saved IDs, which used to come back as an empty list with nothing
+  logged, are now logged.
+
 - **Model output corpus** (`model_outputs`, docs/model-outputs.md): every
   screen, summarize, and curate call records the model's completion
   verbatim beside the hash of the content it saw, the curation keywords,

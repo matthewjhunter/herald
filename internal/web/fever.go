@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,22 +19,34 @@ import (
 //
 // See https://feedafever.com/api for the full Fever API specification.
 func (h *handlers) handleFever(w http.ResponseWriter, r *http.Request) {
+	// The api_key is a password equivalent: no log line below carries it.
 	if err := r.ParseForm(); err != nil {
+		h.logger.Warn("fever auth rejected", "reason", "unparseable form", "err", err)
 		writeFeverJSON(w, feverUnauth())
 		return
 	}
 
 	apiKey := r.FormValue("api_key")
 	if apiKey == "" {
+		h.logger.Warn("fever auth rejected", "reason", "no api_key")
 		writeFeverJSON(w, feverUnauth())
 		return
 	}
 
 	user, err := h.engine.GetUserByFeverAPIKey(apiKey)
 	if err != nil {
+		h.logger.Warn("fever auth rejected", "reason", "unknown api_key")
 		writeFeverJSON(w, feverUnauth())
 		return
 	}
+
+	// One line per request records what the client asked for and what it got.
+	// A Fever response does not echo its request, and a client that stops
+	// syncing says nothing on its own, so this line is the only way to see
+	// which request a stalled client keeps repeating.
+	tr := &feverTrace{}
+	tr.add("user", user.ID, "sections", feverSections(r))
+	defer func() { h.logger.Info("fever request", tr.attrs...) }()
 
 	resp := map[string]any{
 		"api_version":            3,
@@ -43,6 +56,7 @@ func (h *handlers) handleFever(w http.ResponseWriter, r *http.Request) {
 
 	// Mark (write) operations first so subsequent reads reflect the change.
 	if mark := r.FormValue("mark"); mark != "" {
+		tr.add("mark", mark, "as", r.FormValue("as"), "id", r.FormValue("id"), "before", r.FormValue("before"))
 		h.feverMark(user.ID, r)
 	}
 
@@ -61,15 +75,15 @@ func (h *handlers) handleFever(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, ok := r.Form["items"]; ok {
-		h.feverAddItems(user.ID, r, resp)
+		h.feverAddItems(user.ID, r, resp, tr)
 	}
 
 	if _, ok := r.Form["unread_item_ids"]; ok {
-		h.feverAddUnreadIDs(user.ID, resp)
+		h.feverAddUnreadIDs(user.ID, resp, tr)
 	}
 
 	if _, ok := r.Form["saved_item_ids"]; ok {
-		h.feverAddSavedIDs(user.ID, resp)
+		h.feverAddSavedIDs(user.ID, resp, tr)
 	}
 
 	// &favicons returns base64-encoded feed icons.
@@ -82,6 +96,26 @@ func (h *handlers) handleFever(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeFeverJSON(w, resp)
+}
+
+// feverTrace accumulates the attributes of a request's log line.
+type feverTrace struct{ attrs []any }
+
+func (t *feverTrace) add(kv ...any) { t.attrs = append(t.attrs, kv...) }
+
+// feverSectionNames are the read sections a Fever request can ask for, in
+// the order the handler serves them.
+var feverSectionNames = []string{"feeds", "groups", "items", "unread_item_ids", "saved_item_ids", "favicons", "links"}
+
+// feverSections lists the read sections present in a request.
+func feverSections(r *http.Request) string {
+	var got []string
+	for _, name := range feverSectionNames {
+		if _, ok := r.Form[name]; ok {
+			got = append(got, name)
+		}
+	}
+	return strings.Join(got, ",")
 }
 
 // feverUnauth returns the minimal unauthenticated Fever response.
@@ -257,9 +291,10 @@ type feverItem struct {
 	CreatedOnTime int64  `json:"created_on_time"`
 }
 
-func (h *handlers) feverAddItems(userID int64, r *http.Request, resp map[string]any) {
+func (h *handlers) feverAddItems(userID int64, r *http.Request, resp map[string]any, tr *feverTrace) {
 	sinceID, _ := strconv.ParseInt(r.FormValue("since_id"), 10, 64)
 	maxID, _ := strconv.ParseInt(r.FormValue("max_id"), 10, 64)
+	tr.add("since_id", sinceID, "max_id", maxID)
 
 	var withIDs []int64
 	if raw := r.FormValue("with_ids"); raw != "" {
@@ -268,6 +303,9 @@ func (h *handlers) feverAddItems(userID int64, r *http.Request, resp map[string]
 				withIDs = append(withIDs, id)
 			}
 		}
+		if len(withIDs) > 0 {
+			tr.add("with_ids", len(withIDs), "with_ids_min", slices.Min(withIDs), "with_ids_max", slices.Max(withIDs))
+		}
 		if len(withIDs) > 100 {
 			withIDs = withIDs[:100]
 		}
@@ -275,12 +313,25 @@ func (h *handlers) feverAddItems(userID int64, r *http.Request, resp map[string]
 
 	rows, err := h.engine.GetFeverItems(userID, sinceID, maxID, withIDs, 50)
 	if err != nil {
+		h.logger.Error("fever: loading items failed", "user", userID, "err", err)
+		tr.add("items_err", err)
 		resp["items"] = []any{}
 		resp["total_items"] = 0
 		return
 	}
+	tr.add("items", len(rows))
+	if len(rows) > 0 {
+		lo, hi := rows[0].ID, rows[0].ID
+		for _, row := range rows[1:] {
+			lo, hi = min(lo, row.ID), max(hi, row.ID)
+		}
+		tr.add("items_min_id", lo, "items_max_id", hi)
+	}
 
-	total, _ := h.engine.GetFeverItemCount(userID)
+	total, err := h.engine.GetFeverItemCount(userID)
+	if err != nil {
+		h.logger.Error("fever: counting items failed", "user", userID, "err", err)
+	}
 
 	items := make([]feverItem, len(rows))
 	for i, row := range rows {
@@ -322,8 +373,12 @@ func (h *handlers) feverAddItems(userID int64, r *http.Request, resp map[string]
 	resp["total_items"] = total
 }
 
-func (h *handlers) feverAddUnreadIDs(userID int64, resp map[string]any) {
+func (h *handlers) feverAddUnreadIDs(userID int64, resp map[string]any, tr *feverTrace) {
 	ids, err := h.engine.GetUnreadArticleIDsForUser(userID)
+	if err != nil {
+		h.logger.Error("fever: loading unread ids failed", "user", userID, "err", err)
+	}
+	tr.add("unread_ids", len(ids))
 	if err != nil || len(ids) == 0 {
 		resp["unread_item_ids"] = ""
 		return
@@ -335,8 +390,12 @@ func (h *handlers) feverAddUnreadIDs(userID int64, resp map[string]any) {
 	resp["unread_item_ids"] = strings.Join(parts, ",")
 }
 
-func (h *handlers) feverAddSavedIDs(userID int64, resp map[string]any) {
+func (h *handlers) feverAddSavedIDs(userID int64, resp map[string]any, tr *feverTrace) {
 	ids, err := h.engine.GetStarredArticleIDsForUser(userID)
+	if err != nil {
+		h.logger.Error("fever: loading saved ids failed", "user", userID, "err", err)
+	}
+	tr.add("saved_ids", len(ids))
 	if err != nil || len(ids) == 0 {
 		resp["saved_item_ids"] = ""
 		return
