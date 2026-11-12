@@ -1,6 +1,10 @@
 package herald
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/matthewjhunter/herald/internal/storage"
+)
 
 // The surfaces beyond the reader's own lists (#274): the Fever sync API, which
 // is somebody's phone, and the hidden count that tells a reader their filters
@@ -168,5 +172,50 @@ func TestReaderGaugeHiddenIsPerUser(t *testing.T) {
 	}
 	if g, _ := engine.GetReaderGauge(2, 0); g.Hidden != 0 {
 		t.Errorf("other user: Hidden = %d, want 0", g.Hidden)
+	}
+}
+
+// A Fever client pages until a batch comes back empty. When filter rules hide
+// every article in a batch, an empty answer would end its sync with the
+// visible articles beyond still unseen, so the engine reads on past a fully
+// hidden batch in whichever direction the request pages.
+func TestFeverItemsReadPastAFullyHiddenBatch(t *testing.T) {
+	engine, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	feedID := subscribeDirect(t, engine, 1, "https://example.com/feed.xml", "Feed")
+	ids := addFilterTestArticles(t, engine, 1, feedID,
+		"Real News 0", "Open Thread 1", "Open Thread 2", "Open Thread 3", "Real News 4")
+	if _, err := engine.AddFilterRule(1, FilterRule{
+		Axis: AxisTitle, MatchMode: MatchSubstring, Value: "open thread", Score: -5,
+	}); err != nil {
+		t.Fatalf("AddFilterRule: %v", err)
+	}
+	setFilterThreshold(t, engine, 1, -1)
+
+	titles := func(rows []storage.FeverItemRow) []string {
+		out := make([]string, len(rows))
+		for i, r := range rows {
+			out[i] = r.Title
+		}
+		return out
+	}
+
+	// Forward from the first article: the next two are both hidden.
+	rows, err := engine.GetFeverItems(1, ids[0], 0, nil, 2)
+	if err != nil {
+		t.Fatalf("GetFeverItems(since_id): %v", err)
+	}
+	if got := titles(rows); len(got) != 1 || got[0] != "Real News 4" {
+		t.Errorf("since_id=%d: got %v, want [Real News 4]", ids[0], got)
+	}
+
+	// Backward from the last hidden article: the first batch is both hidden.
+	rows, err = engine.GetFeverItems(1, 0, ids[3], nil, 2)
+	if err != nil {
+		t.Fatalf("GetFeverItems(max_id): %v", err)
+	}
+	if got := titles(rows); len(got) != 1 || got[0] != "Real News 0" {
+		t.Errorf("max_id=%d: got %v, want [Real News 0]", ids[3], got)
 	}
 }

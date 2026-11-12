@@ -55,6 +55,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   paging forward from the highest id it held jumped past every article in a
   gap of more than one batch. It now returns the next items, oldest first;
   `max_id` and unbounded requests stay newest-first.
+- **A Fever batch hidden entirely by filter rules no longer ends a sync.**
+  Clients read an empty batch as the end of the stream, so a run of hidden
+  articles one batch long stopped them short of the visible articles
+  beyond. The items endpoint now reads past a fully hidden batch in the
+  request's paging direction (up to 20 batches).
 
 ### Added
 
