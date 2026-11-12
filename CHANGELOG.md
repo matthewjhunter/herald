@@ -43,6 +43,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instruction in each prompt. The security screen still chunks the joined
   text. Prompt truncation now cuts on a rune boundary.
 
+### Fixed
+
+- **Fever clients that sync a capped number of items get new ones again.**
+  `unread_item_ids` listed unread articles oldest-first. A client that
+  fetches only the first N IDs on that list (FeedMe takes 250) kept
+  re-fetching the same old items once the unread backlog outgrew its cap,
+  and showed nothing new from then on. The list is now newest-first.
+
 ### Added
 
 - **Fever requests are logged.** Each authenticated Fever API call logs one

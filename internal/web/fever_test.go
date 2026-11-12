@@ -224,3 +224,39 @@ func TestFeverLogsRejectedAuth(t *testing.T) {
 		t.Errorf("expected an auth-rejected line, got: %s", out)
 	}
 }
+
+// A client that syncs a capped number of unread items takes them from the
+// front of unread_item_ids. Oldest-first, a backlog larger than the cap
+// meant the same old items on every sync and nothing new ever again, so
+// the list leads with the newest.
+func TestFeverUnreadItemIDs_NewestFirst(t *testing.T) {
+	tf := newTestFixtures(t)
+	const apiKey = "test-fever-key"
+	if err := tf.store.SetFeverCredential(tf.userID, apiKey); err != nil {
+		t.Fatalf("SetFeverCredential: %v", err)
+	}
+	want := []int64{}
+	for i := range 3 {
+		id, err := tf.store.AddArticle(&storage.Article{
+			FeedID: tf.feedID,
+			GUID:   fmt.Sprintf("unread-order-%d", i),
+			Title:  fmt.Sprintf("Unread %d", i),
+			URL:    fmt.Sprintf("https://example.com/unread/%d", i),
+		})
+		if err != nil {
+			t.Fatalf("AddArticle: %v", err)
+		}
+		want = append([]int64{id}, want...)
+	}
+	want = append(want, tf.articleID)
+
+	resp := feverRequest(t, tf, url.Values{"api_key": {apiKey}, "unread_item_ids": {""}})
+	got, _ := resp["unread_item_ids"].(string)
+	parts := make([]string, len(want))
+	for i, id := range want {
+		parts[i] = fmt.Sprint(id)
+	}
+	if exp := strings.Join(parts, ","); got != exp {
+		t.Errorf("unread_item_ids = %q, want newest first %q", got, exp)
+	}
+}
