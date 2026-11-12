@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fetches only the first N IDs on that list (FeedMe takes 250) kept
   re-fetching the same old items once the unread backlog outgrew its cap,
   and showed nothing new from then on. The list is now newest-first.
+- **Fever `since_id` pages forward.** A request with `since_id` returned
+  the newest 50 items rather than the 50 after `since_id`, so a client
+  paging forward from the highest id it held jumped past every article in a
+  gap of more than one batch. It now returns the next items, oldest first;
+  `max_id` and unbounded requests stay newest-first.
 
 ### Added
 

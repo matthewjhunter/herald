@@ -25,7 +25,8 @@ WHERE a.id = ANY(@article_ids::bigint[])
 ORDER BY a.id DESC LIMIT @lim;
 
 -- name: GetFeverItemsRange :many
--- since_id / max_id of 0 disable that bound (the Fever API's default).
+-- Newest first, for max_id paging backward and for a request with no bound.
+-- since_id requests go to GetFeverItemsSince; a since_id of 0 disables it.
 SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
        a.author, a.published_date, a.fetched_date,
        COALESCE(rs.read, FALSE) AS is_read,
@@ -36,6 +37,21 @@ LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = @user_id
 WHERE (@since_id::bigint = 0 OR a.id > @since_id::bigint)
   AND (@max_id::bigint = 0 OR a.id <= @max_id::bigint)
 ORDER BY a.id DESC LIMIT @lim;
+
+-- name: GetFeverItemsSince :many
+-- since_id pages forward: the items just after it, oldest first, so a client
+-- that repeats with the highest id it got walks the whole gap. max_id, when
+-- also given, caps the window.
+SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+       a.author, a.published_date, a.fetched_date,
+       COALESCE(rs.read, FALSE) AS is_read,
+       COALESCE(rs.starred, FALSE) AS is_starred
+FROM articles a
+JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = @user_id
+LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = @user_id
+WHERE a.id > @since_id::bigint
+  AND (@max_id::bigint = 0 OR a.id <= @max_id::bigint)
+ORDER BY a.id ASC LIMIT @lim;
 
 -- name: GetFeverItemCount :one
 SELECT COUNT(*)::int
