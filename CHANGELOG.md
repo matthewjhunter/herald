@@ -26,10 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cached images and favicons are marked `private` (#346).** Both routes
   require login, but sent `Cache-Control: public`, so a shared proxy or CDN
   could store one user's image and serve it to another.
-- **Go 1.26.10.** go.mod now requires Go 1.26.10, which CI and release
+- **Go 1.26.11.** go.mod now requires Go 1.26.11, which CI and release
   builds follow, picking up the standard library fixes for GO-2026-6809
-  (crypto/x509 distrust of compromised intermediates) and GO-2026-6617
-  (net/http HTTP/2 HPACK encoder race).
+  (crypto/x509 distrust of compromised intermediates), GO-2026-6617
+  (net/http HTTP/2 HPACK encoder race), and GO-2026-6859 (HTTP/1 server
+  crash from a MaxBytesReader header race in net/http).
 
 ### Changed
 
