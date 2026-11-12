@@ -306,9 +306,12 @@ FROM articles a
 JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = $1
 LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = $1
 WHERE NOT COALESCE(rs.read, FALSE)
-ORDER BY a.id
+ORDER BY a.id DESC
 `
 
+// Newest first: a client that syncs a capped number of unread items takes
+// them from the front of this list, so oldest-first starved it of new ones
+// once the backlog outgrew the cap.
 func (q *Queries) GetUnreadArticleIDsForUser(ctx context.Context, userID int64) ([]int64, error) {
 	rows, err := q.db.Query(ctx, getUnreadArticleIDsForUser, userID)
 	if err != nil {

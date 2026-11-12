@@ -43,12 +43,15 @@ FROM articles a
 JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = @user_id;
 
 -- name: GetUnreadArticleIDsForUser :many
+-- Newest first: a client that syncs a capped number of unread items takes
+-- them from the front of this list, so oldest-first starved it of new ones
+-- once the backlog outgrew the cap.
 SELECT a.id
 FROM articles a
 JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = @user_id
 LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = @user_id
 WHERE NOT COALESCE(rs.read, FALSE)
-ORDER BY a.id;
+ORDER BY a.id DESC;
 
 -- name: GetStarredArticleIDsForUser :many
 SELECT article_id FROM read_state
