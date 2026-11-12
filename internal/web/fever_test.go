@@ -260,3 +260,58 @@ func TestFeverUnreadItemIDs_NewestFirst(t *testing.T) {
 		t.Errorf("unread_item_ids = %q, want newest first %q", got, exp)
 	}
 }
+
+// since_id asks for the items after it, oldest first: a client paging forward
+// sets since_id to the highest id it has and repeats until a batch comes back
+// empty. Newest-first, a gap of more than one batch returned the newest 50 and
+// the client jumped past everything between, never to see it.
+func TestFeverItems_SinceIDPagesForward(t *testing.T) {
+	tf := newTestFixtures(t)
+	const apiKey = "test-fever-key"
+	if err := tf.store.SetFeverCredential(tf.userID, apiKey); err != nil {
+		t.Fatalf("SetFeverCredential: %v", err)
+	}
+	var ids []int64
+	for i := range 60 {
+		id, err := tf.store.AddArticle(&storage.Article{
+			FeedID: tf.feedID,
+			GUID:   fmt.Sprintf("since-%d", i),
+			Title:  fmt.Sprintf("Since %d", i),
+			URL:    fmt.Sprintf("https://example.com/since/%d", i),
+		})
+		if err != nil {
+			t.Fatalf("AddArticle: %v", err)
+		}
+		ids = append(ids, id)
+	}
+
+	itemIDs := func(form url.Values) []int64 {
+		t.Helper()
+		form.Set("api_key", apiKey)
+		form.Set("items", "")
+		resp := feverRequest(t, tf, form)
+		raw, _ := resp["items"].([]any)
+		var out []int64
+		for _, r := range raw {
+			item, _ := r.(map[string]any)
+			id, _ := item["id"].(float64)
+			out = append(out, int64(id))
+		}
+		return out
+	}
+
+	got := itemIDs(url.Values{"since_id": {fmt.Sprint(tf.articleID)}})
+	if len(got) != 50 || got[0] != ids[0] || got[49] != ids[49] {
+		t.Fatalf("since_id=%d: got %d items %v, want ids %d..%d ascending", tf.articleID, len(got), got, ids[0], ids[49])
+	}
+	got = itemIDs(url.Values{"since_id": {fmt.Sprint(ids[49])}})
+	if len(got) != 10 || got[0] != ids[50] || got[9] != ids[59] {
+		t.Fatalf("second page: got %v, want ids %d..%d", got, ids[50], ids[59])
+	}
+
+	// max_id pages backward and stays newest-first.
+	got = itemIDs(url.Values{"max_id": {fmt.Sprint(ids[59])}})
+	if len(got) != 50 || got[0] != ids[59] || got[49] != ids[10] {
+		t.Fatalf("max_id=%d: got %v, want ids %d down to %d", ids[59], got, ids[59], ids[10])
+	}
+}

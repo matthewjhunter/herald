@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/matthewjhunter/herald/internal/storage"
 )
@@ -40,6 +41,10 @@ func (e *Engine) GetFeverFeeds(userID int64) ([]storage.Feed, error) {
 	return e.store.GetUserFeeds(userID)
 }
 
+// feverFillRounds bounds how many fully hidden batches GetFeverItems reads
+// past before it gives up and returns the empty batch.
+const feverFillRounds = 20
+
 // GetFeverItems returns articles for the Fever items endpoint.
 //
 // Filter rules apply here for the same reason they apply to the web reader: a
@@ -47,19 +52,56 @@ func (e *Engine) GetFeverFeeds(userID int64) ([]storage.Feed, error) {
 // entirely, so an article hidden in the web UI still synced to every phone.
 //
 // A batch can come back shorter than limit when rules hide part of it. Fever
-// clients page by since_id rather than by offset, so a short batch costs
-// nothing -- the next request picks up after the last id returned.
+// clients page by since_id or max_id rather than by offset, so a short batch
+// costs nothing -- the next request picks up after the last id returned. An
+// EMPTY batch is different: clients read it as the end of the stream. So when
+// rules hide a whole batch, this reads on past it in the request's direction
+// until something is visible, the store runs out, or feverFillRounds batches
+// have gone by.
 func (e *Engine) GetFeverItems(userID int64, sinceID, maxID int64, withIDs []int64, limit int) ([]storage.FeverItemRow, error) {
-	rows, err := e.store.GetFeverItems(userID, sinceID, maxID, withIDs, limit)
-	if err != nil {
-		return nil, err
+	if limit <= 0 || limit > 50 {
+		limit = 50 // the store's own cap; a full batch is compared against it
 	}
 	rf := e.filters()
 	p := rf.plan(userID)
-	if !p.hides() || len(rows) == 0 {
-		return rows, nil
-	}
 
+	for round := 0; ; round++ {
+		rows, err := e.store.GetFeverItems(userID, sinceID, maxID, withIDs, limit)
+		if err != nil {
+			return nil, err
+		}
+		if !p.hides() || len(rows) == 0 {
+			return rows, nil
+		}
+		kept := e.feverVisible(rf, p, rows)
+		// with_ids names its articles, so there is no further window to read.
+		if len(kept) > 0 || len(rows) < limit || len(withIDs) > 0 {
+			return kept, nil
+		}
+		if round == feverFillRounds-1 {
+			slog.Default().Warn("fever: filter rules hid every article in the window; returning an empty batch",
+				"user", userID, "batches", feverFillRounds, "since_id", sinceID, "max_id", maxID)
+			return kept, nil
+		}
+		// Advance past the hidden batch. since_id pages forward, oldest first;
+		// otherwise the store pages backward from max_id, newest first.
+		lo, hi := rows[0].ID, rows[0].ID
+		for _, r := range rows[1:] {
+			lo, hi = min(lo, r.ID), max(hi, r.ID)
+		}
+		if sinceID > 0 {
+			sinceID = hi
+		} else {
+			if lo <= 1 {
+				return kept, nil
+			}
+			maxID = lo - 1
+		}
+	}
+}
+
+// feverVisible drops the rows the user's filter rules hide.
+func (e *Engine) feverVisible(rf ruleFilter, p filterPlan, rows []storage.FeverItemRow) []storage.FeverItemRow {
 	articles := make([]storage.Article, len(rows))
 	for i, r := range rows {
 		articles[i] = r.Article
@@ -73,7 +115,7 @@ func (e *Engine) GetFeverItems(userID int64, sinceID, maxID int64, withIDs []int
 		}
 		kept = append(kept, r)
 	}
-	return kept, nil
+	return kept
 }
 
 // GetFeverItemCount returns the total article count visible to a user.

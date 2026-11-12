@@ -2434,6 +2434,23 @@ func (s *PostgresStore) GetFeverItems(userID int64, sinceID, maxID int64, withID
 		return results, nil
 	}
 
+	if sinceID > 0 {
+		rows, err := s.q.GetFeverItemsSince(ctx, db.GetFeverItemsSinceParams{
+			UserID:  userID,
+			SinceID: sinceID,
+			MaxID:   maxID,
+			Lim:     int32(limit),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("fever items: %w", err)
+		}
+		results = make([]FeverItemRow, len(rows))
+		for i, r := range rows {
+			results[i] = feverItemFromCore(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate, r.IsRead, r.IsStarred)
+		}
+		return results, nil
+	}
+
 	rows, err := s.q.GetFeverItemsRange(ctx, db.GetFeverItemsRangeParams{
 		UserID:  userID,
 		SinceID: sinceID,

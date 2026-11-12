@@ -179,7 +179,8 @@ type GetFeverItemsRangeRow struct {
 	IsStarred     bool
 }
 
-// since_id / max_id of 0 disable that bound (the Fever API's default).
+// Newest first, for max_id paging backward and for a request with no bound.
+// since_id requests go to GetFeverItemsSince; a since_id of 0 disables it.
 func (q *Queries) GetFeverItemsRange(ctx context.Context, arg GetFeverItemsRangeParams) ([]GetFeverItemsRangeRow, error) {
 	rows, err := q.db.Query(ctx, getFeverItemsRange,
 		arg.UserID,
@@ -194,6 +195,82 @@ func (q *Queries) GetFeverItemsRange(ctx context.Context, arg GetFeverItemsRange
 	items := []GetFeverItemsRangeRow{}
 	for rows.Next() {
 		var i GetFeverItemsRangeRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Guid,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Summary,
+			&i.Author,
+			&i.PublishedDate,
+			&i.FetchedDate,
+			&i.IsRead,
+			&i.IsStarred,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getFeverItemsSince = `-- name: GetFeverItemsSince :many
+SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+       a.author, a.published_date, a.fetched_date,
+       COALESCE(rs.read, FALSE) AS is_read,
+       COALESCE(rs.starred, FALSE) AS is_starred
+FROM articles a
+JOIN user_feeds uf ON uf.feed_id = a.feed_id AND uf.user_id = $1
+LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = $1
+WHERE a.id > $2::bigint
+  AND ($3::bigint = 0 OR a.id <= $3::bigint)
+ORDER BY a.id ASC LIMIT $4
+`
+
+type GetFeverItemsSinceParams struct {
+	UserID  int64
+	SinceID int64
+	MaxID   int64
+	Lim     int32
+}
+
+type GetFeverItemsSinceRow struct {
+	ID            int64
+	FeedID        int64
+	Guid          string
+	Title         string
+	Url           string
+	Content       *string
+	Summary       *string
+	Author        *string
+	PublishedDate *time.Time
+	FetchedDate   time.Time
+	IsRead        bool
+	IsStarred     bool
+}
+
+// since_id pages forward: the items just after it, oldest first, so a client
+// that repeats with the highest id it got walks the whole gap. max_id, when
+// also given, caps the window.
+func (q *Queries) GetFeverItemsSince(ctx context.Context, arg GetFeverItemsSinceParams) ([]GetFeverItemsSinceRow, error) {
+	rows, err := q.db.Query(ctx, getFeverItemsSince,
+		arg.UserID,
+		arg.SinceID,
+		arg.MaxID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetFeverItemsSinceRow{}
+	for rows.Next() {
+		var i GetFeverItemsSinceRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.FeedID,
