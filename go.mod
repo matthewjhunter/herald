@@ -10,7 +10,8 @@ require (
 	github.com/infodancer/logging v0.1.3
 	github.com/infodancer/logging/httplog v0.1.2
 	github.com/infodancer/oidclient v0.9.1
-	github.com/infodancer/smoke v0.1.1
+	github.com/infodancer/smoke v0.1.2
+	github.com/infodancer/web/httpsec v0.2.1
 	github.com/infodancer/web/media v0.1.5
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/matthewjhunter/airlock v0.1.2
