@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"github.com/infodancer/web/httpsec"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -130,21 +131,28 @@ func contentSecurityPolicy(analyticsOrigin string) string {
 	return strings.Join(parts, "; ")
 }
 
-// SecurityHeaders sets conservative security response headers on every
-// response. The CSP permits inline scripts/styles because some templates use
-// them; tightening script-src with nonces is a follow-up. Individual handlers
-// may override Content-Security-Policy before writing (the public landing page
-// does, to whitelist an optional analytics origin); this sets the strict default.
+// SecurityHeaders puts the security response headers on every response.
+//
+// Everything but the CSP comes from httpsec's strict defaults: nosniff, frame
+// deny, strict-origin-when-cross-origin, a Permissions-Policy that denies the
+// powerful browser features, and two-year HSTS. That policy is shared with smoke
+// (httpsec decides what is sent, smoke decides what is expected; neither controls
+// the other), and this site conforms to it.
+//
+// The CSP is the one declared exception. Herald enforces its own policy (see
+// contentSecurityPolicy), which allows 'unsafe-inline' script and style because
+// some templates use them. httpsec's default has neither, and its report-only
+// mode would replace an enforced policy with one that blocks nothing, so herald
+// keeps its own until the templates move to nonces; then it can switch to
+// httpsec's policy, report-only first. Individual handlers may override the CSP
+// before writing (the public landing page does, to whitelist an optional
+// analytics origin, and cached images send a locked-down one).
 func SecurityHeaders(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
-		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("X-Frame-Options", "DENY")
-		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		h.Set("Content-Security-Policy", contentSecurityPolicy(""))
-		h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+	withCSP := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", contentSecurityPolicy(""))
 		next.ServeHTTP(w, r)
 	})
+	return httpsec.Headers(httpsec.HeaderConfig{CSPMode: httpsec.CSPOff})(withCSP)
 }
 
 // Recovery catches panics and returns a 500, reporting the panic to logger.
