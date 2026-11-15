@@ -153,10 +153,11 @@ func TestSmokeRoutesAuthenticated(t *testing.T) {
 	// list, granting the smoke user admin so /admin/* returns 200.
 	mux := NewRouter(engine, validator, "", nil, "admin", []string{"tester@example.com"}, AnalyticsConfig{})
 
-	// Serve what production serves: serve.go wraps the router in SecurityHeaders,
+	// Serve what production serves: serve.go wraps the router in SecurityHeaders and
+	// CSRFGuard (smoke sends a same-origin Origin on every probe),
 	// and smoke holds every response to the shared header baseline. Do not turn the
 	// header checks off to make this pass.
-	srv := httptest.NewServer(SecurityHeaders(mux))
+	srv := httptest.NewServer(SecurityHeaders(CSRFGuard(mux)))
 	t.Cleanup(srv.Close)
 
 	ctx := context.Background()
