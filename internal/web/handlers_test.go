@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/infodancer/smoke"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -1696,6 +1697,17 @@ func TestSecurityHeaders(t *testing.T) {
 		"Content-Security-Policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'",
 	}
 	for header, wantVal := range want {
+		if got := rr.Header().Get(header); got != wantVal {
+			t.Errorf("%s: got %q, want %q", header, got, wantVal)
+		}
+	}
+
+	// The rest of the policy is the shared baseline. The expected values come
+	// from smoke, not from this package: httpsec decides what is sent, smoke
+	// decides what is expected, and neither controls the other. The CSP is the one
+	// declared exception (above): herald enforces its own, with 'unsafe-inline',
+	// until the templates move to nonces.
+	for header, wantVal := range smoke.BaselineHeaders() {
 		if got := rr.Header().Get(header); got != wantVal {
 			t.Errorf("%s: got %q, want %q", header, got, wantVal)
 		}
