@@ -140,7 +140,7 @@ user sessions, article browsing, admin, Fever API, etc.`,
 			)
 			srv := &http.Server{
 				Addr:         listenAddr,
-				Handler:      web.SecurityHeaders(accessLog(web.Recovery(logger, mux))),
+				Handler:      web.SecurityHeaders(accessLog(web.Recovery(logger, web.CSRFGuard(mux)))),
 				ErrorLog:     httplog.ErrorLog(logger.With("component", "http")),
 				ReadTimeout:  15 * time.Second,
 				WriteTimeout: 30 * time.Second,
