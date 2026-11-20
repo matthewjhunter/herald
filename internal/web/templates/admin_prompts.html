@@ -1,7 +1,7 @@
 {{define "title"}}Herald - Global AI Prompts{{end}}
 {{define "nav"}}{{template "shared-nav" "settings"}}{{end}}
 {{define "content"}}
-<main class="container" style="max-width:800px;">
+<main class="container u-max-width-800px">
     {{template "settings-subnav" (dict "Active" "admin-prompts" "IsAdmin" true)}}
     <h2>Global AI Prompts</h2>
     <p class="secondary">These prompts are used as defaults for all users who have not set their own. Changes take effect on the next AI processing cycle.</p>
@@ -12,24 +12,24 @@
     <article>
         <header>
             <strong>{{.Label}}</strong>
-            {{if .IsCustom}}<small style="color:var(--pico-primary);">&nbsp;(global override active)</small>{{else}}<small class="secondary">&nbsp;(using embedded default)</small>{{end}}
+            {{if .IsCustom}}<small class="u-color-var-pico-primary">&nbsp;(global override active)</small>{{else}}<small class="secondary">&nbsp;(using embedded default)</small>{{end}}
         </header>
         <form hx-post="/admin/prompts/{{.Type}}" hx-swap="none" data-saved-feedback>
-            <textarea name="template" rows="8" style="font-family:monospace;font-size:0.85em;">{{.Template}}</textarea>
-            <label style="margin-top:0.5rem;font-size:0.9em;">Model</label>
+            <textarea name="template" rows="8" class="u-a198aa">{{.Template}}</textarea>
+            <label class="u-4c8e32">Model</label>
             {{if .AvailableModels}}
-            <select name="model" style="margin-bottom:0.5rem;">
+            <select name="model" class="u-margin-bottom-0-5rem">
                 {{range .AvailableModels}}
                 <option value="{{.}}" {{if eq . $entry.Model}}selected{{end}}>{{.}}</option>
                 {{end}}
             </select>
             {{else}}
-            <input type="text" name="model" value="{{.Model}}" placeholder="e.g. llama3.2:3b" style="margin-bottom:0.5rem;">
+            <input type="text" name="model" value="{{.Model}}" placeholder="e.g. llama3.2:3b" class="u-margin-bottom-0-5rem">
             {{end}}
-            <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
-                <button type="submit" data-save-btn style="margin:0;">Save</button>
+            <div class="u-c791a0">
+                <button type="submit" data-save-btn class="u-margin-0">Save</button>
                 {{if .IsCustom}}
-                <button type="button" class="outline secondary" style="margin:0;"
+                <button type="button" class="outline secondary u-margin-0"
                         hx-delete="/admin/prompts/{{.Type}}"
                         hx-confirm="Reset '{{.Label}}' to embedded default?"
                         data-reload-on-success>

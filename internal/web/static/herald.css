@@ -673,3 +673,35 @@
     /* Nudge up to sit optically level with the headline's cap height. */
     margin-top: -0.1rem;
 }
+
+/* Small action buttons in the article list footer. The danger variant takes the
+   destructive color; they start hidden (the hidden attribute) until a feed or
+   group is selected. */
+.btn-sm {
+  padding: 0.25rem 0.75rem !important;
+  font-size: 0.85rem !important;
+}
+
+.btn-danger {
+  color: var(--pico-del-color) !important;
+  border-color: var(--pico-del-color) !important;
+}
+
+/* Status page: a count turns red or orange when something needs attention. */
+.stat-red-border { border-color: #f44336 !important; }
+.stat-red { color: #f44336 !important; }
+.stat-orange-border { border-color: #ff9800 !important; }
+.stat-orange { color: #ff9800 !important; }
+
+/* Feeds management table (was a style block in feeds_manage.html). */
+#feeds-table th.sortable { cursor:pointer; user-select:none; white-space:nowrap; }
+#feeds-table th.sortable:hover { opacity:0.75; }
+#feeds-table th.sort-asc::after { content:" ▲"; font-size:0.7em; }
+#feeds-table th.sort-desc::after { content:" ▼"; font-size:0.7em; }
+.feed-tag-chip { display:inline-flex; align-items:center; gap:0.15rem;
+    background:var(--pico-secondary-background); color:var(--pico-secondary-inverse);
+    border-radius:0.8rem; padding:0.05rem 0.5rem; font-size:0.75rem; white-space:nowrap; }
+.feed-tag-chip form { display:inline; }
+.feed-tag-chip button { background:none; border:none; color:inherit; cursor:pointer;
+    padding:0; margin:0; font-size:0.8rem; line-height:1; opacity:0.7; width:auto; }
+.feed-tag-chip button:hover { opacity:1; }

@@ -1,5 +1,5 @@
 {{define "ai_summary_detail"}}
-<div class="summary-detail" style="padding:1rem;">
+<div class="summary-detail u-padding-1rem">
     {{if eq .Status "generating"}}
     <div hx-get="/summary/{{.ID}}" hx-trigger="every 3s" hx-target="#reading-pane" hx-swap="innerHTML">
         <progress></progress>

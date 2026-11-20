@@ -39,12 +39,12 @@
     {{if .ShowReasons}}
     {{/* Optional. The vote is already recorded; this only adds an axis to it,
          so dismissing the menu by ignoring it loses nothing. */}}
-    <span class="vote-reasons" style="margin-left:0.5rem;font-size:0.8em;">
+    <span class="vote-reasons u-ab373b">
         <span class="secondary">Why?</span>
         {{$id := .ID}}{{$surface := .Surface}}{{$pos := .Position}}
         {{range voteReasons}}
-        <button type="button" class="outline secondary"
-                style="margin:0 0 0 0.25rem;padding:0.1rem 0.4rem;font-size:0.9em;"
+        <button type="button" class="outline secondary u-264705"
+               
                 hx-post="/articles/{{$id}}/vote"
                 hx-vals='{"vote":"down","reason":"{{.Axis}}","from":"{{$surface}}"{{if $pos}},"pos":"{{$pos}}"{{end}}}'
                 hx-target="#vote-{{$id}}"

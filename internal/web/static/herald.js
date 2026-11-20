@@ -276,28 +276,28 @@
             if (unsubBtn) {
                 unsubBtn.dataset.feedId = feedLink.dataset.feedId;
                 unsubBtn.title = 'Unsubscribe from ' + feedLink.dataset.feedTitle;
-                unsubBtn.style.display = '';
+                unsubBtn.hidden = false;
             }
-            if (muteBtn) muteBtn.style.display = 'none';
-            if (ungroupBtn) ungroupBtn.style.display = 'none';
+            if (muteBtn) muteBtn.hidden = true;
+            if (ungroupBtn) ungroupBtn.hidden = true;
         } else if (groupLink) {
             // Group selected — show mute and ungroup, hide unsubscribe
-            if (unsubBtn) { unsubBtn.style.display = 'none'; unsubBtn.dataset.feedId = ''; }
+            if (unsubBtn) { unsubBtn.hidden = true; unsubBtn.dataset.feedId = ''; }
             if (muteBtn) {
                 muteBtn.dataset.groupId = groupLink.dataset.groupId;
                 muteBtn.title = 'Mute ' + groupLink.dataset.groupTitle;
-                muteBtn.style.display = '';
+                muteBtn.hidden = false;
             }
             if (ungroupBtn) {
                 ungroupBtn.dataset.groupId = groupLink.dataset.groupId;
                 ungroupBtn.title = 'Ungroup ' + groupLink.dataset.groupTitle;
-                ungroupBtn.style.display = '';
+                ungroupBtn.hidden = false;
             }
         } else if (e.target.closest('#sidebar a:not([data-feed-id]):not([data-group-id])')) {
             // "All Articles" or "Starred" — hide all action buttons
-            if (unsubBtn) { unsubBtn.style.display = 'none'; unsubBtn.dataset.feedId = ''; }
-            if (muteBtn) { muteBtn.style.display = 'none'; }
-            if (ungroupBtn) { ungroupBtn.style.display = 'none'; }
+            if (unsubBtn) { unsubBtn.hidden = true; unsubBtn.dataset.feedId = ''; }
+            if (muteBtn) { muteBtn.hidden = true; }
+            if (ungroupBtn) { ungroupBtn.hidden = true; }
         }
     });
 
@@ -597,4 +597,32 @@
             sortTable(table, col, asc);
         });
     })();
+
+    // Behavior that used to be inline attributes, which the Content-Security-Policy
+    // refuses. Delegated listeners, so they also cover content htmx swaps in.
+    document.addEventListener('submit', function (e) {
+        var form = e.target;
+        if (!form || !form.matches) return;
+        // data-confirm: ask before submitting (destructive forms).
+        var msg = form.getAttribute('data-confirm');
+        if (msg && !window.confirm(msg)) { e.preventDefault(); return; }
+        // The nav search box filters as you type; Enter must not reload the page.
+        if (form.matches('form.nav-search')) e.preventDefault();
+    });
+    document.addEventListener('click', function (e) {
+        // data-select-on-click: select the field's text so it can be copied.
+        var el = e.target;
+        if (el && el.matches && el.matches('[data-select-on-click]') && el.select) el.select();
+    });
+
+    // The reader gauge's arc boundaries are numbers from the server. They are set
+    // here as CSS custom properties (a style attribute would be refused), on first
+    // load and again for each fragment htmx swaps in.
+    function applyGauges(root) {
+        (root || document).querySelectorAll('.reader-gauge-ring[data-grey-end]').forEach(function (el) {
+            el.style.setProperty('--grey-end', el.dataset.greyEnd + '%');
+            el.style.setProperty('--yellow-end', el.dataset.yellowEnd + '%');
+        });
+    }
+    if (window.htmx && htmx.onLoad) htmx.onLoad(applyGauges); else applyGauges(document);
 })();

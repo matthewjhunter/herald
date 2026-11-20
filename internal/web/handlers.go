@@ -310,6 +310,7 @@ func (h *handlers) renderPublicPage(w http.ResponseWriter, name string, data any
 	// app's CSP is never relaxed.
 	if h.analytics.Enabled {
 		w.Header().Set("Content-Security-Policy", contentSecurityPolicy(h.analytics.Origin))
+		w.Header().Set("Content-Security-Policy-Report-Only", reportOnlyCSP(h.analytics.Origin))
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	pd := publicPageData{Analytics: h.analytics, Data: data}

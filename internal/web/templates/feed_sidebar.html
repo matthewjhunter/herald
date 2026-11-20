@@ -2,7 +2,7 @@
 {{with .Gauge}}
 <div class="reader-gauge" title="Last 7 days &mdash; pending: waiting on AI screening; unread: scored, not yet read; read: already seen">
     {{if .Total}}
-    <div class="reader-gauge-ring" style="--grey-end:{{.GreyEnd}}%;--yellow-end:{{.YellowEnd}}%;">
+    <div class="reader-gauge-ring" data-grey-end="{{.GreyEnd}}" data-yellow-end="{{.YellowEnd}}">
         <span class="reader-gauge-center">{{.Ready}}</span>
     </div>
     {{else}}

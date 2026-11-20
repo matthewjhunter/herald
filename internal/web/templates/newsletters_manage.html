@@ -24,7 +24,7 @@
             </div>
             {{template "feed_picker" (dict "Suffix" "new" "Feeds" .Feeds "FeedTags" .FeedTags "AllTags" .AllTags "SelFeeds" emptyInts "SelTags" emptyStrs)}}
             <label>Prompt (leave blank for the default summary prompt)
-                <textarea name="prompt" rows="6" style="font-family:monospace;font-size:0.85em;"></textarea>
+                <textarea name="prompt" rows="6" class="u-a198aa"></textarea>
             </label>
             <label>Email Recipient (optional)<input type="email" name="email_recipient" placeholder="you@example.com"></label>
             <button type="submit">Create</button>
@@ -43,23 +43,21 @@
 {{if .Newsletters}}
 {{range .Newsletters}}
 <article>
-    <header style="display:flex;justify-content:space-between;align-items:center;">
+    <header class="u-f12080">
         <strong>{{.Name}}</strong>
         <span class="meta">{{.Schedule}} &middot; min {{printf "%.1f" .Config.MinInterestScore}} &middot; max {{.Config.MaxArticles}}
             {{if .Config.IncludeTags}}&middot; tags: {{range $i, $t := .Config.IncludeTags}}{{if $i}}, {{end}}{{$t}}{{end}}{{end}}
             {{if .Config.IncludeFeeds}}&middot; {{len .Config.IncludeFeeds}} feed(s){{else}}{{if not .Config.IncludeTags}}&middot; all feeds{{end}}{{end}}
             {{if .EmailRecipient}}&middot; ✉ {{.EmailRecipient}}{{end}}</span>
     </header>
-    <div style="display:flex;gap:0.5rem;align-items:center;">
-        <button class="outline" hx-post="/newsletters/{{.ID}}/generate" hx-target="#gen-status-{{.ID}}" hx-swap="innerHTML"
-                style="padding:0.25rem 0.75rem;font-size:0.85rem;">Generate now</button>
-        <span id="gen-status-{{.ID}}" class="secondary" style="font-size:0.85rem;"></span>
-        <button class="outline secondary" hx-delete="/newsletters/{{.ID}}"
-                hx-target="#newsletter-list" hx-swap="innerHTML" hx-confirm="Delete digest '{{.Name}}'?"
-                style="margin-left:auto;padding:0.25rem 0.75rem;font-size:0.85rem;">Delete</button>
+    <div class="u-522b38">
+        <button class="outline u-39e3b1" hx-post="/newsletters/{{.ID}}/generate" hx-target="#gen-status-{{.ID}}" hx-swap="innerHTML">Generate now</button>
+        <span id="gen-status-{{.ID}}" class="secondary u-font-size-0-85rem"></span>
+        <button class="outline secondary u-87423c" hx-delete="/newsletters/{{.ID}}"
+                hx-target="#newsletter-list" hx-swap="innerHTML" hx-confirm="Delete digest '{{.Name}}'?">Delete</button>
     </div>
-    <details style="margin-top:0.5rem;">
-        <summary style="cursor:pointer;font-size:0.9rem;">Edit</summary>
+    <details class="u-margin-top-0-5rem">
+        <summary class="u-d8ebb1">Edit</summary>
         <form hx-patch="/newsletters/{{.ID}}" hx-target="#newsletter-list" hx-swap="innerHTML">
             <div class="grid">
                 <label>Name<input type="text" name="name" required value="{{.Name}}"></label>
@@ -77,7 +75,7 @@
             </div>
             {{template "feed_picker" (dict "Suffix" .ID "Feeds" $feeds "FeedTags" $.FeedTags "AllTags" $.AllTags "SelFeeds" .Config.IncludeFeeds "SelTags" .Config.IncludeTags)}}
             <label>Prompt (leave blank for the default summary prompt)
-                <textarea name="prompt" rows="6" style="font-family:monospace;font-size:0.85em;">{{.PromptTemplate}}</textarea>
+                <textarea name="prompt" rows="6" class="u-a198aa">{{.PromptTemplate}}</textarea>
             </label>
             <label>Email Recipient (optional)<input type="email" name="email_recipient" value="{{.EmailRecipient}}"></label>
             <button type="submit">Save</button>
@@ -114,125 +112,6 @@
 {{end}}
 
 {{define "feed_picker_assets"}}
-<style>
-    .feed-picker { margin-bottom: 1rem; }
-    .fp-hint { font-size: 0.8rem; color: var(--pico-muted-color); margin: 0 0 0.4rem; }
-    .feed-picker.fp-on .fp-native { display: none; }
-    .fp-panes { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
-    .fp-pane { border: 1px solid var(--pico-muted-border-color); border-radius: 0.4rem; padding: 0.5rem; }
-    .fp-pane h5 { margin: 0 0 0.4rem; font-size: 0.8rem; text-transform: uppercase; color: var(--pico-muted-color); }
-    .fp-search { width: 100%; margin: 0 0 0.5rem; padding: 0.2rem 0.4rem; font-size: 0.85rem; }
-    .fp-scroll { max-height: 16rem; overflow-y: auto; }
-    .fp-group > summary { cursor: pointer; font-size: 0.8rem; font-weight: 600; padding: 0.2rem 0; }
-    .fp-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.15rem 0.25rem; font-size: 0.85rem; }
-    .fp-row button { padding: 0 0.4rem; margin: 0; font-size: 0.8rem; line-height: 1.4; width: auto; }
-    .fp-chip { display: inline-flex; align-items: center; gap: 0.2rem; background: var(--pico-secondary-background); color: var(--pico-secondary-inverse); border-radius: 0.8rem; padding: 0.1rem 0.55rem; margin: 0.15rem 0.2rem 0 0; font-size: 0.8rem; }
-    .fp-chip.fp-tagchip { background: var(--pico-primary-background); color: var(--pico-primary-inverse); }
-    .fp-chip button { background: none; border: none; color: inherit; cursor: pointer; padding: 0; margin: 0; width: auto; font-size: 0.85rem; line-height: 1; }
-    .fp-included-empty { font-size: 0.8rem; color: var(--pico-muted-color); }
-</style>
-<script>
-(function () {
-    function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
-
-    function buildPicker(pick) {
-        if (pick.dataset.fpInit) return;
-        pick.dataset.fpInit = '1';
-        var tagSel = pick.querySelector('.fp-tags');
-        var feedSel = pick.querySelector('.fp-feeds');
-        if (!feedSel) return;
-
-        var feeds = Array.prototype.map.call(feedSel.options, function (o) {
-            var tags = [];
-            try { tags = JSON.parse(o.dataset.tags || '[]') || []; } catch (e) { tags = []; }
-            return { id: o.value, title: o.dataset.title || o.text, tags: tags, opt: o };
-        });
-        var tagOpts = tagSel ? Array.prototype.slice.call(tagSel.options) : [];
-
-        var ui = document.createElement('div');
-        ui.className = 'fp-panes';
-        ui.innerHTML =
-            '<div class="fp-pane fp-avail"><h5>Available</h5>' +
-            '<input type="search" class="fp-search" placeholder="filter feeds…"><div class="fp-scroll"></div></div>' +
-            '<div class="fp-pane fp-incl"><h5>Included</h5><div class="fp-scroll fp-incl-body"></div></div>';
-        pick.appendChild(ui);
-        pick.classList.add('fp-on');
-
-        var availBody = ui.querySelector('.fp-avail .fp-scroll');
-        var inclBody = ui.querySelector('.fp-incl-body');
-        var search = ui.querySelector('.fp-search');
-
-        function tagSelected(name) {
-            var o = tagOpts.find(function (t) { return t.value === name; });
-            return o ? o.selected : false;
-        }
-        function setTag(name, on) {
-            var o = tagOpts.find(function (t) { return t.value === name; });
-            if (o) o.selected = on;
-        }
-
-        function renderAvail() {
-            var q = (search.value || '').toLowerCase();
-            var groups = {}; var order = [];
-            tagOpts.forEach(function (t) { groups[t.value] = []; order.push(t.value); });
-            var untagged = [];
-            feeds.forEach(function (f) {
-                if (q && f.title.toLowerCase().indexOf(q) === -1) return;
-                if (!f.tags.length) { untagged.push(f); return; }
-                f.tags.forEach(function (tg) { if (!(tg in groups)) { groups[tg] = []; order.push(tg); } groups[tg].push(f); });
-            });
-            var html = '';
-            order.forEach(function (tg) {
-                if (!groups[tg].length) return;
-                html += '<details class="fp-group" open><summary>' + esc(tg) +
-                    ' <button type="button" class="outline" data-follow="' + esc(tg) + '">' +
-                    (tagSelected(tg) ? 'following ✓' : 'follow →') + '</button></summary>';
-                groups[tg].forEach(function (f) {
-                    html += '<div class="fp-row"><span>' + esc(f.title) + '</span>' +
-                        '<button type="button" class="outline" data-add="' + esc(f.id) + '">' + (f.opt.selected ? '✓' : '+') + '</button></div>';
-                });
-                html += '</details>';
-            });
-            if (untagged.length) {
-                html += '<details class="fp-group"><summary>Untagged</summary>';
-                untagged.forEach(function (f) {
-                    html += '<div class="fp-row"><span>' + esc(f.title) + '</span>' +
-                        '<button type="button" class="outline" data-add="' + esc(f.id) + '">' + (f.opt.selected ? '✓' : '+') + '</button></div>';
-                });
-                html += '</details>';
-            }
-            availBody.innerHTML = html || '<p class="fp-included-empty">No feeds.</p>';
-        }
-
-        function renderIncl() {
-            var html = '';
-            tagOpts.filter(function (t) { return t.selected; }).forEach(function (t) {
-                html += '<span class="fp-chip fp-tagchip">#' + esc(t.value) +
-                    '<button type="button" data-unfollow="' + esc(t.value) + '">✕</button></span>';
-            });
-            feeds.filter(function (f) { return f.opt.selected; }).forEach(function (f) {
-                html += '<span class="fp-chip">' + esc(f.title) +
-                    '<button type="button" data-rm="' + esc(f.id) + '">✕</button></span>';
-            });
-            inclBody.innerHTML = html || '<p class="fp-included-empty">Nothing selected → all feeds.</p>';
-        }
-
-        function rerender() { renderAvail(); renderIncl(); }
-
-        pick.addEventListener('click', function (e) {
-            var b = e.target.closest('button'); if (!b || !pick.contains(b)) return;
-            if (b.dataset.add != null) { var f = feeds.find(function (x) { return x.id === b.dataset.add; }); if (f) f.opt.selected = true; e.preventDefault(); rerender(); }
-            else if (b.dataset.rm != null) { var f2 = feeds.find(function (x) { return x.id === b.dataset.rm; }); if (f2) f2.opt.selected = false; e.preventDefault(); rerender(); }
-            else if (b.dataset.follow != null) { setTag(b.dataset.follow, true); e.preventDefault(); rerender(); }
-            else if (b.dataset.unfollow != null) { setTag(b.dataset.unfollow, false); e.preventDefault(); rerender(); }
-        });
-        search.addEventListener('input', renderAvail);
-        rerender();
-    }
-
-    function init(root) { (root || document).querySelectorAll('.feed-picker').forEach(buildPicker); }
-    if (document.readyState !== 'loading') init(); else document.addEventListener('DOMContentLoaded', function () { init(); });
-    document.body.addEventListener('htmx:afterSwap', function (e) { init(e.target); });
-})();
-</script>
+<link rel="stylesheet" href="/static/feed-picker.css?v={{assetVersion}}">
+<script src="/static/feed-picker.js?v={{assetVersion}}" defer></script>
 {{end}}

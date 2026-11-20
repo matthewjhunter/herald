@@ -40,7 +40,7 @@
     <article>
         <header><h3>Filter Threshold</h3></header>
         <form hx-post="/filters/threshold" hx-swap="none">
-            <div class="grid" style="align-items:end;">
+            <div class="grid u-align-items-end">
                 <div>
                     <label for="filter_threshold">Threshold</label>
                     <input type="number" id="filter_threshold" name="filter_threshold"
@@ -142,7 +142,7 @@
             <option value="{{.ID}}">{{.Title}}</option>
             {{end}}
         </select>
-        <div id="metadata-result" style="margin-top:1rem;"></div>
+        <div id="metadata-result" class="u-margin-top-1rem"></div>
     </article>
     {{end}}
 </main>
@@ -170,7 +170,7 @@
             <td>{{if eq .MatchMode "regex"}}<code>{{.Value}}</code>{{else}}{{.Value}}{{end}}</td>
             <td>{{.Score}}</td>
             <td>
-                <button class="outline secondary" style="padding:0.25rem 0.5rem;font-size:0.8rem;"
+                <button class="outline secondary u-3ce306"
                         hx-delete="/filters/{{.ID}}"
                         hx-target="#rules-list" hx-swap="innerHTML"
                         hx-confirm="Delete this rule?">

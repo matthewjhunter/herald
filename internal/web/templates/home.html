@@ -12,19 +12,19 @@
              hx-get="/articles" hx-trigger="load" hx-swap="innerHTML">
             <div class="empty-state">Loading articles...</div>
         </div>
-        <div class="article-list-footer" style="display:flex;justify-content:space-between;align-items:center;">
+        <div class="article-list-footer u-f12080">
             <button class="outline secondary mark-all-read-btn">Mark all as read</button>
-            <button id="hide-read-btn" class="outline" style="padding:0.2rem 0.6rem;font-size:0.8rem;"></button>
+            <button id="hide-read-btn" class="outline u-b7c697"></button>
             <button id="unsubscribe-feed-btn"
-                    class="outline" style="display:none;color:var(--pico-del-color);border-color:var(--pico-del-color);padding:0.25rem 0.75rem;font-size:0.85rem;">
+                    class="outline btn-sm btn-danger" hidden>
                 Unsubscribe
             </button>
             <button id="mute-group-btn"
-                    class="outline" style="display:none;color:var(--pico-del-color);border-color:var(--pico-del-color);padding:0.25rem 0.75rem;font-size:0.85rem;">
+                    class="outline btn-sm btn-danger" hidden>
                 Mute Topic
             </button>
             <button id="ungroup-btn"
-                    class="outline" style="display:none;padding:0.25rem 0.75rem;font-size:0.85rem;">
+                    class="outline btn-sm" hidden>
                 Ungroup
             </button>
         </div>
