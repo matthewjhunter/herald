@@ -139,20 +139,57 @@ func contentSecurityPolicy(analyticsOrigin string) string {
 // (httpsec decides what is sent, smoke decides what is expected; neither controls
 // the other), and this site conforms to it.
 //
-// The CSP is the one declared exception. Herald enforces its own policy (see
-// contentSecurityPolicy), which allows 'unsafe-inline' script and style because
-// some templates use them. httpsec's default has neither, and its report-only
-// mode would replace an enforced policy with one that blocks nothing, so herald
-// keeps its own until the templates move to nonces; then it can switch to
-// httpsec's policy, report-only first. Individual handlers may override the CSP
-// before writing (the public landing page does, to whitelist an optional
-// analytics origin, and cached images send a locked-down one).
+// The CSP is the one declared exception, and a temporary one. Herald still
+// enforces its own policy (see contentSecurityPolicy), which allows
+// 'unsafe-inline' script and style from the days when templates used them. The
+// templates no longer do: they carry no inline script, style element, style
+// attribute or handler (TestTemplatesCarryNoInlineCode). So the strict policy
+// from httpsec is sent report-only beside it (see reportOnlyHeaders), and once
+// its reports are quiet it replaces the enforced one. The two headers have
+// different names, so sending both loses no protection. Individual handlers may
+// override the CSP before writing (the public landing page does, to whitelist an
+// optional analytics origin, and cached images send a locked-down one).
 func SecurityHeaders(next http.Handler) http.Handler {
+	report := httpsec.ReportHandler(slog.Default())
 	withCSP := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Browsers POST violation reports with no Origin, so the collector is
+		// answered here, ahead of the CSRF guard that sits inside this.
+		if r.URL.Path == cspReportPath {
+			if r.Method != http.MethodPost {
+				w.Header().Set("Allow", http.MethodPost)
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			report.ServeHTTP(w, r)
+			return
+		}
 		w.Header().Set("Content-Security-Policy", contentSecurityPolicy(""))
 		next.ServeHTTP(w, r)
 	})
-	return httpsec.Headers(httpsec.HeaderConfig{CSPMode: httpsec.CSPOff})(withCSP)
+	return httpsec.Headers(reportOnlyHeaders(""))(withCSP)
+}
+
+// cspReportPath is where browsers send Content-Security-Policy violation reports.
+const cspReportPath = "/csp-report"
+
+// reportOnlyHeaders is the strict default policy from httpsec, report-only, with
+// the analytics origin (when there is one) allowed for script and beacon. It rides
+// beside the enforced policy: the two headers have different names, so sending
+// both loses no protection, and the reports show what enforcing the strict one
+// would block. The templates are being moved to it; when its reports are quiet it
+// replaces the enforced policy above.
+func reportOnlyHeaders(analyticsOrigin string) httpsec.HeaderConfig {
+	p := httpsec.DefaultPolicy()
+	if analyticsOrigin != "" {
+		p = p.Allow("script-src", analyticsOrigin).Allow("connect-src", analyticsOrigin)
+	}
+	return httpsec.HeaderConfig{Policy: p, CSPMode: httpsec.CSPReportOnly, ReportURI: cspReportPath}
+}
+
+// reportOnlyCSP is the report-only header value for a response; see
+// reportOnlyHeaders.
+func reportOnlyCSP(analyticsOrigin string) string {
+	return reportOnlyHeaders(analyticsOrigin).Expected()["Content-Security-Policy-Report-Only"]
 }
 
 // Recovery catches panics and returns a 500, reporting the panic to logger.
