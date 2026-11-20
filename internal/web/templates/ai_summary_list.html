@@ -1,8 +1,8 @@
 {{define "ai_summary_list"}}
 <div class="summary-list">
-    <div class="article-list-header" style="display:flex;justify-content:space-between;align-items:center;padding:0.5rem;">
+    <div class="article-list-header u-32f1dc">
         <strong>AI Summaries</strong>
-        <button class="outline" style="margin:0;padding:0.2rem 0.6rem;font-size:0.85rem;"
+        <button class="outline u-cef629"
                 hx-post="/summary/generate" hx-target="#article-list" hx-swap="innerHTML"
                 {{if not .Enabled}}disabled{{end}}>
             Generate
@@ -22,7 +22,7 @@
              {{end}}>
             <h4>{{if .ConfigName}}{{.ConfigName}}{{else}}AI Summary{{end}} &mdash; {{.Label}}</h4>
             <div class="meta">
-                {{if eq .Status "generating"}}<progress style="width:6rem;height:0.5rem;"></progress> generating…
+                {{if eq .Status "generating"}}<progress class="u-0d7a0c"></progress> generating…
                 {{else if eq .Status "failed"}}generation failed
                 {{else}}{{.ArticleCount}} article{{if ne .ArticleCount 1}}s{{end}}{{end}}
             </div>

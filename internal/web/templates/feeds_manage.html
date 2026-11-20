@@ -1,43 +1,43 @@
 {{define "feed_title_display"}}
 {{if .SiteURL}}<a href="{{.SiteURL}}" target="_blank" rel="noopener">{{if .Title}}{{.Title}}{{else}}(untitled){{end}}</a>{{else}}<span>{{if .Title}}{{.Title}}{{else}}(untitled){{end}}</span>{{end}}
-<button class="outline secondary" style="padding:0.1rem 0.35rem;font-size:0.75rem;margin-left:0.4rem;vertical-align:middle;"
+<button class="outline secondary u-edcad6"
         hx-get="/feeds/{{.FeedID}}/edit-title?title={{.Title}}"
         hx-target="#feed-title-cell-{{.FeedID}}"
         hx-swap="innerHTML">✎</button>
 {{end}}
 
 {{define "feed_title_edit"}}
-<form style="display:flex;align-items:center;gap:0.4rem;margin:0;"
+<form
       hx-patch="/feeds/{{.FeedID}}"
       hx-target="#feed-title-cell-{{.FeedID}}"
-      hx-swap="innerHTML">
-    <input type="text" name="title" value="{{.Title}}" style="margin:0;padding:0.2rem 0.4rem;font-size:0.9rem;width:16rem;" autofocus>
-    <button type="submit" style="margin:0;padding:0.2rem 0.5rem;font-size:0.8rem;">Save</button>
-    <button type="button" style="margin:0;padding:0.2rem 0.5rem;font-size:0.8rem;"
+      hx-swap="innerHTML" class="u-999e8d">
+    <input type="text" name="title" value="{{.Title}}" autofocus class="u-4fa19c">
+    <button type="submit" class="u-646980">Save</button>
+    <button type="button"
             hx-get="/feeds/{{.FeedID}}/title?title={{.Title}}"
             hx-target="#feed-title-cell-{{.FeedID}}"
             hx-swap="innerHTML"
-            class="outline secondary">✕</button>
+            class="outline secondary u-646980">✕</button>
 </form>
 {{end}}
 
 {{define "feed_discover_results"}}
 {{if .Error}}
-<p style="color:var(--pico-del-color);margin-top:0.5rem;">{{.Error}}</p>
+<p class="u-66a49f">{{.Error}}</p>
 {{else}}
-<div style="margin-top:0.75rem;">
-    <p style="margin-bottom:0.5rem;">Found {{len .Feeds}} feed(s) at <em>{{.PageURL}}</em>:</p>
+<div class="u-margin-top-0-75rem">
+    <p class="u-margin-bottom-0-5rem">Found {{len .Feeds}} feed(s) at <em>{{.PageURL}}</em>:</p>
     {{range .Feeds}}
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:0.5rem 0;border-bottom:1px solid var(--pico-muted-border-color);">
+    <div class="u-531c3a">
         <div>
             <strong>{{if .Title}}{{.Title}}{{else}}(untitled){{end}}</strong>
             <small class="secondary"> — {{.Type}}</small><br>
             <small class="secondary">{{.URL}}</small>
         </div>
-        <form hx-post="/feeds" hx-target="body" style="margin:0;">
+        <form hx-post="/feeds" hx-target="body" class="u-margin-0">
             <input type="hidden" name="url" value="{{.URL}}">
             <input type="hidden" name="title" value="{{.Title}}">
-            <button type="submit" style="margin:0;padding:0.3rem 0.75rem;font-size:0.85rem;">Subscribe</button>
+            <button type="submit" class="u-3c9ced">Subscribe</button>
         </form>
     </div>
     {{end}}
@@ -46,20 +46,20 @@
 {{end}}
 
 {{define "feed_tags_cell"}}
-<div id="feed-tags-cell-{{.FeedID}}" style="display:flex;flex-wrap:wrap;align-items:center;gap:0.3rem;">
+<div id="feed-tags-cell-{{.FeedID}}" class="u-e11784">
     {{range .Tags}}
-    <span class="feed-tag-chip">{{.}}<form style="display:inline;margin:0;"
+    <span class="feed-tag-chip">{{.}}<form
             hx-delete="/feeds/{{$.FeedID}}/tags"
-            hx-target="#feed-tags-cell-{{$.FeedID}}" hx-swap="outerHTML">
+            hx-target="#feed-tags-cell-{{$.FeedID}}" hx-swap="outerHTML" class="u-47dffa">
         <input type="hidden" name="tag" value="{{.}}">
         <button type="submit" title="Remove tag">✕</button></form></span>
     {{end}}
-    <form style="display:inline-flex;margin:0;" autocomplete="off"
+    <form autocomplete="off"
           hx-post="/feeds/{{.FeedID}}/tags"
           hx-target="#feed-tags-cell-{{.FeedID}}" hx-swap="outerHTML"
-          data-reset-on-success>
+          data-reset-on-success class="u-bf270c">
         <input type="text" name="tag" placeholder="+ tag" list="all-tags-list" maxlength="50"
-               style="margin:0;padding:0.1rem 0.4rem;font-size:0.75rem;width:7rem;">
+               class="u-12de49">
     </form>
 </div>
 {{end}}
@@ -98,7 +98,7 @@
 
     <article>
         <header><h3>Export OPML</h3></header>
-        <p><a href="/feeds/export.opml" role="button" class="outline secondary" style="display:inline-block;">Download Subscriptions</a></p>
+        <p><a href="/feeds/export.opml" role="button" class="outline secondary u-display-inline-block">Download Subscriptions</a></p>
     </article>
 
     <div id="feed-list">
@@ -107,9 +107,9 @@
             <thead>
                 <tr>
                     <th data-col="0" class="sortable">Feed</th>
-                    <th data-col="1" class="sortable" style="text-align:right;">Articles</th>
-                    <th data-col="2" class="sortable" style="text-align:right;">Unread</th>
-                    <th data-col="3" class="sortable" style="text-align:right;">Unsummarized</th>
+                    <th data-col="1" class="sortable u-text-align-right">Articles</th>
+                    <th data-col="2" class="sortable u-text-align-right">Unread</th>
+                    <th data-col="3" class="sortable u-text-align-right">Unsummarized</th>
                     <th data-col="4" class="sortable">Last Post</th>
                     <th data-col="5" class="sortable">Last Fetched</th>
                     <th>Tags</th>
@@ -122,16 +122,16 @@
                     <td>
                         <strong id="feed-title-cell-{{.FeedID}}">{{template "feed_title_display" .}}</strong><br>
                         <small class="secondary">{{.URL}}</small>
-                        {{if gt .ConsecutiveErrors 0}}<br><small style="color:var(--pico-del-color);">&#9888; Failing ({{.ConsecutiveErrors}}x since last success){{if .LastError}}: {{.LastError}}{{end}}</small>{{else if .LastError}}<br><small class="secondary">Last error: {{.LastError}}</small>{{end}}
+                        {{if gt .ConsecutiveErrors 0}}<br><small class="u-color-var-pico-del-color">&#9888; Failing ({{.ConsecutiveErrors}}x since last success){{if .LastError}}: {{.LastError}}{{end}}</small>{{else if .LastError}}<br><small class="secondary">Last error: {{.LastError}}</small>{{end}}
                     </td>
-                    <td style="text-align:right;">{{.TotalArticles}}</td>
-                    <td style="text-align:right;">{{.UnreadArticles}}</td>
-                    <td style="text-align:right;">{{if .UnsummarizedArticles}}{{.UnsummarizedArticles}}{{else}}0{{end}}</td>
+                    <td class="u-text-align-right">{{.TotalArticles}}</td>
+                    <td class="u-text-align-right">{{.UnreadArticles}}</td>
+                    <td class="u-text-align-right">{{if .UnsummarizedArticles}}{{.UnsummarizedArticles}}{{else}}0{{end}}</td>
                     <td>{{.LastPostDateFmt}}</td>
                     <td>{{.LastFetchedFmt}}</td>
                     <td>{{template "feed_tags_cell" (dict "FeedID" .FeedID "Tags" .Tags)}}</td>
                     <td>
-                        <button class="outline secondary" style="padding:0.25rem 0.5rem;font-size:0.8rem;"
+                        <button class="outline secondary u-3ce306"
                                 hx-delete="/feeds/{{.FeedID}}"
                                 hx-target="#feed-list" hx-swap="innerHTML"
                                 hx-confirm="Unsubscribe from {{.Title}}?">
@@ -143,19 +143,6 @@
             </tbody>
         </table>
         <datalist id="all-tags-list">{{range .AllTags}}<option value="{{.}}"></option>{{end}}</datalist>
-        <style>
-            #feeds-table th.sortable { cursor:pointer; user-select:none; white-space:nowrap; }
-            #feeds-table th.sortable:hover { opacity:0.75; }
-            #feeds-table th.sort-asc::after { content:" ▲"; font-size:0.7em; }
-            #feeds-table th.sort-desc::after { content:" ▼"; font-size:0.7em; }
-            .feed-tag-chip { display:inline-flex; align-items:center; gap:0.15rem;
-                background:var(--pico-secondary-background); color:var(--pico-secondary-inverse);
-                border-radius:0.8rem; padding:0.05rem 0.5rem; font-size:0.75rem; white-space:nowrap; }
-            .feed-tag-chip form { display:inline; }
-            .feed-tag-chip button { background:none; border:none; color:inherit; cursor:pointer;
-                padding:0; margin:0; font-size:0.8rem; line-height:1; opacity:0.7; width:auto; }
-            .feed-tag-chip button:hover { opacity:1; }
-        </style>
         {{else}}
         <p class="empty-state">No feeds subscribed. Add one above.</p>
         {{end}}

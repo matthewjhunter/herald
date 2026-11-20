@@ -8,12 +8,9 @@
          printf 'sha384-%s\n' "$(openssl dgst -sha384 -binary static/pico.min.css | openssl base64 -A)" -->
     <link rel="stylesheet" href="/static/pico.min.css?v={{assetVersion}}" integrity="sha384-L1dWfspMTHU/ApYnFiMz2QID/PlP1xCW9visvBdbEkOLkSSWsP6ZJWhPw6apiXxU" crossorigin="anonymous">
     <link rel="stylesheet" href="/static/herald.css?v={{assetVersion}}">
-    <script>
-        (function() {
-            var t = localStorage.getItem('herald-theme');
-            if (t) document.documentElement.setAttribute('data-theme', t);
-        })();
-    </script>
+    <link rel="stylesheet" href="/static/utilities.css?v={{assetVersion}}">
+    <meta name="htmx-config" content='{"includeIndicatorStyles":false}'>
+    <script src="/static/theme-init.js?v={{assetVersion}}"></script>
 </head>
 <body>
     <div id="reconnect-banner" class="reconnect-banner" hidden>
@@ -21,12 +18,12 @@
         <button id="reconnect-btn" class="outline" type="button">Reconnect</button>
     </div>
     <header class="top-nav">
-        <div style="display:flex;flex-direction:column;gap:0;">
-            <h1 style="margin-bottom:0;"><a href="/" style="text-decoration:none;color:inherit;">Herald</a></h1>
-            <span style="font-size:0.6rem;opacity:0.4;line-height:1;margin-top:0.15rem;">{{buildVersion}} · {{buildTime}}</span>
+        <div class="u-f81a44">
+            <h1 class="u-margin-bottom-0"><a href="/" class="u-c52f90">Herald</a></h1>
+            <span class="u-7c4af3">{{buildVersion}} · {{buildTime}}</span>
         </div>
         {{block "nav" .}}{{end}}
-        <form class="nav-search" onsubmit="return false;">
+        <form class="nav-search">
             <svg class="nav-search-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
                 <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/>
                 <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>

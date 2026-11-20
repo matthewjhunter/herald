@@ -7,10 +7,10 @@
     <p>Admin-only HTML wrapped around every generated digest at render and email time (e.g. a mandatory unsubscribe footer). Changes apply to existing digests without regenerating. Sanitized on output.</p>
     <form hx-post="/admin/digest" hx-swap="none" data-saved-feedback>
         <label>Header HTML
-            <textarea name="header" rows="6" style="font-family:monospace;font-size:0.85em;">{{.Header}}</textarea>
+            <textarea name="header" rows="6" class="u-a198aa">{{.Header}}</textarea>
         </label>
         <label>Footer HTML
-            <textarea name="footer" rows="6" style="font-family:monospace;font-size:0.85em;">{{.Footer}}</textarea>
+            <textarea name="footer" rows="6" class="u-a198aa">{{.Footer}}</textarea>
         </label>
         <button type="submit" data-save-btn>Save</button>
     </form>
