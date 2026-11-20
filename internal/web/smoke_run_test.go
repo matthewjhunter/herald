@@ -17,39 +17,11 @@ import (
 // the PNG signature is enough to exercise a 200 response.
 var smokePNG = []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}
 
-// TestSmokeRoutesAuthenticated is the phase-2a authed smoke harness: it boots
-// the real wired router against a real (SQLite) store, seeds a deterministic
-// fixture, mints a valid session cookie via the fake OIDC provider, and runs
-// the smoke library over every route in the manifest with that cookie. Unlike
-// the per-handler tests (which exercise one handler each), this drives the
-// fully assembled server end-to-end and fails on any 5xx/4xx -- the class of
-// wiring/DI/route-registration regression that unit tests against fakes miss.
-//
-// It is in-process (no preview container yet): it catches handler/route/DB-
-// wiring 502s, not deployment/migration/image regressions. Those are phase 2b.
-//
-// The fixture pins ids to 1 (each entity is the first row in a fresh DB), which
-// the smoke.Example() annotations in routes.go reference. The smoke user is made
-// admin (via the adminUsers email fallback) so /admin/* routes return 200 rather
-// than 403.
-func TestSmokeRoutesAuthenticated(t *testing.T) {
-	dbPath, dropSchema := storagetest.DSN(t)
-	t.Cleanup(dropSchema)
-
-	// herald-web runs read-only in production; mirror that. Incidental writes
-	// (e.g. auto-mark-read) are best-effort and ignored by the handlers.
-	engine, err := herald.NewEngine(herald.EngineConfig{DBPath: dbPath, ReadOnly: true})
-	if err != nil {
-		t.Fatalf("NewEngine: %v", err)
-	}
-	t.Cleanup(func() { engine.Close() })
-
-	st, err := storage.NewStore(dbPath)
-	if err != nil {
-		t.Fatalf("NewStore: %v", err)
-	}
-	t.Cleanup(func() { st.Close() })
-
+// seedSmokeFixture fills a fresh store with the deterministic fixture the smoke
+// examples assume (every entity is the first row, so ids are 1). The browser
+// fixture serves the same data so pages render with something on them.
+func seedSmokeFixture(t *testing.T, engine *herald.Engine, st storage.Store) {
+	t.Helper()
 	// Seed the fixture. newTestValidator issues a token for sub "test-sub-1" /
 	// "tester@example.com"; provision the matching user so request-time
 	// GetOrProvisionOIDCUser resolves to it and user-scoped routes (summary)
@@ -147,6 +119,42 @@ func TestSmokeRoutesAuthenticated(t *testing.T) {
 		t.Fatalf("fixture ids not deterministic: user=%d feed=%d feed2=%d article=%d summary=%d rule=%d group1=%d group2=%d nl1=%d nl2=%d",
 			user.ID, feedID, feed2, articleID, sumID, ruleID, group1, group2, nl1, nl2)
 	}
+}
+
+// TestSmokeRoutesAuthenticated is the phase-2a authed smoke harness: it boots
+// the real wired router against a real (SQLite) store, seeds a deterministic
+// fixture, mints a valid session cookie via the fake OIDC provider, and runs
+// the smoke library over every route in the manifest with that cookie. Unlike
+// the per-handler tests (which exercise one handler each), this drives the
+// fully assembled server end-to-end and fails on any 5xx/4xx -- the class of
+// wiring/DI/route-registration regression that unit tests against fakes miss.
+//
+// It is in-process (no preview container yet): it catches handler/route/DB-
+// wiring 502s, not deployment/migration/image regressions. Those are phase 2b.
+//
+// The fixture pins ids to 1 (each entity is the first row in a fresh DB), which
+// the smoke.Example() annotations in routes.go reference. The smoke user is made
+// admin (via the adminUsers email fallback) so /admin/* routes return 200 rather
+// than 403.
+func TestSmokeRoutesAuthenticated(t *testing.T) {
+	dbPath, dropSchema := storagetest.DSN(t)
+	t.Cleanup(dropSchema)
+
+	// herald-web runs read-only in production; mirror that. Incidental writes
+	// (e.g. auto-mark-read) are best-effort and ignored by the handlers.
+	engine, err := herald.NewEngine(herald.EngineConfig{DBPath: dbPath, ReadOnly: true})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	t.Cleanup(func() { engine.Close() })
+
+	st, err := storage.NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	seedSmokeFixture(t, engine, st)
 
 	validator, token := newTestValidator(t)
 	// adminRole "admin" with no role claim falls back to the adminUsers email
