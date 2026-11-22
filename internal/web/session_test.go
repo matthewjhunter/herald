@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -116,7 +117,7 @@ func concurrentRefreshAssertion(t *testing.T, engine *herald.Engine) {
 	mintAccess := func(ttl time.Duration) string {
 		now := time.Now()
 		claims := jwt.MapClaims{
-			"iss": issuer, "sub": "test-sub-1",
+			"iss": issuer, "sub": "test-sub-1", "aud": "test-client",
 			"email": "tester@example.com", "name": "Tester",
 			"iat": now.Unix(), "exp": now.Add(ttl).Unix(),
 		}
@@ -256,7 +257,7 @@ func TestSessionAuthenticate_FastPathNoRefresh(t *testing.T) {
 	mintAccess := func() string {
 		now := time.Now()
 		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-			"iss": issuer, "sub": "test-sub-1",
+			"iss": issuer, "sub": "test-sub-1", "aud": "test-client",
 			"email": "tester@example.com", "name": "Tester",
 			"iat": now.Unix(), "exp": now.Add(time.Hour).Unix(),
 		})
@@ -340,5 +341,147 @@ func TestSessionAuthenticate_ExpiredSessionRejected(t *testing.T) {
 	}
 	if _, err := engine.GetSession(id); err == nil {
 		t.Error("expired session should have been deleted on rejection")
+	}
+}
+
+// TestSessionAuthenticate_RefusesTokenNotBoundToThisSession covers the two
+// bindings a session's access token must satisfy: it was issued to this client
+// (aud), and it belongs to the subject the session was started for (user_sub).
+// The issuer's signature proves neither -- every client of the issuer holds
+// tokens that verify -- so each case below is a correctly signed, in-date
+// token that must still be refused, whether it is found in the session row or
+// handed back by a renewal.
+func TestSessionAuthenticate_RefusesTokenNotBoundToThisSession(t *testing.T) {
+	const sessionSub = "test-sub-1"
+
+	tests := []struct {
+		name string
+		// stored is the claim set of the access token in the session row; nil
+		// stores an expired token so the request goes straight to renewal.
+		stored jwt.MapClaims
+		// renewed is the claim set the refresh grant answers with; nil makes
+		// the token endpoint refuse the grant.
+		renewed jwt.MapClaims
+		wantErr error
+	}{
+		{
+			name:   "stored token names another client",
+			stored: jwt.MapClaims{"sub": sessionSub, "aud": "other-client"},
+		},
+		{
+			// AllowMissingAudience is deliberately off: every grant herald
+			// uses carries aud.
+			name:   "stored token has no audience",
+			stored: jwt.MapClaims{"sub": sessionSub},
+		},
+		{
+			name:   "stored token is for another subject",
+			stored: jwt.MapClaims{"sub": "someone-else", "aud": "test-client"},
+		},
+		{
+			name:    "renewal answers for another client",
+			renewed: jwt.MapClaims{"sub": sessionSub, "aud": "other-client"},
+			wantErr: oidclient.ErrWrongAudience,
+		},
+		{
+			name:    "renewal answers with no audience",
+			renewed: jwt.MapClaims{"sub": sessionSub},
+			wantErr: oidclient.ErrWrongAudience,
+		},
+		{
+			name:    "renewal answers for another subject",
+			renewed: jwt.MapClaims{"sub": "someone-else", "aud": "test-client"},
+			wantErr: session.ErrSubjectChanged,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var issuer string
+			mint := func(claims jwt.MapClaims, ttl time.Duration) string {
+				now := time.Now()
+				full := jwt.MapClaims{
+					"iss": issuer, "email": "tester@example.com", "name": "Tester",
+					"iat": now.Unix(), "exp": now.Add(ttl).Unix(),
+				}
+				for k, v := range claims {
+					full[k] = v
+				}
+				tok := jwt.NewWithClaims(jwt.SigningMethodRS256, full)
+				tok.Header["kid"] = testKID
+				signed, err := tok.SignedString(testKey)
+				if err != nil {
+					t.Fatalf("sign: %v", err)
+				}
+				return signed
+			}
+
+			tokenHandler := func(w http.ResponseWriter, _ *http.Request) {
+				if tt.renewed == nil {
+					http.Error(w, "invalid_grant", http.StatusUnauthorized)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"access_token":  mint(tt.renewed, time.Hour),
+					"refresh_token": "refresh-1",
+					"token_type":    "Bearer",
+					"expires_in":    3600,
+				})
+			}
+
+			srv, _ := fakeOIDCProvider(t, tokenHandler)
+			issuer = srv.URL
+			validator, err := oidclient.New(context.Background(), oidclient.Config{
+				IssuerURL: srv.URL, CookieName: "test_jwt",
+				ClientID: "test-client", CallbackURL: "https://herald.example.com/auth/callback",
+				OfflineAccess: true,
+			})
+			if err != nil {
+				t.Fatalf("oidclient.New: %v", err)
+			}
+
+			engine := newSessionTestEngine(t)
+			kr := testKeyring(t)
+			sm, err := newSessionManager(engine, validator, kr)
+			if err != nil {
+				t.Fatalf("newSessionManager: %v", err)
+			}
+
+			id := newTestSessionID(t)
+			now := time.Now()
+			stored, accessExpiry := mint(jwt.MapClaims{"sub": sessionSub, "aud": "test-client"}, -time.Minute), now.Add(-time.Minute)
+			if tt.stored != nil {
+				stored, accessExpiry = mint(tt.stored, time.Hour), now.Add(time.Hour)
+			}
+			if err := engine.CreateSession(&storage.Session{
+				ID: id, UserSub: sessionSub,
+				AccessToken:    seal(t, kr, id, stored),
+				RefreshToken:   seal(t, kr, id, "refresh-0"),
+				AccessExpiry:   accessExpiry,
+				AbsoluteExpiry: now.Add(24 * time.Hour),
+			}); err != nil {
+				t.Fatalf("CreateSession: %v", err)
+			}
+
+			req := httptest.NewRequest("GET", "/", nil)
+			req.AddCookie(&http.Cookie{Name: "test_jwt", Value: id})
+			claims, err := sm.Authenticate(req)
+			if err == nil {
+				t.Fatalf("authenticated as %+v, want refusal", claims)
+			}
+			if tt.wantErr != nil && !errors.Is(err, tt.wantErr) {
+				t.Errorf("err = %v, want %v", err, tt.wantErr)
+			}
+
+			// A refused renewal must not have been written to the session.
+			row, err := engine.GetSession(id)
+			if err != nil {
+				t.Fatalf("GetSession: %v", err)
+			}
+			if row.Version != 0 {
+				t.Errorf("stored version = %d, want 0 (refused tokens must not be persisted)", row.Version)
+			}
+		})
 	}
 }

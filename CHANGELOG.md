@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cached images and favicons are marked `private` (#346).** Both routes
   require login, but sent `Cache-Control: public`, so a shared proxy or CDN
   could store one user's image and serve it to another.
+- **Access tokens must be issued to herald (#365).** oidclient v0.11.1
+  requires a session's access token to name herald's client id in `aud`, so
+  a token the same issuer signed for another client is refused, and it
+  refuses a stored token or a renewal whose subject differs from the one the
+  session was started for. Tokens with no `aud` are refused too; the
+  provider must emit the claim on every grant, refresh included.
 - **Go 1.26.11.** go.mod now requires Go 1.26.11, which CI and release
   builds follow, picking up the standard library fixes for GO-2026-6809
   (crypto/x509 distrust of compromised intermediates), GO-2026-6617

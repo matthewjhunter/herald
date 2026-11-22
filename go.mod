@@ -9,7 +9,7 @@ require (
 	github.com/infodancer/authz v0.1.0
 	github.com/infodancer/logging v0.1.3
 	github.com/infodancer/logging/httplog v0.1.2
-	github.com/infodancer/oidclient v0.9.1
+	github.com/infodancer/oidclient v0.11.1
 	github.com/infodancer/smoke v0.1.2
 	github.com/infodancer/web/httpsec v0.2.1
 	github.com/infodancer/web/media v0.1.5
@@ -31,7 +31,7 @@ require (
 	github.com/HugoSmits86/nativewebp v1.3.0 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
-	github.com/coreos/go-oidc/v3 v3.20.0 // indirect
+	github.com/coreos/go-oidc/v3 v3.21.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/gogs/chardet v0.0.0-20211120154057-b7413eaefb8f // indirect
@@ -48,7 +48,7 @@ require (
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/oauth2 v0.36.0 // indirect
+	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
 )

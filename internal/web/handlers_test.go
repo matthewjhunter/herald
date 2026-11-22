@@ -134,7 +134,7 @@ func defaultTokenHandler(issuerURL *string) http.HandlerFunc {
 		now := time.Now()
 
 		accessClaims := jwt.MapClaims{
-			"iss": *issuerURL, "sub": "test-sub-1",
+			"iss": *issuerURL, "sub": "test-sub-1", "aud": "test-client",
 			"email": "tester@example.com", "name": "Tester",
 			"iat": now.Unix(), "exp": now.Add(time.Hour).Unix(),
 		}
