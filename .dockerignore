@@ -1,6 +1,44 @@
+# What the image build must not see.
+#
+# This is also the list the Docker workflow uses to decide whether a push has
+# anything to build (.github/scripts/deploy-scope): a push that changes only
+# paths excluded here builds nothing. So an entry must be something the image
+# really does not need. Write plain root paths, one per line; a glob still
+# keeps files out of the build but is not used for skipping.
+
+# Local build output and state.
 herald
 herald-web
 herald.db*
 .git
 .omc
 .claude
+
+# Docs, plans and repo guidance.
+docs
+plans
+CHANGELOG.md
+CLAUDE.md
+INSTALL.md
+PROJECT_STATUS.md
+QUICKSTART.md
+README.md
+SECURITY.md
+USAGE.md
+LICENSE
+
+# CI, dev tooling and host-install files. None of it is compiled in.
+.github
+.vscode
+githooks
+systemd
+.editorconfig
+.envrc
+.gitignore
+.golangci.yml
+.goreleaser.yml
+Makefile
+Taskfile.yml
+docker-compose.yml
+sqlc.yaml
+test_feeds.opml
