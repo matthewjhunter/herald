@@ -90,7 +90,7 @@ issuer_url = "https://webauth.example.com/t/mytenant"
 # registration: herald then registers itself and signs in as the client the
 # provider assigns. To sign in as client_id itself -- a client the provider's
 # operator registered by hand, e.g. one trusted to skip the consent page -- set
-# HERALD_WEBAUTH_STATIC_CLIENT=true in the environment. The client must already
+# OIDC_STATIC_CLIENT=true in the environment. The client must already
 # exist at the provider with callback_url among its redirect URIs. Switching
 # clients signs every user out once: their refresh tokens belong to the old one.
 client_id = "herald"
