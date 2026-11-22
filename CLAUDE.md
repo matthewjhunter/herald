@@ -42,3 +42,11 @@ task vulncheck
 ```bash
 task check
 ```
+
+## Image builds
+
+A push to `main` publishes `ghcr.io/matthewjhunter/herald:latest`, and a `v*` tag publishes the version tags. A push to `main` that changes nothing in the image builds nothing.
+
+"Nothing in the image" means every changed path is excluded by `.dockerignore`; that file is the only list (`.github/scripts/deploy-scope` reads it). To stop a path from triggering builds, add it to `.dockerignore`, and only if the image really does not need it. Anything not listed builds. A change to `Dockerfile` or `.dockerignore` always builds, and so does a tag.
+
+One consequence: the image stamps the commit it was built from, so after a skipped push `:latest` reports the last commit that changed the image, not the tip of `main`.

@@ -64,5 +64,9 @@ jobs:
             echo "internal/storage/db is stale; run 'task sqlc' and commit the result."
             exit 1
           }
+      # The Docker workflow uses this to skip pushes that change nothing in
+      # the image. `./...` does not descend into .github, so name it.
+      - name: Deploy scope rules
+        run: go test ./.github/scripts/deploy-scope/
       - name: Smoke route coverage (warn)
         run: go tool smolder gate --manifest internal/web/smoke-manifest.json --mode warn
