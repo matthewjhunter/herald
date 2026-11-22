@@ -86,6 +86,13 @@ addr = ":8080"
 [web.webauth]
 # Required for login.
 issuer_url = "https://webauth.example.com/t/mytenant"
+# client_id is only a fallback when the provider offers dynamic client
+# registration: herald then registers itself and signs in as the client the
+# provider assigns. To sign in as client_id itself -- a client the provider's
+# operator registered by hand, e.g. one trusted to skip the consent page -- set
+# HERALD_WEBAUTH_STATIC_CLIENT=true in the environment. The client must already
+# exist at the provider with callback_url among its redirect URIs. Switching
+# clients signs every user out once: their refresh tokens belong to the old one.
 client_id = "herald"
 callback_url = "https://herald.example.com/auth/callback"
 cookie = "infodancer_jwt"

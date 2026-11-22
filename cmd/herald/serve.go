@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -68,14 +69,23 @@ user sessions, article browsing, admin, Fever API, etc.`,
 				return fmt.Errorf("webauth.issuer_url (or --webauth-issuer) is required")
 			}
 
+			staticClient, err := staticClientFromEnv(os.Getenv(staticClientEnv), clientID)
+			if err != nil {
+				return err
+			}
+
 			ctx := context.Background()
 			validator, err := oidclient.NewLazy(ctx, oidclient.Config{
-				IssuerURL:   issuerURL,
-				CookieName:  cookie,
-				WebauthURL:  webauthBaseURL,
-				ClientID:    clientID,
-				ClientName:  "Herald",
-				CallbackURL: callbackURL,
+				IssuerURL:  issuerURL,
+				CookieName: cookie,
+				WebauthURL: webauthBaseURL,
+				ClientID:   clientID,
+				// Without this the provider's dynamic registration replaces
+				// ClientID with a fresh self-registered client, which is never
+				// trusted to skip the consent page.
+				StaticClient: staticClient,
+				ClientName:   "Herald",
+				CallbackURL:  callbackURL,
 				// Request a refresh token so the session can be renewed server-side
 				// without an interactive redirect (#173). The token is stored only in
 				// the herald DB and never reaches the browser.
@@ -182,6 +192,29 @@ user sessions, article browsing, admin, Fever API, etc.`,
 	cmd.Flags().StringVar(&webauthCallback, "webauth-callback-url", "", "OIDC callback URL")
 
 	return cmd
+}
+
+// staticClientEnv names the environment variable that makes `herald serve`
+// sign in as the configured client id instead of registering dynamically.
+const staticClientEnv = "HERALD_WEBAUTH_STATIC_CLIENT"
+
+// staticClientFromEnv parses the staticClientEnv value. Empty means off. A
+// value that is not a boolean, or one that turns the option on with no client
+// id to pin, is a startup error: falling back to dynamic registration would
+// run the server as a different client than the operator asked for, and the
+// only symptom would be a consent page.
+func staticClientFromEnv(value, clientID string) (bool, error) {
+	if value == "" {
+		return false, nil
+	}
+	on, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s: %q is not a boolean", staticClientEnv, value)
+	}
+	if on && clientID == "" {
+		return false, fmt.Errorf("%s requires webauth.client_id (or --webauth-client-id)", staticClientEnv)
+	}
+	return on, nil
 }
 
 // mergeString returns first non-empty of a then b (simple flag/env/config precedence helper).

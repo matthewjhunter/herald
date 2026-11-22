@@ -40,6 +40,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`HERALD_WEBAUTH_STATIC_CLIENT` signs in as the configured client (#365).**
+  When the provider offers dynamic client registration, herald registered
+  itself and ran as the client the provider assigned, ignoring
+  `webauth.client_id`; a self-registered client is never trusted, so every
+  sign-in stopped at the provider's consent page. Setting the variable to
+  `true` uses `client_id` as configured and never registers. It requires a
+  client id, and an unparseable value stops startup. Turning it on signs
+  every user out once, since existing refresh tokens are bound to the old
+  client.
+
 - **A link post's linked page is fenced apart from the post.** The curation
   and summarization prompts used to receive the feed body and the fetched
   linked page as one block, so the model could not tell the poster's take
