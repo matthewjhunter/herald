@@ -196,7 +196,7 @@ user sessions, article browsing, admin, Fever API, etc.`,
 
 // staticClientEnv names the environment variable that makes `herald serve`
 // sign in as the configured client id instead of registering dynamically.
-const staticClientEnv = "HERALD_WEBAUTH_STATIC_CLIENT"
+const staticClientEnv = "OIDC_STATIC_CLIENT"
 
 // staticClientFromEnv parses the staticClientEnv value. Empty means off. A
 // value that is not a boolean, or one that turns the option on with no client

@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`HERALD_WEBAUTH_STATIC_CLIENT` signs in as the configured client (#365).**
+- **`OIDC_STATIC_CLIENT` signs in as the configured client (#365).**
   When the provider offers dynamic client registration, herald registered
   itself and ran as the client the provider assigned, ignoring
   `webauth.client_id`; a self-registered client is never trusted, so every
