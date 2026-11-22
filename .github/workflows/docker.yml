@@ -10,9 +10,52 @@ permissions:
   packages: write
 
 jobs:
+  check:
+    name: Decide whether to build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      image_changed: ${{ steps.changes.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # A push that changes nothing the image is built from -- docs, plans, CI
+      # and dev tooling -- has nothing to build. "Not in the image" means
+      # excluded by .dockerignore; see .github/scripts/deploy-scope. A release
+      # tag always builds: it has to publish its version tags whatever the
+      # last commit touched.
+      # No pipes: a failure of either command has to fail the step. If it
+      # did not, the output would be empty, the build would be skipped, and a
+      # broken check would look like a green run with nothing to build.
+      - name: Decide whether to build
+        id: changes
+        shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          set -euo pipefail
+          if [ "$REF_TYPE" = "tag" ]; then
+            echo "image=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --name-only HEAD~1 HEAD > "$RUNNER_TEMP/changed.txt"
+          go run .github/scripts/deploy-scope/main.go < "$RUNNER_TEMP/changed.txt" > "$RUNNER_TEMP/scope.txt"
+          cat "$RUNNER_TEMP/scope.txt"
+          cat "$RUNNER_TEMP/scope.txt" >> "$GITHUB_OUTPUT"
+
   docker:
     name: Build and Push
     runs-on: ubuntu-latest
+    needs: check
+    if: needs.check.outputs.image_changed == 'true'
     steps:
       - uses: actions/checkout@v7
 
