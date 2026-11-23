@@ -27,12 +27,49 @@ permissions:
   pull-requests: write
 
 jobs:
+  # A PR that changes nothing the image is built from (docs, skills, CI, dev
+  # tooling) would get a preview identical to the base branch, so it gets none.
+  # "Not in the image" means excluded by .dockerignore; the rule is in
+  # .github/scripts/deploy-scope and is the one the deploy workflow uses.
+  check:
+    # Inert along with the preview job below, and for the same reason.
+    if: ${{ vars.HERALD_PREVIEW_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    outputs:
+      image_changed: ${{ steps.changes.outputs.image }}
+    steps:
+      # The default checkout of a pull request is its merge commit, whose
+      # first parent is the base branch. Depth 2 fetches both, so the diff
+      # below is everything the PR changes, not just its last push.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # No pipes: a failure of either command has to fail the step. If it did
+      # not, the output would be empty and a broken check would look like a PR
+      # that needs no preview.
+      - name: Decide whether the PR needs a preview
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --name-only HEAD~1 HEAD > "$RUNNER_TEMP/changed.txt"
+          go run .github/scripts/deploy-scope/main.go < "$RUNNER_TEMP/changed.txt" > "$RUNNER_TEMP/scope.txt"
+          cat "$RUNNER_TEMP/scope.txt"
+          cat "$RUNNER_TEMP/scope.txt" >> "$GITHUB_OUTPUT"
+
   preview:
     # Inert until the herald self-hosted runner exists on docker-web and the
     # repo variable HERALD_PREVIEW_ENABLED is set to "true". Without this guard
     # the job would queue forever against a missing runner, leaving every PR
     # with a stuck check. Enable once the homelab runner play has been applied.
-    if: ${{ vars.HERALD_PREVIEW_ENABLED == 'true' }}
+    needs: check
+    if: ${{ vars.HERALD_PREVIEW_ENABLED == 'true' && needs.check.outputs.image_changed == 'true' }}
     runs-on: [self-hosted, linux, docker-web]
     steps:
       - uses: actions/checkout@v7
