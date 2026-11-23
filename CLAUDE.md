@@ -49,4 +49,6 @@ A push to `main` publishes `ghcr.io/matthewjhunter/herald:latest`, and a `v*` ta
 
 "Nothing in the image" means every changed path is excluded by `.dockerignore`; that file is the only list (`.github/scripts/deploy-scope` reads it). To stop a path from triggering builds, add it to `.dockerignore`, and only if the image really does not need it. Anything not listed builds. A change to `Dockerfile` or `.dockerignore` always builds, and so does a tag.
 
+The PR preview workflow uses the same rule against everything the PR changes: a PR that touches nothing in the image gets no preview.
+
 One consequence: the image stamps the commit it was built from, so after a skipped push `:latest` reports the last commit that changed the image, not the tip of `main`.
