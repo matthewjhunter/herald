@@ -73,8 +73,8 @@ github.com/infodancer/logging/httplog v0.1.2 h1:c75RJF5G4Hj/uZ8NA5iELY2iDN8t7cDZ
 github.com/infodancer/logging/httplog v0.1.2/go.mod h1:mloHIlKZcl9ISGDPSJilwLC37MFCofJS1LxYVRlPrpQ=
 github.com/infodancer/oidclient v0.11.1 h1:8pN55OW4aJO0XJ9goflxysSqb6A/vLj5AJhOhRRNCy4=
 github.com/infodancer/oidclient v0.11.1/go.mod h1:mhAQdsc+CmC0k4hbR2mUCvDUCfehfh+l86OiW7J48DA=
-github.com/infodancer/smoke v0.1.2 h1:ufXOD2293M3AmQLE9mDour26Qhm9fXAvjcz6Rs9QZWM=
-github.com/infodancer/smoke v0.1.2/go.mod h1:GS5zF/W2bErRud5bV/CWUhyDMtGOyWMxDHxIyNroYbk=
+github.com/infodancer/smoke v0.1.3 h1:jwNEpdDKHga1aGasrdM+oFBQKaNI5hAOzfe8zct/ZqE=
+github.com/infodancer/smoke v0.1.3/go.mod h1:GS5zF/W2bErRud5bV/CWUhyDMtGOyWMxDHxIyNroYbk=
 github.com/infodancer/web/httpsec v0.2.2 h1:6ab+0gHhA7tCs0bfyXk1Cdod6JvxfIc+sEmKo9aFXSA=
 github.com/infodancer/web/httpsec v0.2.2/go.mod h1:ohW7xzX1WkPkhVxwGPx2NcpYrr0GW+6XSkqCstaf7Eg=
 github.com/infodancer/web/media v0.1.5 h1:/BzKmYMMr7WGPomvn5DUnVsb5Cl/LjCfg/U5TXr0h4g=
