@@ -210,6 +210,8 @@ poll_min_interval = "2m"
 
 Models stay in `[ollama]` (`security_model`, `curation_model`) and in per-user prompt overrides, as today.
 
+Turning `enabled` off, or dropping a kind from `stages`, stops new submissions only. Batches already running are still polled and their results applied, so the rest of the block (`base_url`, `api_key`, `auth_style`) has to stay in place until `ai_batches` shows nothing running. A curation result collected this way can land after the synchronous path has already scored the same article; the later write wins.
+
 ### Failure modes considered
 
 - Provider or gateway down at submit: every claim refunded, nothing recorded, next cycle retries. The LLM circuit breaker is not involved; the batch client has its own short retry on the submit POST only when the error is clearly pre-upstream (connection refused, DNS).
