@@ -129,6 +129,38 @@ WHERE uf.user_id = @user_id
 ORDER BY COALESCE(a.published_date, a.fetched_date) DESC
 LIMIT @lim;
 
+-- name: GetArticlesLackingSummaryBy :many
+-- The regeneration queue: security-passed articles with no summary row from
+-- @model, whether text or skip marker. Walked by descending id with a cursor,
+-- so a run visits each article once even when a call fails and leaves no row.
+SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+       a.author, a.published_date, a.fetched_date,
+       a.linked_url, a.linked_content
+FROM articles a
+WHERE a.security_threat <= @max_security_threat::double precision
+  AND a.id < @before_id
+  AND NOT EXISTS (
+    SELECT 1 FROM article_summaries s WHERE s.article_id = a.id AND s.model = @model::text
+  )
+ORDER BY a.id DESC
+LIMIT @lim;
+
+-- name: GetArticlesLackingScreenBy :many
+-- The shadow-rescan queue: articles that already carry a verdict and have no
+-- screen-history row from @model. Articles not yet screened are left to the
+-- live screen and its claims.
+SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+       a.author, a.published_date, a.fetched_date,
+       a.linked_url, a.linked_content
+FROM articles a
+WHERE a.security_threat IS NOT NULL
+  AND a.id < @before_id
+  AND NOT EXISTS (
+    SELECT 1 FROM article_screens sc WHERE sc.article_id = a.id AND sc.model = @model::text
+  )
+ORDER BY a.id DESC
+LIMIT @lim;
+
 -- name: GetUnsummarizedArticleCount :one
 SELECT COUNT(*)::int
 FROM articles a

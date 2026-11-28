@@ -190,6 +190,154 @@ func (q *Queries) GetArticle(ctx context.Context, id int64) (GetArticleRow, erro
 	return i, err
 }
 
+const getArticlesLackingScreenBy = `-- name: GetArticlesLackingScreenBy :many
+SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+       a.author, a.published_date, a.fetched_date,
+       a.linked_url, a.linked_content
+FROM articles a
+WHERE a.security_threat IS NOT NULL
+  AND a.id < $1
+  AND NOT EXISTS (
+    SELECT 1 FROM article_screens sc WHERE sc.article_id = a.id AND sc.model = $2::text
+  )
+ORDER BY a.id DESC
+LIMIT $3
+`
+
+type GetArticlesLackingScreenByParams struct {
+	BeforeID int64
+	Model    string
+	Lim      int32
+}
+
+type GetArticlesLackingScreenByRow struct {
+	ID            int64
+	FeedID        int64
+	Guid          string
+	Title         string
+	Url           string
+	Content       *string
+	Summary       *string
+	Author        *string
+	PublishedDate *time.Time
+	FetchedDate   time.Time
+	LinkedUrl     string
+	LinkedContent string
+}
+
+// The shadow-rescan queue: articles that already carry a verdict and have no
+// screen-history row from @model. Articles not yet screened are left to the
+// live screen and its claims.
+func (q *Queries) GetArticlesLackingScreenBy(ctx context.Context, arg GetArticlesLackingScreenByParams) ([]GetArticlesLackingScreenByRow, error) {
+	rows, err := q.db.Query(ctx, getArticlesLackingScreenBy, arg.BeforeID, arg.Model, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetArticlesLackingScreenByRow{}
+	for rows.Next() {
+		var i GetArticlesLackingScreenByRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Guid,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Summary,
+			&i.Author,
+			&i.PublishedDate,
+			&i.FetchedDate,
+			&i.LinkedUrl,
+			&i.LinkedContent,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getArticlesLackingSummaryBy = `-- name: GetArticlesLackingSummaryBy :many
+SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
+       a.author, a.published_date, a.fetched_date,
+       a.linked_url, a.linked_content
+FROM articles a
+WHERE a.security_threat <= $1::double precision
+  AND a.id < $2
+  AND NOT EXISTS (
+    SELECT 1 FROM article_summaries s WHERE s.article_id = a.id AND s.model = $3::text
+  )
+ORDER BY a.id DESC
+LIMIT $4
+`
+
+type GetArticlesLackingSummaryByParams struct {
+	MaxSecurityThreat float64
+	BeforeID          int64
+	Model             string
+	Lim               int32
+}
+
+type GetArticlesLackingSummaryByRow struct {
+	ID            int64
+	FeedID        int64
+	Guid          string
+	Title         string
+	Url           string
+	Content       *string
+	Summary       *string
+	Author        *string
+	PublishedDate *time.Time
+	FetchedDate   time.Time
+	LinkedUrl     string
+	LinkedContent string
+}
+
+// The regeneration queue: security-passed articles with no summary row from
+// @model, whether text or skip marker. Walked by descending id with a cursor,
+// so a run visits each article once even when a call fails and leaves no row.
+func (q *Queries) GetArticlesLackingSummaryBy(ctx context.Context, arg GetArticlesLackingSummaryByParams) ([]GetArticlesLackingSummaryByRow, error) {
+	rows, err := q.db.Query(ctx, getArticlesLackingSummaryBy,
+		arg.MaxSecurityThreat,
+		arg.BeforeID,
+		arg.Model,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetArticlesLackingSummaryByRow{}
+	for rows.Next() {
+		var i GetArticlesLackingSummaryByRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FeedID,
+			&i.Guid,
+			&i.Title,
+			&i.Url,
+			&i.Content,
+			&i.Summary,
+			&i.Author,
+			&i.PublishedDate,
+			&i.FetchedDate,
+			&i.LinkedUrl,
+			&i.LinkedContent,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getArticlesNeedingFullText = `-- name: GetArticlesNeedingFullText :many
 SELECT id, feed_id, guid, title, url, content, summary, author,
        published_date, fetched_date

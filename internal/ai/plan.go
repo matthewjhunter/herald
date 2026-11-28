@@ -36,6 +36,16 @@ type SecurityPlan struct {
 	PromptHash string
 }
 
+// ScreenModel is the model the security screen would use right now: the
+// security prompt's own model when the admin page sets one, else the
+// processor's security model.
+func (p *AIProcessor) ScreenModel() string {
+	if m := p.promptLoader.GetModel(0, PromptTypeSecurity); m != "" {
+		return m
+	}
+	return p.securityModel
+}
+
 // SecurityPlan renders the screen prompt for an article. An operator override
 // takes the single-request path (its template is not chunk-shaped, #238); the
 // default prompt splits a long article into overlapping windows so the whole
