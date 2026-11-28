@@ -409,6 +409,68 @@ const summarizableBody = "The council voted seven to two on Tuesday to approve t
 	"drainage district, ending a dispute that had run since the spring floods " +
 	"washed out two county roads and a rail crossing."
 
+// Every verdict the screen writes is attributed: the gating columns on the
+// article say what was decided, the history row says which model decided it.
+func TestSecurityStageRecordsScreenHistory(t *testing.T) {
+	fake := &fakeAI{available: true}
+	fake.securityFn = func(title, _ string) (*ai.SecurityResult, error) {
+		r := &ai.SecurityResult{Threat: 1, Category: "none", Model: "fake-screen", PromptHash: "screenhash"}
+		switch {
+		case strings.HasPrefix(title, "block"):
+			r.Threat, r.Category, r.Verified = 8, "instruction_override", true
+		case strings.HasPrefix(title, "medium"):
+			r.Threat = 5
+		case strings.HasPrefix(title, "anon"):
+			r.Model, r.PromptHash = "", ""
+		}
+		return r, nil
+	}
+	st, store, feedID := newHarness(t, fake)
+
+	pass := seed(t, store, feedID, "pass", strings.Repeat("x", 500))
+	block := seed(t, store, feedID, "block", strings.Repeat("x", 500))
+	medium := seed(t, store, feedID, "medium", strings.Repeat("x", 500))
+	anon := seed(t, store, feedID, "anon", strings.Repeat("x", 500))
+	st.Security(context.Background(), []storage.Article{pass, block, medium, anon})
+
+	for _, tc := range []struct {
+		name    string
+		id      int64
+		threat  float64
+		flagged bool
+	}{
+		{"pass", pass.ID, 1, false},
+		{"hard block", block.ID, 8, false},
+		{"borderline", medium.ID, 5, true},
+	} {
+		scans, err := store.ListArticleScreens(tc.id)
+		if err != nil {
+			t.Fatalf("%s: ListArticleScreens: %v", tc.name, err)
+		}
+		if len(scans) != 1 {
+			t.Fatalf("%s: %d screen rows, want 1", tc.name, len(scans))
+		}
+		got := scans[0]
+		if got.Model != "fake-screen" || got.PromptHash != "screenhash" || got.Via != storage.ModelOutputViaSync ||
+			!got.Effective || got.Threat != tc.threat || got.Flagged != tc.flagged {
+			t.Errorf("%s: screen row = %+v, want an effective sync scan by fake-screen, threat %v flagged %v", tc.name, got, tc.threat, tc.flagged)
+		}
+	}
+	if scans, _ := store.ListArticleScreens(block.ID); !scans[0].Verified || scans[0].Category != "instruction_override" {
+		t.Errorf("block row = %+v, want the category and verified flag carried through", scans[0])
+	}
+
+	// A result that cannot name its model still gates the article, and
+	// leaves no history row rather than an unattributed one.
+	scores, err := store.GetArticleSecurityScores([]int64{anon.ID})
+	if err != nil || scores[anon.ID] != 1 {
+		t.Errorf("unattributed verdict = %v, %v; want threat 1 on the article", scores[anon.ID], err)
+	}
+	if scans, _ := store.ListArticleScreens(anon.ID); len(scans) != 0 {
+		t.Errorf("unattributed verdict left %d history rows, want none", len(scans))
+	}
+}
+
 func TestSummarizeStage(t *testing.T) {
 	st, store, feedID := newHarness(t, &fakeAI{available: true})
 	mustPass := func(a storage.Article) {
@@ -465,6 +527,11 @@ func TestSummarizeStage(t *testing.T) {
 		got, _ := store.GetArticleSummary(a.ID)
 		if got == nil {
 			t.Fatal("expected a skip row recorded for the over-length summary")
+		}
+		// The marker names the model whose output was rejected, so another
+		// model's attempt at the same article is a separate question.
+		if got.SkipReason == "" || got.Model != "fake-model" {
+			t.Errorf("skip row = reason %q model %q, want a reason and fake-model", got.SkipReason, got.Model)
 		}
 	})
 

@@ -91,7 +91,7 @@ func (s *Stage) securityOne(ctx context.Context, article storage.Article) *stora
 		return nil
 	}
 
-	return s.recordSecurityVerdict(article, secResult)
+	return s.recordSecurityVerdict(article, secResult, storage.ModelOutputViaSync)
 }
 
 // recordModelOutput appends one scoring call to the model output corpus
@@ -121,6 +121,35 @@ func optionalKeywords(k string) *string {
 	return &k
 }
 
+// securityThresholds returns the pass ceiling and the borderline ceiling on
+// the threat scale, with the defaults a config that leaves them unset gets.
+func (s *Stage) securityThresholds() (pass, border float64) {
+	pass = s.Cfg.Thresholds.MaxSecurityThreat
+	if pass == 0 {
+		pass = 3.0
+	}
+	border = s.Cfg.Thresholds.SecurityBorderlineThreat
+	if border == 0 {
+		border = 6.0
+	}
+	return pass, border
+}
+
+// writeScreen stores the gating verdict and, when the result says which model
+// reached it, the screen-history row that attributes it. A result with no
+// model still gates the article; it just leaves no history row, because a row
+// that could not name its model would be worth nothing.
+func (s *Stage) writeScreen(articleID int64, r *ai.SecurityResult, flagged bool, via string) error {
+	if r.Model == "" {
+		return s.Store.ScreenArticleSecurity(articleID, r.Threat, r.Category, r.Verified, flagged)
+	}
+	return s.Store.RecordArticleScreen(storage.ArticleScreen{
+		ArticleID: articleID, Model: r.Model, PromptHash: r.PromptHash, Via: via,
+		Threat: r.Threat, Category: r.Category, Verified: r.Verified, Flagged: flagged,
+		Effective: true,
+	})
+}
+
 // recordSecurityVerdict writes a screen verdict against the article and
 // returns the article when it passed, nil when it was blocked or flagged.
 // Shared by the synchronous screen and the batch path so both apply the same
@@ -129,27 +158,23 @@ func optionalKeywords(k string) *string {
 //	threat <= passThreat            -> pass, queued for curation
 //	passThreat < threat <= border   -> borderline, flagged for audit, excluded
 //	threat > border                 -> hard block, excluded
-func (s *Stage) recordSecurityVerdict(article storage.Article, secResult *ai.SecurityResult) *storage.Article {
-	passThreat := s.Cfg.Thresholds.MaxSecurityThreat
-	if passThreat == 0 {
-		passThreat = 3.0
-	}
-	borderThreat := s.Cfg.Thresholds.SecurityBorderlineThreat
-	if borderThreat == 0 {
-		borderThreat = 6.0
-	}
+//
+// via is how the scan was made ("sync" or "batch:<provider>"); with the
+// result's model it goes into the screen history beside the verdict.
+func (s *Stage) recordSecurityVerdict(article storage.Article, secResult *ai.SecurityResult, via string) *storage.Article {
+	passThreat, borderThreat := s.securityThresholds()
 
 	if secResult.Threat > borderThreat {
 		// Hard block: above the borderline ceiling. Record the verdict; the threat
 		// gates it out of every downstream (passing) query.
-		s.Store.ScreenArticleSecurity(article.ID, secResult.Threat, secResult.Category, secResult.Verified, false) //nolint:errcheck
+		s.writeScreen(article.ID, secResult, false, via) //nolint:errcheck
 		s.Formatter.OutputProcessingStatus(article.ID, article.Title, 0, secResult.Threat, false)
 		return nil
 	}
 
 	if secResult.Threat > passThreat {
 		// Borderline: clears the hard block but not the pass ceiling. Flag for audit.
-		s.Store.ScreenArticleSecurity(article.ID, secResult.Threat, secResult.Category, secResult.Verified, true) //nolint:errcheck
+		s.writeScreen(article.ID, secResult, true, via) //nolint:errcheck
 		s.Formatter.OutputProcessingStatus(article.ID, article.Title, 0, secResult.Threat, false)
 		return nil
 	}
@@ -157,7 +182,7 @@ func (s *Stage) recordSecurityVerdict(article storage.Article, secResult *ai.Sec
 	// Passed (low threat). Record the verdict on the article; the per-user
 	// curation stage picks it up via the threat ceiling and assigns each user's
 	// interest.
-	if err := s.Store.ScreenArticleSecurity(article.ID, secResult.Threat, secResult.Category, secResult.Verified, false); err != nil {
+	if err := s.writeScreen(article.ID, secResult, false, via); err != nil {
 		s.Formatter.Warning("failed to record security verdict for article %d: %v", article.ID, err)
 		return nil
 	}
@@ -192,13 +217,31 @@ func (s *Stage) summarizeOne(ctx context.Context, article storage.Article) *stor
 		// Already summarized (or marked skipped) — advance unchanged.
 		return &article
 	}
+	out, _ := s.summarize(ctx, article, "")
+	return out
+}
 
+// errModelMismatch reports a completion attributed to a different model than
+// the one a regeneration run is filling in.
+var errModelMismatch = errors.New("model mismatch")
+
+// summarize sends one article to the summarizer and records the outcome in
+// the summary history, without asking whether the article already has a
+// summary; the caller decides that. wantModel is "" for the live stage. A
+// regeneration run passes the model it is filling in: the no-prose skip marker
+// then names that model, so the run does not meet the article again, and a
+// completion from any other model is refused with errModelMismatch before
+// anything is written. That is the only error returned; every other failure
+// is logged and yields a nil article, as in the live stage.
+func (s *Stage) summarize(ctx context.Context, article storage.Article, wantModel string) (*storage.Article, error) {
 	content := articleContent(article)
 	if n := proseLength(content); n < minProseChars {
 		reason := fmt.Sprintf("no summarizable prose (%d < %d chars)", n, minProseChars)
 		s.Formatter.Debug("marking article %d summarization skipped: %s", article.ID, reason)
-		s.Store.MarkSummarizationSkipped(article.ID, reason) //nolint:errcheck
-		return &article
+		// No model was asked. The live stage's marker names none; a
+		// regeneration's names the model it would have asked.
+		s.Store.MarkSummarizationSkipped(article.ID, reason, wantModel) //nolint:errcheck
+		return &article, nil
 	}
 
 	maxLen := s.Cfg.Summarization.MaxSummaryLength
@@ -206,13 +249,16 @@ func (s *Stage) summarizeOne(ctx context.Context, article storage.Article) *stor
 	if err != nil {
 		// Transient — leave unsummarized, retry next cycle.
 		s.Formatter.Warning("summarization failed for article %d: %v", article.ID, err)
-		return nil
+		return nil, nil
+	}
+	if wantModel != "" && result.Model != wantModel {
+		return nil, fmt.Errorf("%w: article %d was summarized by %q, not %q", errModelMismatch, article.ID, result.Model, wantModel)
 	}
 	summary := result.Summary
 	if ai.LooksLikeGarbage(summary) {
 		// Mostly load-related, sometimes recovers under lower load — retry.
 		s.Formatter.Warning("discarding garbled summary for article %d", article.ID)
-		return nil
+		return nil, nil
 	}
 	// Every kept-or-rejected completion goes to the corpus; which it was is
 	// in the parsed field, so a trainer can keep only the accepted ones.
@@ -229,16 +275,16 @@ func (s *Stage) summarizeOne(ctx context.Context, article storage.Article) *stor
 	if len(summary) > len(content) {
 		reason := fmt.Sprintf("summary longer than content (%d > %d)", len(summary), len(content))
 		s.Formatter.Warning("marking article %d summarization skipped: %s", article.ID, reason)
-		s.Store.MarkSummarizationSkipped(article.ID, reason) //nolint:errcheck
+		s.Store.MarkSummarizationSkipped(article.ID, reason, result.Model) //nolint:errcheck
 		record(false, reason)
-		return &article
+		return &article, nil
 	}
 	if maxLen > 0 && len(summary) > maxLen+maxLen*15/100 {
 		reason := fmt.Sprintf("summary exceeds max length by >15%% (%d > %d)", len(summary), maxLen)
 		s.Formatter.Warning("marking article %d summarization skipped: %s", article.ID, reason)
-		s.Store.MarkSummarizationSkipped(article.ID, reason) //nolint:errcheck
+		s.Store.MarkSummarizationSkipped(article.ID, reason, result.Model) //nolint:errcheck
 		record(false, reason)
-		return &article
+		return &article, nil
 	}
 	record(true, "")
 
@@ -248,9 +294,9 @@ func (s *Stage) summarizeOne(ctx context.Context, article storage.Article) *stor
 	prov := storage.SummaryProvenance{Model: result.Model, PromptHash: result.PromptHash, Duration: result.Duration}
 	if err := s.Store.UpdateArticleAISummary(article.ID, summary, prov); err != nil {
 		s.Formatter.Warning("failed to cache AI summary for %d: %v", article.ID, err)
-		return nil
+		return nil, nil
 	}
-	return &article
+	return &article, nil
 }
 
 // Curate assigns an interest score to each security-passed article via the

@@ -717,4 +717,11 @@ func TestBatchPoll_AttributesToTheModelThatWasSent(t *testing.T) {
 	if outs[0].Model != "sec-model" {
 		t.Errorf("corpus row model = %q, want sec-model, the model the batch was sent to", outs[0].Model)
 	}
+	scans, err := store.ListArticleScreens(a.ID)
+	if err != nil || len(scans) != 1 {
+		t.Fatalf("screen history rows = %d, %v", len(scans), err)
+	}
+	if got := scans[0]; got.Model != "sec-model" || got.Via != "batch:fake" || !got.Effective || got.PromptHash == "" {
+		t.Errorf("screen history row = %+v, want an effective batch scan by sec-model", got)
+	}
 }

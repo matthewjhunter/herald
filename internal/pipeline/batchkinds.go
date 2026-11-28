@@ -198,7 +198,9 @@ func (k *ScreenKind) Apply(_ context.Context, rows []storage.AIBatchRequest, res
 			Via: storage.ModelOutputViaBatch(k.Provider), Trainable: false,
 		})
 	}
-	k.Stage.recordSecurityVerdict(*article, k.Planner.SecurityVerdict(findings, plan.Screened))
+	verdict := k.Planner.SecurityVerdict(findings, plan.Screened)
+	verdict.Model, verdict.PromptHash = sentModel, sentHash
+	k.Stage.recordSecurityVerdict(*article, verdict, storage.ModelOutputViaBatch(k.Provider))
 	return nil
 }
 

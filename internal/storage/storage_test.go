@@ -1672,7 +1672,7 @@ func TestGetUnsummarizedScoredArticles(t *testing.T) {
 		URL: "https://example.com/5", PublishedDate: &now,
 	})
 	store.ScreenArticleSecurity(a5, 0, "none", false, false)
-	if err := store.MarkSummarizationSkipped(a5, "summary longer than content"); err != nil {
+	if err := store.MarkSummarizationSkipped(a5, "summary longer than content", ""); err != nil {
 		t.Fatalf("MarkSummarizationSkipped: %v", err)
 	}
 
@@ -2746,7 +2746,7 @@ func TestGetProcessingStats(t *testing.T) {
 	if err := store.ScreenArticleSecurity(a3, 7, "none", false, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.MarkSummarizationSkipped(a3, "too short"); err != nil {
+	if err := store.MarkSummarizationSkipped(a3, "too short", ""); err != nil {
 		t.Fatal(err)
 	}
 

@@ -16,8 +16,8 @@ LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = @user_id;
 -- Summaries are per-article and shared by all subscribers (#162), so these two
 -- funnel numbers are global, like the security columns above.
 SELECT
-  (SELECT COUNT(*) FROM article_summaries WHERE ai_summary <> '')::int AS summarized,
-  (SELECT COUNT(*) FROM article_summaries WHERE COALESCE(skip_reason, '') <> '')::int AS summarize_skipped;
+  (SELECT COUNT(*) FROM article_summaries WHERE is_current AND ai_summary <> '')::int AS summarized,
+  (SELECT COUNT(*) FROM article_summaries WHERE is_current AND COALESCE(skip_reason, '') <> '')::int AS summarize_skipped;
 
 -- name: GetProcessingFeedCounts :one
 SELECT
@@ -58,7 +58,7 @@ FROM feeds f
 JOIN user_feeds uf ON uf.feed_id = f.id AND uf.user_id = @user_id
 JOIN articles a ON a.feed_id = f.id
 LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = @user_id
-LEFT JOIN article_summaries asumm ON asumm.article_id = a.id
+LEFT JOIN article_summaries asumm ON asumm.article_id = a.id AND asumm.is_current
 GROUP BY f.id, uf.user_title
 ORDER BY COALESCE(uf.user_title, f.title);
 

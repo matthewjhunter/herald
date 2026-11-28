@@ -45,12 +45,7 @@ func (p *AIProcessor) SummarizeArticle(ctx context.Context, text ArticleText, ma
 		return nil, fmt.Errorf("failed to render summarization prompt: %w", err)
 	}
 
-	// The admin page lets the summarization prompt name its own model; fall
-	// back to the processor default below every tier the loader knows about.
-	model := resolved.Model
-	if model == "" {
-		model = p.curationModel
-	}
+	model := p.summaryModelFor(resolved.Model)
 
 	callCtx, cancel := p.withCallTimeout(ctx)
 	defer cancel()
@@ -68,6 +63,25 @@ func (p *AIProcessor) SummarizeArticle(ctx context.Context, text ArticleText, ma
 		Duration:   time.Since(start),
 		Response:   result,
 	}, nil
+}
+
+// summaryModelFor applies the summarizer's fallback: the admin page lets the
+// summarization prompt name its own model, and below every tier the loader
+// knows about the processor's curation model is used.
+func (p *AIProcessor) summaryModelFor(promptModel string) string {
+	if promptModel != "" {
+		return promptModel
+	}
+	return p.curationModel
+}
+
+// SummaryModel is the model SummarizeArticle would use right now.
+func (p *AIProcessor) SummaryModel() (string, error) {
+	resolved, err := p.promptLoader.Resolve(0, PromptTypeSummarization)
+	if err != nil {
+		return "", fmt.Errorf("failed to load summarization prompt: %w", err)
+	}
+	return p.summaryModelFor(resolved.Model), nil
 }
 
 // GroupSummaryInput represents an article for group summary generation.
