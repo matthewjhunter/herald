@@ -161,6 +161,17 @@ func (k *ScreenKind) Apply(_ context.Context, rows []storage.AIBatchRequest, res
 		k.Release(rows, storage.AIBatchErrored)
 		return fmt.Errorf("article %d: content changed in flight (%d chunks sent, %d now); released to be screened afresh", articleID, len(rows), len(plan.Chunks))
 	}
+	// Who answered is what the request row recorded at submit. The plan was
+	// re-rendered just now under the live config, and the model may have been
+	// switched since the batch went out; it only fills in for a row that never
+	// recorded one.
+	sentModel, sentHash := plan.Model, plan.PromptHash
+	if len(rows) > 0 && rows[0].Model != "" {
+		sentModel = rows[0].Model
+	}
+	if len(rows) > 0 && rows[0].PromptHash != "" {
+		sentHash = rows[0].PromptHash
+	}
 	findings := make([]screen.Finding, 0, len(rows))
 	for _, r := range rows {
 		if r.ChunkIndex < 0 || r.ChunkIndex >= len(plan.Chunks) {
@@ -182,7 +193,7 @@ func (k *ScreenKind) Apply(_ context.Context, rows []storage.AIBatchRequest, res
 		k.Stage.Store.ResolveAIBatchRequest(r) //nolint:errcheck // the finding is a diagnostic copy; the verdict below is the record
 		k.Stage.recordModelOutput(storage.ModelOutput{
 			Kind: storage.ModelOutputScreen, ArticleID: articleID, ChunkIndex: r.ChunkIndex, ChunkCount: len(rows),
-			Model: plan.Model, PromptHash: plan.PromptHash, ContentHash: storage.ContentHash(content),
+			Model: sentModel, PromptHash: sentHash, ContentHash: storage.ContentHash(content),
 			Response: results[r.CustomID].Text, Parsed: screenParsed(f.Threat, f.Category, f.Verified),
 			Via: storage.ModelOutputViaBatch(k.Provider), Trainable: false,
 		})
