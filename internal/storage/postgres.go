@@ -988,6 +988,48 @@ func (s *PostgresStore) GetUnsummarizedScoredArticles(maxSecurityThreat float64,
 	return articles, nil
 }
 
+// GetArticlesLackingSummaryBy returns security-passed articles with no summary
+// row from model, newest id first, below beforeID. See the query for why it is
+// a cursor walk.
+func (s *PostgresStore) GetArticlesLackingSummaryBy(model string, maxSecurityThreat float64, beforeID int64, limit int) ([]Article, error) {
+	rows, err := s.q.GetArticlesLackingSummaryBy(context.Background(), db.GetArticlesLackingSummaryByParams{
+		MaxSecurityThreat: maxSecurityThreat,
+		BeforeID:          beforeID,
+		Model:             model,
+		Lim:               int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get articles lacking a summary by %s: %w", model, err)
+	}
+	articles := make([]Article, len(rows))
+	for i, r := range rows {
+		articles[i] = coreArticle(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate)
+		articles[i].LinkedURL = r.LinkedUrl
+		articles[i].LinkedContent = r.LinkedContent
+	}
+	return articles, nil
+}
+
+// GetArticlesLackingScreenBy returns already-screened articles with no
+// screen-history row from model, newest id first, below beforeID.
+func (s *PostgresStore) GetArticlesLackingScreenBy(model string, beforeID int64, limit int) ([]Article, error) {
+	rows, err := s.q.GetArticlesLackingScreenBy(context.Background(), db.GetArticlesLackingScreenByParams{
+		BeforeID: beforeID,
+		Model:    model,
+		Lim:      int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get articles lacking a screen by %s: %w", model, err)
+	}
+	articles := make([]Article, len(rows))
+	for i, r := range rows {
+		articles[i] = coreArticle(r.ID, r.FeedID, r.Guid, r.Title, r.Url, r.Content, r.Summary, r.Author, r.PublishedDate, r.FetchedDate)
+		articles[i].LinkedURL = r.LinkedUrl
+		articles[i].LinkedContent = r.LinkedContent
+	}
+	return articles, nil
+}
+
 // SetInterestScore records the curation interest score without touching the
 // security verdict, along with the model and prompt hash that produced it
 // (#258). Empty provenance strings are stored as NULL, which reads as "origin

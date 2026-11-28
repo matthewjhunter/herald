@@ -198,6 +198,7 @@ func main() {
 	rootCmd.AddCommand(repairCmd())
 	rootCmd.AddCommand(backfillEmbeddingsCmd())
 	rootCmd.AddCommand(embeddingDriftCmd())
+	rootCmd.AddCommand(regenerateCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

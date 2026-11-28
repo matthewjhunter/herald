@@ -299,6 +299,11 @@ type Store interface {
 	MarkSummarizationSkipped(articleID int64, reason, model string) error
 	GetArticleSummary(articleID int64) (*ArticleSummary, error)
 	ListArticleSummaries(articleID int64) ([]ArticleSummary, error)
+	// Regeneration queues (cmd `herald regenerate`): articles with no row from
+	// model in the summary history / the screen history, newest id first and
+	// below beforeID, so a run walks the corpus once with a cursor.
+	GetArticlesLackingSummaryBy(model string, maxSecurityThreat float64, beforeID int64, limit int) ([]Article, error)
+	GetArticlesLackingScreenBy(model string, beforeID int64, limit int) ([]Article, error)
 	// GetArticleBacklinks returns articles in the user's feeds with an extracted
 	// outbound link (article_links) whose normalized form contains needle as a
 	// substring (urlnorm.QueryKey output -- a domain, partial URL, or full URL),
