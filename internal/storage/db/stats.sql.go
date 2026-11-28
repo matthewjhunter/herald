@@ -38,7 +38,7 @@ FROM feeds f
 JOIN user_feeds uf ON uf.feed_id = f.id AND uf.user_id = $1
 JOIN articles a ON a.feed_id = f.id
 LEFT JOIN read_state rs ON rs.article_id = a.id AND rs.user_id = $1
-LEFT JOIN article_summaries asumm ON asumm.article_id = a.id
+LEFT JOIN article_summaries asumm ON asumm.article_id = a.id AND asumm.is_current
 GROUP BY f.id, uf.user_title
 ORDER BY COALESCE(uf.user_title, f.title)
 `
@@ -191,8 +191,8 @@ func (q *Queries) GetProcessingFunnel(ctx context.Context, userID int64) (GetPro
 
 const getProcessingSummaryCounts = `-- name: GetProcessingSummaryCounts :one
 SELECT
-  (SELECT COUNT(*) FROM article_summaries WHERE ai_summary <> '')::int AS summarized,
-  (SELECT COUNT(*) FROM article_summaries WHERE COALESCE(skip_reason, '') <> '')::int AS summarize_skipped
+  (SELECT COUNT(*) FROM article_summaries WHERE is_current AND ai_summary <> '')::int AS summarized,
+  (SELECT COUNT(*) FROM article_summaries WHERE is_current AND COALESCE(skip_reason, '') <> '')::int AS summarize_skipped
 `
 
 type GetProcessingSummaryCountsRow struct {

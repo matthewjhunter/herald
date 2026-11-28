@@ -35,7 +35,7 @@ SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
        a.author, a.published_date, a.fetched_date,
        COALESCE(s.ai_summary, '') AS ai_summary
 FROM articles a
-LEFT JOIN article_summaries s ON s.article_id = a.id
+LEFT JOIN article_summaries s ON s.article_id = a.id AND s.is_current
 LEFT JOIN article_embeddings ae ON a.id = ae.article_id AND ae.embedding_model = $1
 WHERE ae.article_id IS NULL
    OR (ae.status = $2 AND ae.attempts < $3::int

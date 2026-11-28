@@ -67,7 +67,7 @@ func TestGetArticleSummariesBatch(t *testing.T) {
 		if err := store.UpdateArticleAISummary(summarized, "inline summary", SummaryProvenance{}); err != nil {
 			t.Fatalf("UpdateArticleAISummary: %v", err)
 		}
-		if err := store.MarkSummarizationSkipped(skipped, "too short"); err != nil {
+		if err := store.MarkSummarizationSkipped(skipped, "too short", ""); err != nil {
 			t.Fatalf("MarkSummarizationSkipped: %v", err)
 		}
 
@@ -116,7 +116,7 @@ func TestSummarizationSkipSharedAcrossUsers(t *testing.T) {
 			t.Fatalf("ScreenArticleSecurity: %v", err)
 		}
 
-		if err := store.MarkSummarizationSkipped(id, "summary longer than content"); err != nil {
+		if err := store.MarkSummarizationSkipped(id, "summary longer than content", ""); err != nil {
 			t.Fatalf("MarkSummarizationSkipped: %v", err)
 		}
 

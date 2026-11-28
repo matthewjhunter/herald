@@ -136,6 +136,12 @@ type Store interface {
 	// verdict is payload-free (plan 012): threat (0=clean), category (closed
 	// vocabulary), verified -- never the model's quoted evidence or prose.
 	ScreenArticleSecurity(articleID int64, securityThreat float64, securityCategory string, securityVerified, securityFlagged bool) error
+	// RecordArticleScreen appends a scan to the article's screen history with
+	// the model that made it. An effective scan also sets the gating verdict
+	// (what ScreenArticleSecurity does alone, without attribution); one that
+	// is not effective is a shadow that changes nothing readers can see.
+	RecordArticleScreen(scr ArticleScreen) error
+	ListArticleScreens(articleID int64) ([]ArticleScreen, error)
 	SkipArticleSecurity(articleID int64, reason string) error
 	IncrementArticleSecurityAttempts(articleID int64) error
 	GetUnscreenedArticles(limit int) ([]Article, error)
@@ -282,11 +288,17 @@ type Store interface {
 	HasFilterRules(userID int64) (bool, error)
 
 	// Article summaries (per-article, shared by all subscribers — #162)
-	// UpdateArticleAISummary caches the summary text with its provenance; a
-	// re-summary replaces both, so a row never pairs new text with an old model.
+	// Summaries are a history (migration 0024): UpdateArticleAISummary appends
+	// a summary with its provenance and makes it the current one, leaving any
+	// earlier summary on record. MarkSummarizationSkipped appends a skip
+	// marker, naming the model that failed ("" when none was asked); it
+	// becomes current only when the article has no summary text to keep.
+	// GetArticleSummary is the current row; ListArticleSummaries is all of
+	// them, newest first.
 	UpdateArticleAISummary(articleID int64, aiSummary string, prov SummaryProvenance) error
-	MarkSummarizationSkipped(articleID int64, reason string) error
+	MarkSummarizationSkipped(articleID int64, reason, model string) error
 	GetArticleSummary(articleID int64) (*ArticleSummary, error)
+	ListArticleSummaries(articleID int64) ([]ArticleSummary, error)
 	// GetArticleBacklinks returns articles in the user's feeds with an extracted
 	// outbound link (article_links) whose normalized form contains needle as a
 	// substring (urlnorm.QueryKey output -- a domain, partial URL, or full URL),

@@ -44,7 +44,7 @@ SELECT a.id, a.feed_id, a.guid, a.title, a.url, a.content, a.summary,
        a.author, a.published_date, a.fetched_date,
        a.linked_url, a.linked_content
 FROM articles a
-LEFT JOIN article_summaries asumm ON asumm.article_id = a.id
+LEFT JOIN article_summaries asumm ON asumm.article_id = a.id AND asumm.is_current
 WHERE a.security_threat <= @max_security_threat::double precision AND asumm.article_id IS NULL
 ORDER BY a.published_date DESC
 LIMIT @lim;
@@ -132,7 +132,7 @@ LIMIT @lim;
 -- name: GetUnsummarizedArticleCount :one
 SELECT COUNT(*)::int
 FROM articles a
-LEFT JOIN article_summaries asumm ON asumm.article_id = a.id
+LEFT JOIN article_summaries asumm ON asumm.article_id = a.id AND asumm.is_current
 WHERE asumm.article_id IS NULL;
 
 -- name: GetArticlesNeedingFullText :many

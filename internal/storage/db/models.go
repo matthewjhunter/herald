@@ -171,6 +171,20 @@ type ArticleLink struct {
 	UrlNorm   string
 }
 
+type ArticleScreen struct {
+	ID         int64
+	ArticleID  int64
+	Model      string
+	PromptHash *string
+	Threat     float64
+	Category   *string
+	Verified   *bool
+	Flagged    bool
+	Via        string
+	Effective  bool
+	ScreenedAt time.Time
+}
+
 type ArticleSummary struct {
 	ArticleID   int64
 	AiSummary   string
@@ -179,6 +193,8 @@ type ArticleSummary struct {
 	Model       *string
 	PromptHash  *string
 	DurationMs  *int64
+	ID          int64
+	IsCurrent   bool
 }
 
 type ArticleVote struct {

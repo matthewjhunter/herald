@@ -10,10 +10,21 @@ import (
 	"time"
 )
 
+const demoteCurrentArticleSummary = `-- name: DemoteCurrentArticleSummary :exec
+UPDATE article_summaries SET is_current = FALSE
+WHERE article_id = $1 AND is_current
+`
+
+func (q *Queries) DemoteCurrentArticleSummary(ctx context.Context, articleID int64) error {
+	_, err := q.db.Exec(ctx, demoteCurrentArticleSummary, articleID)
+	return err
+}
+
 const getArticleSummaries = `-- name: GetArticleSummaries :many
 SELECT article_id, ai_summary
 FROM article_summaries
 WHERE article_id = ANY($1::bigint[])
+  AND is_current
   AND ai_summary <> ''
 `
 
@@ -43,81 +54,143 @@ func (q *Queries) GetArticleSummaries(ctx context.Context, articleIds []int64) (
 }
 
 const getArticleSummary = `-- name: GetArticleSummary :one
-SELECT article_id, ai_summary, generated_at, model, prompt_hash, duration_ms
+SELECT id, article_id, ai_summary, skip_reason, generated_at, model, prompt_hash, duration_ms, is_current
 FROM article_summaries
-WHERE article_id = $1
+WHERE article_id = $1 AND is_current
 `
 
 type GetArticleSummaryRow struct {
+	ID          int64
 	ArticleID   int64
 	AiSummary   string
+	SkipReason  *string
 	GeneratedAt time.Time
 	Model       *string
 	PromptHash  *string
 	DurationMs  *int64
+	IsCurrent   bool
 }
 
 func (q *Queries) GetArticleSummary(ctx context.Context, articleID int64) (GetArticleSummaryRow, error) {
 	row := q.db.QueryRow(ctx, getArticleSummary, articleID)
 	var i GetArticleSummaryRow
 	err := row.Scan(
+		&i.ID,
 		&i.ArticleID,
 		&i.AiSummary,
+		&i.SkipReason,
 		&i.GeneratedAt,
 		&i.Model,
 		&i.PromptHash,
 		&i.DurationMs,
+		&i.IsCurrent,
 	)
 	return i, err
 }
 
-const markSummarizationSkipped = `-- name: MarkSummarizationSkipped :exec
-INSERT INTO article_summaries (article_id, ai_summary, skip_reason)
-VALUES ($1, '', $2::text)
-ON CONFLICT (article_id) DO UPDATE SET
-  skip_reason = EXCLUDED.skip_reason,
-  generated_at = NOW()
+const getCurrentArticleSummaryText = `-- name: GetCurrentArticleSummaryText :one
+SELECT ai_summary FROM article_summaries
+WHERE article_id = $1 AND is_current
 `
 
-type MarkSummarizationSkippedParams struct {
-	ArticleID  int64
-	SkipReason string
+func (q *Queries) GetCurrentArticleSummaryText(ctx context.Context, articleID int64) (string, error) {
+	row := q.db.QueryRow(ctx, getCurrentArticleSummaryText, articleID)
+	var ai_summary string
+	err := row.Scan(&ai_summary)
+	return ai_summary, err
 }
 
-func (q *Queries) MarkSummarizationSkipped(ctx context.Context, arg MarkSummarizationSkippedParams) error {
-	_, err := q.db.Exec(ctx, markSummarizationSkipped, arg.ArticleID, arg.SkipReason)
-	return err
-}
-
-const updateArticleAISummary = `-- name: UpdateArticleAISummary :exec
-INSERT INTO article_summaries (article_id, ai_summary, skip_reason, model, prompt_hash, duration_ms)
-VALUES ($1, $2, NULL, $3, $4, $5)
-ON CONFLICT (article_id) DO UPDATE SET
-  ai_summary = EXCLUDED.ai_summary,
-  skip_reason = NULL,
-  model = EXCLUDED.model,
-  prompt_hash = EXCLUDED.prompt_hash,
-  duration_ms = EXCLUDED.duration_ms,
-  generated_at = NOW()
+const insertArticleSummary = `-- name: InsertArticleSummary :exec
+INSERT INTO article_summaries (article_id, ai_summary, skip_reason, model, prompt_hash, duration_ms, is_current)
+VALUES ($1, $2, $3::text, $4::text,
+        $5::text, $6::bigint, $7)
 `
 
-type UpdateArticleAISummaryParams struct {
+type InsertArticleSummaryParams struct {
 	ArticleID  int64
 	AiSummary  string
+	SkipReason *string
 	Model      *string
 	PromptHash *string
 	DurationMs *int64
+	IsCurrent  bool
 }
 
-// Provenance (model, prompt hash, duration) travels with the text: a re-summary
-// replaces all of it, so a row never pairs new text with an old model.
-func (q *Queries) UpdateArticleAISummary(ctx context.Context, arg UpdateArticleAISummaryParams) error {
-	_, err := q.db.Exec(ctx, updateArticleAISummary,
+// Provenance (model, prompt hash, duration) travels with the text, so a row
+// never pairs one model's text with another's name.
+func (q *Queries) InsertArticleSummary(ctx context.Context, arg InsertArticleSummaryParams) error {
+	_, err := q.db.Exec(ctx, insertArticleSummary,
 		arg.ArticleID,
 		arg.AiSummary,
+		arg.SkipReason,
 		arg.Model,
 		arg.PromptHash,
 		arg.DurationMs,
+		arg.IsCurrent,
 	)
 	return err
+}
+
+const listArticleSummaries = `-- name: ListArticleSummaries :many
+SELECT id, article_id, ai_summary, skip_reason, generated_at, model, prompt_hash, duration_ms, is_current
+FROM article_summaries
+WHERE article_id = $1
+ORDER BY generated_at DESC, id DESC
+`
+
+type ListArticleSummariesRow struct {
+	ID          int64
+	ArticleID   int64
+	AiSummary   string
+	SkipReason  *string
+	GeneratedAt time.Time
+	Model       *string
+	PromptHash  *string
+	DurationMs  *int64
+	IsCurrent   bool
+}
+
+func (q *Queries) ListArticleSummaries(ctx context.Context, articleID int64) ([]ListArticleSummariesRow, error) {
+	rows, err := q.db.Query(ctx, listArticleSummaries, articleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListArticleSummariesRow{}
+	for rows.Next() {
+		var i ListArticleSummariesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ArticleID,
+			&i.AiSummary,
+			&i.SkipReason,
+			&i.GeneratedAt,
+			&i.Model,
+			&i.PromptHash,
+			&i.DurationMs,
+			&i.IsCurrent,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockArticleForSummary = `-- name: LockArticleForSummary :one
+
+SELECT id FROM articles WHERE id = $1 FOR NO KEY UPDATE
+`
+
+// article_summaries is a history (migration 0024): one row per generation,
+// with is_current marking the one row per article that readers use. Writers
+// go through PostgresStore.addSummaryRow, which takes LockArticleForSummary
+// first so two writers for the same article cannot both insert a current row.
+func (q *Queries) LockArticleForSummary(ctx context.Context, id int64) (int64, error) {
+	row := q.db.QueryRow(ctx, lockArticleForSummary, id)
+	err := row.Scan(&id)
+	return id, err
 }

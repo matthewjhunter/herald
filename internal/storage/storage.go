@@ -57,10 +57,19 @@ type Article struct {
 	Starred         bool   // requesting user's starred state; only set by queries that select read_state.starred
 }
 
+// ArticleSummary is one row of an article's summary history (migration 0024).
+// An article can have several, from different models or dates; exactly one is
+// current, and that is the one readers, the embedder and grouping use.
 type ArticleSummary struct {
+	ID          int64
 	ArticleID   int64
 	AISummary   string
 	GeneratedAt time.Time
+	// IsCurrent marks the row readers use.
+	IsCurrent bool
+	// SkipReason is set on a skip marker: no usable summary was produced, and
+	// AISummary is empty. Model says which model failed, when one was asked.
+	SkipReason string
 	// Provenance recorded when the summary was generated. Zero for rows
 	// written before it was tracked: unknown, not "whatever is current".
 	SummaryProvenance
@@ -75,6 +84,28 @@ type SummaryProvenance struct {
 	Model      string
 	PromptHash string
 	Duration   time.Duration
+}
+
+// ArticleScreen is one security scan of an article (migration 0024). The
+// verdict that gates an article lives on the article; this is the record of
+// which model reached it, and of any other model's scan of the same article.
+// Payload-free, like the verdict columns (plan 012).
+type ArticleScreen struct {
+	ID         int64
+	ArticleID  int64
+	Model      string
+	PromptHash string
+	// Via is "sync" or "batch:<provider>", as on a model output row.
+	Via string
+	// Threat is the combined verdict (0 = clean): max(model, regex).
+	Threat   float64
+	Category string
+	Verified bool
+	Flagged  bool
+	// Effective reports that this scan set the article's gating verdict. A
+	// scan that is not effective is a shadow, kept only for comparison.
+	Effective  bool
+	ScreenedAt time.Time
 }
 
 // ArticleLinkSource is the raw text the link-extraction stage parses outbound

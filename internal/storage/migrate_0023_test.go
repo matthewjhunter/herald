@@ -41,15 +41,13 @@ func TestMigration0023DeletesNonImageCacheRows(t *testing.T) {
 	}
 	s.Close()
 
-	// Forget 0023 so the next open applies it over the rows above.
+	// Roll back past 0023 so the next open applies it over the rows above.
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}
 	defer db.Close()
-	if _, err := db.Exec("DELETE FROM goose_db_version WHERE version_id = 23"); err != nil {
-		t.Fatalf("reset goose version: %v", err)
-	}
+	migrateDownTo(t, db, 22)
 	s, err = NewStore(dsn)
 	if err != nil {
 		t.Fatalf("reopen (apply 0023): %v", err)
@@ -125,9 +123,7 @@ func TestMigration0023RelabelsICOVariants(t *testing.T) {
 		t.Fatalf("sql.Open: %v", err)
 	}
 	defer db.Close()
-	if _, err := db.Exec("DELETE FROM goose_db_version WHERE version_id = 23"); err != nil {
-		t.Fatalf("reset goose version: %v", err)
-	}
+	migrateDownTo(t, db, 22)
 	s, err = NewStore(dsn)
 	if err != nil {
 		t.Fatalf("reopen (apply 0023): %v", err)

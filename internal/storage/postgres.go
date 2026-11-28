@@ -1020,6 +1020,84 @@ func (s *PostgresStore) ScreenArticleSecurity(articleID int64, securityThreat fl
 	return nil
 }
 
+// RecordArticleScreen appends one scan to the article's screen history. An
+// effective scan also sets the verdict that gates the article, in the same
+// transaction, so the history can never claim a verdict the article does not
+// carry. A scan that is not effective is a shadow: recorded for comparison,
+// changing nothing readers can see.
+func (s *PostgresStore) RecordArticleScreen(scr ArticleScreen) error {
+	if scr.Model == "" {
+		return errors.New("record article screen: a scan needs the model that made it")
+	}
+	if scr.Via == "" {
+		return errors.New("record article screen: a scan needs how it was made (via)")
+	}
+	ctx := context.Background()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("record article screen: begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+	qtx := s.q.WithTx(tx)
+
+	verified := scr.Verified
+	if scr.Effective {
+		if err := qtx.ScreenArticleSecurity(ctx, db.ScreenArticleSecurityParams{
+			SecurityThreat:   scr.Threat,
+			SecurityCategory: scr.Category,
+			SecurityVerified: &verified,
+			SecurityFlagged:  scr.Flagged,
+			ID:               scr.ArticleID,
+		}); err != nil {
+			return fmt.Errorf("record article screen: verdict: %w", err)
+		}
+	}
+	if err := qtx.InsertArticleScreen(ctx, db.InsertArticleScreenParams{
+		ArticleID:  scr.ArticleID,
+		Model:      scr.Model,
+		PromptHash: nullableText(scr.PromptHash),
+		Threat:     scr.Threat,
+		Category:   nullableText(scr.Category),
+		Verified:   &verified,
+		Flagged:    scr.Flagged,
+		Via:        scr.Via,
+		Effective:  scr.Effective,
+	}); err != nil {
+		return fmt.Errorf("record article screen: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("record article screen: commit: %w", err)
+	}
+	return nil
+}
+
+// ListArticleScreens returns every scan on record for the article, newest
+// first.
+func (s *PostgresStore) ListArticleScreens(articleID int64) ([]ArticleScreen, error) {
+	rows, err := s.q.ListArticleScreens(context.Background(), articleID)
+	if err != nil {
+		return nil, fmt.Errorf("list article screens: %w", err)
+	}
+	out := make([]ArticleScreen, 0, len(rows))
+	for _, r := range rows {
+		scr := ArticleScreen{
+			ID: r.ID, ArticleID: r.ArticleID, Model: r.Model, Threat: r.Threat,
+			Flagged: r.Flagged, Via: r.Via, Effective: r.Effective, ScreenedAt: r.ScreenedAt,
+		}
+		if r.PromptHash != nil {
+			scr.PromptHash = *r.PromptHash
+		}
+		if r.Category != nil {
+			scr.Category = *r.Category
+		}
+		if r.Verified != nil {
+			scr.Verified = *r.Verified
+		}
+		out = append(out, scr)
+	}
+	return out, nil
+}
+
 // SkipArticleSecurity marks an article screened without a score (no content /
 // too short). The reason is herald-authored and logged only -- it is no longer
 // persisted (plan 012 dropped security_reason). See the SQLite implementation.
@@ -1487,7 +1565,59 @@ func (s *PostgresStore) HasFilterRules(userID int64) (bool, error) {
 
 // --- Article summaries ---
 
+// UpdateArticleAISummary records a summary and makes it the article's current
+// one. It never overwrites: an earlier summary stays in the history with its
+// own model and date (migration 0024).
 func (s *PostgresStore) UpdateArticleAISummary(articleID int64, aiSummary string, prov SummaryProvenance) error {
+	if err := s.addSummaryRow(articleID, aiSummary, "", prov); err != nil {
+		return fmt.Errorf("failed to update AI summary: %w", err)
+	}
+	return nil
+}
+
+// MarkSummarizationSkipped records that no usable summary was produced, with
+// the model that failed when one was involved ("" when the article was never
+// sent to a model). The marker becomes the current row only if the article has
+// no summary text on record: one model failing must not take away another
+// model's summary.
+func (s *PostgresStore) MarkSummarizationSkipped(articleID int64, reason, model string) error {
+	if reason == "" {
+		return errors.New("failed to mark summarization skipped: a skip needs a reason")
+	}
+	if err := s.addSummaryRow(articleID, "", reason, SummaryProvenance{Model: model}); err != nil {
+		return fmt.Errorf("failed to mark summarization skipped: %w", err)
+	}
+	return nil
+}
+
+// addSummaryRow appends one row to an article's summary history and settles
+// which row is current. skipReason "" means text is a real summary, which
+// always becomes current; otherwise the row is a skip marker, which becomes
+// current only when there is no summary text to keep. The article row is
+// locked for the duration so two writers cannot both insert a current row.
+func (s *PostgresStore) addSummaryRow(articleID int64, text, skipReason string, prov SummaryProvenance) error {
+	ctx := context.Background()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+	qtx := s.q.WithTx(tx)
+
+	if _, err := qtx.LockArticleForSummary(ctx, articleID); err != nil {
+		return fmt.Errorf("lock article %d: %w", articleID, err)
+	}
+	currentText, err := qtx.GetCurrentArticleSummaryText(ctx, articleID)
+	hasCurrent := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("read current summary: %w", err)
+	}
+	makeCurrent := skipReason == "" || !hasCurrent || currentText == ""
+	if makeCurrent && hasCurrent {
+		if err := qtx.DemoteCurrentArticleSummary(ctx, articleID); err != nil {
+			return fmt.Errorf("demote current summary: %w", err)
+		}
+	}
 	// Zero provenance is stored as NULL, never as an empty string or 0ms: the
 	// column's NULL means "not recorded", and a store with nothing to say must
 	// read back the same way.
@@ -1496,28 +1626,22 @@ func (s *PostgresStore) UpdateArticleAISummary(articleID int64, aiSummary string
 		ms := prov.Duration.Milliseconds()
 		durationMs = &ms
 	}
-	if err := s.q.UpdateArticleAISummary(context.Background(), db.UpdateArticleAISummaryParams{
+	if err := qtx.InsertArticleSummary(ctx, db.InsertArticleSummaryParams{
 		ArticleID:  articleID,
-		AiSummary:  aiSummary,
+		AiSummary:  text,
+		SkipReason: nullableText(skipReason),
 		Model:      nullableText(prov.Model),
 		PromptHash: nullableText(prov.PromptHash),
 		DurationMs: durationMs,
+		IsCurrent:  makeCurrent,
 	}); err != nil {
-		return fmt.Errorf("failed to update AI summary: %w", err)
+		return fmt.Errorf("insert summary: %w", err)
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
-func (s *PostgresStore) MarkSummarizationSkipped(articleID int64, reason string) error {
-	if err := s.q.MarkSummarizationSkipped(context.Background(), db.MarkSummarizationSkippedParams{
-		ArticleID:  articleID,
-		SkipReason: reason,
-	}); err != nil {
-		return fmt.Errorf("failed to mark summarization skipped: %w", err)
-	}
-	return nil
-}
-
+// GetArticleSummary returns the article's current summary row -- the one
+// readers use -- or nil when it has none. The row may be a skip marker.
 func (s *PostgresStore) GetArticleSummary(articleID int64) (*ArticleSummary, error) {
 	r, err := s.q.GetArticleSummary(context.Background(), articleID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1526,10 +1650,34 @@ func (s *PostgresStore) GetArticleSummary(articleID int64) (*ArticleSummary, err
 	if err != nil {
 		return nil, fmt.Errorf("failed to get article summary: %w", err)
 	}
-	out := &ArticleSummary{
+	out := articleSummaryFromRow(db.ListArticleSummariesRow(r))
+	return &out, nil
+}
+
+// ListArticleSummaries returns every summary row on record for the article,
+// newest first: the current one, the ones it replaced, and skip markers.
+func (s *PostgresStore) ListArticleSummaries(articleID int64) ([]ArticleSummary, error) {
+	rows, err := s.q.ListArticleSummaries(context.Background(), articleID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list article summaries: %w", err)
+	}
+	out := make([]ArticleSummary, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, articleSummaryFromRow(r))
+	}
+	return out, nil
+}
+
+func articleSummaryFromRow(r db.ListArticleSummariesRow) ArticleSummary {
+	out := ArticleSummary{
+		ID:          r.ID,
 		ArticleID:   r.ArticleID,
 		AISummary:   r.AiSummary,
 		GeneratedAt: r.GeneratedAt,
+		IsCurrent:   r.IsCurrent,
+	}
+	if r.SkipReason != nil {
+		out.SkipReason = *r.SkipReason
 	}
 	if r.Model != nil {
 		out.Model = *r.Model
@@ -1540,7 +1688,7 @@ func (s *PostgresStore) GetArticleSummary(articleID int64) (*ArticleSummary, err
 	if r.DurationMs != nil {
 		out.Duration = time.Duration(*r.DurationMs) * time.Millisecond
 	}
-	return out, nil
+	return out
 }
 
 func (s *PostgresStore) GetArticleBacklinks(userID, excludeID int64, needle string, limit int) ([]Backlink, error) {
