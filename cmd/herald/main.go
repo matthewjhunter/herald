@@ -96,16 +96,42 @@ func newBatchSubmitter() (batch.Submitter, error) {
 	}
 }
 
+// batchKindsFor says which kinds this process registers with the batch stage.
+// A kind is registered when [batch] sends it down the batch path, and also
+// when it still has batches running: turning [batch] off, or dropping a kind
+// from its stages, stops new submissions but must not strand the results of
+// what was already sent. Either way only for the stages this process owns, so
+// the screen and curate daemons each collect their own.
+func batchKindsFor(stages stageSet, mode pipeline.Mode, defaultUser int64, running []storage.AIBatch) (screen, curate bool) {
+	inFlight := make(map[string]bool, len(running))
+	for _, b := range running {
+		inFlight[b.Kind] = true
+	}
+	screen = stages.has(stageScreen) && (inFlight[pipeline.KindScreen] || (mode != nil && mode(0, pipeline.KindScreen)))
+	curate = stages.has(stageCurate) && (inFlight[pipeline.KindCurate] || (mode != nil && mode(defaultUser, pipeline.KindCurate)))
+	return screen, curate
+}
+
+// submitGate is the Mode the batch kinds gate their submissions on. With
+// batching off it refuses everything, which leaves a stage that only collects.
+func submitGate(mode pipeline.Mode) pipeline.Mode {
+	if mode == nil {
+		return func(int64, string) bool { return false }
+	}
+	return mode
+}
+
 // newBatchStage builds the batch stage for this process's stages: the screen
 // daemon registers the screen kind, the curate daemon the curate kind, so each
-// polls and applies only its own batches. Returns nil when no registered kind
-// takes the batch path.
-func newBatchStage(store storage.Store, processor *ai.AIProcessor, formatter *output.Formatter, stages stageSet, mode pipeline.Mode) (*pipeline.BatchStage, error) {
-	screenBatched := stages.has(stageScreen) && mode(0, pipeline.KindScreen)
-	curateBatched := stages.has(stageCurate) && mode(cfg.DefaultUserID, pipeline.KindCurate)
+// polls and applies only its own batches. running is the store's unfinished
+// batches; see batchKindsFor. Returns nil when there is nothing to submit or
+// collect.
+func newBatchStage(store storage.Store, processor *ai.AIProcessor, formatter *output.Formatter, stages stageSet, mode pipeline.Mode, running []storage.AIBatch) (*pipeline.BatchStage, error) {
+	screenBatched, curateBatched := batchKindsFor(stages, mode, cfg.DefaultUserID, running)
 	if !screenBatched && !curateBatched {
 		return nil, nil
 	}
+	mode = submitGate(mode)
 	sub, err := newBatchSubmitter()
 	if err != nil {
 		return nil, err
@@ -581,14 +607,19 @@ func runCycle(ctx context.Context, stages stageSet) error {
 	// synchronous stages run, so a refunded claim is visible to them, and new
 	// work is submitted after, so the synchronous stages have had their turn
 	// at anything they own.
+	//
+	// The stage is built whenever there is something to submit or something
+	// still running, so batches sent before [batch] was turned off are
+	// collected rather than left to expire with their claims.
 	mode := batchMode()
-	var batchStage *pipeline.BatchStage
-	if mode != nil {
-		batchStage, err = newBatchStage(store, processor, formatter, stages, mode)
-		if err != nil {
-			formatter.Warning("batch scoring disabled this cycle, falling back to synchronous calls: %v", err)
-			mode = nil
-		}
+	running, err := store.ListRunningAIBatches()
+	if err != nil {
+		formatter.Warning("could not list running batches; none will be collected this cycle: %v", err)
+	}
+	batchStage, err := newBatchStage(store, processor, formatter, stages, mode, running)
+	if err != nil {
+		formatter.Warning("batch scoring disabled this cycle, falling back to synchronous calls: %v", err)
+		mode = nil
 	}
 	if batchStage != nil {
 		if err := batchStage.Reconcile(ctx); err != nil {

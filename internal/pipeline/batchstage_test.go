@@ -683,3 +683,38 @@ func TestBatchCurate_LinkPostFencedSeparately(t *testing.T) {
 		t.Fatal("no curation request submitted for the link post")
 	}
 }
+
+// A batch is collected under whatever config is live when it ends, which
+// need not be the config it was sent under: the model can be switched while a
+// batch is in flight. The record of who answered has to come from the request
+// row, written at submit, not from the model configured now.
+func TestBatchPoll_AttributesToTheModelThatWasSent(t *testing.T) {
+	bs, sub, _, store, feedID := newBatchHarness(t)
+	a := seed(t, store, feedID, "switched", "Combine flour and water, then bake for twenty minutes.")
+	if err := bs.Submit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// The operator moves scoring to another model before the results arrive.
+	later, err := ai.NewAIProcessor("http://unused.invalid", "new-sec-model", "new-cur-model", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range bs.Kinds {
+		if sk, ok := k.(*ScreenKind); ok {
+			sk.Planner = later
+		}
+	}
+
+	sub.end("fb_1", succeeded(screenCustomID(a.ID, 0), cleanVerdict, 50, 10))
+	if err := bs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	outs, err := store.ListModelOutputsByArticle(a.ID)
+	if err != nil || len(outs) != 1 {
+		t.Fatalf("corpus rows = %d, %v", len(outs), err)
+	}
+	if outs[0].Model != "sec-model" {
+		t.Errorf("corpus row model = %q, want sec-model, the model the batch was sent to", outs[0].Model)
+	}
+}
