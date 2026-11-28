@@ -304,6 +304,13 @@ type Store interface {
 	// below beforeID, so a run walks the corpus once with a cursor.
 	GetArticlesLackingSummaryBy(model string, maxSecurityThreat float64, beforeID int64, limit int) ([]Article, error)
 	GetArticlesLackingScreenBy(model string, beforeID int64, limit int) ([]Article, error)
+	// Model comparison over the two histories (cmd `herald compare`): each
+	// model's latest row per article, over the articles both have a row for.
+	// pass and border are the threat ceilings that define the screen buckets.
+	CompareScreens(modelA, modelB string, pass, border float64, maxDisagreements int) (*ScreenComparison, error)
+	CompareSummaries(modelA, modelB string, samples int) (*SummaryComparison, error)
+	ListSummaryModels() ([]ModelRows, error)
+	ListScreenModels() ([]ModelRows, error)
 	// GetArticleBacklinks returns articles in the user's feeds with an extracted
 	// outbound link (article_links) whose normalized form contains needle as a
 	// substring (urlnorm.QueryKey output -- a domain, partial URL, or full URL),
