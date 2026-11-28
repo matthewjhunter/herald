@@ -9,7 +9,7 @@ Status: **collecting.** Every screen, summarize, and curate call writes a row. N
 Each scoring call already records its verdict and, since #258, the model and prompt hash that produced it. What the live rows cannot hold is the training pair:
 
 - **The completion is consumed by parsing.** `read_state` keeps a score, `articles` keeps a threat and category, `article_summaries` keeps the trimmed text. The reasoning sentence, the finding's evidence quote, and the untrimmed summary were thrown away.
-- **The live rows are overwritten.** Rescoring under a new prompt replaces the score; a second summary replaces the first. A corpus has to be append-only or it only ever holds the latest opinion.
+- **The live rows hold what was kept, not what was said.** Rescoring under a new prompt replaces the score. Summaries and screen verdicts do keep a history since migration 0024 (docs/model-history.md), but of the accepted result: the trimmed summary, the verdict's numbers. A rejected completion leaves at most a skip marker there.
 - **The input moves.** Article content is rewritten after scoring by the full-text fetch, the boilerplate trim, and the repair passes. A row has to say what the model saw, or at least be able to tell when the live article no longer matches.
 
 ## What a row holds
